@@ -4,7 +4,7 @@ import react from '@vitejs/plugin-react'
 // https://vite.dev/config/
 export default defineConfig({
   plugins: [react()],
-  base: '/snake/', // Assuming the repository name is 'snake'
+  base: '/made-with-ai/snake/', // Updated to include full path
   build: {
     outDir: 'dist',
     assetsDir: 'assets',
@@ -19,6 +19,14 @@ export default defineConfig({
           'three': ['three']
         }
       }
+    }
+  },
+  // Add public directory configuration
+  publicDir: 'public',
+  // Ensure proper asset handling
+  resolve: {
+    alias: {
+      '@': '/src'
     }
   }
 })
