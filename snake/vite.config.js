@@ -20,13 +20,5 @@ export default defineConfig({
         }
       }
     }
-  },
-  // Add public directory configuration
-  publicDir: 'public',
-  // Ensure proper asset handling
-  resolve: {
-    alias: {
-      '@': '/src'
-    }
   }
 })
