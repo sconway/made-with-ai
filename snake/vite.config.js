@@ -4,29 +4,15 @@ import { resolve } from 'path'
 
 // https://vite.dev/config/
 export default defineConfig({
-  plugins: [react({
-    include: "**/*.{jsx,tsx}",
-    babel: {
-      plugins: [],
-      presets: ['@babel/preset-react']
-    }
-  })],
-  base: '/made-with-ai/snake/', // Updated to include full path
+  plugins: [react()],
+  base: '/made-with-ai/snake/',
   build: {
     outDir: 'dist',
     assetsDir: 'assets',
     sourcemap: true,
-    // Ensure clean builds
     emptyOutDir: true,
-    // Optimize build
     rollupOptions: {
-      input: resolve(__dirname, 'index.html'),
-      output: {
-        manualChunks: {
-          'vendor': ['react', 'react-dom'],
-          'three': ['three']
-        }
-      }
+      input: resolve(__dirname, 'index.html')
     }
   },
   // Add public directory configuration
