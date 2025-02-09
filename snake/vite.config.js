@@ -30,7 +30,7 @@ export default defineConfig({
     alias: {
       '@': resolve(__dirname, 'src')
     },
-    extensions: ['.js', '.jsx', '.ts', '.tsx']
+    extensions: ['.mjs', '.js', '.jsx', '.json']
   },
   esbuild: {
     loader: 'jsx',
