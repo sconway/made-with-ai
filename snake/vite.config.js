@@ -4,7 +4,13 @@ import { resolve } from 'path'
 
 // https://vite.dev/config/
 export default defineConfig({
-  plugins: [react()],
+  plugins: [react({
+    include: "**/*.{jsx,tsx}",
+    babel: {
+      plugins: [],
+      presets: ['@babel/preset-react']
+    }
+  })],
   base: '/made-with-ai/snake/', // Updated to include full path
   build: {
     outDir: 'dist',
