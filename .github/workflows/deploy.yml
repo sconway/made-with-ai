@@ -49,10 +49,11 @@ jobs:
 
       - name: Prepare deployment
         run: |
-          mkdir -p ./dist
-          mv ./snake/dist/* ./dist/snake/
+          mkdir -p ./dist/snake
+          cp -r ./snake/dist/* ./dist/snake/
           # Add similar moves for other projects when they're added
-          # mv ./test/dist/* ./dist/test/
+          # mkdir -p ./dist/test
+          # cp -r ./test/dist/* ./dist/test/
 
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3
