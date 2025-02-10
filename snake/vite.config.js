@@ -7,7 +7,13 @@ export default defineConfig({
   plugins: [react()],
   base: '/made-with-ai/snake/',
   build: {
-    outDir: 'dist'
+    outDir: 'dist',
+    assetsDir: 'assets',
+    rollupOptions: {
+      input: {
+        main: 'index.html'
+      }
+    }
   },
   resolve: {
     alias: {
