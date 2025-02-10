@@ -6,11 +6,6 @@ export default defineConfig({
   plugins: [react()],
   base: '/made-with-ai/snake/',
   build: {
-    outDir: 'dist',
-    rollupOptions: {
-      input: {
-        main: 'index.html'
-      }
-    }
+    outDir: 'dist'
   }
 })
