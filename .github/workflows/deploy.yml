@@ -25,6 +25,7 @@ jobs:
         with:
           node-version: 18
           cache: "npm"
+          cache-dependency-path: "./snake/package-lock.json"
 
       - name: Install Snake dependencies
         working-directory: ./snake
