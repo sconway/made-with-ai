@@ -49,8 +49,19 @@ jobs:
 
       - name: Prepare deployment
         run: |
+          echo "Checking snake build output..."
+          ls -la ./snake/dist/
+
+          echo "Creating deployment directory..."
           mkdir -p ./dist/snake
-          cp -r ./snake/dist/* ./dist/snake/
+
+          echo "Copying files..."
+          cp -r ./snake/dist/* ./dist/snake/ || echo "Copy failed"
+
+          echo "Verifying deployment directory..."
+          ls -la ./dist/
+          ls -la ./dist/snake/
+
           # Add similar moves for other projects when they're added
           # mkdir -p ./dist/test
           # cp -r ./test/dist/* ./dist/test/
