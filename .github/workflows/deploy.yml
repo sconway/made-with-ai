@@ -3,6 +3,9 @@ name: Deploy to GitHub Pages
 on:
   push:
     branches: [main, master]
+    paths:
+      - "snake/**"
+      # - "test/**"
   workflow_dispatch:
 
 permissions:
@@ -23,14 +26,32 @@ jobs:
           node-version: 18
           cache: "npm"
 
-      - name: Install dependencies
+      - name: Install Snake dependencies
+        working-directory: ./snake
         run: npm ci
 
-      - name: Build
+      - name: Build Snake
+        working-directory: ./snake
         run: npm run build
+
+      # Add similar steps for other projects when they're added
+      # - name: Install Test dependencies
+      #   working-directory: ./test
+      #   run: npm ci
+
+      # - name: Build Test
+      #   working-directory: ./test
+      #   run: npm run build
 
       - name: Setup Pages
         uses: actions/configure-pages@v3
+
+      - name: Prepare deployment
+        run: |
+          mkdir -p ./dist
+          mv ./snake/dist/* ./dist/snake/
+          # Add similar moves for other projects when they're added
+          # mv ./test/dist/* ./dist/test/
 
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v2
