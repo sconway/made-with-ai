@@ -6,6 +6,15 @@ export default defineConfig({
   plugins: [react()],
   base: '/made-with-ai/snake/',
   build: {
-    outDir: 'dist'
+    outDir: 'dist',
+    rollupOptions: {
+      input: 'index.html'
+    }
+  },
+  resolve: {
+    extensions: ['.mjs', '.js', '.jsx', '.json']
+  },
+  optimizeDeps: {
+    include: ['react', 'react-dom']
   }
 })
