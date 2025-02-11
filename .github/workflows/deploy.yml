@@ -8,14 +8,22 @@ on:
       # - "test/**"
   workflow_dispatch:
 
+# These are now top-level permissions that apply to all jobs
 permissions:
   contents: read
   pages: write
   id-token: write
+  actions: read # Added for artifact access
 
 jobs:
   build:
     runs-on: ubuntu-latest
+    # Explicitly set build job permissions
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+      actions: write # Needed for artifact upload
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -84,6 +92,7 @@ jobs:
         uses: actions/upload-pages-artifact@v3
         with:
           path: _site
+          retention-days: 1
 
   deploy:
     environment:
@@ -94,7 +103,14 @@ jobs:
     permissions:
       pages: write
       id-token: write
+      actions: read # Needed for artifact download
     steps:
+      - name: Download artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: github-pages
+          path: artifact
+
       - name: Deploy to GitHub Pages
         id: deployment
         uses: actions/deploy-pages@v3
