@@ -16,17 +16,8 @@ permissions:
   actions: write # Required for artifact upload/download
 
 jobs:
-  build-and-deploy:
-    concurrency: ci-${{ github.ref }}
+  build:
     runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      pages: write
-      id-token: write
-      actions: write # Required for artifact upload/download
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -68,24 +59,30 @@ jobs:
       - name: Setup Pages
         uses: actions/configure-pages@v4
 
-      - name: Upload artifact
+      - name: Prepare site
         run: |
-          if [ ! -d "./snake/dist" ]; then
-            echo "Error: dist directory not found"
-            exit 1
-          fi
-          echo "Creating artifact directory..."
-          mkdir -p ./_site
-          echo "Copying files..."
-          cp -r ./snake/dist/* ./_site/
-          echo "Verifying artifact contents:"
-          ls -la ./_site/
+          mkdir -p _site/snake
+          cp -r ./snake/dist/* _site/snake/
 
-      - name: Upload Pages artifact
-        uses: actions/upload-pages-artifact@v3
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
         with:
-          path: ./_site
+          name: github-pages
+          path: _site
           retention-days: 1
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Download artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: github-pages
+          path: _site
 
       - name: Deploy to GitHub Pages
         id: deployment
