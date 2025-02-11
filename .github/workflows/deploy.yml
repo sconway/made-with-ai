@@ -33,7 +33,10 @@ jobs:
 
       - name: Build Snake
         working-directory: ./snake
-        run: npm run build
+        run: |
+          npm run build
+          echo "Build completed. Checking build output:"
+          ls -la dist/
 
       # Add similar steps for other projects when they're added
       # - name: Install Test dependencies
@@ -47,29 +50,22 @@ jobs:
       - name: Setup Pages
         uses: actions/configure-pages@v4
 
-      - name: Prepare deployment
+      - name: Create artifact directory
         run: |
-          echo "Checking snake build output..."
-          ls -la ./snake/dist/
-
-          echo "Creating deployment directory..."
-          mkdir -p ./dist/snake
-
-          echo "Copying files..."
-          cp -r ./snake/dist/* ./dist/snake/ || echo "Copy failed"
-
-          echo "Verifying deployment directory..."
-          ls -la ./dist/
-          ls -la ./dist/snake/
-
-          # Add similar moves for other projects when they're added
-          # mkdir -p ./dist/test
-          # cp -r ./test/dist/* ./dist/test/
+          mkdir -p _site/snake
+          echo "Created _site directory. Contents of workspace:"
+          ls -la
+          echo "Contents of snake/dist:"
+          ls -la snake/dist/
+          cp -r snake/dist/* _site/snake/
+          echo "Contents of _site after copy:"
+          ls -la _site/
+          ls -la _site/snake/
 
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3
         with:
-          path: "./dist"
+          path: _site
 
   deploy:
     environment:
