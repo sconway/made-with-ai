@@ -13,11 +13,17 @@ permissions:
   contents: read
   pages: write
   id-token: write
+  actions: write # Required for artifact upload/download
 
 jobs:
   build-and-deploy:
     concurrency: ci-${{ github.ref }}
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+      actions: write # Required for artifact upload/download
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
@@ -79,6 +85,7 @@ jobs:
         uses: actions/upload-pages-artifact@v3
         with:
           path: ./_site
+          retention-days: 1
 
       - name: Deploy to GitHub Pages
         id: deployment
