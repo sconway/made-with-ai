@@ -16,8 +16,11 @@ permissions:
   actions: write # Required for artifact upload/download
 
 jobs:
-  build:
+  deploy:
     runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -33,17 +36,12 @@ jobs:
         working-directory: ./snake
         run: |
           npm ci
-          echo "Node modules installed. Contents of node_modules:"
-          ls -la node_modules
+          echo "Node modules installed"
 
       - name: Build Snake
         working-directory: ./snake
         run: |
           npm run build
-          if [ ! -d "dist" ]; then
-            echo "Error: dist directory was not created"
-            exit 1
-          fi
           echo "Build output:"
           ls -la dist/
 
@@ -59,30 +57,11 @@ jobs:
       - name: Setup Pages
         uses: actions/configure-pages@v4
 
-      - name: Prepare site
-        run: |
-          mkdir -p _site/snake
-          cp -r ./snake/dist/* _site/snake/
-
-      - name: Upload build artifact
-        uses: actions/upload-artifact@v4
+      - name: Build with Jekyll
+        uses: actions/jekyll-build-action@v1.0.7
         with:
-          name: github-pages
-          path: _site
-          retention-days: 1
-
-  deploy:
-    needs: build
-    runs-on: ubuntu-latest
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
-    steps:
-      - name: Download artifact
-        uses: actions/download-artifact@v4
-        with:
-          name: github-pages
-          path: _site
+          source: ./snake/dist
+          destination: ./_site
 
       - name: Deploy to GitHub Pages
         id: deployment
