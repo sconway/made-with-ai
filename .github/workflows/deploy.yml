@@ -29,13 +29,20 @@ jobs:
 
       - name: Install Snake dependencies
         working-directory: ./snake
-        run: npm ci
+        run: |
+          npm ci
+          echo "Node modules installed. Contents of node_modules:"
+          ls -la node_modules
 
       - name: Build Snake
         working-directory: ./snake
         run: |
           npm run build
-          echo "Build completed. Checking build output:"
+          if [ ! -d "dist" ]; then
+            echo "Error: dist directory was not created"
+            exit 1
+          fi
+          echo "Build output:"
           ls -la dist/
 
       # Add similar steps for other projects when they're added
@@ -50,17 +57,28 @@ jobs:
       - name: Setup Pages
         uses: actions/configure-pages@v4
 
-      - name: Create artifact directory
+      - name: Prepare artifact
         run: |
-          mkdir -p _site/snake
-          echo "Created _site directory. Contents of workspace:"
-          ls -la
-          echo "Contents of snake/dist:"
-          ls -la snake/dist/
-          cp -r snake/dist/* _site/snake/
-          echo "Contents of _site after copy:"
+          # First check if snake/dist exists and has content
+          if [ ! -d "snake/dist" ] || [ -z "$(ls -A snake/dist)" ]; then
+            echo "Error: snake/dist is empty or doesn't exist"
+            exit 1
+          fi
+
+          # Create _site directory
+          mkdir -p _site
+
+          # Copy the entire snake/dist directory to _site
+          cp -r snake/dist/. _site/
+
+          # Verify _site has content
+          echo "Contents of _site directory:"
           ls -la _site/
-          ls -la _site/snake/
+
+          if [ -z "$(ls -A _site)" ]; then
+            echo "Error: _site directory is empty"
+            exit 1
+          fi
 
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3
