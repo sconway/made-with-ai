@@ -57,11 +57,10 @@ jobs:
       - name: Setup Pages
         uses: actions/configure-pages@v4
 
-      - name: Build with Jekyll
-        uses: actions/jekyll-build-action@v1.0.7
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v3
         with:
-          source: ./snake/dist
-          destination: ./_site
+          path: ./snake/dist
 
       - name: Deploy to GitHub Pages
         id: deployment
