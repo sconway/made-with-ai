@@ -18,12 +18,9 @@ permissions:
 jobs:
   build:
     runs-on: ubuntu-latest
-    # Explicitly set build job permissions
-    permissions:
-      contents: read
-      pages: write
-      id-token: write
-      actions: write # Needed for artifact upload
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -65,33 +62,14 @@ jobs:
       - name: Setup Pages
         uses: actions/configure-pages@v4
 
-      - name: Prepare artifact
-        run: |
-          # First check if snake/dist exists and has content
-          if [ ! -d "snake/dist" ] || [ -z "$(ls -A snake/dist)" ]; then
-            echo "Error: snake/dist is empty or doesn't exist"
-            exit 1
-          fi
-
-          # Create _site directory
-          mkdir -p _site
-
-          # Copy the entire snake/dist directory to _site
-          cp -r snake/dist/. _site/
-
-          # Verify _site has content
-          echo "Contents of _site directory:"
-          ls -la _site/
-
-          if [ -z "$(ls -A _site)" ]; then
-            echo "Error: _site directory is empty"
-            exit 1
-          fi
+      - name: Build with Jekyll
+        uses: actions/jekyll-build-action@v1
+        with:
+          source: ./snake/dist
+          destination: ./_site
 
       - name: Upload Pages artifact
         uses: actions/upload-pages-artifact@v3
-        with:
-          path: _site
 
       - name: Deploy to GitHub Pages
         id: deployment
