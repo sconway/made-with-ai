@@ -37,6 +37,7 @@ jobs:
           cache: "npm"
           cache-dependency-path: "./snake/package-lock.json"
       - name: Install dependencies
+        working-directory: ./snake
         run: npm install
       - name: Build
         working-directory: ./snake
