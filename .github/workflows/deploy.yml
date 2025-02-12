@@ -5,7 +5,6 @@ on:
     branches: [main, master]
     paths:
       - "snake/**"
-      # - "test/**"
   workflow_dispatch:
 
 # These are now top-level permissions that apply to all jobs
@@ -16,12 +15,11 @@ permissions:
   actions: write # Required for artifact upload/download
 
 jobs:
-  build:
+  deploy:
     runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      actions: write
-      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -33,47 +31,22 @@ jobs:
           cache: "npm"
           cache-dependency-path: "./snake/package-lock.json"
 
-      - name: Install Snake dependencies
+      - name: Install dependencies
         working-directory: ./snake
-        run: |
-          npm ci
-          echo "Node modules installed"
+        run: npm ci
 
-      - name: Build Snake
+      - name: Build
         working-directory: ./snake
-        run: |
-          npm run build
-          echo "Build output:"
-          ls -la dist/
-
-      # Add similar steps for other projects when they're added
-      # - name: Install Test dependencies
-      #   working-directory: ./test
-      #   run: npm ci
-
-      # - name: Build Test
-      #   working-directory: ./test
-      #   run: npm run build
+        run: npm run build
 
       - name: Setup Pages
         uses: actions/configure-pages@v4
 
-      - name: Upload Pages artifact
+      - name: Upload artifact
         uses: actions/upload-pages-artifact@v3
         with:
           path: ./snake/dist
 
-  deploy:
-    needs: build
-    runs-on: ubuntu-latest
-    permissions:
-      pages: write
-      id-token: write
-      actions: read
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
-    steps:
       - name: Deploy to GitHub Pages
         id: deployment
         uses: actions/deploy-pages@v3
