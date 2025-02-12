@@ -9,7 +9,7 @@ on:
 
 # These are now top-level permissions that apply to all jobs
 permissions:
-  contents: read
+  contents: write
   pages: write
   id-token: write
   actions: write # Required for artifact upload/download
@@ -58,7 +58,8 @@ jobs:
       #     path: ./snake/dist
 
       - name: Deploy to GitHub Pages
-        uses: peaceiris/actions-gh-pages@v4
+        uses: peaceiris/actions-gh-pages@v3
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
           publish_dir: ./snake/dist
+          force_orphan: true
