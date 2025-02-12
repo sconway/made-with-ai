@@ -115,7 +115,7 @@ function App() {
       new THREE.PlaneGeometry(wallSize, wallSize),
       wallMaterial.clone()
     );
-    rightWall.position.x = wallSize/2;
+    rightWall.position.x = wallSize / 2;
     rightWall.rotation.y = -Math.PI/2;
     scene.add(rightWall);
     walls.push(rightWall);
