@@ -39,8 +39,8 @@ function App() {
     controls.dampingFactor = 0.05
     controls.enableZoom = true
     controls.enableRotate = true
-    controls.minDistance = 50
-    controls.maxDistance = 200
+    controls.minDistance = 55
+    controls.maxDistance = 205
     controls.target.set(0, 0, 0)
     controls.update()
 
@@ -596,8 +596,7 @@ function App() {
         borderRadius: '5px'
       }}>
         Controls:<br/>
-        Arrow Keys: Move in X-Y plane<br/>
-        WASD: Move in X-Z plane<br/>
+        Arrow Keys or WASD: Move in X-Y plane<br/>
         Mouse: Rotate camera<br/>
         Scroll: Zoom camera
       </div>
