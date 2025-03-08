@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import * as THREE from 'three'
-import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls'
+import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js'
 import './App.css'
 
 function App() {
@@ -10,6 +10,18 @@ function App() {
   const [isThirdPerson, setIsThirdPerson] = useState(false)
   const [isTransitioning, setIsTransitioning] = useState(false)
   const [showTransitionIndicator, setShowTransitionIndicator] = useState(false)
+  // Gyroscope states
+  const [gyroscopeAvailable, setGyroscopeAvailable] = useState(false)
+  const [gyroscopeActive, setGyroscopeActive] = useState(false)
+  const [showGyroscopeIndicator, setShowGyroscopeIndicator] = useState(false)
+  // Add state for permission button and touch controls
+  const [showPermissionButton, setShowPermissionButton] = useState(false)
+  const [showTouchControls, setShowTouchControls] = useState(false)
+  
+  // Add references for orientation data and timing
+  const orientationRef = useRef({ beta: 0, gamma: 0 })
+  const lastMoveTimeRef = useRef(0)
+  const isMobileRef = useRef(false)
   
   // Refs for tracking state across renders
   const isThirdPersonRef = useRef(false)
@@ -163,6 +175,311 @@ function App() {
     }
   }
 
+  // Function to detect mobile devices
+  const detectMobile = () => {
+    const userAgent = navigator.userAgent || navigator.vendor || window.opera
+    const isMobile = /android|webos|iphone|ipad|ipod|blackberry|iemobile|opera mini/i.test(userAgent.toLowerCase())
+    console.log("Device detection:", isMobile ? "Mobile" : "Desktop")
+    isMobileRef.current = isMobile
+    return isMobile
+  }
+
+  // Function to check if device needs permission
+  const needsIOSPermission = () => {
+    return window.DeviceOrientationEvent && 
+           typeof window.DeviceOrientationEvent.requestPermission === 'function'
+  }
+
+  // Function to check if device has gyroscope
+  const hasGyroscope = () => {
+    // Basic check if DeviceOrientationEvent exists
+    return window.DeviceOrientationEvent !== undefined;
+  }
+
+  // Function to request gyroscope permission on iOS
+  const requestIOSPermission = async () => {
+    if (!needsIOSPermission()) {
+      console.log("No iOS permission needed, enabling gyroscope directly");
+      window.addEventListener('deviceorientation', handleOrientation);
+      setGyroscopeActive(true);
+      setShowGyroscopeIndicator(true);
+      return true;
+    }
+    
+    console.log("Requesting iOS device orientation permission");
+    
+    try {
+      // This must be called in response to a user gesture (like a button click)
+      const response = await window.DeviceOrientationEvent.requestPermission();
+      console.log("Permission response:", response);
+      
+      if (response === 'granted') {
+        console.log("iOS permission granted!");
+        
+        // Add event listener and update state
+        window.addEventListener('deviceorientation', handleOrientation);
+        setGyroscopeActive(true);
+        setShowGyroscopeIndicator(true);
+        setShowPermissionButton(false);
+        setShowTouchControls(false);
+        
+        // Log confirmation
+        console.log("Device orientation listener added");
+        return true;
+      } else {
+        console.log("iOS permission denied:", response);
+        
+        // Show touch controls instead
+        setShowPermissionButton(false);
+        setShowTouchControls(true);
+        alert("Motion access was denied. Touch controls have been enabled instead.");
+        return false;
+      }
+    } catch (error) {
+      console.error("Error requesting iOS permission:", error);
+      // Show touch controls as fallback
+      setShowPermissionButton(false);
+      setShowTouchControls(true);
+      alert("Error accessing motion sensors. Touch controls have been enabled instead.");
+      return false;
+    }
+  };
+
+  // Handle direct player movement from touch controls
+  const movePlayerDirectly = (direction) => {
+    if (hasWonRef.current || !initialRotationDone || isTransitioning) {
+      console.log('Movement ignored - Game won, initial rotation not done, or transition in progress');
+      return false;
+    }
+    
+    console.log('Direct player movement:', direction);
+    
+    // Get current player position and mesh
+    const currentX = playerRef.current.position.x;
+    const currentZ = playerRef.current.position.z;
+    const player = playerRef.current.mesh;
+    
+    if (!player) {
+      console.error('Player mesh not found');
+      return false;
+    }
+    
+    // Calculate new position based on direction
+    let newX = currentX;
+    let newZ = currentZ;
+    
+    if (isThirdPersonRef.current) {
+      // First-person mode movement
+      switch (direction) {
+        case 'ArrowUp':
+          // Move forward
+          newX = currentX + Math.round(playerRef.current.direction.x);
+          newZ = currentZ + Math.round(playerRef.current.direction.z);
+          break;
+        case 'ArrowDown':
+          // Move backward
+          newX = currentX - Math.round(playerRef.current.direction.x);
+          newZ = currentZ - Math.round(playerRef.current.direction.z);
+          break;
+        case 'ArrowLeft':
+          // Rotate left
+          playerRef.current.direction.applyAxisAngle(new THREE.Vector3(0, 1, 0), Math.PI / 2);
+          
+          // Update player mesh rotation
+          const leftAngle = Math.atan2(playerRef.current.direction.x, playerRef.current.direction.z);
+          player.rotation.y = leftAngle;
+          
+          // Update camera look direction
+          const leftLookTarget = camera.position.clone();
+          leftLookTarget.add(playerRef.current.direction.clone().multiplyScalar(WALL_THICKNESS));
+          camera.lookAt(leftLookTarget);
+          
+          // Force camera update
+          camera.updateProjectionMatrix();
+          camera.updateMatrixWorld();
+          
+          return true; // Rotation complete
+          
+        case 'ArrowRight':
+          // Rotate right
+          playerRef.current.direction.applyAxisAngle(new THREE.Vector3(0, 1, 0), -Math.PI / 2);
+          
+          // Update player mesh rotation
+          const rightAngle = Math.atan2(playerRef.current.direction.x, playerRef.current.direction.z);
+          player.rotation.y = rightAngle;
+          
+          // Update camera look direction
+          const rightLookTarget = camera.position.clone();
+          rightLookTarget.add(playerRef.current.direction.clone().multiplyScalar(WALL_THICKNESS));
+          camera.lookAt(rightLookTarget);
+          
+          // Force camera update
+          camera.updateProjectionMatrix();
+          camera.updateMatrixWorld();
+          
+          return true; // Rotation complete
+      }
+    } else {
+      // Top-down mode movement
+      switch (direction) {
+        case 'ArrowUp':
+          newZ = currentZ - 1;
+          playerRef.current.direction.set(0, 0, -1);
+          break;
+        case 'ArrowDown':
+          newZ = currentZ + 1;
+          playerRef.current.direction.set(0, 0, 1);
+          break;
+        case 'ArrowLeft':
+          newX = currentX - 1;
+          playerRef.current.direction.set(-1, 0, 0);
+          break;
+        case 'ArrowRight':
+          newX = currentX + 1;
+          playerRef.current.direction.set(1, 0, 0);
+          break;
+      }
+    }
+    
+    // Check if movement is valid
+    if (isInBounds(newX, newZ) && maze[newX][newZ] === 0) {
+      // Update player position
+      playerRef.current.position.x = newX;
+      playerRef.current.position.z = newZ;
+      
+      // Calculate new world position
+      const newWorldPosition = new THREE.Vector3(
+        (newX - MAZE_SIZE/2) * WALL_THICKNESS,
+        WALL_THICKNESS/2,
+        (newZ - MAZE_SIZE/2) * WALL_THICKNESS
+      );
+      
+      // Update player world position
+      playerRef.current.worldPosition.copy(newWorldPosition);
+      
+      // Update player mesh position
+      player.position.copy(newWorldPosition);
+      
+      // Update player rotation
+      const angle = Math.atan2(playerRef.current.direction.x, playerRef.current.direction.z);
+      player.rotation.y = angle;
+      
+      // In first-person mode, update camera position
+      if (isThirdPersonRef.current) {
+        camera.position.set(
+          newWorldPosition.x,
+          newWorldPosition.y + 1.5, // Eye level
+          newWorldPosition.z
+        );
+        
+        // Update camera look direction
+        const lookTarget = camera.position.clone();
+        lookTarget.add(playerRef.current.direction.clone().multiplyScalar(WALL_THICKNESS));
+        camera.lookAt(lookTarget);
+        
+        // Force camera update
+        camera.updateProjectionMatrix();
+        camera.updateMatrixWorld();
+      }
+      
+      // Check for victory condition
+      if (newX === MAZE_SIZE-1 && newZ === MAZE_SIZE-2) {
+        // Store the fact that player has reached the exit
+        exitReachedRef.current = true;
+        
+        setHasWon(true);
+        setShowRestart(true);
+        celebrate();
+      }
+      
+      return true; // Movement successful
+    } else {
+      console.log('Movement blocked - Out of bounds or wall:', newX, newZ);
+      return false; // Movement blocked
+    }
+  };
+
+  // Handle touch control button press with direct player movement
+  const handleDirectTouchControl = (e, direction) => {
+    if (hasWonRef.current || isTransitioning) return;
+    
+    // Prevent default behaviors
+    e.preventDefault();
+    e.stopPropagation();
+    
+    console.log(`Direct touch control: ${direction}`);
+    
+    // Move player directly instead of using synthetic events
+    movePlayerDirectly(direction);
+    
+    // Return false to prevent any default behavior
+    return false;
+  };
+
+  // Simplified orientation handler
+  const handleOrientation = (event) => {
+    // Log the first few events to confirm we're receiving data
+    const now = performance.now();
+    const firstEvents = now < 3000;
+    
+    if (firstEvents) {
+      console.log("Orientation event received:", {
+        beta: event.beta,
+        gamma: event.gamma,
+        time: now
+      });
+    }
+    
+    // Store orientation data
+    orientationRef.current = {
+      beta: event.beta,   // Front/back tilt (-180 to 180)
+      gamma: event.gamma  // Left/right tilt (-90 to 90)
+    };
+    
+    // Log occasionally
+    if (!firstEvents && now % 3000 < 20) {
+      console.log("Orientation data:", orientationRef.current);
+    }
+  };
+  
+  // Effect to set up gyroscope on component mount
+  useEffect(() => {
+    // Detect if we're on mobile
+    const isMobile = detectMobile()
+    console.log("Is mobile:", isMobile)
+    
+    if (isMobile) {
+      if (needsIOSPermission()) {
+        // iOS - Show permission button
+        console.log("iOS device detected - showing permission button")
+        setShowPermissionButton(true)
+        
+        // Add logging for iOS event availability
+        if (window.DeviceOrientationEvent) {
+          console.log("DeviceOrientationEvent is available")
+          console.log("requestPermission function:", 
+                     typeof window.DeviceOrientationEvent.requestPermission)
+        } else {
+          console.log("DeviceOrientationEvent is NOT available")
+        }
+      } else if (hasGyroscope()) {
+        // Android or other device with gyroscope - setup directly
+        console.log("Android or other mobile device with gyroscope - setting up tilt controls")
+        window.addEventListener('deviceorientation', handleOrientation)
+        setGyroscopeActive(true)
+        setShowGyroscopeIndicator(true)
+      } else {
+        // Mobile without gyroscope - show touch controls
+        console.log("Mobile device without gyroscope - showing touch controls")
+        setShowTouchControls(true)
+      }
+    }
+    
+    return () => {
+      window.removeEventListener('deviceorientation', handleOrientation)
+    }
+  }, [])
+  
   useEffect(() => {
     console.log('Effect running')
     if (!mountRef.current) {
@@ -171,25 +488,38 @@ function App() {
     }
 
     try {
+      console.log("Initializing 3D scene")
+      
+      // First detect if we're on mobile
+      isMobileRef.current = detectMobile()
+      console.log("Is mobile device:", isMobileRef.current)
+      
+      // Automatically show gyroscope indicator on mobile
+      if (isMobileRef.current) {
+        setShowGyroscopeIndicator(true)
+      }
+      
       // Scene setup
       const scene = new THREE.Scene()
       scene.background = new THREE.Color(0x000000)
-      console.log('Scene created')
+      
+      // Add lighting - consolidated lighting setup
+      const ambientLight = new THREE.AmbientLight(0x404040, 1.5)
+      scene.add(ambientLight)
+      
+      const dirLight = new THREE.DirectionalLight(0xffffff, 1)
+      dirLight.position.set(1, 1, 1)
+      scene.add(dirLight)
+      console.log('Lighting set up')
 
-      // Camera setup
-      const camera = new THREE.PerspectiveCamera(
-        75, // Increased FOV for better first-person view
-        window.innerWidth / window.innerHeight,
-        0.1,
-        1000
-      )
-      // Start in top-down view with a closer position
-      camera.position.set(0, 45, 0)  // Reduced height from 80 to 45
-      camera.lookAt(0, 0, 0)
-      console.log('Camera set up')
-
-      // Renderer setup
-      const renderer = new THREE.WebGLRenderer({ 
+      // Ensure the mount ref is available
+      if (!mountRef.current) {
+        console.error("Mount ref is not available")
+        return
+      }
+      
+      // Renderer setup - use the canvas element directly
+      const renderer = new THREE.WebGLRenderer({
         antialias: true,
         canvas: mountRef.current
       })
@@ -198,26 +528,149 @@ function App() {
       renderer.shadowMap.enabled = true
       renderer.shadowMap.type = THREE.PCFSoftShadowMap
       console.log('Renderer set up')
-
-      // Controls
-      const controls = new OrbitControls(camera, renderer.domElement)
-      controls.enableDamping = true
-      controls.dampingFactor = 0.05
-      controls.enableRotate = true
-      controls.enableZoom = true
-      controls.minDistance = 20  // Reduced from 40 to allow closer zoom
-      controls.maxDistance = 100  // Reduced from 200 to prevent extreme zoom out
-      controls.enablePan = true
-      controls.target.set(0, 0, 0)
-      controls.update()
-      console.log('Controls set up')
+      
+      // Enable direct orientation handling for mobile
+      if (isMobileRef.current) {
+        console.log("Setting up orientation handling for mobile")
+        const handleDeviceOrientation = (event) => {
+          orientationRef.current = {
+            beta: event.beta,   // Front/back tilt (-180 to 180)
+            gamma: event.gamma  // Left/right tilt (-90 to 90)
+          }
+          
+          // Log orientation data occasionally
+          const now = performance.now()
+          if (now % 2000 < 20) {
+            console.log("Device orientation:", orientationRef.current)
+          }
+          
+          // Auto-activate gyroscope based on receiving actual data
+          if (!gyroscopeActive && (event.beta !== null || event.gamma !== null)) {
+            console.log("Automatically activating gyroscope - received real data")
+            setGyroscopeActive(true)
+          }
+        }
+        
+        // Try to set up device orientation events
+        if (window.DeviceOrientationEvent) {
+          if (typeof window.DeviceOrientationEvent.requestPermission === 'function') {
+            // iOS 13+ - need to handle permissions
+            console.log("iOS detected - will request permission on first interaction")
+            
+            // Set up a one-time touch handler to request permissions
+            const requestIOSPermission = async () => {
+              console.log("Requesting iOS device orientation permission")
+              try {
+                const permission = await window.DeviceOrientationEvent.requestPermission()
+                if (permission === 'granted') {
+                  console.log("Permission granted, adding orientation listener")
+                  window.addEventListener('deviceorientation', handleDeviceOrientation)
+                  setGyroscopeActive(true)
+                } else {
+                  console.log("Permission denied:", permission)
+                }
+              } catch (err) {
+                console.error("Error requesting permission:", err)
+              }
+            }
+            
+            // Add listener for the first touch/interaction
+            document.addEventListener('touchstart', () => {
+              requestIOSPermission()
+              // Only request once
+              document.removeEventListener('touchstart', requestIOSPermission)
+            }, { once: true })
+            
+          } else {
+            // Android and other devices - no permission needed
+            console.log("Adding device orientation listener directly")
+            window.addEventListener('deviceorientation', handleDeviceOrientation)
+            setGyroscopeActive(true)
+          }
+        }
+      }
 
       // Maze parameters
       const MAZE_SIZE = 21
       const CELL_SIZE = 2
       const WALL_HEIGHT = 3
       const WALL_THICKNESS = 2
-
+      
+      // Camera setup
+      // Calculate camera height based on maze size and screen orientation
+      const calculateOptimalCameraHeight = (hasControls = false) => {
+        const isMobile = window.innerWidth < 768;
+        const isLandscape = window.innerWidth > window.innerHeight;
+        
+        // Base height calculation on maze size
+        const mazeWorldSize = MAZE_SIZE * WALL_THICKNESS;
+        
+        // For mobile devices, we need a higher camera position to see the full maze
+        // Adjust base height depending on whether touch controls are visible
+        let baseHeight = mazeWorldSize * 1.5;
+        
+        // If touch controls are showing, adjust camera height to account for them
+        if (isMobile && (hasControls || showTouchControls)) {
+          // In portrait mode, we need more adjustment
+          if (!isLandscape) {
+            baseHeight = mazeWorldSize * 1.8; // More height for touch controls in portrait
+          } else {
+            baseHeight = mazeWorldSize * 1.6; // Less adjustment needed in landscape
+          }
+        }
+        
+        // Adjust for different device types and orientations
+        if (isMobile) {
+          return isLandscape ? baseHeight * 0.8 : baseHeight * 1.2;
+        } else {
+          return baseHeight;
+        }
+      };
+      
+      // Make the function available globally
+      window.calculateOptimalCameraHeight = calculateOptimalCameraHeight;
+      
+      // Set initial camera position for top-down view
+      const cameraHeight = calculateOptimalCameraHeight()
+      const camera = new THREE.PerspectiveCamera(
+        60,
+        window.innerWidth / window.innerHeight,
+        0.1,
+        1000
+      )
+      camera.position.set(0, cameraHeight, 0)
+      camera.lookAt(0, 0, 0)
+      console.log('Camera set up')
+      
+      // Check if running on mobile device
+      const isMobile = detectMobile()
+      
+      // Controls - use OrbitControls for desktop, simpler controls for mobile
+      let controls;
+      
+      if (!isMobile) {
+        // Desktop - use OrbitControls
+        controls = new OrbitControls(camera, renderer.domElement)
+        controls.enableDamping = true
+        controls.dampingFactor = 0.1
+        controls.target.set(0, 0, 0)
+        controls.update()
+        console.log('Desktop controls set up')
+      } else {
+        // Mobile - use simple camera handling without OrbitControls
+        // Create a simple controls object with just the essential methods
+        controls = {
+          target: new THREE.Vector3(0, 0, 0),
+          update: () => {},
+          enabled: false,
+          enableRotate: false,
+          enableZoom: false,
+          enablePan: false,
+          dispose: () => {} // Add a dummy dispose method
+        }
+        console.log('Mobile simplified controls set up')
+      }
+      
       // Initialize maze grid - use existing maze if game has been won
       const maze = hasWon && mazeRef.current ? 
         mazeRef.current : 
@@ -226,6 +679,24 @@ function App() {
       // Store maze in ref for persistence across re-renders
       mazeRef.current = maze
 
+      // Store key variables in window for global access from touch controls
+      window.MAZE_SIZE = MAZE_SIZE;
+      window.WALL_THICKNESS = WALL_THICKNESS;
+      window.playerRef = playerRef;
+      window.mazeRef = mazeRef;
+      window.isThirdPersonRef = isThirdPersonRef;
+      window.gameCamera = camera;
+      window.maze = maze;
+      
+      // Function to celebrate win - exposed globally for touch controls
+      window.celebrateWin = () => {
+        // Store the fact that player has reached the exit
+        exitReachedRef.current = true;
+        setHasWon(true);
+        setShowRestart(true);
+        celebrate();
+      };
+      
       // Create maze group
       const mazeGroup = new THREE.Group()
       scene.add(mazeGroup)
@@ -557,12 +1028,11 @@ function App() {
       }
 
       // Add lights
-      const ambientLight = new THREE.AmbientLight(0xffffff, 0.6)
-      scene.add(ambientLight)
+      const mazeLighting = new THREE.AmbientLight(0xffffff, 0.6)
+      scene.add(mazeLighting)
 
       const directionalLight = new THREE.DirectionalLight(0xffffff, 1.0)
       directionalLight.position.set(50, 100, 50)
-      directionalLight.castShadow = true
       scene.add(directionalLight)
 
       const pointLight1 = new THREE.PointLight(0x4444ff, 2, 150)
@@ -723,21 +1193,14 @@ function App() {
       const createPlayer = () => {
         const playerGeometry = new THREE.Group()
         
-        // Create arrow body (cone)
-        const coneGeometry = new THREE.ConeGeometry(WALL_THICKNESS/2, WALL_THICKNESS, 8)
-        const coneMaterial = new THREE.MeshPhongMaterial({ color: 0xffff00 })
-        const cone = new THREE.Mesh(coneGeometry, coneMaterial)
-        cone.rotation.x = -Math.PI / 2  // Point forward
-        cone.position.z = WALL_THICKNESS/4  // Move forward slightly
+        // Create a sphere for the player
+        const sphereGeometry = new THREE.SphereGeometry(WALL_THICKNESS/2, 16, 16)
+        const sphereMaterial = new THREE.MeshPhongMaterial({ 
+          color: 0xffff00  // Yellow color
+        })
+        const sphere = new THREE.Mesh(sphereGeometry, sphereMaterial)
         
-        // Create arrow base (cylinder)
-        const cylinderGeometry = new THREE.CylinderGeometry(WALL_THICKNESS/4, WALL_THICKNESS/4, WALL_THICKNESS/2, 8)
-        const cylinder = new THREE.Mesh(cylinderGeometry, coneMaterial)
-        cylinder.rotation.x = -Math.PI / 2  // Align with cone
-        cylinder.position.z = -WALL_THICKNESS/4  // Move back slightly
-        
-        playerGeometry.add(cone)
-        playerGeometry.add(cylinder)
+        playerGeometry.add(sphere)
         
         return playerGeometry
       }
@@ -754,8 +1217,9 @@ function App() {
         // Find the existing player in the maze group
         for (let i = 0; i < mazeGroup.children.length; i++) {
           const child = mazeGroup.children[i];
-          // The player is a group with two children (cone and cylinder)
-          if (child.isGroup && child.children.length === 2) {
+          // The player is now a group with a sphere
+          if (child.isGroup && child.children.length > 0 && 
+              child.children[0].geometry instanceof THREE.SphereGeometry) {
             existingPlayer = child;
             break;
           }
@@ -845,7 +1309,7 @@ function App() {
             
             // Store initial states
             const startPos = camera.position.clone()
-            const startTarget = controls.target.clone()
+            const startTarget = new THREE.Vector3().copy(controls.target)
             const startFOV = camera.fov
             const startMazeRotation = {
               x: mazeGroup.rotation.x,
@@ -860,7 +1324,7 @@ function App() {
                 playerRef.current.worldPosition.y + 1.5,  // Eye level
                 playerRef.current.worldPosition.z
               ) :
-              new THREE.Vector3(0, 45, 0)  // Top-down view with a closer position
+              new THREE.Vector3(0, calculateOptimalCameraHeight(), 0)  // Top-down view with optimal height
             
             const endTarget = newIsThirdPerson ?
               new THREE.Vector3(
@@ -871,7 +1335,15 @@ function App() {
               new THREE.Vector3(0, 0, 0)  // Look at center for top-down view
             
             // End states for other properties
-            const endFOV = newIsThirdPerson ? 75 : 60  // Wider FOV for top-down to see more of the maze
+            const isMobile = window.innerWidth < 768
+            const isLandscape = window.innerWidth > window.innerHeight
+            let endFOV = newIsThirdPerson ? 75 : 60  // Default FOV values
+            
+            // Adjust FOV for mobile devices
+            if (isMobile) {
+              endFOV = newIsThirdPerson ? 75 : (isLandscape ? 75 : 80)
+            }
+            
             const endMazeRotation = {
               x: newIsThirdPerson ? 0 : 0,
               y: newIsThirdPerson ? 0 : 0,
@@ -896,7 +1368,9 @@ function App() {
             });
             
             // Disable controls during transition
-            controls.enabled = false
+            if (!isMobileRef.current) {
+              controls.enabled = false
+            }
             
             // Animation duration in milliseconds
             const duration = 1200  // 1.2 seconds for a smoother transition
@@ -908,141 +1382,89 @@ function App() {
               const progress = Math.min(elapsed / duration, 1)
               
               // Custom easing function for smoother motion (cubic bezier approximation)
-              const eased = progress < 0.5 ? 
-                4 * progress * progress * progress : 
-                1 - Math.pow(-2 * progress + 2, 3) / 2;
+              const easeInOutCubic = progress => progress < 0.5 
+                ? 4 * progress * progress * progress 
+                : 1 - Math.pow(-2 * progress + 2, 3) / 2
               
-              // For arc movement, we'll use a different easing for height
-              const heightEase = newIsThirdPerson ? 
-                // When going to POV: quick descent with a slight bounce
-                progress < 0.9 ? 
-                  1 - Math.pow(1 - progress / 0.9, 2) : 
-                  1 + Math.sin((progress - 0.9) * Math.PI * 5) * 0.05 : 
-                // When going to top-down: slow initial ascent, then faster
-                Math.pow(progress, 1.8)
+              const easedProgress = easeInOutCubic(progress)
               
-              // Create a more interesting camera path with an arc
-              const arcHeight = newIsThirdPerson ? 
-                THREE.MathUtils.lerp(startPos.y, endPos.y, heightEase) :
-                THREE.MathUtils.lerp(startPos.y, endPos.y + 25 * Math.sin(progress * Math.PI), heightEase)
+              // Interpolate position
+              camera.position.lerpVectors(startPos, endPos, easedProgress)
               
-              // Interpolate position with arc
-              camera.position.x = THREE.MathUtils.lerp(startPos.x, endPos.x, eased)
-              camera.position.y = arcHeight
-              camera.position.z = THREE.MathUtils.lerp(startPos.z, endPos.z, eased)
-              
-              // Interpolate target with slight lead (target moves ahead of camera)
-              const targetEase = Math.min(1, eased * 1.2)
-              controls.target.lerpVectors(startTarget, endTarget, targetEase)
-              
-              // Interpolate FOV - use different easing for more dramatic effect
-              const fovEase = newIsThirdPerson ? 
-                // When going to POV: gradually widen with slight overshoot
-                progress < 0.9 ? 
-                  Math.pow(progress / 0.9, 1.5) : 
-                  1 + Math.sin((progress - 0.9) * Math.PI * 5) * 0.03 : 
-                // When going to top-down: quickly narrow
-                1 - Math.pow(1 - progress, 1.7)
-              camera.fov = THREE.MathUtils.lerp(startFOV, endFOV, fovEase)
-              
-              // Interpolate maze rotation with slight wobble for dynamic feel
-              const rotationEase = eased
-              const wobble = Math.sin(progress * Math.PI * 3) * 0.03 * (1 - progress)
-              
-              // Only apply rotation in POV mode, keep at 0 for top-down
-              if (newIsThirdPerson) {
-                mazeGroup.rotation.x = THREE.MathUtils.lerp(startMazeRotation.x, endMazeRotation.x, rotationEase) + wobble
-                mazeGroup.rotation.y = THREE.MathUtils.lerp(startMazeRotation.y, endMazeRotation.y, rotationEase) + wobble
-                mazeGroup.rotation.z = THREE.MathUtils.lerp(startMazeRotation.z, endMazeRotation.z, rotationEase)
-              } else {
-                // When going to top-down, always keep rotation at 0
-                mazeGroup.rotation.set(0, 0, 0)
+              // Interpolate target
+              const interpolatedTarget = new THREE.Vector3().lerpVectors(startTarget, endTarget, easedProgress)
+              if (!isMobileRef.current) {
+                controls.target.copy(interpolatedTarget)
               }
+              camera.lookAt(interpolatedTarget)
               
-              // Fade player in/out
+              // Interpolate FOV
+              camera.fov = THREE.MathUtils.lerp(startFOV, endFOV, easedProgress)
+              camera.updateProjectionMatrix()
+              
+              // Interpolate maze rotation
+              mazeGroup.rotation.x = THREE.MathUtils.lerp(startMazeRotation.x, endMazeRotation.x, easedProgress)
+              mazeGroup.rotation.y = THREE.MathUtils.lerp(startMazeRotation.y, endMazeRotation.y, easedProgress)
+              mazeGroup.rotation.z = THREE.MathUtils.lerp(startMazeRotation.z, endMazeRotation.z, easedProgress)
+              
+              // Interpolate player opacity
               player.children.forEach(child => {
                 if (child.material) {
-                  child.material.opacity = THREE.MathUtils.lerp(startPlayerOpacity, endPlayerOpacity, eased)
+                  child.material.opacity = THREE.MathUtils.lerp(startPlayerOpacity, endPlayerOpacity, easedProgress)
                 }
               })
               
-              // Update camera matrices
-              camera.updateProjectionMatrix()
-              camera.lookAt(controls.target)
-              controls.update()
-              
-              // Continue animation if not complete
-              if (progress < 1) {
-                animationFrameId = requestAnimationFrame(animateCamera)
-              } else {
-                // Final setup once animation is complete
-                if (newIsThirdPerson) {
-                  controls.enabled = false
-                  controls.enableRotate = false
-                  controls.enableZoom = false
-                  controls.enablePan = false
-                  
-                  // Ensure final position and direction for POV mode
-                  const playerPos = playerRef.current.worldPosition.clone()
-                  console.log('Switching to POV mode - Player position:', playerPos)
-                  
-                  camera.position.set(
-                    playerPos.x,
-                    playerPos.y + 1.5,  // Eye level
-                    playerPos.z
-                  )
-                  const lookTarget = camera.position.clone()
-                  lookTarget.add(playerRef.current.direction.clone().multiplyScalar(WALL_THICKNESS))
-                  camera.lookAt(lookTarget)
-                  controls.target.copy(lookTarget)
-                  player.visible = false  // Hide arrow in POV mode
-                } else {
-                  // For top-down view, ensure consistent camera position and orientation
-                  camera.position.set(0, 45, 0)
-                  controls.target.set(0, 0, 0)
-                  
+              // If animation is complete
+              if (progress === 1) {
+                // Clean up animation frame
+                cancelAnimationFrame(animationFrameId)
+                
+                // Update player visibility based on view
+                player.visible = !newIsThirdPerson
+                
+                // Reset player opacity
+                player.children.forEach(child => {
+                  if (child.material) {
+                    child.material.opacity = endPlayerOpacity
+                    if (endPlayerOpacity === 1) {
+                      child.material.transparent = false
+                    }
+                  }
+                })
+                
+                // Re-enable controls in desktop mode if in top-down view
+                if (!isMobileRef.current && !newIsThirdPerson) {
                   controls.enabled = true
                   controls.enableRotate = true
                   controls.enableZoom = true
                   controls.enablePan = true
-                  
-                  // Update player mesh position and rotation when returning to top-down
-                  console.log('Switching to top-down mode - Player world position:', playerRef.current.worldPosition)
-                  console.log('Switching to top-down mode - Player grid position:', playerRef.current.position)
-                  
-                  // Ensure player mesh position matches the current world position
-                  player.position.copy(playerRef.current.worldPosition)
-                  const angle = Math.atan2(playerRef.current.direction.x, playerRef.current.direction.z)
-                  player.rotation.y = angle
-                  
-                  console.log('Updated player mesh position to:', player.position)
-                  
-                  // Reset opacity
-                  player.children.forEach(child => {
-                    if (child.material) {
-                      child.material.opacity = 1
-                    }
-                  })
-                  player.visible = true  // Show arrow in top-down mode
-                  
-                  // Force maze rotation to exactly 0
-                  mazeGroup.rotation.set(0, 0, 0)
+                } else {
+                  // For POV view or mobile, ensure consistent camera position and orientation
+                  camera.position.copy(endPos)
+                  camera.lookAt(endTarget)
                 }
                 
-                // Always ensure maze rotation is reset to 0 at the end
-                mazeGroup.rotation.set(0, 0, 0)
-                
-                // Allow new transitions
-                window.isTransitioning = false
+                // End transition state
                 setIsTransitioning(false)
+                
+                // Show transition indicator briefly
+                setShowTransitionIndicator(true)
+                setTimeout(() => setShowTransitionIndicator(false), 1500)
+                
+                return
               }
+              
+              // Continue animation
+              animationFrameId = requestAnimationFrame(animateCamera)
             }
             
             // Start animation
+            const startTime = performance.now()
             animationFrameId = requestAnimationFrame(animateCamera)
             
             return newIsThirdPerson
           })
+          
           return false
         }
       }
@@ -1269,7 +1691,64 @@ function App() {
       // Animation loop
       let animationFrameId
       function animate(currentTime) {
-        animationFrameId = requestAnimationFrame(animate)
+        animationFrameId = requestAnimationFrame(animate);
+        
+        // Handle gyroscope-based movement on mobile devices
+        if (isMobileRef.current && gyroscopeActive && !hasWonRef.current && !isTransitioning) {
+          const now = performance.now();
+          const { beta, gamma } = orientationRef.current;
+          
+          // Debug logs for the first few seconds
+          if (now < 5000 && now % 500 < 20) {
+            console.log("Animation loop - orientation:", { beta, gamma });
+          }
+          
+          // Only proceed if we have valid orientation data
+          if (beta !== null && gamma !== null) {
+            // Very sensitive tilt detection for mobile
+            // Note: beta is front/back tilt, gamma is left/right tilt
+            
+            // Calculate tilt magnitude with very low threshold
+            const betaMagnitude = Math.abs(beta);
+            const gammaMagnitude = Math.abs(gamma);
+            
+            // Determine movement direction based on tilt
+            // We want movement to feel intuitive based on phone tilt
+            let direction = '';
+            const tiltThreshold = 5; // Very low threshold for detection
+            
+            // Determine the primary direction based on larger tilt
+            if (betaMagnitude > gammaMagnitude && betaMagnitude > tiltThreshold) {
+              // Front/back tilt is dominant
+              direction = beta > 0 ? 'ArrowDown' : 'ArrowUp';
+            } else if (gammaMagnitude > tiltThreshold) {
+              // Left/right tilt is dominant
+              direction = gamma > 0 ? 'ArrowRight' : 'ArrowLeft';
+            }
+            
+            // Only move if enough time has passed since last move
+            // Faster movement for steeper tilts
+            const maxTilt = Math.max(betaMagnitude, gammaMagnitude);
+            const moveDelay = Math.max(100, 500 - maxTilt * 5); // 100-500ms delay
+            
+            if (direction && now - lastMoveTimeRef.current > moveDelay) {
+              console.log(`Gyroscope movement: ${direction} (tilt: ${maxTilt.toFixed(1)}°)`);
+              
+              // Create a synthetic event
+              const syntheticEvent = {
+                key: direction,
+                preventDefault: () => {},
+                stopPropagation: () => {}
+              };
+              
+              // Call the handle key function that moves the player
+              handleKeyDown(syntheticEvent);
+              
+              // Update last move time
+              lastMoveTimeRef.current = now;
+            }
+          }
+        }
         
         // Skip initial animation if the game has been won
         if (!initialRotationDone && !hasWon) {
@@ -1306,7 +1785,6 @@ function App() {
           }
         })
 
-        // Use the ref instead of state for immediate access
         if (updateParticlesRef.current) {
           console.log('Calling updateParticles from animation loop');
           const shouldContinue = updateParticlesRef.current()
@@ -1322,56 +1800,65 @@ function App() {
         if (!isThirdPersonRef.current) {
           // In top-down view, ensure consistent camera position and orientation
           if (Math.abs(camera.position.x) > 0.1 || Math.abs(camera.position.z) > 0.1 || 
-              Math.abs(camera.position.y - 45) > 0.1 ||
+              Math.abs(camera.position.y - calculateOptimalCameraHeight()) > 0.1 ||
               Math.abs(controls.target.x) > 0.1 || Math.abs(controls.target.y) > 0.1 || Math.abs(controls.target.z) > 0.1) {
             // If camera has drifted from the expected top-down position, reset it
-            camera.position.set(0, 45, 0);
+            camera.position.set(0, calculateOptimalCameraHeight(), 0);
             controls.target.set(0, 0, 0);
           }
-          controls.update()
+          
+          // Only update OrbitControls if we're not on mobile
+          if (!isMobileRef.current && controls.update) {
+            controls.update()
+          }
         } else {
           // Ensure orbit controls are disabled in POV mode
-          controls.enabled = false
-          controls.enableRotate = false
-          controls.enableZoom = false
-          controls.enablePan = false
-          
-          // Force camera to stay at player position
-          const playerPos = playerRef.current.worldPosition
-          camera.position.set(
-            playerPos.x,
-            playerPos.y + 1.5,
-            playerPos.z
-          )
-          const lookTarget = camera.position.clone()
-          lookTarget.add(playerRef.current.direction.clone().multiplyScalar(WALL_THICKNESS))
-          camera.lookAt(lookTarget)
-          
-          // Log camera state occasionally (every 60 frames to avoid spam)
-          if (currentTime % 60 === 0) {
-            console.log('Animation loop - Camera state:', {
-              position: camera.position.clone(),
-              direction: playerRef.current.direction.clone(),
-              lookTarget: lookTarget
-            })
+          if (!isMobileRef.current) {
+            controls.enabled = false
+            controls.enableRotate = false
+            controls.enableZoom = false
+            controls.enablePan = false
           }
           
-          // Force camera update
-          camera.updateProjectionMatrix()
-          camera.updateMatrixWorld()
+          // POV camera updates are handled in the movement code
         }
-        
+
         renderer.render(scene, camera)
       }
 
       console.log('Starting animation')
       animate()
 
-      // Handle window resize
+      // Handle window resize to maintain proper camera settings
       function handleResize() {
-        camera.aspect = window.innerWidth / window.innerHeight
+        const width = window.innerWidth
+        const height = window.innerHeight
+        
+        // Update renderer size
+        renderer.setSize(width, height)
+        
+        // Update camera aspect ratio
+        camera.aspect = width / height
+        
+        // Adjust field of view based on device type and orientation
+        const isMobile = width < 768
+        const isLandscape = width > height
+        
+        if (isMobile) {
+          // Mobile devices need a wider FOV to see the full maze
+          camera.fov = isLandscape ? 75 : 80
+        } else {
+          // Default FOV for desktop
+          camera.fov = 60
+        }
+        
+        // If in top-down view, adjust camera height to ensure full maze visibility
+        if (!isThirdPersonRef.current) {
+          camera.position.y = calculateOptimalCameraHeight()
+          camera.lookAt(0, 0, 0)
+        }
+        
         camera.updateProjectionMatrix()
-        renderer.setSize(window.innerWidth, window.innerHeight)
       }
       window.addEventListener('resize', handleResize)
 
@@ -1394,92 +1881,417 @@ function App() {
           }
         })
         renderer.dispose()
-        controls.dispose()
+        if (controls && typeof controls.dispose === 'function') {
+          controls.dispose()
+        }
       }
     } catch (error) {
       console.error('Error in setup:', error)
     }
   }, [])
 
+  // Add state to track if we should show touch controls
+  useEffect(() => {
+    // Always show touch controls for mobile devices without gyroscope or when gyro is denied
+    const checkMobileAndSetControls = () => {
+      const isMobile = detectMobile();
+      
+      // For testing - uncomment to force touch controls
+      // setShowTouchControls(true);
+      
+      if (isMobile) {
+        // If device doesn't support gyro or permission was denied, show touch controls
+        if (!hasGyroscope() || (needsIOSPermission() && !gyroscopeActive)) {
+          console.log("Setting up touch controls for mobile");
+          setShowTouchControls(true);
+        }
+      }
+    };
+    
+    checkMobileAndSetControls();
+  }, [gyroscopeActive]); // Re-run when gyroscope status changes
+
+  // Add refs for the touch control buttons
+  const upButtonRef = useRef(null);
+  const downButtonRef = useRef(null);
+  const leftButtonRef = useRef(null);
+  const rightButtonRef = useRef(null);
+  
+  // Effect to set up touch control buttons
+  useEffect(() => {
+    // Only run this if touch controls are showing
+    if (!showTouchControls) return;
+    
+    console.log("Setting up touch control listeners");
+    
+    // Function to handle touch/click on a direction button
+    const handleButtonPress = (direction) => {
+      console.log(`Button pressed: ${direction}`);
+      
+      // Get key constants from window global scope to ensure access to all variables
+      const MAZE_SIZE = window.MAZE_SIZE || 21;
+      const WALL_THICKNESS = window.WALL_THICKNESS || 2;
+      
+      // Access player and game state through refs
+      const playerRef = window.playerRef;
+      const isThirdPerson = window.isThirdPersonRef?.current;
+      
+      if (!playerRef || !playerRef.current || !playerRef.current.position) {
+        console.error("Player reference not available");
+        return;
+      }
+      
+      // Get current player position
+      const currentX = playerRef.current.position.x;
+      const currentZ = playerRef.current.position.z;
+      const player = playerRef.current.mesh;
+      
+      // Log attempt 
+      console.log(`Attempting to move from (${currentX}, ${currentZ}) in direction ${direction}`);
+      
+      // Access the maze through the global window
+      const maze = window.mazeRef?.current;
+      if (!maze) {
+        console.error("Maze not accessible");
+        return;
+      }
+      
+      // Get camera from window
+      const camera = window.gameCamera;
+      
+      // Function to check if a position is in bounds
+      const isInBounds = (x, z) => {
+        return x >= 0 && x < MAZE_SIZE && z >= 0 && z < MAZE_SIZE;
+      };
+      
+      // Calculate new position based on direction
+      let newX = currentX;
+      let newZ = currentZ;
+      
+      if (isThirdPerson) {
+        // First-person mode
+        switch (direction) {
+          case 'up':
+            // Move forward
+            newX = currentX + Math.round(playerRef.current.direction.x);
+            newZ = currentZ + Math.round(playerRef.current.direction.z);
+            break;
+          case 'down':
+            // Move backward
+            newX = currentX - Math.round(playerRef.current.direction.x);
+            newZ = currentZ - Math.round(playerRef.current.direction.z);
+            break;
+          case 'left':
+            // Rotate left
+            playerRef.current.direction.applyAxisAngle(new THREE.Vector3(0, 1, 0), Math.PI / 2);
+            // Update player rotation
+            const leftAngle = Math.atan2(playerRef.current.direction.x, playerRef.current.direction.z);
+            player.rotation.y = leftAngle;
+            return; // Just rotation, no movement check needed
+          case 'right':
+            // Rotate right
+            playerRef.current.direction.applyAxisAngle(new THREE.Vector3(0, 1, 0), -Math.PI / 2);
+            // Update player rotation
+            const rightAngle = Math.atan2(playerRef.current.direction.x, playerRef.current.direction.z);
+            player.rotation.y = rightAngle;
+            return; // Just rotation, no movement check needed
+        }
+      } else {
+        // Top-down mode
+        switch (direction) {
+          case 'up':
+            newZ = currentZ - 1;
+            playerRef.current.direction.set(0, 0, -1);
+            break;
+          case 'down':
+            newZ = currentZ + 1;
+            playerRef.current.direction.set(0, 0, 1);
+            break;
+          case 'left':
+            newX = currentX - 1;
+            playerRef.current.direction.set(-1, 0, 0);
+            break;
+          case 'right':
+            newX = currentX + 1;
+            playerRef.current.direction.set(1, 0, 0);
+            break;
+        }
+      }
+      
+      // Check if movement is valid
+      console.log(`Checking movement to (${newX}, ${newZ})`);
+      if (isInBounds(newX, newZ) && maze[newX][newZ] === 0) {
+        console.log("Movement valid, updating position");
+        
+        // Update player position
+        playerRef.current.position.x = newX;
+        playerRef.current.position.z = newZ;
+        
+        // Calculate new world position
+        const newWorldPosition = new THREE.Vector3(
+          (newX - MAZE_SIZE/2) * WALL_THICKNESS,
+          WALL_THICKNESS/2,
+          (newZ - MAZE_SIZE/2) * WALL_THICKNESS
+        );
+        
+        // Update player world position
+        playerRef.current.worldPosition.copy(newWorldPosition);
+        
+        // Update player mesh position
+        player.position.copy(newWorldPosition);
+        
+        // Update player rotation
+        const angle = Math.atan2(playerRef.current.direction.x, playerRef.current.direction.z);
+        player.rotation.y = angle;
+        
+        // Check for victory
+        if (newX === MAZE_SIZE-1 && newZ === MAZE_SIZE-2) {
+          console.log("Victory triggered from touch control!");
+          window.celebrateWin();
+        }
+      } else {
+        console.log("Movement invalid - wall or out of bounds");
+      }
+    };
+    
+    // Better event handlers that prevent all default behaviors
+    const handleTouchEvent = (e, direction) => {
+      e.preventDefault();
+      e.stopPropagation();
+      handleButtonPress(direction);
+      return false;
+    };
+    
+    // Set up event listeners for both touch and click events
+    const setupButton = (ref, direction) => {
+      if (!ref.current) return;
+      
+      // Use all possible event types to ensure we catch the interaction
+      const button = ref.current;
+      
+      // Store event handlers to remove them later
+      const touchStartHandler = (e) => handleTouchEvent(e, direction);
+      const touchEndHandler = (e) => e.preventDefault();
+      const mouseDownHandler = (e) => handleTouchEvent(e, direction);
+      const clickHandler = (e) => handleTouchEvent(e, direction);
+      
+      // Add all event listeners
+      button.addEventListener('touchstart', touchStartHandler, { passive: false });
+      button.addEventListener('touchend', touchEndHandler, { passive: false });
+      button.addEventListener('mousedown', mouseDownHandler);
+      button.addEventListener('click', clickHandler);
+      
+      // Return a cleanup function
+      return () => {
+        button.removeEventListener('touchstart', touchStartHandler);
+        button.removeEventListener('touchend', touchEndHandler);
+        button.removeEventListener('mousedown', mouseDownHandler);
+        button.removeEventListener('click', clickHandler);
+      };
+    };
+    
+    // Set up all buttons
+    const cleanupUp = setupButton(upButtonRef, 'up');
+    const cleanupDown = setupButton(downButtonRef, 'down');
+    const cleanupLeft = setupButton(leftButtonRef, 'left');
+    const cleanupRight = setupButton(rightButtonRef, 'right');
+    
+    // Clean up all event listeners on unmount
+    return () => {
+      if (cleanupUp) cleanupUp();
+      if (cleanupDown) cleanupDown();
+      if (cleanupLeft) cleanupLeft();
+      if (cleanupRight) cleanupRight();
+    };
+  }, [showTouchControls]);
+
+  // Effect to disable zooming and scrolling on mobile
+  useEffect(() => {
+    // Add meta tags to prevent zooming
+    const setViewportMeta = () => {
+      // Find existing viewport meta tag
+      let meta = document.querySelector('meta[name="viewport"]');
+      
+      // If it doesn't exist, create it
+      if (!meta) {
+        meta = document.createElement('meta');
+        meta.name = 'viewport';
+        document.head.appendChild(meta);
+      }
+      
+      // Set content to prevent zooming
+      meta.content = 'width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover';
+    };
+    
+    // Add event handlers to prevent default touch actions
+    const preventZoom = (event) => {
+      // Prevent pinch zoom on mobile
+      if (event.touches && event.touches.length > 1) {
+        event.preventDefault();
+      }
+    };
+    
+    // Prevent double-tap zoom
+    const preventDoubleTapZoom = (event) => {
+      event.preventDefault();
+    };
+    
+    // Apply viewport meta
+    setViewportMeta();
+    
+    // Add touch event listeners to prevent zooming
+    document.addEventListener('touchmove', preventZoom, { passive: false });
+    document.addEventListener('touchstart', preventDoubleTapZoom, { passive: false });
+    
+    // Clean up
+    return () => {
+      document.removeEventListener('touchmove', preventZoom);
+      document.removeEventListener('touchstart', preventDoubleTapZoom);
+    };
+  }, []);
+
+  // Effect to adjust camera height when touch controls visibility changes
+  useEffect(() => {
+    // Only run this if we have camera and controls references and we're in top-down view
+    if (!window.gameCamera || isThirdPersonRef.current) {
+      return;
+    }
+    
+    // Update camera height if we're in top-down view
+    const updateCameraForTouchControls = () => {
+      const camera = window.gameCamera;
+      if (camera && !isThirdPersonRef.current) {
+        // Use the window.calculateOptimalCameraHeight function if it exists
+        if (typeof window.calculateOptimalCameraHeight === 'function') {
+          const newHeight = window.calculateOptimalCameraHeight(showTouchControls);
+          camera.position.y = newHeight;
+          camera.updateProjectionMatrix();
+          console.log(`Adjusted camera height to ${newHeight} for touch controls`);
+        } else {
+          console.warn('calculateOptimalCameraHeight function not available globally');
+        }
+      }
+    };
+    
+    // Add a slight delay to ensure the DOM has updated
+    const timeoutId = setTimeout(updateCameraForTouchControls, 100);
+    
+    return () => clearTimeout(timeoutId);
+  }, [showTouchControls]);
+
   return (
-    <div style={{ width: '100vw', height: '100vh', background: '#000' }}>
-      <canvas 
-        ref={mountRef} 
-        style={{ 
-          width: '100%', 
-          height: '100%', 
-          display: 'block'
-        }} 
-      />
-      <div style={{
-        position: 'absolute',
-        bottom: 20,
-        left: 20,
-        color: 'white',
-        fontSize: '16px',
-        backgroundColor: 'rgba(0, 0, 0, 0.7)',
-        padding: '10px',
-        borderRadius: '5px'
-      }}>
-        Controls:<br/>
-        Arrow Keys or WASD: Move<br/>
-        V: Toggle View<br/>
-        {!isThirdPerson && 'Mouse: Rotate/Zoom Camera'}
-      </div>
-      {showRestart && (
-        <div style={{
-          position: 'absolute',
-          top: '50%',
-          left: '50%',
-          transform: 'translate(-50%, -50%)',
-          color: 'white',
-          fontSize: '48px',
-          textAlign: 'center',
-          backgroundColor: 'rgba(0, 0, 0, 0.7)',
-          padding: '20px',
-          borderRadius: '10px'
-        }}>
-          <div>Victory!</div>
-          <button
-            onClick={restartGame}
-            style={{
-              fontSize: '24px',
-              padding: '10px 20px',
-              marginTop: '20px',
-              cursor: 'pointer',
-              backgroundColor: '#4CAF50',
-              border: 'none',
-              color: 'white',
-              borderRadius: '5px'
+    <>
+      <canvas ref={mountRef} style={{ display: 'block', width: '100vw', height: '100vh' }} />
+      
+      {/* iOS Permission Button */}
+      {showPermissionButton && (
+        <div 
+          className="permission-button-container"
+          onClick={() => console.log("Container clicked")}
+          onTouchStart={() => console.log("Container touch started")}
+        >
+          <button 
+            className="permission-button"
+            onClick={(e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              console.log("Permission button clicked");
+              // Use a timeout to ensure the click event is fully processed
+              setTimeout(() => {
+                requestIOSPermission();
+              }, 10);
+            }}
+            onTouchStart={(e) => {
+              console.log("Button touch started");
+              e.stopPropagation();
+            }}
+            onTouchEnd={(e) => {
+              console.log("Button touch ended");
+              e.preventDefault();
+              e.stopPropagation();
+              // Use a timeout to ensure the touch event is fully processed
+              setTimeout(() => {
+                requestIOSPermission();
+              }, 10);
             }}
           >
-            Play Again
+            Enable Tilt Controls
           </button>
+          <p className="permission-text">
+            Tap to allow motion controls for moving the ball with your device
+          </p>
         </div>
       )}
-      {isTransitioning && (
-        <div style={{
-          position: 'absolute',
-          bottom: 70,
-          left: 20,
-          color: '#ffcc00',
-          fontSize: '16px',
-          backgroundColor: 'rgba(0, 0, 0, 0.7)',
-          padding: '10px',
-          borderRadius: '5px',
-          animation: 'pulse 1s infinite'
-        }}>
-          Changing view...
+      
+      {/* Touch Controls for Mobile */}
+      {showTouchControls && (
+        <div className="touch-controls">
+          <div className="touch-controls-row">
+            <button 
+              ref={upButtonRef}
+              className="touch-button up-button"
+              data-direction="up"
+            >
+              ▲
+            </button>
+          </div>
+          <div className="touch-controls-row">
+            <button 
+              ref={leftButtonRef}
+              className="touch-button left-button"
+              data-direction="left"
+            >
+              ◀
+            </button>
+            <div className="touch-button-spacer"></div>
+            <button 
+              ref={rightButtonRef}
+              className="touch-button right-button"
+              data-direction="right"
+            >
+              ▶
+            </button>
+          </div>
+          <div className="touch-controls-row">
+            <button 
+              ref={downButtonRef}
+              className="touch-button down-button"
+              data-direction="down"
+            >
+              ▼
+            </button>
+          </div>
         </div>
       )}
-      <style jsx="true">{`
-        @keyframes pulse {
-          0% { opacity: 0.7; }
-          50% { opacity: 1; }
-          100% { opacity: 0.7; }
-        }
-      `}</style>
-    </div>
+      
+      {/* UI elements */}
+      {hasWon && (
+        <div className="victory-message">
+          <h1>You Won!</h1>
+          {showRestart && (
+            <button onClick={restartGame}>Play Again</button>
+          )}
+        </div>
+      )}
+      
+      {showTransitionIndicator && (
+        <div className="view-mode-indicator">
+          {isThirdPerson ? 'First-Person View' : 'Top-Down View'}
+        </div>
+      )}
+      
+      {/* Gyroscope indicator for mobile users */}
+      {showGyroscopeIndicator && gyroscopeActive && (
+        <div className="gyroscope-indicator">
+          <div className="gyroscope-icon">
+            <svg viewBox="0 0 24 24" width="24" height="24">
+              <path fill="currentColor" d="M12,2A10,10 0 0,0 2,12A10,10 0 0,0 12,22A10,10 0 0,0 22,12A10,10 0 0,0 12,2M12,4A8,8 0 0,1 20,12A8,8 0 0,1 12,20A8,8 0 0,1 4,12A8,8 0 0,1 12,4M12,6A6,6 0 0,0 6,12A6,6 0 0,0 12,18A6,6 0 0,0 18,12A6,6 0 0,0 12,6M12,8A4,4 0 0,1 16,12A4,4 0 0,1 12,16A4,4 0 0,1 8,12A4,4 0 0,1 12,8Z" />
+            </svg>
+          </div>
+          <span>Tilt to Move</span>
+        </div>
+      )}
+    </>
   )
 }
 
