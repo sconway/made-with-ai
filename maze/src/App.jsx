@@ -2131,7 +2131,7 @@ function App() {
     return () => clearTimeout(timeoutId);
   }, [showTouchControls]);
 
-  // Update the physics update function with more robust collision detection
+  // Update the physics update function with more forgiving collision detection
   const updatePlayerPhysics = () => {
     if (!gyroscopeActive || hasWon || isTransitioning) return;
     
@@ -2160,10 +2160,10 @@ function App() {
     const gravityZ = physics.gravityZ || 0;
     
     // Constants for physics calculation
-    const gravity = 0.006;      // Gravity strength
-    const friction = 0.97;      // Surface friction - higher for smoother movement
-    const bounce = 0.3;         // Bounce factor when hitting walls
-    const playerRadius = 0.4;   // Player radius for collision detection (slightly less than 0.5 for better fit)
+    const gravity = 0.008;      // Increased gravity strength for more responsiveness
+    const friction = 0.96;      // Surface friction - higher for smoother movement
+    const bounce = 0.4;         // Increased bounce factor
+    const playerRadius = 0.35;  // Reduced player radius for collision detection (less restrictive)
     
     // Apply gravity to velocity
     vel.x += gravityX * gravity;
@@ -2184,14 +2184,9 @@ function App() {
     let newX = pos.x + vel.x;
     let newZ = pos.z + vel.z;
     
-    // Log movement for debugging
-    if (performance.now() % 3000 < 20) {
-      console.log(`Physics move: pos(${pos.x.toFixed(2)},${pos.z.toFixed(2)}) vel(${vel.x.toFixed(4)},${vel.z.toFixed(4)}) newPos(${newX.toFixed(2)},${newZ.toFixed(2)})`);
-    }
-    
-    // Enhanced isPositionValid function that checks if a position is valid for the player sphere
+    // Simplified collision detection function to be less restrictive
     const isPositionValid = (x, z) => {
-      // Calculate grid cell
+      // Current cell position
       const cellX = Math.floor(x);
       const cellZ = Math.floor(z);
       
@@ -2200,78 +2195,42 @@ function App() {
         return false;
       }
       
-      // Check current cell first (most common case)
+      // Current cell must be a path (0)
       if (maze[cellX][cellZ] === 1) {
-        return false; // Current cell is a wall
+        return false;
       }
-      
-      // Check for proximity to walls by checking nearby cells if we're close to their edges
       
       // Position within the cell (0.0 to 1.0)
       const fracX = x - cellX;
       const fracZ = z - cellZ;
       
-      // Check right wall
-      if (fracX + playerRadius > 1.0) {
-        // Check if there's a wall to the right
+      // Only check adjacent cells if we're very close to the edge
+      const edgeThreshold = playerRadius;
+      
+      // Check right wall if close to right edge
+      if (fracX > 1.0 - edgeThreshold) {
         if (cellX + 1 < MAZE_SIZE && maze[cellX + 1][cellZ] === 1) {
           return false;
         }
       }
       
-      // Check left wall
-      if (fracX - playerRadius < 0.0) {
-        // Check if there's a wall to the left
+      // Check left wall if close to left edge
+      if (fracX < edgeThreshold) {
         if (cellX - 1 >= 0 && maze[cellX - 1][cellZ] === 1) {
           return false;
         }
       }
       
-      // Check bottom wall
-      if (fracZ + playerRadius > 1.0) {
-        // Check if there's a wall below
+      // Check bottom wall if close to bottom edge
+      if (fracZ > 1.0 - edgeThreshold) {
         if (cellZ + 1 < MAZE_SIZE && maze[cellX][cellZ + 1] === 1) {
           return false;
         }
       }
       
-      // Check top wall
-      if (fracZ - playerRadius < 0.0) {
-        // Check if there's a wall above
+      // Check top wall if close to top edge
+      if (fracZ < edgeThreshold) {
         if (cellZ - 1 >= 0 && maze[cellX][cellZ - 1] === 1) {
-          return false;
-        }
-      }
-      
-      // Additional diagonal checks for corner cases
-      if (fracX + playerRadius > 1.0 && fracZ + playerRadius > 1.0) {
-        // Bottom-right corner
-        if (cellX + 1 < MAZE_SIZE && cellZ + 1 < MAZE_SIZE && 
-            maze[cellX + 1][cellZ + 1] === 1) {
-          return false;
-        }
-      }
-      
-      if (fracX - playerRadius < 0.0 && fracZ + playerRadius > 1.0) {
-        // Bottom-left corner
-        if (cellX - 1 >= 0 && cellZ + 1 < MAZE_SIZE && 
-            maze[cellX - 1][cellZ + 1] === 1) {
-          return false;
-        }
-      }
-      
-      if (fracX + playerRadius > 1.0 && fracZ - playerRadius < 0.0) {
-        // Top-right corner
-        if (cellX + 1 < MAZE_SIZE && cellZ - 1 >= 0 && 
-            maze[cellX + 1][cellZ - 1] === 1) {
-          return false;
-        }
-      }
-      
-      if (fracX - playerRadius < 0.0 && fracZ - playerRadius < 0.0) {
-        // Top-left corner
-        if (cellX - 1 >= 0 && cellZ - 1 >= 0 && 
-            maze[cellX - 1][cellZ - 1] === 1) {
           return false;
         }
       }
@@ -2283,8 +2242,6 @@ function App() {
     let hitWallX = false;
     let hitWallZ = false;
     
-    // Use a two-step collision check for more accurate movement
-    
     // 1. First check X movement only
     if (isPositionValid(newX, pos.z)) {
       pos.x = newX;
@@ -2293,15 +2250,11 @@ function App() {
       vel.x = -vel.x * bounce;
       hitWallX = true;
       
-      // Move away from the wall - find the maximum valid position
+      // Move away from the wall
       if (vel.x > 0) {
-        // Moving right, find the rightmost valid position
-        let validX = Math.floor(pos.x) + 1.0 - playerRadius - 0.01;
-        pos.x = Math.min(validX, pos.x);
+        pos.x = Math.floor(pos.x) + 1.0 - playerRadius - 0.01;
       } else {
-        // Moving left, find the leftmost valid position
-        let validX = Math.ceil(pos.x - 1.0) + playerRadius + 0.01;
-        pos.x = Math.max(validX, pos.x);
+        pos.x = Math.ceil(pos.x) + playerRadius + 0.01;
       }
     }
     
@@ -2313,21 +2266,16 @@ function App() {
       vel.z = -vel.z * bounce;
       hitWallZ = true;
       
-      // Move away from the wall - find the maximum valid position
+      // Move away from the wall
       if (vel.z > 0) {
-        // Moving down, find the lowest valid position
-        let validZ = Math.floor(pos.z) + 1.0 - playerRadius - 0.01;
-        pos.z = Math.min(validZ, pos.z);
+        pos.z = Math.floor(pos.z) + 1.0 - playerRadius - 0.01;
       } else {
-        // Moving up, find the highest valid position
-        let validZ = Math.ceil(pos.z - 1.0) + playerRadius + 0.01;
-        pos.z = Math.max(validZ, pos.z);
+        pos.z = Math.ceil(pos.z) + playerRadius + 0.01;
       }
     }
     
-    // Final safety check - if we somehow ended up in an invalid position, revert to original
+    // If we got stuck, revert to original position
     if (!isPositionValid(pos.x, pos.z)) {
-      console.warn(`Invalid position after collision resolution! Reverting to ${originalX.toFixed(2)},${originalZ.toFixed(2)}`);
       pos.x = originalX;
       pos.z = originalZ;
       vel.x = 0;
@@ -2352,11 +2300,6 @@ function App() {
       celebrate();
     }
     
-    // Log collision for debugging
-    if (hitWallX || hitWallZ) {
-      console.log(`Wall collision! pos(${pos.x.toFixed(2)},${pos.z.toFixed(2)}) vel(${vel.x.toFixed(4)},${vel.z.toFixed(4)})`);
-    }
-    
     // Update debug info
     setDebugInfo(prev => ({
       ...prev,
@@ -2364,41 +2307,17 @@ function App() {
       position: { x: pos.x, z: pos.z }
     }));
   };
-  
-  // Update the animation function to properly call updatePlayerPhysics
-  useEffect(() => {
-    let animationFrameId;
-    
-    function animatePhysics() {
-      animationFrameId = requestAnimationFrame(animatePhysics);
-      
-      // Only process physics if needed
-      if (isMobileRef.current && gyroscopeActive && !hasWon && !isTransitioning) {
-        updatePlayerPhysics();
-      }
-    }
-    
-    // Start the physics animation loop
-    animatePhysics();
-    
-    // Cleanup function
-    return () => {
-      if (animationFrameId) {
-        cancelAnimationFrame(animationFrameId);
-      }
-    };
-  }, [gyroscopeActive, hasWon, isTransitioning]);
 
-  // Add a function to initialize physics in the game setup
+  // Update initializePhysics to reset player position to entrance
   const initializePhysics = () => {
     console.log("⚡ Initializing physics system");
     
     // Set up global physics config
     window.physics = {
-      gravity: 0.008,      // Increased gravity strength
-      maxSpeed: 0.25,      // Slightly higher max speed
-      friction: 0.98,      // Surface friction (air/ground)
-      restitution: 0.5,    // Bounciness on collision
+      gravity: 0.008,      // Gravity strength
+      maxSpeed: 0.25,      // Maximum speed cap
+      friction: 0.96,      // Surface friction (air/ground)
+      restitution: 0.4,    // Bounciness on collision
       active: true,        // Whether physics is currently running
       debug: true,         // Show debug logs
       lastTime: 0,         // Time tracking for frame rate independence
@@ -2411,249 +2330,44 @@ function App() {
       initialized: true    // Flag to indicate physics is ready
     };
     
-    // Reset player physics properties
+    // Reset player to entrance position
     if (playerRef.current) {
+      // Set initial position to entrance (typically 1,1)
+      playerRef.current.position = { x: 1, z: 1 };
+      
+      // Reset velocity
       playerRef.current.velocity = { x: 0, z: 0 };
       playerRef.current.acceleration = { x: 0, z: 0 };
-      playerRef.current.mass = 1;
-      playerRef.current.lastUpdateTime = performance.now();
+      
+      // Update mesh if it exists
+      if (playerRef.current.mesh) {
+        playerRef.current.mesh.position.x = 1 * 2; // * 2 for scaling
+        playerRef.current.mesh.position.z = 1 * 2;
+        console.log("Reset player mesh position to entrance");
+      }
     }
     
-    // Add a visual debug element to show tilt direction
-    const addDebugIndicator = () => {
-      if (document.getElementById('physics-debug-indicator')) return;
-      
-      const indicator = document.createElement('div');
-      indicator.id = 'physics-debug-indicator';
-      indicator.style.cssText = `
-        position: fixed;
-        top: 10px;
-        right: 10px;
-        width: 100px;
-        height: 100px;
-        background-color: rgba(0, 0, 0, 0.5);
-        border-radius: 50%;
-        z-index: 10000;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-      `;
-      
-      const dot = document.createElement('div');
-      dot.style.cssText = `
-        width: 20px;
-        height: 20px;
-        background-color: #4CAF50;
-        border-radius: 50%;
-        position: absolute;
-        transform: translate(-50%, -50%);
-        left: 50%;
-        top: 50%;
-        transition: all 0.1s ease;
-      `;
-      
-      const text = document.createElement('div');
-      text.style.cssText = `
-        position: absolute;
-        bottom: -25px;
-        left: 0;
-        width: 100%;
-        text-align: center;
-        color: white;
-        font-size: 12px;
-      `;
-      text.innerText = 'Tilt Debug';
-      
-      indicator.appendChild(dot);
-      indicator.appendChild(text);
-      document.body.appendChild(indicator);
-      
-      window.physics.debugDot = dot;
-    };
-    
-    // Only add the debug indicator in debug mode and on mobile
-    if (window.physics.debug && detectMobile()) {
-      setTimeout(addDebugIndicator, 500); // Delay to ensure DOM is ready
-    }
-    
-    console.log("⚡ Physics system initialized with gravity:", window.physics.gravity);
-    
-    // Add a test impulse immediately to see if physics works at all
+    // Rest of existing function...
+  };
+
+  // Add a helper function to reset player position
+  const resetPlayerPosition = () => {
     if (playerRef.current) {
-      console.log("💥 Adding immediate test impulse of 0.05");
-      playerRef.current.velocity = { x: 0.05, z: 0.05 };
+      // Reset to entrance position (1,1)
+      playerRef.current.position = { x: 1, z: 1 };
+      playerRef.current.velocity = { x: 0, z: 0 };
+      
+      // Update mesh position
+      if (playerRef.current.mesh) {
+        playerRef.current.mesh.position.x = 1 * 2;
+        playerRef.current.mesh.position.z = 1 * 2;
+      }
+      
+      console.log("Player position reset to entrance");
     }
   };
 
-  // Create both event handlers to catch all possible orientation events
-  const connectOrientationEvents = () => {
-    console.log("🔌 Connecting all orientation event handlers");
-    
-    // Try both event types
-    if (window.DeviceOrientationEvent) {
-      window.addEventListener('deviceorientation', handleDeviceOrientation, { passive: true });
-      console.log("✓ Added deviceorientation listener");
-    }
-    
-    if (window.DeviceMotionEvent) {
-      window.addEventListener('devicemotion', handleDeviceMotion, { passive: true });
-      console.log("✓ Added devicemotion listener");
-    }
-    
-    // Force activate gyroscope
-    setGyroscopeActive(true);
-    setShowGyroscopeIndicator(true);
-  };
-  
-  // Handle device motion events as a backup for orientation
-  const handleDeviceMotion = (event) => {
-    // Update event counter for debugging
-    setDebugInfo(prev => ({
-      ...prev,
-      eventCount: prev.eventCount + 1,
-      lastUpdate: Date.now(),
-      eventType: 'motion'
-    }));
-    
-    if (!window.physics) return;
-    
-    // Use acceleration data from motion event
-    const accel = event.accelerationIncludingGravity;
-    if (accel && accel.x !== null && accel.y !== null && accel.z !== null) {
-      // Convert acceleration to gravity direction
-      // Note: this is a simplified conversion and might need adjustment
-      // Typical range for acceleration is around -10 to 10 m/s²
-      const maxAccel = 5; // m/s²
-      let gravityX = Math.min(Math.max(accel.x / maxAccel, -1), 1);
-      let gravityZ = Math.min(Math.max(accel.y / maxAccel, -1), 1);
-      
-      // Apply deadzone
-      const deadzone = 0.05;
-      if (Math.abs(gravityX) < deadzone) gravityX = 0;
-      if (Math.abs(gravityZ) < deadzone) gravityZ = 0;
-      
-      // Store in physics object
-      window.physics.gravityX = -gravityX; // Invert to match expected direction
-      window.physics.gravityZ = gravityZ;
-      
-      // Log occasionally
-      if (performance.now() % 2000 < 20) {
-        console.log(`📱 Device motion: accel(${accel.x.toFixed(2)}, ${accel.y.toFixed(2)}, ${accel.z.toFixed(2)})`);
-        console.log(`🧲 Converted gravity: X=${gravityX.toFixed(3)}, Z=${gravityZ.toFixed(3)}`);
-      }
-    }
-  };
-
-  // Update the device orientation handler for more responsive controls
-  const handleDeviceOrientation = (event) => {
-    // Skip if orientation event is empty
-    if (event.beta === null && event.gamma === null) {
-      return;
-    }
-    
-    // Auto-activate gyroscope based on receiving actual data
-    if (!gyroscopeActive && (event.beta !== null || event.gamma !== null)) {
-      console.log("✅ Automatically activating gyroscope - received real data");
-      setGyroscopeActive(true);
-      setShowGyroscopeIndicator(true);
-    }
-    
-    // Store orientation data
-    if (event.beta !== null && event.gamma !== null) {
-      let beta = event.beta;   // Forward/backward tilt (-180 to 180)
-      let gamma = event.gamma; // Left/right tilt (-90 to 90)
-      
-      // Adjust for different device orientations
-      if (window.orientation !== undefined) {
-        const orientation = window.orientation;
-        
-        if (orientation === 90) {
-          // Landscape, home button right
-          const temp = beta;
-          beta = gamma;
-          gamma = -temp;
-        } else if (orientation === -90) {
-          // Landscape, home button left
-          const temp = beta;
-          beta = -gamma;
-          gamma = temp;
-        } else if (orientation === 180) {
-          // Portrait, upside down
-          beta = -beta;
-          gamma = -gamma;
-        }
-      }
-      
-      // Make sure physics is initialized
-      if (!window.physics) {
-        initializePhysics();
-      }
-      
-      // Apply smoother mapping for better control
-      // - Beta controls forward/back tilt (z-axis in our game)
-      // - Gamma controls left/right tilt (x-axis in our game)
-      
-      // Use a non-linear response curve for more precision at small angles
-      // and faster response at steeper angles
-      const maxAngle = 25;     // Full effect at 25 degrees tilt (reduced for more sensitivity)
-      const deadzone = 1.5;    // Smaller deadzone for more responsiveness
-      const sensitivity = 1.5; // Higher sensitivity for more responsive controls
-      
-      let gravityX = 0;
-      let gravityZ = 0;
-      
-      // Calculate X gravity from gamma (left-right tilt)
-      if (Math.abs(gamma) > deadzone) {
-        // Apply a non-linear response curve
-        const normalizedTilt = Math.min(Math.abs(gamma) - deadzone, maxAngle - deadzone) / (maxAngle - deadzone);
-        // Use a power curve for more responsive control
-        const response = Math.pow(normalizedTilt, 1.5) * sensitivity;
-        gravityX = response * Math.sign(gamma);
-      }
-      
-      // Calculate Z gravity from beta (forward-backward tilt)
-      if (Math.abs(beta) > deadzone) {
-        // Apply a non-linear response curve
-        const normalizedTilt = Math.min(Math.abs(beta) - deadzone, maxAngle - deadzone) / (maxAngle - deadzone);
-        // Use a power curve for more responsive control
-        const response = Math.pow(normalizedTilt, 1.5) * sensitivity;
-        gravityZ = response * Math.sign(beta);
-      }
-      
-      // Apply immediate velocity boost for small tilts to make controls feel more responsive
-      if (playerRef.current && playerRef.current.velocity) {
-        const responsiveBoost = 0.001;
-        if (Math.abs(gravityX) > 0.01 && Math.abs(playerRef.current.velocity.x) < 0.01) {
-          playerRef.current.velocity.x += gravityX * responsiveBoost;
-        }
-        if (Math.abs(gravityZ) > 0.01 && Math.abs(playerRef.current.velocity.z) < 0.01) {
-          playerRef.current.velocity.z += gravityZ * responsiveBoost;
-        }
-      }
-      
-      // Store gravity in physics system
-      if (window.physics) {
-        window.physics.gravityX = gravityX;
-        window.physics.gravityZ = gravityZ;
-        
-        // Update debug info
-        setDebugInfo(prev => ({
-          ...prev,
-          beta: parseFloat(beta.toFixed(2)),
-          gamma: parseFloat(gamma.toFixed(2)),
-          gravity: { x: gravityX, z: gravityZ },
-          eventCount: prev.eventCount + 1,
-          lastUpdate: Date.now(),
-          eventType: 'orientation'
-        }));
-      }
-      
-      // Store orientation for other uses
-      orientationRef.current = { beta, gamma };
-    }
-  };
-
-  // Update the debug overlay with better visualization
+  // Update the DebugOverlay to include a reset button
   const DebugOverlay = () => {
     const { beta, gamma, velocity, gravity, eventCount, lastUpdate, eventType, position } = debugInfo;
     const timeSinceUpdate = Date.now() - lastUpdate;
@@ -2766,28 +2480,45 @@ function App() {
               ({position?.x?.toFixed(1) || '?'}, {position?.z?.toFixed(1) || '?'})
             </span>
           </div>
-          <button 
-            onClick={() => {
-              if (playerRef.current) {
-                playerRef.current.velocity = { 
-                  x: 0.1, 
-                  z: 0.1 
-                };
-                console.log("Manual impulse applied");
-              }
-            }}
-            style={{
-              marginTop: '5px',
-              background: '#4CAF50',
-              border: 'none',
-              borderRadius: '3px',
-              padding: '5px',
-              color: 'white',
-              cursor: 'pointer'
-            }}
-          >
-            Force Impulse
-          </button>
+          <div style={{ display: 'flex', gap: '5px', marginTop: '5px' }}>
+            <button 
+              onClick={() => {
+                if (playerRef.current) {
+                  playerRef.current.velocity = { 
+                    x: 0.1, 
+                    z: 0.1 
+                  };
+                  console.log("Manual impulse applied");
+                }
+              }}
+              style={{
+                flex: 1,
+                background: '#4CAF50',
+                border: 'none',
+                borderRadius: '3px',
+                padding: '5px',
+                color: 'white',
+                cursor: 'pointer'
+              }}
+            >
+              Impulse
+            </button>
+            
+            <button 
+              onClick={resetPlayerPosition}
+              style={{
+                flex: 1,
+                background: '#2196F3',
+                border: 'none',
+                borderRadius: '3px',
+                padding: '5px',
+                color: 'white',
+                cursor: 'pointer'
+              }}
+            >
+              Reset Position
+            </button>
+          </div>
         </div>
       </div>
     );
@@ -2796,6 +2527,213 @@ function App() {
   // Add a toggle for debug info
   const toggleDebug = () => {
     setDebugInfo(prev => ({ ...prev, showDebug: !prev.showDebug }));
+  };
+  
+  // Ensure the physics animation loop is properly set up
+  useEffect(() => {
+    let animationFrameId;
+    let lastUpdateTime = 0;
+    const fixedTimeStep = 1000 / 60; // 60 fps target
+    let accumulator = 0;
+    
+    // Main physics animation loop with fixed timestep for smoother physics
+    function animatePhysics(timestamp) {
+      animationFrameId = requestAnimationFrame(animatePhysics);
+      
+      // Calculate elapsed time since last frame
+      if (lastUpdateTime === 0) {
+        lastUpdateTime = timestamp;
+        return;
+      }
+      
+      // Calculate elapsed time and update last time
+      const frameTime = timestamp - lastUpdateTime;
+      lastUpdateTime = timestamp;
+      
+      // Fixed timestep loop to ensure consistent physics regardless of framerate
+      accumulator += frameTime;
+      
+      // Update physics in fixed steps
+      while (accumulator >= fixedTimeStep) {
+        // Only process physics if needed
+        if (isMobileRef.current && gyroscopeActive && !hasWon && !isTransitioning) {
+          updatePlayerPhysics();
+        }
+        
+        accumulator -= fixedTimeStep;
+      }
+    }
+    
+    // Start the physics animation loop
+    animationFrameId = requestAnimationFrame(animatePhysics);
+    
+    // Cleanup function
+    return () => {
+      if (animationFrameId) {
+        cancelAnimationFrame(animationFrameId);
+      }
+    };
+  }, [gyroscopeActive, hasWon, isTransitioning]);
+
+  // Restore the connectOrientationEvents function and other event handlers
+  const connectOrientationEvents = () => {
+    console.log("🔌 Connecting all orientation event handlers");
+    
+    // Try both event types
+    if (window.DeviceOrientationEvent) {
+      window.addEventListener('deviceorientation', handleDeviceOrientation, { passive: true });
+      console.log("✓ Added deviceorientation listener");
+    }
+    
+    if (window.DeviceMotionEvent) {
+      window.addEventListener('devicemotion', handleDeviceMotion, { passive: true });
+      console.log("✓ Added devicemotion listener");
+    }
+    
+    // Force activate gyroscope
+    setGyroscopeActive(true);
+    setShowGyroscopeIndicator(true);
+    
+    // Initialize physics if not already done
+    if (!window.physics) {
+      initializePhysics();
+    }
+  };
+  
+  // Handle device motion events as a backup for orientation
+  const handleDeviceMotion = (event) => {
+    // Update event counter for debugging
+    setDebugInfo(prev => ({
+      ...prev,
+      eventCount: prev.eventCount + 1,
+      lastUpdate: Date.now(),
+      eventType: 'motion'
+    }));
+    
+    if (!window.physics) return;
+    
+    // Use acceleration data from motion event
+    const accel = event.accelerationIncludingGravity;
+    if (accel && accel.x !== null && accel.y !== null && accel.z !== null) {
+      // Convert acceleration to gravity direction
+      // Typical range for acceleration is around -10 to 10 m/s²
+      const maxAccel = 5; // m/s²
+      let gravityX = Math.min(Math.max(accel.x / maxAccel, -1), 1);
+      let gravityZ = Math.min(Math.max(accel.y / maxAccel, -1), 1);
+      
+      // Apply deadzone
+      const deadzone = 0.05;
+      if (Math.abs(gravityX) < deadzone) gravityX = 0;
+      if (Math.abs(gravityZ) < deadzone) gravityZ = 0;
+      
+      // Store in physics object
+      window.physics.gravityX = -gravityX; // Invert to match expected direction
+      window.physics.gravityZ = gravityZ;
+    }
+  };
+  
+  // Update the device orientation handler for more responsive controls
+  const handleDeviceOrientation = (event) => {
+    // Skip if orientation event is empty
+    if (event.beta === null && event.gamma === null) {
+      return;
+    }
+    
+    // Auto-activate gyroscope based on receiving actual data
+    if (!gyroscopeActive && (event.beta !== null || event.gamma !== null)) {
+      console.log("✅ Automatically activating gyroscope - received real data");
+      setGyroscopeActive(true);
+      setShowGyroscopeIndicator(true);
+    }
+    
+    // Store orientation data
+    if (event.beta !== null && event.gamma !== null) {
+      let beta = event.beta;   // Forward/backward tilt (-180 to 180)
+      let gamma = event.gamma; // Left/right tilt (-90 to 90)
+      
+      // Adjust for different device orientations
+      if (window.orientation !== undefined) {
+        const orientation = window.orientation;
+        
+        if (orientation === 90) {
+          // Landscape, home button right
+          const temp = beta;
+          beta = gamma;
+          gamma = -temp;
+        } else if (orientation === -90) {
+          // Landscape, home button left
+          const temp = beta;
+          beta = -gamma;
+          gamma = temp;
+        } else if (orientation === 180) {
+          // Portrait, upside down
+          beta = -beta;
+          gamma = -gamma;
+        }
+      }
+      
+      // Make sure physics is initialized
+      if (!window.physics) {
+        initializePhysics();
+      }
+      
+      // Apply smoother mapping for better control
+      const maxAngle = 25;     // Full effect at 25 degrees tilt
+      const deadzone = 1.5;    // Smaller deadzone for more responsiveness
+      const sensitivity = 1.5; // Higher sensitivity for more responsive controls
+      
+      let gravityX = 0;
+      let gravityZ = 0;
+      
+      // Calculate X gravity from gamma (left-right tilt)
+      if (Math.abs(gamma) > deadzone) {
+        // Apply a non-linear response curve
+        const normalizedTilt = Math.min(Math.abs(gamma) - deadzone, maxAngle - deadzone) / (maxAngle - deadzone);
+        // Use a power curve for more responsive control
+        const response = Math.pow(normalizedTilt, 1.5) * sensitivity;
+        gravityX = response * Math.sign(gamma);
+      }
+      
+      // Calculate Z gravity from beta (forward-backward tilt)
+      if (Math.abs(beta) > deadzone) {
+        // Apply a non-linear response curve
+        const normalizedTilt = Math.min(Math.abs(beta) - deadzone, maxAngle - deadzone) / (maxAngle - deadzone);
+        // Use a power curve for more responsive control
+        const response = Math.pow(normalizedTilt, 1.5) * sensitivity;
+        gravityZ = response * Math.sign(beta);
+      }
+      
+      // Apply immediate velocity boost for small tilts to make controls feel more responsive
+      if (playerRef.current && playerRef.current.velocity) {
+        const responsiveBoost = 0.001;
+        if (Math.abs(gravityX) > 0.01 && Math.abs(playerRef.current.velocity.x) < 0.01) {
+          playerRef.current.velocity.x += gravityX * responsiveBoost;
+        }
+        if (Math.abs(gravityZ) > 0.01 && Math.abs(playerRef.current.velocity.z) < 0.01) {
+          playerRef.current.velocity.z += gravityZ * responsiveBoost;
+        }
+      }
+      
+      // Store gravity in physics system
+      if (window.physics) {
+        window.physics.gravityX = gravityX;
+        window.physics.gravityZ = gravityZ;
+        
+        // Update debug info
+        setDebugInfo(prev => ({
+          ...prev,
+          beta: parseFloat(beta.toFixed(2)),
+          gamma: parseFloat(gamma.toFixed(2)),
+          gravity: { x: gravityX, z: gravityZ },
+          eventCount: prev.eventCount + 1,
+          lastUpdate: Date.now(),
+          eventType: 'orientation'
+        }));
+      }
+      
+      // Store orientation for other uses
+      orientationRef.current = { beta, gamma };
+    }
   };
   
   return (
