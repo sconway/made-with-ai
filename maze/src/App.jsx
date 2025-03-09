@@ -69,13 +69,15 @@ function App() {
   // Add a ref to track if the player has reached the exit
   const exitReachedRef = useRef(false)
 
-  // Add state for debug display with proper initialization
+  // Update debug info state to include collision info
   const [debugInfo, setDebugInfo] = useState({
     beta: 0,
     gamma: 0,
     velocity: { x: 0, z: 0 },
     gravity: { x: 0, z: 0 },
     position: { x: 0, z: 0 },
+    collision: false,
+    collisionEdge: '',
     eventCount: 0,
     lastUpdate: Date.now(),
     eventType: 'none',
@@ -2131,7 +2133,7 @@ function App() {
     return () => clearTimeout(timeoutId);
   }, [showTouchControls]);
 
-  // Update the physics update function with more forgiving collision detection
+  // Update the physics update function with more robust wall collision detection
   const updatePlayerPhysics = () => {
     if (!gyroscopeActive || hasWon || isTransitioning) return;
     
@@ -2160,10 +2162,10 @@ function App() {
     const gravityZ = physics.gravityZ || 0;
     
     // Constants for physics calculation
-    const gravity = 0.008;      // Increased gravity strength for more responsiveness
-    const friction = 0.96;      // Surface friction - higher for smoother movement
-    const bounce = 0.4;         // Increased bounce factor
-    const playerRadius = 0.35;  // Reduced player radius for collision detection (less restrictive)
+    const gravity = 0.008;      // Gravity strength
+    const friction = 0.95;      // Surface friction - increased for smoother movement
+    const bounce = 0.4;         // Bounce factor when hitting walls
+    const playerRadius = 0.40;  // Player radius for collision detection
     
     // Apply gravity to velocity
     vel.x += gravityX * gravity;
@@ -2174,9 +2176,9 @@ function App() {
     vel.z *= friction;
     
     // Only process movement if velocity is significant
-    if (Math.abs(vel.x) < 0.0005 && Math.abs(vel.z) < 0.0005) return;
+    if (Math.abs(vel.x) < 0.0003 && Math.abs(vel.z) < 0.0003) return;
     
-    // Original position before movement
+    // Store original position before any movement
     const originalX = pos.x;
     const originalZ = pos.z;
     
@@ -2184,102 +2186,209 @@ function App() {
     let newX = pos.x + vel.x;
     let newZ = pos.z + vel.z;
     
-    // Simplified collision detection function to be less restrictive
-    const isPositionValid = (x, z) => {
-      // Current cell position
+    // Track collisions for debugging
+    let collision = false;
+    let collisionEdge = '';
+    let xCollisions, zCollisions;
+    
+    // Improved collision detection system
+    const isWall = (gridX, gridZ) => {
+      if (gridX < 0 || gridX >= MAZE_SIZE || gridZ < 0 || gridZ >= MAZE_SIZE) {
+        return true; // Out of bounds is treated as a wall
+      }
+      return maze[gridX][gridZ] === 1; // 1 = wall
+    };
+    
+    // Check all four corners of the current cell and neighboring cells
+    const getWallCollisions = (x, z) => {
+      // Get the cell coordinates
       const cellX = Math.floor(x);
       const cellZ = Math.floor(z);
       
-      // Basic bounds check
-      if (cellX < 0 || cellX >= MAZE_SIZE || cellZ < 0 || cellZ >= MAZE_SIZE) {
-        return false;
-      }
-      
-      // Current cell must be a path (0)
-      if (maze[cellX][cellZ] === 1) {
-        return false;
-      }
-      
-      // Position within the cell (0.0 to 1.0)
+      // Calculate position within cell (0 to 1)
       const fracX = x - cellX;
       const fracZ = z - cellZ;
       
-      // Only check adjacent cells if we're very close to the edge
-      const edgeThreshold = playerRadius;
+      // Distances from player center to cell edges
+      const distToRightEdge = 1.0 - fracX;
+      const distToLeftEdge = fracX;
+      const distToBottomEdge = 1.0 - fracZ;
+      const distToTopEdge = fracZ;
       
-      // Check right wall if close to right edge
-      if (fracX > 1.0 - edgeThreshold) {
-        if (cellX + 1 < MAZE_SIZE && maze[cellX + 1][cellZ] === 1) {
-          return false;
+      // Check collisions with each possible wall
+      const collisions = {
+        right: false,  // Right edge of current cell
+        left: false,   // Left edge of current cell
+        bottom: false, // Bottom edge of current cell
+        top: false,    // Top edge of current cell
+        
+        rightWall: isWall(cellX + 1, cellZ), // Is there a wall to the right?
+        leftWall: isWall(cellX - 1, cellZ),  // Is there a wall to the left?
+        bottomWall: isWall(cellX, cellZ + 1), // Is there a wall below?
+        topWall: isWall(cellX, cellZ - 1),   // Is there a wall above?
+        
+        // Diagonal walls for corner collisions
+        topLeftWall: isWall(cellX - 1, cellZ - 1),
+        topRightWall: isWall(cellX + 1, cellZ - 1),
+        bottomLeftWall: isWall(cellX - 1, cellZ + 1),
+        bottomRightWall: isWall(cellX + 1, cellZ + 1)
+      };
+      
+      // Check if we're colliding with walls
+      if (collisions.rightWall && distToRightEdge < playerRadius) {
+        collisions.right = true;
+      }
+      
+      if (collisions.leftWall && distToLeftEdge < playerRadius) {
+        collisions.left = true;
+      }
+      
+      if (collisions.bottomWall && distToBottomEdge < playerRadius) {
+        collisions.bottom = true;
+      }
+      
+      if (collisions.topWall && distToTopEdge < playerRadius) {
+        collisions.top = true;
+      }
+      
+      // Check corner collisions (trickier)
+      // Top-left corner
+      if (collisions.topLeftWall && !collisions.topWall && !collisions.leftWall) {
+        const cornerX = cellX;
+        const cornerZ = cellZ;
+        const distToCornerSq = Math.pow(x - cornerX, 2) + Math.pow(z - cornerZ, 2);
+        if (distToCornerSq < playerRadius * playerRadius) {
+          collisions.topLeft = true;
         }
       }
       
-      // Check left wall if close to left edge
-      if (fracX < edgeThreshold) {
-        if (cellX - 1 >= 0 && maze[cellX - 1][cellZ] === 1) {
-          return false;
+      // Top-right corner
+      if (collisions.topRightWall && !collisions.topWall && !collisions.rightWall) {
+        const cornerX = cellX + 1;
+        const cornerZ = cellZ;
+        const distToCornerSq = Math.pow(x - cornerX, 2) + Math.pow(z - cornerZ, 2);
+        if (distToCornerSq < playerRadius * playerRadius) {
+          collisions.topRight = true;
         }
       }
       
-      // Check bottom wall if close to bottom edge
-      if (fracZ > 1.0 - edgeThreshold) {
-        if (cellZ + 1 < MAZE_SIZE && maze[cellX][cellZ + 1] === 1) {
-          return false;
+      // Bottom-left corner
+      if (collisions.bottomLeftWall && !collisions.bottomWall && !collisions.leftWall) {
+        const cornerX = cellX;
+        const cornerZ = cellZ + 1;
+        const distToCornerSq = Math.pow(x - cornerX, 2) + Math.pow(z - cornerZ, 2);
+        if (distToCornerSq < playerRadius * playerRadius) {
+          collisions.bottomLeft = true;
         }
       }
       
-      // Check top wall if close to top edge
-      if (fracZ < edgeThreshold) {
-        if (cellZ - 1 >= 0 && maze[cellX][cellZ - 1] === 1) {
-          return false;
+      // Bottom-right corner
+      if (collisions.bottomRightWall && !collisions.bottomWall && !collisions.rightWall) {
+        const cornerX = cellX + 1;
+        const cornerZ = cellZ + 1;
+        const distToCornerSq = Math.pow(x - cornerX, 2) + Math.pow(z - cornerZ, 2);
+        if (distToCornerSq < playerRadius * playerRadius) {
+          collisions.bottomRight = true;
         }
       }
       
-      return true; // Position is valid
+      return collisions;
     };
     
-    // Track if we hit any walls for physics response
-    let hitWallX = false;
-    let hitWallZ = false;
+    // First, check if the current cell is a wall (shouldn't happen, but just in case)
+    if (isWall(Math.floor(pos.x), Math.floor(pos.z))) {
+      console.warn("Player is inside a wall! Resetting to entrance.");
+      resetPlayerPosition();
+      return;
+    }
     
-    // 1. First check X movement only
-    if (isPositionValid(newX, pos.z)) {
-      pos.x = newX;
-    } else {
-      // Hit a wall in X direction, bounce
-      vel.x = -vel.x * bounce;
-      hitWallX = true;
+    // Move in X direction first
+    if (vel.x !== 0) {
+      pos.x = newX; // Try moving
       
-      // Move away from the wall
-      if (vel.x > 0) {
-        pos.x = Math.floor(pos.x) + 1.0 - playerRadius - 0.01;
-      } else {
-        pos.x = Math.ceil(pos.x) + playerRadius + 0.01;
+      // Check for collisions after moving
+      xCollisions = getWallCollisions(pos.x, pos.z);
+      
+      // Check for wall collisions
+      if (xCollisions.right || xCollisions.left || 
+          xCollisions.topRight || xCollisions.topLeft || 
+          xCollisions.bottomRight || xCollisions.bottomLeft) {
+        // Mark collision for debugging
+        collision = true;
+        if (xCollisions.right) collisionEdge += 'R';
+        if (xCollisions.left) collisionEdge += 'L';
+        if (xCollisions.topRight) collisionEdge += 'TR';
+        if (xCollisions.topLeft) collisionEdge += 'TL';
+        if (xCollisions.bottomRight) collisionEdge += 'BR';
+        if (xCollisions.bottomLeft) collisionEdge += 'BL';
+        
+        // Collision occurred - calculate how to resolve it
+        if (vel.x > 0 && (xCollisions.right || xCollisions.topRight || xCollisions.bottomRight)) {
+          // Moving right, hit a right wall
+          pos.x = Math.floor(pos.x) + (1.0 - playerRadius - 0.01);
+        } else if (vel.x < 0 && (xCollisions.left || xCollisions.topLeft || xCollisions.bottomLeft)) {
+          // Moving left, hit a left wall
+          pos.x = Math.ceil(pos.x) + playerRadius + 0.01;
+        }
+        
+        // Bounce
+        vel.x = -vel.x * bounce;
       }
     }
     
-    // 2. Then check Z movement (with updated X position)
-    if (isPositionValid(pos.x, newZ)) {
-      pos.z = newZ;
-    } else {
-      // Hit a wall in Z direction, bounce
-      vel.z = -vel.z * bounce;
-      hitWallZ = true;
+    // Then move in Z direction (with updated X position)
+    if (vel.z !== 0) {
+      pos.z = newZ; // Try moving
       
-      // Move away from the wall
-      if (vel.z > 0) {
-        pos.z = Math.floor(pos.z) + 1.0 - playerRadius - 0.01;
-      } else {
-        pos.z = Math.ceil(pos.z) + playerRadius + 0.01;
+      // Check for collisions after moving
+      zCollisions = getWallCollisions(pos.x, pos.z);
+      
+      // Check for wall collisions
+      if (zCollisions.top || zCollisions.bottom || 
+          zCollisions.topRight || zCollisions.topLeft || 
+          zCollisions.bottomRight || zCollisions.bottomLeft) {
+        // Mark collision for debugging
+        collision = true;
+        if (zCollisions.top) collisionEdge += 'T';
+        if (zCollisions.bottom) collisionEdge += 'B';
+        if (zCollisions.topRight && !collisionEdge.includes('TR')) collisionEdge += 'TR';
+        if (zCollisions.topLeft && !collisionEdge.includes('TL')) collisionEdge += 'TL';
+        if (zCollisions.bottomRight && !collisionEdge.includes('BR')) collisionEdge += 'BR';
+        if (zCollisions.bottomLeft && !collisionEdge.includes('BL')) collisionEdge += 'BL';
+        
+        // Collision occurred - calculate how to resolve it
+        if (vel.z > 0 && (zCollisions.bottom || zCollisions.bottomLeft || zCollisions.bottomRight)) {
+          // Moving down, hit a bottom wall
+          pos.z = Math.floor(pos.z) + (1.0 - playerRadius - 0.01);
+        } else if (vel.z < 0 && (zCollisions.top || zCollisions.topLeft || zCollisions.topRight)) {
+          // Moving up, hit a top wall
+          pos.z = Math.ceil(pos.z) + playerRadius + 0.01;
+        }
+        
+        // Bounce
+        vel.z = -vel.z * bounce;
       }
     }
     
-    // If we got stuck, revert to original position
-    if (!isPositionValid(pos.x, pos.z)) {
+    // Final safety check - make sure we're not inside a wall
+    const finalCollisions = getWallCollisions(pos.x, pos.z);
+    if (finalCollisions.right || finalCollisions.left || finalCollisions.top || finalCollisions.bottom ||
+        finalCollisions.topRight || finalCollisions.topLeft || finalCollisions.bottomRight || finalCollisions.bottomLeft) {
+      // Something went wrong with collision resolution - revert to original position
+      console.warn("Failed to resolve collisions properly - reverting position");
       pos.x = originalX;
       pos.z = originalZ;
       vel.x = 0;
       vel.z = 0;
+      collision = true;
+      collisionEdge += 'STUCK';
+    }
+    
+    // Check if the current cell is a wall (again, shouldn't happen)
+    if (isWall(Math.floor(pos.x), Math.floor(pos.z))) {
+      console.error("Player ended up inside a wall after movement! Resetting.");
+      resetPlayerPosition();
+      return;
     }
     
     // Update mesh position
@@ -2300,11 +2409,13 @@ function App() {
       celebrate();
     }
     
-    // Update debug info
+    // Update debug info with collision information
     setDebugInfo(prev => ({
       ...prev,
       velocity: { x: vel.x, z: vel.z },
-      position: { x: pos.x, z: pos.z }
+      position: { x: pos.x, z: pos.z },
+      collision,
+      collisionEdge
     }));
   };
 
@@ -2369,7 +2480,7 @@ function App() {
 
   // Update the DebugOverlay to include a reset button
   const DebugOverlay = () => {
-    const { beta, gamma, velocity, gravity, eventCount, lastUpdate, eventType, position } = debugInfo;
+    const { beta, gamma, velocity, gravity, position, eventCount, lastUpdate, eventType, collision, collisionEdge } = debugInfo;
     const timeSinceUpdate = Date.now() - lastUpdate;
     
     // Calculate a color representing the intensity of movement
@@ -2480,6 +2591,13 @@ function App() {
               ({position?.x?.toFixed(1) || '?'}, {position?.z?.toFixed(1) || '?'})
             </span>
           </div>
+          <div>
+            <span style={{ color: '#8cf' }}>Collision: </span>
+            <span style={{ color: collision ? '#f88' : '#8f8' }}>
+              {collision ? `Yes (${collisionEdge})` : 'No'}
+            </span>
+          </div>
+          
           <div style={{ display: 'flex', gap: '5px', marginTop: '5px' }}>
             <button 
               onClick={() => {
@@ -2735,6 +2853,70 @@ function App() {
       orientationRef.current = { beta, gamma };
     }
   };
+  
+  // Add debug visualization for player collision radius
+  useEffect(() => {
+    if (!debugInfo.showDebug) return;
+    
+    // Add visual indicator of player collision radius
+    const addCollisionVisualizer = () => {
+      if (document.getElementById('collision-visualizer')) return;
+      
+      const visualizer = document.createElement('div');
+      visualizer.id = 'collision-visualizer';
+      visualizer.style.cssText = `
+        position: absolute;
+        width: 80px;
+        height: 80px;
+        border-radius: 50%;
+        border: 2px dashed rgba(255, 100, 100, 0.7);
+        pointer-events: none;
+        transform: translate(-50%, -50%);
+        transition: border-color 0.3s;
+        z-index: 1000;
+      `;
+      
+      document.body.appendChild(visualizer);
+      window.collisionVisualizer = visualizer;
+    };
+    
+    // Update visualizer position in animation loop
+    const updateVisualizer = () => {
+      if (!window.collisionVisualizer || !playerRef.current?.mesh) return;
+      
+      // Convert 3D world position to screen coordinates
+      const mesh = playerRef.current.mesh;
+      const vector = new THREE.Vector3();
+      vector.set(mesh.position.x, mesh.position.y, mesh.position.z);
+      
+      vector.project(camera);
+      
+      const x = (vector.x * 0.5 + 0.5) * window.innerWidth;
+      const y = (-(vector.y * 0.5) + 0.5) * window.innerHeight;
+      
+      window.collisionVisualizer.style.left = `${x}px`;
+      window.collisionVisualizer.style.top = `${y}px`;
+      
+      // Update color based on collision state
+      window.collisionVisualizer.style.borderColor = debugInfo.collision ? 
+        'rgba(255, 0, 0, 0.9)' : 'rgba(100, 255, 100, 0.6)';
+      
+      // Schedule next update
+      requestAnimationFrame(updateVisualizer);
+    };
+    
+    // Set up visualizer
+    addCollisionVisualizer();
+    const animId = requestAnimationFrame(updateVisualizer);
+    
+    return () => {
+      cancelAnimationFrame(animId);
+      if (window.collisionVisualizer) {
+        window.collisionVisualizer.remove();
+        window.collisionVisualizer = null;
+      }
+    };
+  }, [debugInfo.showDebug]);
   
   return (
     <>
