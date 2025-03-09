@@ -69,6 +69,19 @@ function App() {
   // Add a ref to track if the player has reached the exit
   const exitReachedRef = useRef(false)
 
+  // Add state for debug display with proper initialization
+  const [debugInfo, setDebugInfo] = useState({
+    beta: 0,
+    gamma: 0,
+    velocity: { x: 0, z: 0 },
+    gravity: { x: 0, z: 0 },
+    position: { x: 0, z: 0 },
+    eventCount: 0,
+    lastUpdate: Date.now(),
+    eventType: 'none',
+    showDebug: true
+  });
+
   // Move restartGame outside useEffect
   const restartGame = () => {
     console.log('Restarting game...')
@@ -205,16 +218,7 @@ function App() {
   const requestIOSPermission = async () => {
     if (!needsIOSPermission()) {
       console.log("No iOS permission needed, enabling gyroscope directly");
-      window.addEventListener('deviceorientation', handleOrientation);
-      setGyroscopeActive(true);
-      setShowGyroscopeIndicator(true);
-      
-      // Initialize physics system for non-iOS devices
-      if (!window.physics || !window.physics.initialized) {
-        console.log("📱 Non-iOS device, initializing physics system");
-        initializePhysics();
-      }
-      
+      connectOrientationEvents();
       return true;
     }
     
@@ -228,26 +232,16 @@ function App() {
       if (response === 'granted') {
         console.log("✅ iOS permission granted!");
         
-        // Add event listener and update state
-        window.addEventListener('deviceorientation', handleOrientation);
-        setGyroscopeActive(true);
-        setShowGyroscopeIndicator(true);
+        // Connect all orientation events
+        connectOrientationEvents();
+        
+        // Update UI state
         setShowPermissionButton(false);
         setShowTouchControls(false);
         
-        // Initialize physics for iOS after permission granted
-        if (!window.physics || !window.physics.initialized) {
-          console.log("🍎 iOS permission granted, initializing physics system");
+        // Initialize physics
+        if (!window.physics) {
           initializePhysics();
-          
-          // Add a test impulse after a short delay to validate physics
-          setTimeout(() => {
-            if (playerRef.current && !hasWon) {
-              console.log("🧪 Adding test impulse to verify physics system");
-              playerRef.current.velocity.x = 0.05;
-              playerRef.current.velocity.z = 0.05;
-            }
-          }, 2000);
         }
         
         return true;
@@ -2291,35 +2285,109 @@ function App() {
     }
     
     console.log("⚡ Physics system initialized with gravity:", window.physics.gravity);
+    
+    // Add a test impulse immediately to see if physics works at all
+    if (playerRef.current) {
+      console.log("💥 Adding immediate test impulse of 0.05");
+      playerRef.current.velocity = { x: 0.05, z: 0.05 };
+    }
   };
 
-  // Modify handleDeviceOrientation to be more responsive
+  // Create both event handlers to catch all possible orientation events
+  const connectOrientationEvents = () => {
+    console.log("🔌 Connecting all orientation event handlers");
+    
+    // Try both event types
+    if (window.DeviceOrientationEvent) {
+      window.addEventListener('deviceorientation', handleDeviceOrientation, { passive: true });
+      console.log("✓ Added deviceorientation listener");
+    }
+    
+    if (window.DeviceMotionEvent) {
+      window.addEventListener('devicemotion', handleDeviceMotion, { passive: true });
+      console.log("✓ Added devicemotion listener");
+    }
+    
+    // Force activate gyroscope
+    setGyroscopeActive(true);
+    setShowGyroscopeIndicator(true);
+  };
+  
+  // Handle device motion events as a backup for orientation
+  const handleDeviceMotion = (event) => {
+    // Update event counter for debugging
+    setDebugInfo(prev => ({
+      ...prev,
+      eventCount: prev.eventCount + 1,
+      lastUpdate: Date.now(),
+      eventType: 'motion'
+    }));
+    
+    if (!window.physics) return;
+    
+    // Use acceleration data from motion event
+    const accel = event.accelerationIncludingGravity;
+    if (accel && accel.x !== null && accel.y !== null && accel.z !== null) {
+      // Convert acceleration to gravity direction
+      // Note: this is a simplified conversion and might need adjustment
+      // Typical range for acceleration is around -10 to 10 m/s²
+      const maxAccel = 5; // m/s²
+      let gravityX = Math.min(Math.max(accel.x / maxAccel, -1), 1);
+      let gravityZ = Math.min(Math.max(accel.y / maxAccel, -1), 1);
+      
+      // Apply deadzone
+      const deadzone = 0.05;
+      if (Math.abs(gravityX) < deadzone) gravityX = 0;
+      if (Math.abs(gravityZ) < deadzone) gravityZ = 0;
+      
+      // Store in physics object
+      window.physics.gravityX = -gravityX; // Invert to match expected direction
+      window.physics.gravityZ = gravityZ;
+      
+      // Log occasionally
+      if (performance.now() % 2000 < 20) {
+        console.log(`📱 Device motion: accel(${accel.x.toFixed(2)}, ${accel.y.toFixed(2)}, ${accel.z.toFixed(2)})`);
+        console.log(`🧲 Converted gravity: X=${gravityX.toFixed(3)}, Z=${gravityZ.toFixed(3)}`);
+      }
+    }
+  };
+
+  // Update the handleDeviceOrientation function for better debugging
   const handleDeviceOrientation = (event) => {
-    // Log the raw event occasionally to see if we're getting data
-    if (performance.now() % 3000 < 20) {
-      console.log("📱 Raw device orientation event:", 
-        event.beta !== null ? event.beta.toFixed(2) : "null", 
-        event.gamma !== null ? event.gamma.toFixed(2) : "null"
-      );
+    // Update event counter for debugging
+    setDebugInfo(prev => ({
+      ...prev,
+      eventCount: prev.eventCount + 1,
+      lastUpdate: Date.now(),
+      eventType: 'orientation',
+      beta: event.beta !== null ? parseFloat(event.beta.toFixed(2)) : "null",
+      gamma: event.gamma !== null ? parseFloat(event.gamma.toFixed(2)) : "null"
+    }));
+    
+    // Skip if orientation event is empty
+    if (event.beta === null && event.gamma === null) {
+      if (performance.now() % 3000 < 20) {
+        console.warn("⚠️ Received empty orientation event: beta and gamma are null");
+      }
+      return;
     }
     
+    // Log the raw event occasionally
+    const now = performance.now();
+    if (now % 3000 < 20) {
+      console.log(`📱 Raw device orientation: beta=${event.beta?.toFixed(2)}°, gamma=${event.gamma?.toFixed(2)}°`);
+    }
+    
+    // Skip further processing if not active
     if (hasWon || isTransitioning) return;
-    
-    // Make sure physics is initialized
-    if (!window.physics || !window.physics.initialized) {
-      console.log("⚠️ Physics not initialized, initializing now");
-      initializePhysics();
-    }
     
     // Auto-activate gyroscope based on receiving actual data
     if (!gyroscopeActive && (event.beta !== null || event.gamma !== null)) {
       console.log("✅ Automatically activating gyroscope - received real data");
       setGyroscopeActive(true);
+      setShowGyroscopeIndicator(true);
     }
     
-    // Skip physics updates if gyroscope isn't active
-    if (!gyroscopeActive) return;
-
     // Store orientation data
     if (event.beta !== null && event.gamma !== null) {
       // Beta is front-to-back tilt in degrees, with range [-180,180]
@@ -2327,21 +2395,9 @@ function App() {
       let beta = event.beta;
       let gamma = event.gamma;
 
-      // Store raw orientation data for debugging
-      if (window.physics) {
-        window.physics.orientation.beta = beta;
-        window.physics.orientation.gamma = gamma;
-      }
-
       // Adjust for different device orientations
       if (window.orientation !== undefined) {
         const orientation = window.orientation;
-        
-        // Log orientation occasionally
-        const now = performance.now();
-        if (now % 3000 < 20) {
-          console.log(`📱 Device orientation: ${orientation}°, beta: ${beta.toFixed(2)}°, gamma: ${gamma.toFixed(2)}°`);
-        }
         
         if (orientation === 90) {
           // Landscape, home button right
@@ -2360,6 +2416,12 @@ function App() {
         }
       }
       
+      // Initialize physics if needed
+      if (!window.physics || !window.physics.initialized) {
+        console.log("🔧 Initializing physics from orientation event");
+        initializePhysics();
+      }
+      
       // Store orientation in physics object for use in update
       if (window.physics) {
         // Convert angles to normalized gravity vector components
@@ -2367,7 +2429,7 @@ function App() {
         const maxAngle = 30; // Full effect at 30 degrees tilt
         
         // Apply a small deadzone to prevent drift from small angles
-        const deadzone = 3; // Reduced deadzone for more sensitivity
+        const deadzone = 2; // Reduced for more sensitivity
         let gravityX = 0;
         let gravityZ = 0;
         
@@ -2387,16 +2449,17 @@ function App() {
         window.physics.gravityX = gravityX;
         window.physics.gravityZ = gravityZ;
         
-        // Update the debug dot position if it exists
-        if (window.physics.debugDot) {
-          window.physics.debugDot.style.transform = `translate(calc(-50% + ${gravityX * 40}px), calc(-50% + ${gravityZ * 40}px))`;
-          window.physics.debugDot.style.backgroundColor = (Math.abs(gravityX) > 0.05 || Math.abs(gravityZ) > 0.05) ? 
-            '#FF4500' : '#4CAF50';
-        }
+        // Update debug info
+        setDebugInfo(prev => ({
+          ...prev,
+          gravity: { x: gravityX, z: gravityZ }
+        }));
         
-        // Debug logs
-        if (performance.now() % 1000 < 20) {
-          console.log(`🧲 Physics gravity: X=${gravityX.toFixed(3)}, Z=${gravityZ.toFixed(3)}`);
+        // Apply direct impulse for testing
+        if (now % 5000 < 20 && playerRef.current) {
+          console.log("💥 Applying direct impulse from orientation event");
+          playerRef.current.velocity.x += 0.05 * Math.sign(gravityX);
+          playerRef.current.velocity.z += 0.05 * Math.sign(gravityZ);
         }
       }
       
@@ -2405,262 +2468,118 @@ function App() {
     }
   };
 
-  // Restore the main physics update function with enhanced debugging
-  const updatePhysics = (currentTime) => {
-    // Exit early if conditions aren't right
-    if (!window.physics || !window.physics.active || hasWon || isTransitioning) return;
+  // Update the debug overlay to include more information
+  const DebugOverlay = () => {
+    const { beta, gamma, velocity, gravity, eventCount, lastUpdate, eventType, position } = debugInfo;
+    const timeSinceUpdate = Date.now() - lastUpdate;
     
-    // Check if maze is accessible
-    if (!window.maze) {
-      console.warn("⚠️ Maze not accessible for physics update - storing current maze globally");
-      window.maze = mazeRef.current;
-      if (!window.maze) {
-        console.error("❌ No maze available for physics - cannot continue");
-        return;
-      }
-    }
-    
-    // Calculate delta time for smooth animations
-    if (!window.physics.lastTime) {
-      window.physics.lastTime = currentTime;
-      return;
-    }
-    
-    const deltaTime = currentTime - window.physics.lastTime;
-    window.physics.lastTime = currentTime;
-    
-    // Don't update if delta is too large (tab inactive, etc)
-    if (deltaTime > 100) return;
-    
-    // Normalized time step (to make physics frame-rate independent)
-    const timeStep = deltaTime / 16.67; // Normalize to 60fps
-    
-    // Get physics configuration
-    const physics = window.physics;
-    const gravity = physics.gravity;
-    const maxSpeed = physics.maxSpeed;
-    const friction = physics.friction;
-    const restitution = physics.restitution;
-    
-    // Get player references
-    const player = playerRef.current;
-    const mesh = player.mesh;
-    
-    // Skip if no player mesh
-    if (!mesh) {
-      console.warn("⚠️ No player mesh available for physics update");
-      return;
-    }
-    
-    // Get current position and velocity
-    const pos = player.position;
-    let vel = player.velocity;
-    
-    // Calculate acceleration based on gravity and tilt
-    const gravityX = physics.gravityX || 0;
-    const gravityZ = physics.gravityZ || 0;
-    
-    // Apply acceleration based on gravity
-    vel.x += gravityX * gravity * timeStep;
-    vel.z += gravityZ * gravity * timeStep;
-    
-    // Apply friction
-    vel.x *= Math.pow(friction, timeStep);
-    vel.z *= Math.pow(friction, timeStep);
-    
-    // Speed limit check
-    const speed = Math.sqrt(vel.x * vel.x + vel.z * vel.z);
-    if (speed > maxSpeed) {
-      vel.x = (vel.x / speed) * maxSpeed;
-      vel.z = (vel.z / speed) * maxSpeed;
-    }
-    
-    // If velocity is negligible, stop completely (prevents jitter)
-    if (Math.abs(vel.x) < 0.0005) vel.x = 0;
-    if (Math.abs(vel.z) < 0.0005) vel.z = 0;
-    
-    // Skip the rest if we're not moving
-    if (vel.x === 0 && vel.z === 0) return;
-    
-    // Calculate potential new position
-    let newX = pos.x + vel.x * timeStep;
-    let newZ = pos.z + vel.z * timeStep;
-    
-    // Collision detection with maze walls
-    // Get maze info
-    const maze = window.maze;
-    const MAZE_SIZE = window.MAZE_SIZE || 21;
-    
-    // Define helper function to check if a position is valid (not a wall)
-    const isPositionValid = (x, z) => {
-      // Convert to maze grid coordinates
-      const gridX = Math.floor(x);
-      const gridZ = Math.floor(z);
-      return gridX >= 0 && gridX < MAZE_SIZE && 
-             gridZ >= 0 && gridZ < MAZE_SIZE && 
-             maze[gridX][gridZ] === 0;
-    };
-    
-    // Track if we hit any walls for debugging
-    let hitWall = false;
-    
-    // Handle X collision
-    if (isPositionValid(newX, pos.z)) {
-      pos.x = newX;
-    } else {
-      // Hit a wall in X direction, bounce
-      vel.x = -vel.x * restitution;
-      hitWall = true;
-      
-      // Move slightly away from the wall to prevent sticking
-      // Find the nearest valid position
-      if (vel.x > 0) {
-        pos.x = Math.floor(pos.x) + 0.95; // Move slightly away from right wall
-      } else {
-        pos.x = Math.ceil(pos.x) - 0.05; // Move slightly away from left wall
-      }
-    }
-    
-    // Handle Z collision
-    if (isPositionValid(pos.x, newZ)) {
-      pos.z = newZ;
-    } else {
-      // Hit a wall in Z direction, bounce
-      vel.z = -vel.z * restitution;
-      hitWall = true;
-      
-      // Move slightly away from the wall to prevent sticking
-      if (vel.z > 0) {
-        pos.z = Math.floor(pos.z) + 0.95; // Move slightly away from bottom wall
-      } else {
-        pos.z = Math.ceil(pos.z) - 0.05; // Move slightly away from top wall
-      }
-    }
-    
-    // Update mesh position - apply a multiplier to make movement more visible
-    mesh.position.x = pos.x * 2;
-    mesh.position.z = pos.z * 2;
-    
-    // Update player direction based on velocity
-    if (speed > 0.01) {
-      const angle = Math.atan2(vel.x, vel.z);
-      player.mesh.rotation.y = angle;
-      player.direction.set(vel.x, 0, vel.z).normalize();
-    }
-    
-    // Check for victory
-    if (Math.floor(pos.x) === MAZE_SIZE - 1 && Math.floor(pos.z) === MAZE_SIZE - 2) {
-      console.log("🏆 Victory detected in physics update!");
-      if (typeof window.celebrateWin === 'function') {
-        window.celebrateWin();
-      } else if (typeof gameFunctionsRef.current.celebrate === 'function') {
-        gameFunctionsRef.current.celebrate();
-      }
-    }
-    
-    // Update camera if in third person
-    if (isThirdPersonRef.current) {
-      const cameraOffset = new THREE.Vector3(0, 3, -3).applyQuaternion(mesh.quaternion);
-      camera.position.copy(mesh.position).add(cameraOffset);
-      camera.lookAt(mesh.position);
-    }
-    
-    // Log physics data occasionally or when hitting walls
-    if ((physics.debug && currentTime % 1000 < 20) || hitWall) {
-      console.log(
-        `🔮 Physics update: pos(${pos.x.toFixed(2)},${pos.z.toFixed(2)}) ` +
-        `vel(${vel.x.toFixed(4)},${vel.z.toFixed(4)}) ` +
-        `speed: ${speed.toFixed(3)}` +
-        (hitWall ? " WALL COLLISION" : "")
-      );
-    }
+    return (
+      <div style={{
+        position: 'fixed',
+        top: 10,
+        left: 10,
+        backgroundColor: 'rgba(0,0,0,0.7)',
+        color: 'white',
+        padding: '10px',
+        borderRadius: '5px',
+        fontSize: '14px',
+        zIndex: 10000,
+        maxWidth: '300px',
+        fontFamily: 'monospace'
+      }}>
+        <h3 style={{ margin: '0 0 8px 0', borderBottom: '1px solid #666' }}>📱 Device Debug</h3>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '5px' }}>
+          <div>
+            <span style={{ color: '#8cf' }}>Event Type: </span>
+            <span style={{ color: timeSinceUpdate < 500 ? '#8f8' : '#f88' }}>
+              {eventType || 'None'} ({eventCount})
+            </span>
+            <span style={{ marginLeft: '5px', color: timeSinceUpdate < 200 ? '#8f8' : timeSinceUpdate < 1000 ? '#ff8' : '#f88' }}>
+              {timeSinceUpdate < 200 ? '●' : timeSinceUpdate < 1000 ? '○' : '✕'}
+            </span>
+          </div>
+          <div>
+            <span style={{ color: '#8cf' }}>Gyro Beta: </span>
+            <span style={{ color: Math.abs(beta) > 5 ? '#f88' : '#8f8' }}>{beta}°</span>
+          </div>
+          <div>
+            <span style={{ color: '#8cf' }}>Gyro Gamma: </span>
+            <span style={{ color: Math.abs(gamma) > 5 ? '#f88' : '#8f8' }}>{gamma}°</span>
+          </div>
+          <div>
+            <span style={{ color: '#8cf' }}>Gravity: </span>
+            <span style={{ color: Math.abs(gravity.x) + Math.abs(gravity.z) > 0.05 ? '#f88' : '#8f8' }}>
+              X: {gravity.x?.toFixed(4) || 0}, Z: {gravity.z?.toFixed(4) || 0}
+            </span>
+          </div>
+          <div>
+            <span style={{ color: '#8cf' }}>Velocity: </span>
+            <span style={{ color: Math.abs(velocity.x) + Math.abs(velocity.z) > 0.01 ? '#f88' : '#8f8' }}>
+              X: {velocity.x?.toFixed(4) || 0}, Z: {velocity.z?.toFixed(4) || 0}
+            </span>
+          </div>
+          <div>
+            <span style={{ color: '#8cf' }}>Position: </span>
+            <span>
+              X: {position?.x?.toFixed(2) || '?'}, Z: {position?.z?.toFixed(2) || '?'}
+            </span>
+          </div>
+          <button 
+            onClick={() => {
+              if (playerRef.current) {
+                playerRef.current.velocity = { 
+                  x: 0.1, 
+                  z: 0.1 
+                };
+                console.log("Manual impulse applied");
+              }
+            }}
+            style={{
+              marginTop: '5px',
+              background: '#4CAF50',
+              border: 'none',
+              borderRadius: '3px',
+              padding: '5px',
+              color: 'white',
+              cursor: 'pointer'
+            }}
+          >
+            Force Impulse
+          </button>
+        </div>
+      </div>
+    );
   };
 
-  // Update animation function to call updatePhysics
-  function animate(currentTime) {
-    animationFrameId = requestAnimationFrame(animate)
-    
-    // Make sure physics is initialized
-    if (isMobileRef.current && !window.physics) {
-      console.log("🔧 Initializing physics in animation loop");
-      initializePhysics();
-    }
-    
-    // Update physics for mobile with gyroscope
-    // Don't check gyroscopeActive initially to help with testing
-    if (isMobileRef.current && window.physics && window.physics.initialized && !hasWonRef.current && !isTransitioning) {
-      updatePhysics(currentTime);
-      
-      // Apply a small impulse on first few frames to show movement works
-      const physics = window.physics;
-      if (physics.frameCount === undefined) {
-        physics.frameCount = 0;
-      }
-      
-      if (physics.frameCount < 10) {
-        console.log("💥 Applying test impulse:", physics.frameCount);
-        playerRef.current.velocity.x += 0.01;
-        physics.frameCount++;
-      }
-    }
-    
-    // Update particles if they exist
-    if (particleSystem) {
-      updateParticles();
-    }
-    
-    if (secondWaveSystem) {
-      updateSecondWaveParticles();
-    }
-    
-    if (thirdWaveSystem) {
-      updateThirdWaveParticles();
-    }
-    
-    // Rest of animation code...
-    renderer.render(scene, camera);
-  }
-
-  // Add a specific useEffect to initialize physics for mobile devices
-  useEffect(() => {
-    // Initialize physics system on component mount
-    if (isMobileRef.current) {
-      console.log("📱 Mobile device detected, initializing physics system");
-      
-      // Initialize maze for physics
-      const MAZE_SIZE = 21;
-      window.MAZE_SIZE = MAZE_SIZE;
-      
-      // Ensure we have a maze available for physics
-      if (mazeRef.current) {
-        window.maze = mazeRef.current;
-      }
-      
-      // Initialize physics system
-      initializePhysics();
-      
-      // Add a test impulse after a short delay to validate physics
-      setTimeout(() => {
-        if (playerRef.current && !hasWon) {
-          console.log("🧪 Adding test impulse to verify physics system");
-          playerRef.current.velocity.x = 0.05;
-          playerRef.current.velocity.z = 0.05;
-        }
-      }, 3000);
-    }
-    
-    // Cleanup function
-    return () => {
-      if (window.physics) {
-        window.physics.active = false;
-        console.log("📱 Cleaning up physics system");
-      }
-    };
-  }, []);
-
+  // Add a toggle for debug info
+  const toggleDebug = () => {
+    setDebugInfo(prev => ({ ...prev, showDebug: !prev.showDebug }));
+  };
+  
   return (
     <>
       <canvas ref={mountRef} style={{ display: 'block', width: '100vw', height: '100vh' }} />
+      
+      {/* Debug Overlay */}
+      {debugInfo.showDebug && <DebugOverlay />}
+      
+      {/* Debug Toggle Button */}
+      <button 
+        onClick={toggleDebug}
+        style={{
+          position: 'fixed',
+          top: 10,
+          right: 10,
+          zIndex: 10000,
+          background: 'rgba(0,0,0,0.7)',
+          color: 'white',
+          border: 'none',
+          borderRadius: '5px',
+          padding: '5px 10px'
+        }}
+      >
+        {debugInfo.showDebug ? 'Hide Debug' : 'Show Debug'}
+      </button>
       
       {/* iOS Permission Button */}
       {showPermissionButton && (
