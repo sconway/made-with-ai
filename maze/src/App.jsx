@@ -208,6 +208,13 @@ function App() {
       window.addEventListener('deviceorientation', handleOrientation);
       setGyroscopeActive(true);
       setShowGyroscopeIndicator(true);
+      
+      // Initialize physics system for non-iOS devices
+      if (!window.physics || !window.physics.initialized) {
+        console.log("📱 Non-iOS device, initializing physics system");
+        initializePhysics();
+      }
+      
       return true;
     }
     
@@ -219,7 +226,7 @@ function App() {
       console.log("Permission response:", response);
       
       if (response === 'granted') {
-        console.log("iOS permission granted!");
+        console.log("✅ iOS permission granted!");
         
         // Add event listener and update state
         window.addEventListener('deviceorientation', handleOrientation);
@@ -228,24 +235,32 @@ function App() {
         setShowPermissionButton(false);
         setShowTouchControls(false);
         
-        // Log confirmation
-        console.log("Device orientation listener added");
+        // Initialize physics for iOS after permission granted
+        if (!window.physics || !window.physics.initialized) {
+          console.log("🍎 iOS permission granted, initializing physics system");
+          initializePhysics();
+          
+          // Add a test impulse after a short delay to validate physics
+          setTimeout(() => {
+            if (playerRef.current && !hasWon) {
+              console.log("🧪 Adding test impulse to verify physics system");
+              playerRef.current.velocity.x = 0.05;
+              playerRef.current.velocity.z = 0.05;
+            }
+          }, 2000);
+        }
+        
         return true;
       } else {
-        console.log("iOS permission denied:", response);
-        
-        // Show touch controls instead
+        console.log("❌ iOS permission denied:", response);
         setShowPermissionButton(false);
         setShowTouchControls(true);
-        alert("Motion access was denied. Touch controls have been enabled instead.");
         return false;
       }
     } catch (error) {
-      console.error("Error requesting iOS permission:", error);
-      // Show touch controls as fallback
+      console.error("❌ Error requesting iOS permission:", error);
       setShowPermissionButton(false);
       setShowTouchControls(true);
-      alert("Error accessing motion sensors. Touch controls have been enabled instead.");
       return false;
     }
   };
@@ -541,14 +556,29 @@ function App() {
               try {
                 const permission = await window.DeviceOrientationEvent.requestPermission()
                 if (permission === 'granted') {
-                  console.log("Permission granted, adding orientation listener")
+                  console.log("✅ Permission granted, adding orientation listener")
                   window.addEventListener('deviceorientation', handleDeviceOrientation)
                   setGyroscopeActive(true)
+                  
+                  // Initialize physics for iOS after permission granted
+                  if (!window.physics || !window.physics.initialized) {
+                    console.log("🍎 iOS permission granted, initializing physics system");
+                    initializePhysics();
+                    
+                    // Add a test impulse after a short delay to validate physics
+                    setTimeout(() => {
+                      if (playerRef.current && !hasWon) {
+                        console.log("🧪 Adding test impulse to verify physics system");
+                        playerRef.current.velocity.x = 0.05;
+                        playerRef.current.velocity.z = 0.05;
+                      }
+                    }, 2000);
+                  }
                 } else {
-                  console.log("Permission denied:", permission)
+                  console.log("❌ Permission denied:", permission)
                 }
               } catch (err) {
-                console.error("Error requesting permission:", err)
+                console.error("❌ Error requesting permission:", err)
               }
             }
             
@@ -2175,33 +2205,115 @@ function App() {
 
   // Add a function to initialize physics in the game setup
   const initializePhysics = () => {
-    console.log("Initializing physics system");
+    console.log("⚡ Initializing physics system");
     
     // Set up global physics config
     window.physics = {
-      gravity: 0.005,      // Base gravity strength
-      maxSpeed: 0.2,       // Maximum speed cap
+      gravity: 0.008,      // Increased gravity strength
+      maxSpeed: 0.25,      // Slightly higher max speed
       friction: 0.98,      // Surface friction (air/ground)
       restitution: 0.5,    // Bounciness on collision
       active: true,        // Whether physics is currently running
       debug: true,         // Show debug logs
-      lastTime: 0          // Time tracking for frame rate independence
+      lastTime: 0,         // Time tracking for frame rate independence
+      orientation: {       // Store orientation data
+        beta: 0,
+        gamma: 0,
+      },
+      gravityX: 0,         // Current gravity vector X
+      gravityZ: 0,         // Current gravity vector Z
+      initialized: true    // Flag to indicate physics is ready
     };
     
     // Reset player physics properties
-    playerRef.current.velocity = { x: 0, z: 0 };
-    playerRef.current.acceleration = { x: 0, z: 0 };
-    playerRef.current.mass = 1;
-    playerRef.current.lastUpdateTime = performance.now();
+    if (playerRef.current) {
+      playerRef.current.velocity = { x: 0, z: 0 };
+      playerRef.current.acceleration = { x: 0, z: 0 };
+      playerRef.current.mass = 1;
+      playerRef.current.lastUpdateTime = performance.now();
+    }
+    
+    // Add a visual debug element to show tilt direction
+    const addDebugIndicator = () => {
+      if (document.getElementById('physics-debug-indicator')) return;
+      
+      const indicator = document.createElement('div');
+      indicator.id = 'physics-debug-indicator';
+      indicator.style.cssText = `
+        position: fixed;
+        top: 10px;
+        right: 10px;
+        width: 100px;
+        height: 100px;
+        background-color: rgba(0, 0, 0, 0.5);
+        border-radius: 50%;
+        z-index: 10000;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+      `;
+      
+      const dot = document.createElement('div');
+      dot.style.cssText = `
+        width: 20px;
+        height: 20px;
+        background-color: #4CAF50;
+        border-radius: 50%;
+        position: absolute;
+        transform: translate(-50%, -50%);
+        left: 50%;
+        top: 50%;
+        transition: all 0.1s ease;
+      `;
+      
+      const text = document.createElement('div');
+      text.style.cssText = `
+        position: absolute;
+        bottom: -25px;
+        left: 0;
+        width: 100%;
+        text-align: center;
+        color: white;
+        font-size: 12px;
+      `;
+      text.innerText = 'Tilt Debug';
+      
+      indicator.appendChild(dot);
+      indicator.appendChild(text);
+      document.body.appendChild(indicator);
+      
+      window.physics.debugDot = dot;
+    };
+    
+    // Only add the debug indicator in debug mode and on mobile
+    if (window.physics.debug && detectMobile()) {
+      setTimeout(addDebugIndicator, 500); // Delay to ensure DOM is ready
+    }
+    
+    console.log("⚡ Physics system initialized with gravity:", window.physics.gravity);
   };
 
-  // Enhanced device orientation handler specifically for physics
+  // Modify handleDeviceOrientation to be more responsive
   const handleDeviceOrientation = (event) => {
+    // Log the raw event occasionally to see if we're getting data
+    if (performance.now() % 3000 < 20) {
+      console.log("📱 Raw device orientation event:", 
+        event.beta !== null ? event.beta.toFixed(2) : "null", 
+        event.gamma !== null ? event.gamma.toFixed(2) : "null"
+      );
+    }
+    
     if (hasWon || isTransitioning) return;
+    
+    // Make sure physics is initialized
+    if (!window.physics || !window.physics.initialized) {
+      console.log("⚠️ Physics not initialized, initializing now");
+      initializePhysics();
+    }
     
     // Auto-activate gyroscope based on receiving actual data
     if (!gyroscopeActive && (event.beta !== null || event.gamma !== null)) {
-      console.log("Automatically activating gyroscope - received real data");
+      console.log("✅ Automatically activating gyroscope - received real data");
       setGyroscopeActive(true);
     }
     
@@ -2215,14 +2327,20 @@ function App() {
       let beta = event.beta;
       let gamma = event.gamma;
 
+      // Store raw orientation data for debugging
+      if (window.physics) {
+        window.physics.orientation.beta = beta;
+        window.physics.orientation.gamma = gamma;
+      }
+
       // Adjust for different device orientations
       if (window.orientation !== undefined) {
         const orientation = window.orientation;
         
         // Log orientation occasionally
         const now = performance.now();
-        if (now % 5000 < 20 && window.physics?.debug) {
-          console.log(`Device orientation: ${orientation}°, beta: ${beta.toFixed(2)}°, gamma: ${gamma.toFixed(2)}°`);
+        if (now % 3000 < 20) {
+          console.log(`📱 Device orientation: ${orientation}°, beta: ${beta.toFixed(2)}°, gamma: ${gamma.toFixed(2)}°`);
         }
         
         if (orientation === 90) {
@@ -2249,7 +2367,7 @@ function App() {
         const maxAngle = 30; // Full effect at 30 degrees tilt
         
         // Apply a small deadzone to prevent drift from small angles
-        const deadzone = 5;
+        const deadzone = 3; // Reduced deadzone for more sensitivity
         let gravityX = 0;
         let gravityZ = 0;
         
@@ -2269,9 +2387,16 @@ function App() {
         window.physics.gravityX = gravityX;
         window.physics.gravityZ = gravityZ;
         
+        // Update the debug dot position if it exists
+        if (window.physics.debugDot) {
+          window.physics.debugDot.style.transform = `translate(calc(-50% + ${gravityX * 40}px), calc(-50% + ${gravityZ * 40}px))`;
+          window.physics.debugDot.style.backgroundColor = (Math.abs(gravityX) > 0.05 || Math.abs(gravityZ) > 0.05) ? 
+            '#FF4500' : '#4CAF50';
+        }
+        
         // Debug logs
-        if (performance.now() % 2000 < 20 && window.physics.debug) {
-          console.log(`Physics gravity: X=${gravityX.toFixed(3)}, Z=${gravityZ.toFixed(3)}`);
+        if (performance.now() % 1000 < 20) {
+          console.log(`🧲 Physics gravity: X=${gravityX.toFixed(3)}, Z=${gravityZ.toFixed(3)}`);
         }
       }
       
@@ -2280,16 +2405,19 @@ function App() {
     }
   };
 
-  // Main physics update function 
+  // Restore the main physics update function with enhanced debugging
   const updatePhysics = (currentTime) => {
     // Exit early if conditions aren't right
     if (!window.physics || !window.physics.active || hasWon || isTransitioning) return;
     
     // Check if maze is accessible
     if (!window.maze) {
-      console.warn("Maze not accessible for physics update - storing current maze globally");
+      console.warn("⚠️ Maze not accessible for physics update - storing current maze globally");
       window.maze = mazeRef.current;
-      if (!window.maze) return;
+      if (!window.maze) {
+        console.error("❌ No maze available for physics - cannot continue");
+        return;
+      }
     }
     
     // Calculate delta time for smooth animations
@@ -2319,7 +2447,10 @@ function App() {
     const mesh = player.mesh;
     
     // Skip if no player mesh
-    if (!mesh) return;
+    if (!mesh) {
+      console.warn("⚠️ No player mesh available for physics update");
+      return;
+    }
     
     // Get current position and velocity
     const pos = player.position;
@@ -2370,12 +2501,16 @@ function App() {
              maze[gridX][gridZ] === 0;
     };
     
+    // Track if we hit any walls for debugging
+    let hitWall = false;
+    
     // Handle X collision
     if (isPositionValid(newX, pos.z)) {
       pos.x = newX;
     } else {
       // Hit a wall in X direction, bounce
       vel.x = -vel.x * restitution;
+      hitWall = true;
       
       // Move slightly away from the wall to prevent sticking
       // Find the nearest valid position
@@ -2392,6 +2527,7 @@ function App() {
     } else {
       // Hit a wall in Z direction, bounce
       vel.z = -vel.z * restitution;
+      hitWall = true;
       
       // Move slightly away from the wall to prevent sticking
       if (vel.z > 0) {
@@ -2401,7 +2537,7 @@ function App() {
       }
     }
     
-    // Update mesh position
+    // Update mesh position - apply a multiplier to make movement more visible
     mesh.position.x = pos.x * 2;
     mesh.position.z = pos.z * 2;
     
@@ -2414,6 +2550,7 @@ function App() {
     
     // Check for victory
     if (Math.floor(pos.x) === MAZE_SIZE - 1 && Math.floor(pos.z) === MAZE_SIZE - 2) {
+      console.log("🏆 Victory detected in physics update!");
       if (typeof window.celebrateWin === 'function') {
         window.celebrateWin();
       } else if (typeof gameFunctionsRef.current.celebrate === 'function') {
@@ -2428,60 +2565,98 @@ function App() {
       camera.lookAt(mesh.position);
     }
     
-    // Log physics data occasionally
-    if (physics.debug && currentTime % 1000 < 20) {
+    // Log physics data occasionally or when hitting walls
+    if ((physics.debug && currentTime % 1000 < 20) || hitWall) {
       console.log(
-        `Physics update: pos(${pos.x.toFixed(2)},${pos.z.toFixed(2)}) ` +
+        `🔮 Physics update: pos(${pos.x.toFixed(2)},${pos.z.toFixed(2)}) ` +
         `vel(${vel.x.toFixed(4)},${vel.z.toFixed(4)}) ` +
-        `speed: ${speed.toFixed(3)}`
+        `speed: ${speed.toFixed(3)}` +
+        (hitWall ? " WALL COLLISION" : "")
       );
     }
   };
 
-  // Initialize physics in the game setup
-  useEffect(() => {
-    if (mountRef.current) {
-      // Other game initialization code...
-      
-      // Initialize maze and make it globally accessible
-      const MAZE_SIZE = 21;
-      const maze = Array(MAZE_SIZE).fill().map(() => Array(MAZE_SIZE).fill(1));
-      window.MAZE_SIZE = MAZE_SIZE;
-      window.maze = maze;
-      
-      // Initialize physics
-      initializePhysics();
-      
-      // Other game initialization code...
-    }
-  }, []);
-
-  // Update your animation function to use the physics engine
+  // Update animation function to call updatePhysics
   function animate(currentTime) {
     animationFrameId = requestAnimationFrame(animate)
     
-    // Update physics for mobile with gyroscope
-    if (isMobileRef.current && gyroscopeActive && !hasWonRef.current && !isTransitioning) {
-      updatePhysics(currentTime)
+    // Make sure physics is initialized
+    if (isMobileRef.current && !window.physics) {
+      console.log("🔧 Initializing physics in animation loop");
+      initializePhysics();
     }
     
-    // Rest of your existing animation code
+    // Update physics for mobile with gyroscope
+    // Don't check gyroscopeActive initially to help with testing
+    if (isMobileRef.current && window.physics && window.physics.initialized && !hasWonRef.current && !isTransitioning) {
+      updatePhysics(currentTime);
+      
+      // Apply a small impulse on first few frames to show movement works
+      const physics = window.physics;
+      if (physics.frameCount === undefined) {
+        physics.frameCount = 0;
+      }
+      
+      if (physics.frameCount < 10) {
+        console.log("💥 Applying test impulse:", physics.frameCount);
+        playerRef.current.velocity.x += 0.01;
+        physics.frameCount++;
+      }
+    }
+    
     // Update particles if they exist
     if (particleSystem) {
-      updateParticles()
+      updateParticles();
     }
     
     if (secondWaveSystem) {
-      updateSecondWaveParticles()
+      updateSecondWaveParticles();
     }
     
     if (thirdWaveSystem) {
-      updateThirdWaveParticles()
+      updateThirdWaveParticles();
     }
     
-    // Handle camera updates and transitions
-    // ... rest of existing animation function
+    // Rest of animation code...
+    renderer.render(scene, camera);
   }
+
+  // Add a specific useEffect to initialize physics for mobile devices
+  useEffect(() => {
+    // Initialize physics system on component mount
+    if (isMobileRef.current) {
+      console.log("📱 Mobile device detected, initializing physics system");
+      
+      // Initialize maze for physics
+      const MAZE_SIZE = 21;
+      window.MAZE_SIZE = MAZE_SIZE;
+      
+      // Ensure we have a maze available for physics
+      if (mazeRef.current) {
+        window.maze = mazeRef.current;
+      }
+      
+      // Initialize physics system
+      initializePhysics();
+      
+      // Add a test impulse after a short delay to validate physics
+      setTimeout(() => {
+        if (playerRef.current && !hasWon) {
+          console.log("🧪 Adding test impulse to verify physics system");
+          playerRef.current.velocity.x = 0.05;
+          playerRef.current.velocity.z = 0.05;
+        }
+      }, 3000);
+    }
+    
+    // Cleanup function
+    return () => {
+      if (window.physics) {
+        window.physics.active = false;
+        console.log("📱 Cleaning up physics system");
+      }
+    };
+  }, []);
 
   return (
     <>
