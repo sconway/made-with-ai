@@ -53,7 +53,7 @@ function App() {
   useEffect(() => {
     hasWonRef.current = hasWon
   }, [hasWon])
-  
+
   // Add this before useEffect
   const [updateParticles, setUpdateParticles] = useState(null)
   
@@ -400,7 +400,7 @@ function App() {
       window.removeEventListener('deviceorientation', handleOrientation)
     }
   }, [])
-  
+
   useEffect(() => {
     console.log('Effect running')
     if (!mountRef.current) {
@@ -440,7 +440,7 @@ function App() {
       }
       
       // Renderer setup - use the canvas element directly
-      const renderer = new THREE.WebGLRenderer({
+      const renderer = new THREE.WebGLRenderer({ 
         antialias: true,
         canvas: mountRef.current
       })
@@ -449,7 +449,7 @@ function App() {
       renderer.shadowMap.enabled = true
       renderer.shadowMap.type = THREE.PCFSoftShadowMap
       console.log('Renderer set up')
-      
+
       // Enable direct orientation handling for mobile
       if (isMobileRef.current) {
         console.log("Setting up orientation handling for mobile")
@@ -597,7 +597,7 @@ function App() {
       const CELL_SIZE = 2
       const WALL_HEIGHT = 3
       const WALL_THICKNESS = 2
-      
+
       // Camera setup
       // Calculate camera height based on maze size and screen orientation
       const calculateOptimalCameraHeight = (hasControls = false) => {
@@ -698,7 +698,7 @@ function App() {
         setShowRestart(true);
         celebrate();
       };
-      
+
       // Create maze group
       const mazeGroup = new THREE.Group()
       scene.add(mazeGroup)
@@ -799,13 +799,12 @@ function App() {
 
       // Generate maze using DFS algorithm
       const generateMaze = () => {
-        // Reset the maze
-        for (let x = 0; x < MAZE_SIZE; x++) {
-          for (let z = 0; z < MAZE_SIZE; z++) {
-            maze[x][z] = 1
-          }
+        // Skip maze generation if the game has been won and we have an existing maze
+        if (hasWon && mazeRef.current) {
+          console.log('Game has been won, preserving existing maze')
+          return
         }
-
+        
         console.log('Generating new maze')
         
         // Fill the maze with walls
@@ -842,77 +841,42 @@ function App() {
         maze[MAZE_SIZE-1][MAZE_SIZE-2] = 0
         
         console.log('Maze generated with entrance at (0,1) and exit at (' + (MAZE_SIZE-1) + ',' + (MAZE_SIZE-2) + ')')
-        
-        // Store maze globally for physics engine
-        window.maze = maze;
-        window.MAZE_SIZE = MAZE_SIZE;
-        
-        // Log first few rows of maze for debugging
-        console.log("Maze first 5 rows:");
-        for (let z = 0; z < 5; z++) {
-          let row = "";
-          for (let x = 0; x < MAZE_SIZE; x++) {
-            row += maze[x][z] === 0 ? "." : "#";
-          }
-          console.log(row);
-        }
-        
+
         // Verify path exists
-        if (!pathExists({x: 0, z: 1})) {
-          console.log('No path exists, regenerating maze')
-          generateMaze()
-        }
-      }
-      
-      // Update the initialize physics function to properly grab the maze
-      const initializePhysics = () => {
-        console.log("⚡ Initializing physics system");
-        
-        // Ensure maze is available
-        if (!window.maze && maze) {
-          console.log("Storing maze data for physics engine");
-          window.maze = maze;
-          window.MAZE_SIZE = MAZE_SIZE;
-        }
-        
-        // Set up global physics config
-        window.physics = {
-          gravity: 0.008,      // Increased gravity strength
-          maxSpeed: 0.25,      // Slightly higher max speed
-          friction: 0.98,      // Surface friction (air/ground)
-          restitution: 0.5,    // Bounciness on collision
-          active: true,        // Whether physics is currently running
-          debug: true,         // Show debug logs
-          lastTime: 0,         // Time tracking for frame rate independence
-          orientation: {       // Store orientation data
-            beta: 0,
-            gamma: 0,
-          },
-          gravityX: 0,         // Current gravity vector X
-          gravityZ: 0,         // Current gravity vector Z
-          initialized: true    // Flag to indicate physics is ready
-        };
-        
-        // Reset player physics properties
-        if (playerRef.current) {
-          console.log("Resetting player physics properties");
-          playerRef.current.velocity = { x: 0, z: 0 };
-          playerRef.current.acceleration = { x: 0, z: 0 };
-          playerRef.current.mass = 1;
-          playerRef.current.lastUpdateTime = performance.now();
+        const visited = new Set()
+        const pathExists = (pos) => {
+          const [x, z] = pos
+          if (x === MAZE_SIZE-2 && z === MAZE_SIZE-2) return true
+          visited.add(`${x},${z}`)
           
-          // Add a test impulse immediately to see if physics works at all
-          if (playerRef.current.velocity) {
-            console.log("💥 Adding immediate test impulse of 0.05");
-            playerRef.current.velocity.x = 0.05;
-            playerRef.current.velocity.z = 0.05;
+          const directions = [[0, 1], [1, 0], [0, -1], [-1, 0]]
+          for (const [dx, dz] of directions) {
+            const newX = x + dx
+            const newZ = z + dz
+            if (isInBounds(newX, newZ) && maze[newX][newZ] === 0 && !visited.has(`${newX},${newZ}`)) {
+              if (pathExists([newX, newZ])) return true
+            }
           }
+          return false
+        }
+
+        if (!pathExists([1, 1])) {
+          console.log('No path found from start to exit, regenerating maze')
+          generateMaze()
         } else {
-          console.warn("Player reference not available during physics initialization");
+          console.log('Valid path found from start to exit')
         }
         
-        console.log("⚡ Physics system initialized with gravity:", window.physics.gravity);
-      };
+        // Store the generated maze in the ref for future use
+        mazeRef.current = maze
+        
+        // Store the maze in the window object for global access
+        window.maze = maze
+        window.MAZE_SIZE = MAZE_SIZE
+        
+        console.log('Maze generated and stored globally for physics')
+      }
+      console.log('Maze generation function created')
 
       // Create walls for the maze
       const createWalls = () => {
@@ -922,8 +886,8 @@ function App() {
           console.log('Creating new walls for the maze')
           
           // Remove all existing objects from the maze group
-          while(mazeGroup.children.length > 0) {
-            const object = mazeGroup.children[0]
+        while(mazeGroup.children.length > 0) {
+          const object = mazeGroup.children[0]
             
             // Check if the object is a Group (like the player)
             if (object.isGroup) {
@@ -938,55 +902,55 @@ function App() {
               if (object.material) object.material.dispose()
             }
             
-            mazeGroup.remove(object)
-          }
+          mazeGroup.remove(object)
+        }
 
           // Create new walls based on the maze grid
-          for (let x = 0; x < MAZE_SIZE; x++) {
-            for (let z = 0; z < MAZE_SIZE; z++) {
-              if (maze[x][z] === 1) {
-                const wallGeometry = new THREE.BoxGeometry(
-                  WALL_THICKNESS,
-                  WALL_HEIGHT,
-                  WALL_THICKNESS
-                )
-                const wall = new THREE.Mesh(wallGeometry, wallMaterial)
-                wall.position.set(
-                  (x - MAZE_SIZE/2) * WALL_THICKNESS,
-                  WALL_HEIGHT/2,
-                  (z - MAZE_SIZE/2) * WALL_THICKNESS
-                )
-                mazeGroup.add(wall)
+        for (let x = 0; x < MAZE_SIZE; x++) {
+          for (let z = 0; z < MAZE_SIZE; z++) {
+            if (maze[x][z] === 1) {
+              const wallGeometry = new THREE.BoxGeometry(
+                WALL_THICKNESS,
+                WALL_HEIGHT,
+                WALL_THICKNESS
+              )
+              const wall = new THREE.Mesh(wallGeometry, wallMaterial)
+              wall.position.set(
+                (x - MAZE_SIZE/2) * WALL_THICKNESS,
+                WALL_HEIGHT/2,
+                (z - MAZE_SIZE/2) * WALL_THICKNESS
+              )
+              mazeGroup.add(wall)
 
-                if (x === 0 || x === MAZE_SIZE-1 || z === 0 || z === MAZE_SIZE-1) {
-                  if (x < MAZE_SIZE-1 && maze[x+1][z] === 1) {
-                    const horizontalWall = new THREE.Mesh(
-                      new THREE.BoxGeometry(WALL_THICKNESS, WALL_HEIGHT, WALL_THICKNESS),
-                      wallMaterial
-                    )
-                    horizontalWall.position.set(
-                      (x - MAZE_SIZE/2 + 0.5) * WALL_THICKNESS,
-                      WALL_HEIGHT/2,
-                      (z - MAZE_SIZE/2) * WALL_THICKNESS
-                    )
-                    mazeGroup.add(horizontalWall)
-                  }
-                  
-                  if (z < MAZE_SIZE-1 && maze[x][z+1] === 1) {
-                    const verticalWall = new THREE.Mesh(
-                      new THREE.BoxGeometry(WALL_THICKNESS, WALL_HEIGHT, WALL_THICKNESS),
-                      wallMaterial
-                    )
-                    verticalWall.position.set(
-                      (x - MAZE_SIZE/2) * WALL_THICKNESS,
-                      WALL_HEIGHT/2,
-                      (z - MAZE_SIZE/2 + 0.5) * WALL_THICKNESS
-                    )
-                    mazeGroup.add(verticalWall)
-                  }
+              if (x === 0 || x === MAZE_SIZE-1 || z === 0 || z === MAZE_SIZE-1) {
+                if (x < MAZE_SIZE-1 && maze[x+1][z] === 1) {
+                  const horizontalWall = new THREE.Mesh(
+                    new THREE.BoxGeometry(WALL_THICKNESS, WALL_HEIGHT, WALL_THICKNESS),
+                    wallMaterial
+                  )
+                  horizontalWall.position.set(
+                    (x - MAZE_SIZE/2 + 0.5) * WALL_THICKNESS,
+                    WALL_HEIGHT/2,
+                    (z - MAZE_SIZE/2) * WALL_THICKNESS
+                  )
+                  mazeGroup.add(horizontalWall)
+                }
+                
+                if (z < MAZE_SIZE-1 && maze[x][z+1] === 1) {
+                  const verticalWall = new THREE.Mesh(
+                    new THREE.BoxGeometry(WALL_THICKNESS, WALL_HEIGHT, WALL_THICKNESS),
+                    wallMaterial
+                  )
+                  verticalWall.position.set(
+                    (x - MAZE_SIZE/2) * WALL_THICKNESS,
+                    WALL_HEIGHT/2,
+                    (z - MAZE_SIZE/2 + 0.5) * WALL_THICKNESS
+                  )
+                  mazeGroup.add(verticalWall)
                 }
               }
             }
+          }
           }
         } else {
           console.log('Game has been won, preserving existing maze walls')
@@ -1064,9 +1028,9 @@ function App() {
       
       // Generate initial maze only if the game hasn't been won
       if (!hasWon) {
-        generateMaze()
-        createWalls()
-        console.log('Initial maze created')
+      generateMaze()
+      createWalls()
+      console.log('Initial maze created')
       } else {
         console.log('Game has been won, preserving maze and player position')
       }
@@ -1108,7 +1072,7 @@ function App() {
           positions[i * 3] = playerRef.current.worldPosition.x;
           positions[i * 3 + 1] = playerRef.current.worldPosition.y;
           positions[i * 3 + 2] = playerRef.current.worldPosition.z;
-          
+
           // Vibrant colors
           colors[i * 3] = Math.random();
           colors[i * 3 + 1] = Math.random();
@@ -1117,7 +1081,7 @@ function App() {
         
         particles.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
         particles.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
-        
+
         const particleMaterial = new THREE.PointsMaterial({
           size: 0.5,
           vertexColors: true,
@@ -1149,7 +1113,7 @@ function App() {
         
         // Store reference for cleanup
         celebrationRef.current = particleSystem;
-        
+
         const updateFunc = () => {
           console.log('Update particles function called - frame');
           
@@ -1177,8 +1141,8 @@ function App() {
             positions[idx] += velocities[idx];
             positions[idx + 1] += velocities[idx + 1];
             positions[idx + 2] += velocities[idx + 2];
-            
-            // Add gravity effect
+              
+              // Add gravity effect
             velocities[idx + 1] -= 0.001;
             
             // Calculate distance from origin
@@ -1220,7 +1184,7 @@ function App() {
         console.log('Setting updateParticles function');
         // Use the ref instead of state for immediate update
         updateParticlesRef.current = updateFunc;
-        
+
         return () => {
           console.log('Cleanup function called');
           if (particleSystem.parent) {
@@ -1284,13 +1248,13 @@ function App() {
       // Set player position and direction
       if (!hasWon) {
         // New game - set initial position
-        player.position.set(
-          (1 - MAZE_SIZE/2) * WALL_THICKNESS,
-          WALL_THICKNESS/2,
-          (1 - MAZE_SIZE/2) * WALL_THICKNESS
-        )
-        playerRef.current.mesh = player
-        playerRef.current.worldPosition.copy(player.position)
+      player.position.set(
+        (1 - MAZE_SIZE/2) * WALL_THICKNESS,
+        WALL_THICKNESS/2,
+        (1 - MAZE_SIZE/2) * WALL_THICKNESS
+      )
+      playerRef.current.mesh = player
+      playerRef.current.worldPosition.copy(player.position)
         
         // Now that player is created, set initial direction
         setInitialPlayerDirection(player)
@@ -1362,7 +1326,7 @@ function App() {
             }
             
             // End states for camera position
-            const endPos = newIsThirdPerson ?
+            const endPos = newIsThirdPerson ? 
               new THREE.Vector3(
                 playerRef.current.worldPosition.x,
                 playerRef.current.worldPosition.y + 1.5,  // Eye level
@@ -1413,7 +1377,7 @@ function App() {
             
             // Disable controls during transition
             if (!isMobileRef.current) {
-              controls.enabled = false
+            controls.enabled = false
             }
             
             // Animation duration in milliseconds
@@ -1632,8 +1596,8 @@ function App() {
                 return () => {
                   if (cleanupParticles) cleanupParticles()
                 }
-              }
-            } else {
+          }
+        } else {
               console.log('Movement blocked - Out of bounds or wall:', newX, newZ)
             }
           } else if (moved === 'rotate') {
@@ -1685,37 +1649,37 @@ function App() {
               break;
             default:
               return
-          }
+        }
           
           console.log('Attempting to move to:', newX, newZ)
           console.log('Maze value at target position:', maze[newX][newZ])
           console.log('Is in bounds:', isInBounds(newX, newZ))
 
-          if (isInBounds(newX, newZ) && maze[newX][newZ] === 0) {
+        if (isInBounds(newX, newZ) && maze[newX][newZ] === 0) {
             console.log('Movement is valid, updating positions')
-            playerRef.current.position.x = newX
-            playerRef.current.position.z = newZ
-            const newPosition = new THREE.Vector3(
-              (newX - MAZE_SIZE/2) * WALL_THICKNESS,
+          playerRef.current.position.x = newX
+          playerRef.current.position.z = newZ
+          const newPosition = new THREE.Vector3(
+            (newX - MAZE_SIZE/2) * WALL_THICKNESS,
               WALL_THICKNESS/2,
-              (newZ - MAZE_SIZE/2) * WALL_THICKNESS
-            )
-            playerRef.current.worldPosition.copy(newPosition)
-            
+            (newZ - MAZE_SIZE/2) * WALL_THICKNESS
+          )
+          playerRef.current.worldPosition.copy(newPosition)
+          
             // Use the player reference from playerRef.current.mesh
             player.position.copy(newPosition)
             const angle = Math.atan2(playerRef.current.direction.x, playerRef.current.direction.z)
             player.rotation.y = angle
 
-            if (newX === MAZE_SIZE-1 && newZ === MAZE_SIZE-2) {
+          if (newX === MAZE_SIZE-1 && newZ === MAZE_SIZE-2) {
               // Store the fact that player has reached the exit
               exitReachedRef.current = true
               
-              setHasWon(true)
-              setShowRestart(true)
-              const cleanupParticles = celebrate()
-              return () => {
-                if (cleanupParticles) cleanupParticles()
+            setHasWon(true)
+            setShowRestart(true)
+            const cleanupParticles = celebrate()
+            return () => {
+              if (cleanupParticles) cleanupParticles()
               }
             }
           }
@@ -1737,17 +1701,60 @@ function App() {
       function animate(currentTime) {
         animationFrameId = requestAnimationFrame(animate);
         
-        // Handle gyroscope-based movement using our physics system on mobile
-        if (isMobileRef.current && !hasWonRef.current && !isTransitioning) {
-          // Check if physics system is initialized
-          if (!window.physics) {
-            console.log("🔧 Initializing physics in animation loop");
-            initializePhysics();
+        // Handle gyroscope-based movement on mobile devices
+        if (isMobileRef.current && gyroscopeActive && !hasWonRef.current && !isTransitioning) {
+          const now = performance.now();
+          const { beta, gamma } = orientationRef.current;
+          
+          // Debug logs for the first few seconds
+          if (now < 5000 && now % 500 < 20) {
+            console.log("Animation loop - orientation:", { beta, gamma });
           }
           
-          // Update physics based on device orientation
-          if (window.physics && window.physics.initialized) {
-            updatePhysics(currentTime);
+          // Only proceed if we have valid orientation data
+          if (beta !== null && gamma !== null) {
+            // Very sensitive tilt detection for mobile
+            // Note: beta is front/back tilt, gamma is left/right tilt
+            
+            // Calculate tilt magnitude with very low threshold
+            const betaMagnitude = Math.abs(beta);
+            const gammaMagnitude = Math.abs(gamma);
+            
+            // Determine movement direction based on tilt
+            // We want movement to feel intuitive based on phone tilt
+            let direction = '';
+            const tiltThreshold = 5; // Very low threshold for detection
+            
+            // Determine the primary direction based on larger tilt
+            if (betaMagnitude > gammaMagnitude && betaMagnitude > tiltThreshold) {
+              // Front/back tilt is dominant
+              direction = beta > 0 ? 'ArrowDown' : 'ArrowUp';
+            } else if (gammaMagnitude > tiltThreshold) {
+              // Left/right tilt is dominant
+              direction = gamma > 0 ? 'ArrowRight' : 'ArrowLeft';
+            }
+            
+            // Only move if enough time has passed since last move
+            // Faster movement for steeper tilts
+            const maxTilt = Math.max(betaMagnitude, gammaMagnitude);
+            const moveDelay = Math.max(100, 500 - maxTilt * 5); // 100-500ms delay
+            
+            if (direction && now - lastMoveTimeRef.current > moveDelay) {
+              console.log(`Gyroscope movement: ${direction} (tilt: ${maxTilt.toFixed(1)}°)`);
+              
+              // Create a synthetic event
+              const syntheticEvent = {
+                key: direction,
+                preventDefault: () => {},
+                stopPropagation: () => {}
+              };
+              
+              // Call the handle key function that moves the player
+              handleKeyDown(syntheticEvent);
+              
+              // Update last move time
+              lastMoveTimeRef.current = now;
+            }
           }
         }
         
@@ -1810,8 +1817,8 @@ function App() {
           
           // Only update OrbitControls if we're not on mobile
           if (!isMobileRef.current && controls.update) {
-            controls.update()
-          }
+          controls.update()
+        }
         } else {
           // Ensure orbit controls are disabled in POV mode
           if (!isMobileRef.current) {
@@ -1886,7 +1893,7 @@ function App() {
         })
         renderer.dispose()
         if (controls && typeof controls.dispose === 'function') {
-          controls.dispose()
+        controls.dispose()
         }
       }
     } catch (error) {
@@ -2124,82 +2131,166 @@ function App() {
     return () => clearTimeout(timeoutId);
   }, [showTouchControls]);
 
-  // Add new physics update function
+  // Update the physics update function to properly handle collisions
   const updatePlayerPhysics = () => {
-    if (!gyroscopeActive || hasWon || isTransitioning) return
+    if (!gyroscopeActive || hasWon || isTransitioning) return;
     
-    const player = playerRef.current
-    const acc = player.acceleration
-    const vel = player.velocity
-    const pos = player.position
-    const friction = 0.95  // Friction coefficient to slow down movement
+    // Get maze reference
+    const maze = window.maze || mazeRef.current;
+    if (!maze) {
+      console.warn("No maze available for physics update");
+      return;
+    }
     
-    // Update velocity based on acceleration (simulating gravity)
-    vel.x += acc.x
-    vel.z += acc.z
+    const MAZE_SIZE = window.MAZE_SIZE || 21;
+    
+    const player = playerRef.current;
+    const vel = player.velocity;
+    const pos = player.position;
+    const mesh = player.mesh;
+    
+    if (!mesh) {
+      console.warn("No player mesh available for physics update");
+      return;
+    }
+    
+    // Use gravity from device orientation
+    const physics = window.physics || {};
+    const gravityX = physics.gravityX || 0;
+    const gravityZ = physics.gravityZ || 0;
+    
+    // Constants for physics calculation
+    const gravity = 0.008;      // Gravity strength
+    const friction = 0.97;      // Surface friction - higher for smoother movement
+    const bounce = 0.3;         // Bounce factor when hitting walls
+    
+    // Apply gravity to velocity
+    vel.x += gravityX * gravity;
+    vel.z += gravityZ * gravity;
     
     // Apply friction
-    vel.x *= friction
-    vel.z *= friction
+    vel.x *= friction;
+    vel.z *= friction;
     
     // Only process movement if velocity is significant
-    if (Math.abs(vel.x) < 0.001 && Math.abs(vel.z) < 0.001) return
+    if (Math.abs(vel.x) < 0.0005 && Math.abs(vel.z) < 0.0005) return;
     
     // Calculate potential new position
-    let newX = pos.x + vel.x
-    let newZ = pos.z + vel.z
+    let newX = pos.x + vel.x;
+    let newZ = pos.z + vel.z;
+    
+    // Log movement for debugging
+    if (performance.now() % 3000 < 20) {
+      console.log(`Physics move: pos(${pos.x.toFixed(2)},${pos.z.toFixed(2)}) vel(${vel.x.toFixed(4)},${vel.z.toFixed(4)}) newPos(${newX.toFixed(2)},${newZ.toFixed(2)})`);
+    }
     
     // Define helper function to check if a position is valid (not a wall)
     const isPositionValid = (x, z) => {
       // Convert to maze grid coordinates
-      const gridX = Math.floor(x)
-      const gridZ = Math.floor(z)
-      return gridX >= 0 && gridX < MAZE_SIZE && 
-             gridZ >= 0 && gridZ < MAZE_SIZE && 
-             maze[gridX][gridZ] === 0
-    }
+      const gridX = Math.floor(x);
+      const gridZ = Math.floor(z);
+      
+      if (gridX < 0 || gridX >= MAZE_SIZE || gridZ < 0 || gridZ >= MAZE_SIZE) {
+        return false; // Out of bounds
+      }
+      
+      return maze[gridX][gridZ] === 0; // 0 = path, 1 = wall
+    };
+    
+    let hitWall = false;
     
     // Check X movement
     if (isPositionValid(newX, pos.z)) {
-      pos.x = newX
-      player.mesh.position.x = newX * 2
+      pos.x = newX;
+      mesh.position.x = newX * 2;
     } else {
-      // Hit a wall in X direction, stop velocity
-      vel.x = 0
+      // Hit a wall in X direction, bounce
+      vel.x = -vel.x * bounce;
+      hitWall = true;
+      
+      // Move slightly away from the wall to prevent sticking
+      if (vel.x > 0) {
+        pos.x = Math.floor(pos.x) + 0.9; // Near but not touching the right wall
+      } else {
+        pos.x = Math.ceil(pos.x) - 0.1; // Near but not touching the left wall
+      }
+      
+      mesh.position.x = pos.x * 2;
     }
     
     // Check Z movement
     if (isPositionValid(pos.x, newZ)) {
-      pos.z = newZ
-      player.mesh.position.z = newZ * 2
+      pos.z = newZ;
+      mesh.position.z = newZ * 2;
     } else {
-      // Hit a wall in Z direction, stop velocity
-      vel.z = 0
+      // Hit a wall in Z direction, bounce
+      vel.z = -vel.z * bounce;
+      hitWall = true;
+      
+      // Move slightly away from the wall to prevent sticking
+      if (vel.z > 0) {
+        pos.z = Math.floor(pos.z) + 0.9; // Near but not touching the bottom wall
+      } else {
+        pos.z = Math.ceil(pos.z) - 0.1; // Near but not touching the top wall
+      }
+      
+      mesh.position.z = pos.z * 2;
     }
     
-    // Check if player has reached the exit
+    // Update player direction based on velocity
+    if (Math.abs(vel.x) > 0.01 || Math.abs(vel.z) > 0.01) {
+      const angle = Math.atan2(vel.x, vel.z);
+      mesh.rotation.y = angle;
+      player.direction.set(vel.x, 0, vel.z).normalize();
+    }
+    
+    // Check for victory
     if (Math.floor(pos.x) === MAZE_SIZE - 1 && Math.floor(pos.z) === MAZE_SIZE - 2) {
-      gameFunctionsRef.current.celebrate()
+      console.log("Victory reached!");
+      setHasWon(true);
+      celebrate();
     }
     
-    // Update camera position if in third-person view
-    if (isThirdPersonRef.current) {
-      const cameraOffset = new THREE.Vector3(0, 3, -3).applyQuaternion(player.mesh.quaternion)
-      camera.position.copy(player.mesh.position).add(cameraOffset)
-      camera.lookAt(player.mesh.position)
+    // Log collision for debugging
+    if (hitWall) {
+      console.log(`Wall collision! pos(${pos.x.toFixed(2)},${pos.z.toFixed(2)}) vel(${vel.x.toFixed(4)},${vel.z.toFixed(4)})`);
     }
-  }
+    
+    // Update debug info
+    setDebugInfo(prev => ({
+      ...prev,
+      velocity: { x: vel.x, z: vel.z },
+      position: { x: pos.x, z: pos.z }
+    }));
+  };
+  
+  // Update the animation function to properly call updatePlayerPhysics
+  useEffect(() => {
+    let animationFrameId;
+    
+    function animatePhysics() {
+      animationFrameId = requestAnimationFrame(animatePhysics);
+      
+      // Only process physics if needed
+      if (isMobileRef.current && gyroscopeActive && !hasWon && !isTransitioning) {
+        updatePlayerPhysics();
+      }
+    }
+    
+    // Start the physics animation loop
+    animatePhysics();
+    
+    // Cleanup function
+    return () => {
+      if (animationFrameId) {
+        cancelAnimationFrame(animationFrameId);
+      }
+    };
+  }, [gyroscopeActive, hasWon, isTransitioning]);
 
   // Add a function to initialize physics in the game setup
   const initializePhysics = () => {
     console.log("⚡ Initializing physics system");
-    
-    // Ensure maze is available
-    if (!window.maze && maze) {
-      console.log("Storing maze data for physics engine");
-      window.maze = maze;
-      window.MAZE_SIZE = MAZE_SIZE;
-    }
     
     // Set up global physics config
     window.physics = {
@@ -2221,23 +2312,76 @@ function App() {
     
     // Reset player physics properties
     if (playerRef.current) {
-      console.log("Resetting player physics properties");
       playerRef.current.velocity = { x: 0, z: 0 };
       playerRef.current.acceleration = { x: 0, z: 0 };
       playerRef.current.mass = 1;
       playerRef.current.lastUpdateTime = performance.now();
+    }
+    
+    // Add a visual debug element to show tilt direction
+    const addDebugIndicator = () => {
+      if (document.getElementById('physics-debug-indicator')) return;
       
-      // Add a test impulse immediately to see if physics works at all
-      if (playerRef.current.velocity) {
-        console.log("💥 Adding immediate test impulse of 0.05");
-        playerRef.current.velocity.x = 0.05;
-        playerRef.current.velocity.z = 0.05;
-      }
-    } else {
-      console.warn("Player reference not available during physics initialization");
+      const indicator = document.createElement('div');
+      indicator.id = 'physics-debug-indicator';
+      indicator.style.cssText = `
+        position: fixed;
+        top: 10px;
+        right: 10px;
+        width: 100px;
+        height: 100px;
+        background-color: rgba(0, 0, 0, 0.5);
+        border-radius: 50%;
+        z-index: 10000;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+      `;
+      
+      const dot = document.createElement('div');
+      dot.style.cssText = `
+        width: 20px;
+        height: 20px;
+        background-color: #4CAF50;
+        border-radius: 50%;
+        position: absolute;
+        transform: translate(-50%, -50%);
+        left: 50%;
+        top: 50%;
+        transition: all 0.1s ease;
+      `;
+      
+      const text = document.createElement('div');
+      text.style.cssText = `
+        position: absolute;
+        bottom: -25px;
+        left: 0;
+        width: 100%;
+        text-align: center;
+        color: white;
+        font-size: 12px;
+      `;
+      text.innerText = 'Tilt Debug';
+      
+      indicator.appendChild(dot);
+      indicator.appendChild(text);
+      document.body.appendChild(indicator);
+      
+      window.physics.debugDot = dot;
+    };
+    
+    // Only add the debug indicator in debug mode and on mobile
+    if (window.physics.debug && detectMobile()) {
+      setTimeout(addDebugIndicator, 500); // Delay to ensure DOM is ready
     }
     
     console.log("⚡ Physics system initialized with gravity:", window.physics.gravity);
+    
+    // Add a test impulse immediately to see if physics works at all
+    if (playerRef.current) {
+      console.log("💥 Adding immediate test impulse of 0.05");
+      playerRef.current.velocity = { x: 0.05, z: 0.05 };
+    }
   };
 
   // Create both event handlers to catch all possible orientation events
@@ -2299,7 +2443,7 @@ function App() {
     }
   };
 
-  // Update the handleDeviceOrientation function for better debugging
+  // Update the device orientation handler for more natural controls
   const handleDeviceOrientation = (event) => {
     // Update event counter for debugging
     setDebugInfo(prev => ({
@@ -2313,20 +2457,8 @@ function App() {
     
     // Skip if orientation event is empty
     if (event.beta === null && event.gamma === null) {
-      if (performance.now() % 3000 < 20) {
-        console.warn("⚠️ Received empty orientation event: beta and gamma are null");
-      }
       return;
     }
-    
-    // Log the raw event occasionally
-    const now = performance.now();
-    if (now % 3000 < 20) {
-      console.log(`📱 Raw device orientation: beta=${event.beta?.toFixed(2)}°, gamma=${event.gamma?.toFixed(2)}°`);
-    }
-    
-    // Skip further processing if not active
-    if (hasWon || isTransitioning) return;
     
     // Auto-activate gyroscope based on receiving actual data
     if (!gyroscopeActive && (event.beta !== null || event.gamma !== null)) {
@@ -2337,10 +2469,13 @@ function App() {
     
     // Store orientation data
     if (event.beta !== null && event.gamma !== null) {
-      // Beta is front-to-back tilt in degrees, with range [-180,180]
-      // Gamma is left-to-right tilt in degrees, with range [-90,90]
-      let beta = event.beta;
-      let gamma = event.gamma;
+      let beta = event.beta;   // Forward/backward tilt (-180 to 180)
+      let gamma = event.gamma; // Left/right tilt (-90 to 90)
+      
+      // Log orientation occasionally
+      if (performance.now() % 5000 < 20) {
+        console.log(`Raw orientation: beta=${beta.toFixed(2)}°, gamma=${gamma.toFixed(2)}°, orientation=${window.orientation || 0}°`);
+      }
 
       // Adjust for different device orientations
       if (window.orientation !== undefined) {
@@ -2363,36 +2498,44 @@ function App() {
         }
       }
       
-      // Initialize physics if needed
-      if (!window.physics || !window.physics.initialized) {
-        console.log("🔧 Initializing physics from orientation event");
+      // Make sure physics is initialized
+      if (!window.physics) {
         initializePhysics();
       }
       
-      // Store orientation in physics object for use in update
+      // Apply smoother mapping for better control
+      // - Beta controls forward/back tilt (z-axis in our game)
+      // - Gamma controls left/right tilt (x-axis in our game)
+      
+      // Use a non-linear response curve for more precision at small angles
+      // and faster response at steeper angles
+      const maxAngle = 30;     // Full effect at 30 degrees tilt
+      const deadzone = 2;      // Ignore very small tilts to prevent drift
+      const sensitivity = 1.2; // Adjust sensitivity (higher = more responsive)
+      
+      let gravityX = 0;
+      let gravityZ = 0;
+      
+      // Calculate X gravity from gamma (left-right tilt)
+      if (Math.abs(gamma) > deadzone) {
+        // Apply a non-linear response curve
+        const normalizedTilt = Math.min(Math.abs(gamma) - deadzone, maxAngle - deadzone) / (maxAngle - deadzone);
+        // Use a quadratic curve for smoother control: x^2 shape for more precision at small angles
+        const response = normalizedTilt * normalizedTilt * sensitivity;
+        gravityX = response * Math.sign(gamma);
+      }
+      
+      // Calculate Z gravity from beta (forward-backward tilt)
+      if (Math.abs(beta) > deadzone) {
+        // Apply a non-linear response curve
+        const normalizedTilt = Math.min(Math.abs(beta) - deadzone, maxAngle - deadzone) / (maxAngle - deadzone);
+        // Use a quadratic curve for smoother control
+        const response = normalizedTilt * normalizedTilt * sensitivity;
+        gravityZ = response * Math.sign(beta);
+      }
+      
+      // Store gravity in physics system
       if (window.physics) {
-        // Convert angles to normalized gravity vector components
-        // The steeper the tilt, the stronger the gravity effect
-        const maxAngle = 30; // Full effect at 30 degrees tilt
-        
-        // Apply a small deadzone to prevent drift from small angles
-        const deadzone = 2; // Reduced for more sensitivity
-        let gravityX = 0;
-        let gravityZ = 0;
-        
-        if (Math.abs(gamma) > deadzone) {
-          // Convert angle to a 0.0-1.0 gravity multiplier (clamped at maxAngle)
-          const normalizedAngle = Math.min(Math.abs(gamma) - deadzone, maxAngle - deadzone) / (maxAngle - deadzone);
-          gravityX = normalizedAngle * Math.sign(gamma);
-        }
-        
-        if (Math.abs(beta) > deadzone) {
-          // Convert angle to a 0.0-1.0 gravity multiplier (clamped at maxAngle)
-          const normalizedAngle = Math.min(Math.abs(beta) - deadzone, maxAngle - deadzone) / (maxAngle - deadzone);
-          gravityZ = normalizedAngle * Math.sign(beta);
-        }
-        
-        // Store the calculated gravity for physics update
         window.physics.gravityX = gravityX;
         window.physics.gravityZ = gravityZ;
         
@@ -2401,16 +2544,9 @@ function App() {
           ...prev,
           gravity: { x: gravityX, z: gravityZ }
         }));
-        
-        // Apply direct impulse for testing
-        if (now % 5000 < 20 && playerRef.current) {
-          console.log("💥 Applying direct impulse from orientation event");
-          playerRef.current.velocity.x += 0.05 * Math.sign(gravityX);
-          playerRef.current.velocity.z += 0.05 * Math.sign(gravityZ);
-        }
       }
       
-      // Store raw orientation for other uses
+      // Store orientation for other uses
       orientationRef.current = { beta, gamma };
     }
   };
@@ -2419,8 +2555,8 @@ function App() {
   const DebugOverlay = () => {
     const { beta, gamma, velocity, gravity, eventCount, lastUpdate, eventType, position } = debugInfo;
     const timeSinceUpdate = Date.now() - lastUpdate;
-    
-    return (
+
+  return (
       <div style={{
         position: 'fixed',
         top: 10,
@@ -2444,7 +2580,7 @@ function App() {
             <span style={{ marginLeft: '5px', color: timeSinceUpdate < 200 ? '#8f8' : timeSinceUpdate < 1000 ? '#ff8' : '#f88' }}>
               {timeSinceUpdate < 200 ? '●' : timeSinceUpdate < 1000 ? '○' : '✕'}
             </span>
-          </div>
+      </div>
           <div>
             <span style={{ color: '#8cf' }}>Gyro Beta: </span>
             <span style={{ color: Math.abs(beta) > 5 ? '#f88' : '#8f8' }}>{beta}°</span>
@@ -2471,7 +2607,7 @@ function App() {
               X: {position?.x?.toFixed(2) || '?'}, Z: {position?.z?.toFixed(2) || '?'}
             </span>
           </div>
-          <button 
+          <button
             onClick={() => {
               if (playerRef.current) {
                 playerRef.current.velocity = { 
@@ -2501,223 +2637,6 @@ function App() {
   // Add a toggle for debug info
   const toggleDebug = () => {
     setDebugInfo(prev => ({ ...prev, showDebug: !prev.showDebug }));
-  };
-  
-  // Physics update function to handle gravity-based movement
-  const updatePhysics = (currentTime) => {
-    // Exit early if conditions aren't right
-    if (!window.physics || !window.physics.active) {
-      console.warn("⚠️ Physics system inactive or not initialized");
-      return;
-    }
-    
-    // Check if maze is accessible
-    if (!window.maze) {
-      console.warn("⚠️ Maze not accessible for physics update");
-      // Store the current maze in the window object
-      window.maze = maze;
-      if (!window.maze) return;
-    }
-    
-    // Calculate delta time for smooth animations
-    if (!window.physics.lastTime) {
-      window.physics.lastTime = currentTime;
-      return;
-    }
-    
-    const deltaTime = currentTime - window.physics.lastTime;
-    window.physics.lastTime = currentTime;
-    
-    // Don't update if delta is too large (tab inactive, etc)
-    if (deltaTime > 100) return;
-    
-    // Normalized time step (to make physics frame-rate independent)
-    const timeStep = deltaTime / 16.67; // Normalize to 60fps
-    
-    // Get physics configuration
-    const physics = window.physics;
-    const gravity = physics.gravity || 0.008;
-    const maxSpeed = physics.maxSpeed || 0.25;
-    const friction = physics.friction || 0.98;
-    const restitution = physics.restitution || 0.5;
-    
-    // Get player references
-    const player = playerRef.current;
-    if (!player) {
-      console.error("❌ Player reference is missing");
-      return;
-    }
-    
-    const mesh = player.mesh;
-    if (!mesh) {
-      console.error("❌ Player mesh is missing");
-      return;
-    }
-    
-    // Get current position and velocity
-    const pos = player.position;
-    if (!player.velocity) {
-      player.velocity = { x: 0, z: 0 };
-    }
-    let vel = player.velocity;
-    
-    // Calculate acceleration based on gravity and tilt
-    const gravityX = physics.gravityX || 0;
-    const gravityZ = physics.gravityZ || 0;
-    
-    // Apply acceleration based on gravity - increase strength for better feel
-    vel.x += gravityX * gravity * timeStep * 2;
-    vel.z += gravityZ * gravity * timeStep * 2;
-    
-    // Occasionally apply a test impulse if we're not moving
-    if (currentTime % 5000 < 20 && Math.abs(vel.x) + Math.abs(vel.z) < 0.01) {
-      console.log("🔄 Adding test impulse to verify physics");
-      vel.x += 0.05;
-      vel.z += 0.05;
-    }
-    
-    // Apply friction
-    vel.x *= Math.pow(friction, timeStep);
-    vel.z *= Math.pow(friction, timeStep);
-    
-    // Speed limit check
-    const speed = Math.sqrt(vel.x * vel.x + vel.z * vel.z);
-    if (speed > maxSpeed) {
-      vel.x = (vel.x / speed) * maxSpeed;
-      vel.z = (vel.z / speed) * maxSpeed;
-    }
-    
-    // If velocity is negligible, stop completely (prevents jitter)
-    if (Math.abs(vel.x) < 0.0005) vel.x = 0;
-    if (Math.abs(vel.z) < 0.0005) vel.z = 0;
-    
-    // Skip the rest if we're not moving
-    if (vel.x === 0 && vel.z === 0) return;
-    
-    // Calculate potential new position
-    let newX = pos.x + vel.x * timeStep;
-    let newZ = pos.z + vel.z * timeStep;
-    
-    // Get maze data safely
-    const mazeData = window.maze || maze;
-    const MAZE_SIZE = window.MAZE_SIZE || 21;
-    
-    // Improved helper function to check if a position is valid (not a wall)
-    const isPositionValid = (x, z) => {
-      // Keep player within global maze bounds
-      if (x < 0 || x >= MAZE_SIZE || z < 0 || z >= MAZE_SIZE) {
-        return false;
-      }
-      
-      // Convert to integer grid coordinates
-      const gridX = Math.floor(x);
-      const gridZ = Math.floor(z);
-      
-      // Check if this cell is a path (0) or wall (1)
-      // Default to wall (1) if data is undefined
-      return mazeData[gridX] && mazeData[gridX][gridZ] === 0;
-    };
-    
-    // Track if we hit any walls for debugging
-    let hitWall = false;
-    
-    // Handle X collision with more precise boundary response
-    if (isPositionValid(newX, pos.z)) {
-      pos.x = newX;
-    } else {
-      // Hit a wall in X direction, bounce
-      vel.x = -vel.x * restitution;
-      hitWall = true;
-      
-      // Force the player to stay in a valid cell by checking the direction
-      if (vel.x > 0) {
-        // Moving right, so push left
-        pos.x = Math.floor(pos.x) + 0.9;
-      } else {
-        // Moving left, so push right
-        pos.x = Math.ceil(pos.x) - 0.1;
-      }
-      
-      // Double check we're in a valid position
-      if (!isPositionValid(pos.x, pos.z)) {
-        // Emergency fallback - force to last known good position
-        pos.x = Math.floor(pos.x) + 0.5;
-        vel.x = 0;
-      }
-    }
-    
-    // Handle Z collision with more precise boundary response
-    if (isPositionValid(pos.x, newZ)) {
-      pos.z = newZ;
-    } else {
-      // Hit a wall in Z direction, bounce
-      vel.z = -vel.z * restitution;
-      hitWall = true;
-      
-      // Force the player to stay in a valid cell by checking the direction
-      if (vel.z > 0) {
-        // Moving down, so push up
-        pos.z = Math.floor(pos.z) + 0.9;
-      } else {
-        // Moving up, so push down
-        pos.z = Math.ceil(pos.z) - 0.1;
-      }
-      
-      // Double check we're in a valid position
-      if (!isPositionValid(pos.x, pos.z)) {
-        // Emergency fallback - force to last known good position
-        pos.z = Math.floor(pos.z) + 0.5;
-        vel.z = 0;
-      }
-    }
-    
-    // Final safety check - ensure player is in a valid position
-    if (!isPositionValid(pos.x, pos.z)) {
-      console.warn("⚠️ Player out of bounds! Resetting to start position.");
-      pos.x = 1;
-      pos.z = 1;
-      vel.x = 0;
-      vel.z = 0;
-    }
-    
-    // Update debug info with latest values
-    setDebugInfo(prev => ({
-      ...prev,
-      velocity: { x: vel.x, z: vel.z },
-      position: { x: pos.x, z: pos.z }
-    }));
-    
-    // Update mesh position
-    mesh.position.x = pos.x * 2;
-    mesh.position.z = pos.z * 2;
-    
-    // Update player direction based on velocity
-    if (speed > 0.01) {
-      const angle = Math.atan2(vel.x, vel.z);
-      player.mesh.rotation.y = angle;
-      player.direction.set(vel.x, 0, vel.z).normalize();
-    }
-    
-    // Check for victory condition
-    if (Math.floor(pos.x) === MAZE_SIZE - 1 && Math.floor(pos.z) === MAZE_SIZE - 2) {
-      console.log("🏆 Victory detected in physics update!");
-      if (typeof celebrate === 'function') {
-        celebrate();
-      } else if (gameFunctionsRef.current.celebrate) {
-        gameFunctionsRef.current.celebrate();
-      }
-    }
-    
-    // Log physics data occasionally or when hitting walls
-    if ((physics.debug && currentTime % 2000 < 20) || hitWall) {
-      console.log(
-        `🔮 Physics: pos(${pos.x.toFixed(2)},${pos.z.toFixed(2)}) ` +
-        `vel(${vel.x.toFixed(4)},${vel.z.toFixed(4)}) ` +
-        `grav(${gravityX.toFixed(2)},${gravityZ.toFixed(2)}) ` +
-        `speed: ${speed.toFixed(3)}` +
-        (hitWall ? " 💥 WALL COLLISION" : "")
-      );
-    }
   };
   
   return (
@@ -2796,7 +2715,7 @@ function App() {
             >
               ▲
             </button>
-          </div>
+    </div>
           <div className="touch-controls-row">
             <button 
               ref={leftButtonRef}
