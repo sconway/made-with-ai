@@ -1701,60 +1701,17 @@ function App() {
       function animate(currentTime) {
         animationFrameId = requestAnimationFrame(animate);
         
-        // Handle gyroscope-based movement on mobile devices
-        if (isMobileRef.current && gyroscopeActive && !hasWonRef.current && !isTransitioning) {
-          const now = performance.now();
-          const { beta, gamma } = orientationRef.current;
-          
-          // Debug logs for the first few seconds
-          if (now < 5000 && now % 500 < 20) {
-            console.log("Animation loop - orientation:", { beta, gamma });
+        // Handle gyroscope-based movement using our physics system on mobile
+        if (isMobileRef.current && !hasWonRef.current && !isTransitioning) {
+          // Check if physics system is initialized
+          if (!window.physics) {
+            console.log("🔧 Initializing physics in animation loop");
+            initializePhysics();
           }
           
-          // Only proceed if we have valid orientation data
-          if (beta !== null && gamma !== null) {
-            // Very sensitive tilt detection for mobile
-            // Note: beta is front/back tilt, gamma is left/right tilt
-            
-            // Calculate tilt magnitude with very low threshold
-            const betaMagnitude = Math.abs(beta);
-            const gammaMagnitude = Math.abs(gamma);
-            
-            // Determine movement direction based on tilt
-            // We want movement to feel intuitive based on phone tilt
-            let direction = '';
-            const tiltThreshold = 5; // Very low threshold for detection
-            
-            // Determine the primary direction based on larger tilt
-            if (betaMagnitude > gammaMagnitude && betaMagnitude > tiltThreshold) {
-              // Front/back tilt is dominant
-              direction = beta > 0 ? 'ArrowDown' : 'ArrowUp';
-            } else if (gammaMagnitude > tiltThreshold) {
-              // Left/right tilt is dominant
-              direction = gamma > 0 ? 'ArrowRight' : 'ArrowLeft';
-            }
-            
-            // Only move if enough time has passed since last move
-            // Faster movement for steeper tilts
-            const maxTilt = Math.max(betaMagnitude, gammaMagnitude);
-            const moveDelay = Math.max(100, 500 - maxTilt * 5); // 100-500ms delay
-            
-            if (direction && now - lastMoveTimeRef.current > moveDelay) {
-              console.log(`Gyroscope movement: ${direction} (tilt: ${maxTilt.toFixed(1)}°)`);
-              
-              // Create a synthetic event
-              const syntheticEvent = {
-                key: direction,
-                preventDefault: () => {},
-                stopPropagation: () => {}
-              };
-              
-              // Call the handle key function that moves the player
-              handleKeyDown(syntheticEvent);
-              
-              // Update last move time
-              lastMoveTimeRef.current = now;
-            }
+          // Update physics based on device orientation
+          if (window.physics && window.physics.initialized) {
+            updatePhysics(currentTime);
           }
         }
         
@@ -2554,6 +2511,185 @@ function App() {
   // Add a toggle for debug info
   const toggleDebug = () => {
     setDebugInfo(prev => ({ ...prev, showDebug: !prev.showDebug }));
+  };
+  
+  // Physics update function to handle gravity-based movement
+  const updatePhysics = (currentTime) => {
+    // Exit early if conditions aren't right
+    if (!window.physics || !window.physics.active) {
+      console.warn("⚠️ Physics system inactive or not initialized");
+      return;
+    }
+    
+    // Check if maze is accessible
+    if (!window.maze) {
+      console.warn("⚠️ Maze not accessible for physics update");
+      window.maze = maze;
+      if (!window.maze) return;
+    }
+    
+    // Calculate delta time for smooth animations
+    if (!window.physics.lastTime) {
+      window.physics.lastTime = currentTime;
+      return;
+    }
+    
+    const deltaTime = currentTime - window.physics.lastTime;
+    window.physics.lastTime = currentTime;
+    
+    // Don't update if delta is too large (tab inactive, etc)
+    if (deltaTime > 100) return;
+    
+    // Normalized time step (to make physics frame-rate independent)
+    const timeStep = deltaTime / 16.67; // Normalize to 60fps
+    
+    // Get physics configuration
+    const physics = window.physics;
+    const gravity = physics.gravity || 0.008;
+    const maxSpeed = physics.maxSpeed || 0.25;
+    const friction = physics.friction || 0.98;
+    const restitution = physics.restitution || 0.5;
+    
+    // Get player references
+    const player = playerRef.current;
+    if (!player) {
+      console.error("❌ Player reference is missing");
+      return;
+    }
+    
+    const mesh = player.mesh;
+    if (!mesh) {
+      console.error("❌ Player mesh is missing");
+      return;
+    }
+    
+    // Get current position and velocity
+    const pos = player.position;
+    if (!player.velocity) {
+      player.velocity = { x: 0, z: 0 };
+    }
+    let vel = player.velocity;
+    
+    // Calculate acceleration based on gravity and tilt
+    const gravityX = physics.gravityX || 0;
+    const gravityZ = physics.gravityZ || 0;
+    
+    // Apply acceleration based on gravity - increase strength for better feel
+    vel.x += gravityX * gravity * timeStep * 2;
+    vel.z += gravityZ * gravity * timeStep * 2;
+    
+    // Occasionally apply a test impulse if we're not moving
+    if (currentTime % 5000 < 20 && Math.abs(vel.x) + Math.abs(vel.z) < 0.01) {
+      console.log("🔄 Adding test impulse to verify physics");
+      vel.x += 0.05;
+      vel.z += 0.05;
+    }
+    
+    // Apply friction
+    vel.x *= Math.pow(friction, timeStep);
+    vel.z *= Math.pow(friction, timeStep);
+    
+    // Speed limit check
+    const speed = Math.sqrt(vel.x * vel.x + vel.z * vel.z);
+    if (speed > maxSpeed) {
+      vel.x = (vel.x / speed) * maxSpeed;
+      vel.z = (vel.z / speed) * maxSpeed;
+    }
+    
+    // If velocity is negligible, stop completely (prevents jitter)
+    if (Math.abs(vel.x) < 0.0005) vel.x = 0;
+    if (Math.abs(vel.z) < 0.0005) vel.z = 0;
+    
+    // Skip the rest if we're not moving
+    if (vel.x === 0 && vel.z === 0) return;
+    
+    // Calculate potential new position
+    let newX = pos.x + vel.x * timeStep;
+    let newZ = pos.z + vel.z * timeStep;
+    
+    // Define helper function to check if a position is valid (not a wall)
+    const isPositionValid = (x, z) => {
+      // Convert to maze grid coordinates
+      const gridX = Math.floor(x);
+      const gridZ = Math.floor(z);
+      const MAZE_SIZE = window.MAZE_SIZE || 21;
+      
+      // Check maze bounds and wall status
+      return gridX >= 0 && gridX < MAZE_SIZE && 
+             gridZ >= 0 && gridZ < MAZE_SIZE && 
+             window.maze[gridX][gridZ] === 0;
+    };
+    
+    // Track if we hit any walls for debugging
+    let hitWall = false;
+    
+    // Handle X collision
+    if (isPositionValid(newX, pos.z)) {
+      pos.x = newX;
+    } else {
+      // Hit a wall in X direction, bounce
+      vel.x = -vel.x * restitution;
+      hitWall = true;
+      
+      // Move slightly away from the wall to prevent sticking
+      if (vel.x > 0) {
+        pos.x = Math.floor(pos.x) + 0.95; // Move slightly away from right wall
+      } else {
+        pos.x = Math.ceil(pos.x) - 0.05; // Move slightly away from left wall
+      }
+    }
+    
+    // Handle Z collision
+    if (isPositionValid(pos.x, newZ)) {
+      pos.z = newZ;
+    } else {
+      // Hit a wall in Z direction, bounce
+      vel.z = -vel.z * restitution;
+      hitWall = true;
+      
+      // Move slightly away from the wall to prevent sticking
+      if (vel.z > 0) {
+        pos.z = Math.floor(pos.z) + 0.95; // Move slightly away from bottom wall
+      } else {
+        pos.z = Math.ceil(pos.z) - 0.05; // Move slightly away from top wall
+      }
+    }
+    
+    // Update debug info with latest values
+    setDebugInfo(prev => ({
+      ...prev,
+      velocity: { x: vel.x, z: vel.z },
+      position: { x: pos.x, z: pos.z }
+    }));
+    
+    // Update mesh position
+    mesh.position.x = pos.x * 2;
+    mesh.position.z = pos.z * 2;
+    
+    // Update player direction based on velocity
+    if (speed > 0.01) {
+      const angle = Math.atan2(vel.x, vel.z);
+      player.mesh.rotation.y = angle;
+      player.direction.set(vel.x, 0, vel.z).normalize();
+    }
+    
+    // Check for victory condition
+    const MAZE_SIZE = window.MAZE_SIZE || 21;
+    if (Math.floor(pos.x) === MAZE_SIZE - 1 && Math.floor(pos.z) === MAZE_SIZE - 2) {
+      console.log("🏆 Victory detected in physics update!");
+      celebrate();
+    }
+    
+    // Log physics data occasionally or when hitting walls
+    if ((physics.debug && currentTime % 2000 < 20) || hitWall) {
+      console.log(
+        `🔮 Physics: pos(${pos.x.toFixed(2)},${pos.z.toFixed(2)}) ` +
+        `vel(${vel.x.toFixed(4)},${vel.z.toFixed(4)}) ` +
+        `grav(${gravityX.toFixed(2)},${gravityZ.toFixed(2)}) ` +
+        `speed: ${speed.toFixed(3)}` +
+        (hitWall ? " 💥 WALL COLLISION" : "")
+      );
+    }
   };
   
   return (
