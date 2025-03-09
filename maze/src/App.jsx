@@ -799,12 +799,13 @@ function App() {
 
       // Generate maze using DFS algorithm
       const generateMaze = () => {
-        // Skip maze generation if the game has been won and we have an existing maze
-        if (hasWon && mazeRef.current) {
-          console.log('Game has been won, preserving existing maze')
-          return
+        // Reset the maze
+        for (let x = 0; x < MAZE_SIZE; x++) {
+          for (let z = 0; z < MAZE_SIZE; z++) {
+            maze[x][z] = 1
+          }
         }
-        
+
         console.log('Generating new maze')
         
         // Fill the maze with walls
@@ -842,41 +843,76 @@ function App() {
         
         console.log('Maze generated with entrance at (0,1) and exit at (' + (MAZE_SIZE-1) + ',' + (MAZE_SIZE-2) + ')')
         
-        // Verify path exists
-        const visited = new Set()
-        const pathExists = (pos) => {
-          const [x, z] = pos
-          if (x === MAZE_SIZE-2 && z === MAZE_SIZE-2) return true
-          visited.add(`${x},${z}`)
-          
-          const directions = [[0, 1], [1, 0], [0, -1], [-1, 0]]
-          for (const [dx, dz] of directions) {
-            const newX = x + dx
-            const newZ = z + dz
-            if (isInBounds(newX, newZ) && maze[newX][newZ] === 0 && !visited.has(`${newX},${newZ}`)) {
-              if (pathExists([newX, newZ])) return true
-            }
+        // Store maze globally for physics engine
+        window.maze = maze;
+        window.MAZE_SIZE = MAZE_SIZE;
+        
+        // Log first few rows of maze for debugging
+        console.log("Maze first 5 rows:");
+        for (let z = 0; z < 5; z++) {
+          let row = "";
+          for (let x = 0; x < MAZE_SIZE; x++) {
+            row += maze[x][z] === 0 ? "." : "#";
           }
-          return false
+          console.log(row);
         }
         
-        if (!pathExists([1, 1])) {
-          console.log('No path found from start to exit, regenerating maze')
+        // Verify path exists
+        if (!pathExists({x: 0, z: 1})) {
+          console.log('No path exists, regenerating maze')
           generateMaze()
-        } else {
-          console.log('Valid path found from start to exit')
+        }
+      }
+      
+      // Update the initialize physics function to properly grab the maze
+      const initializePhysics = () => {
+        console.log("⚡ Initializing physics system");
+        
+        // Ensure maze is available
+        if (!window.maze && maze) {
+          console.log("Storing maze data for physics engine");
+          window.maze = maze;
+          window.MAZE_SIZE = MAZE_SIZE;
         }
         
-        // Store the generated maze in the ref for future use
-        mazeRef.current = maze
+        // Set up global physics config
+        window.physics = {
+          gravity: 0.008,      // Increased gravity strength
+          maxSpeed: 0.25,      // Slightly higher max speed
+          friction: 0.98,      // Surface friction (air/ground)
+          restitution: 0.5,    // Bounciness on collision
+          active: true,        // Whether physics is currently running
+          debug: true,         // Show debug logs
+          lastTime: 0,         // Time tracking for frame rate independence
+          orientation: {       // Store orientation data
+            beta: 0,
+            gamma: 0,
+          },
+          gravityX: 0,         // Current gravity vector X
+          gravityZ: 0,         // Current gravity vector Z
+          initialized: true    // Flag to indicate physics is ready
+        };
         
-        // Store the maze in the window object for global access
-        window.maze = maze
-        window.MAZE_SIZE = MAZE_SIZE
+        // Reset player physics properties
+        if (playerRef.current) {
+          console.log("Resetting player physics properties");
+          playerRef.current.velocity = { x: 0, z: 0 };
+          playerRef.current.acceleration = { x: 0, z: 0 };
+          playerRef.current.mass = 1;
+          playerRef.current.lastUpdateTime = performance.now();
+          
+          // Add a test impulse immediately to see if physics works at all
+          if (playerRef.current.velocity) {
+            console.log("💥 Adding immediate test impulse of 0.05");
+            playerRef.current.velocity.x = 0.05;
+            playerRef.current.velocity.z = 0.05;
+          }
+        } else {
+          console.warn("Player reference not available during physics initialization");
+        }
         
-        console.log('Maze generated and stored globally for physics')
-      }
-      console.log('Maze generation function created')
+        console.log("⚡ Physics system initialized with gravity:", window.physics.gravity);
+      };
 
       // Create walls for the maze
       const createWalls = () => {
@@ -2158,6 +2194,13 @@ function App() {
   const initializePhysics = () => {
     console.log("⚡ Initializing physics system");
     
+    // Ensure maze is available
+    if (!window.maze && maze) {
+      console.log("Storing maze data for physics engine");
+      window.maze = maze;
+      window.MAZE_SIZE = MAZE_SIZE;
+    }
+    
     // Set up global physics config
     window.physics = {
       gravity: 0.008,      // Increased gravity strength
@@ -2178,76 +2221,23 @@ function App() {
     
     // Reset player physics properties
     if (playerRef.current) {
+      console.log("Resetting player physics properties");
       playerRef.current.velocity = { x: 0, z: 0 };
       playerRef.current.acceleration = { x: 0, z: 0 };
       playerRef.current.mass = 1;
       playerRef.current.lastUpdateTime = performance.now();
-    }
-    
-    // Add a visual debug element to show tilt direction
-    const addDebugIndicator = () => {
-      if (document.getElementById('physics-debug-indicator')) return;
       
-      const indicator = document.createElement('div');
-      indicator.id = 'physics-debug-indicator';
-      indicator.style.cssText = `
-        position: fixed;
-        top: 10px;
-        right: 10px;
-        width: 100px;
-        height: 100px;
-        background-color: rgba(0, 0, 0, 0.5);
-        border-radius: 50%;
-        z-index: 10000;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-      `;
-      
-      const dot = document.createElement('div');
-      dot.style.cssText = `
-        width: 20px;
-        height: 20px;
-        background-color: #4CAF50;
-        border-radius: 50%;
-        position: absolute;
-        transform: translate(-50%, -50%);
-        left: 50%;
-        top: 50%;
-        transition: all 0.1s ease;
-      `;
-      
-      const text = document.createElement('div');
-      text.style.cssText = `
-        position: absolute;
-        bottom: -25px;
-        left: 0;
-        width: 100%;
-        text-align: center;
-        color: white;
-        font-size: 12px;
-      `;
-      text.innerText = 'Tilt Debug';
-      
-      indicator.appendChild(dot);
-      indicator.appendChild(text);
-      document.body.appendChild(indicator);
-      
-      window.physics.debugDot = dot;
-    };
-    
-    // Only add the debug indicator in debug mode and on mobile
-    if (window.physics.debug && detectMobile()) {
-      setTimeout(addDebugIndicator, 500); // Delay to ensure DOM is ready
+      // Add a test impulse immediately to see if physics works at all
+      if (playerRef.current.velocity) {
+        console.log("💥 Adding immediate test impulse of 0.05");
+        playerRef.current.velocity.x = 0.05;
+        playerRef.current.velocity.z = 0.05;
+      }
+    } else {
+      console.warn("Player reference not available during physics initialization");
     }
     
     console.log("⚡ Physics system initialized with gravity:", window.physics.gravity);
-    
-    // Add a test impulse immediately to see if physics works at all
-    if (playerRef.current) {
-      console.log("💥 Adding immediate test impulse of 0.05");
-      playerRef.current.velocity = { x: 0.05, z: 0.05 };
-    }
   };
 
   // Create both event handlers to catch all possible orientation events
@@ -2524,6 +2514,7 @@ function App() {
     // Check if maze is accessible
     if (!window.maze) {
       console.warn("⚠️ Maze not accessible for physics update");
+      // Store the current maze in the window object
       window.maze = maze;
       if (!window.maze) return;
     }
@@ -2607,23 +2598,30 @@ function App() {
     let newX = pos.x + vel.x * timeStep;
     let newZ = pos.z + vel.z * timeStep;
     
-    // Define helper function to check if a position is valid (not a wall)
+    // Get maze data safely
+    const mazeData = window.maze || maze;
+    const MAZE_SIZE = window.MAZE_SIZE || 21;
+    
+    // Improved helper function to check if a position is valid (not a wall)
     const isPositionValid = (x, z) => {
-      // Convert to maze grid coordinates
+      // Keep player within global maze bounds
+      if (x < 0 || x >= MAZE_SIZE || z < 0 || z >= MAZE_SIZE) {
+        return false;
+      }
+      
+      // Convert to integer grid coordinates
       const gridX = Math.floor(x);
       const gridZ = Math.floor(z);
-      const MAZE_SIZE = window.MAZE_SIZE || 21;
       
-      // Check maze bounds and wall status
-      return gridX >= 0 && gridX < MAZE_SIZE && 
-             gridZ >= 0 && gridZ < MAZE_SIZE && 
-             window.maze[gridX][gridZ] === 0;
+      // Check if this cell is a path (0) or wall (1)
+      // Default to wall (1) if data is undefined
+      return mazeData[gridX] && mazeData[gridX][gridZ] === 0;
     };
     
     // Track if we hit any walls for debugging
     let hitWall = false;
     
-    // Handle X collision
+    // Handle X collision with more precise boundary response
     if (isPositionValid(newX, pos.z)) {
       pos.x = newX;
     } else {
@@ -2631,15 +2629,24 @@ function App() {
       vel.x = -vel.x * restitution;
       hitWall = true;
       
-      // Move slightly away from the wall to prevent sticking
+      // Force the player to stay in a valid cell by checking the direction
       if (vel.x > 0) {
-        pos.x = Math.floor(pos.x) + 0.95; // Move slightly away from right wall
+        // Moving right, so push left
+        pos.x = Math.floor(pos.x) + 0.9;
       } else {
-        pos.x = Math.ceil(pos.x) - 0.05; // Move slightly away from left wall
+        // Moving left, so push right
+        pos.x = Math.ceil(pos.x) - 0.1;
+      }
+      
+      // Double check we're in a valid position
+      if (!isPositionValid(pos.x, pos.z)) {
+        // Emergency fallback - force to last known good position
+        pos.x = Math.floor(pos.x) + 0.5;
+        vel.x = 0;
       }
     }
     
-    // Handle Z collision
+    // Handle Z collision with more precise boundary response
     if (isPositionValid(pos.x, newZ)) {
       pos.z = newZ;
     } else {
@@ -2647,12 +2654,30 @@ function App() {
       vel.z = -vel.z * restitution;
       hitWall = true;
       
-      // Move slightly away from the wall to prevent sticking
+      // Force the player to stay in a valid cell by checking the direction
       if (vel.z > 0) {
-        pos.z = Math.floor(pos.z) + 0.95; // Move slightly away from bottom wall
+        // Moving down, so push up
+        pos.z = Math.floor(pos.z) + 0.9;
       } else {
-        pos.z = Math.ceil(pos.z) - 0.05; // Move slightly away from top wall
+        // Moving up, so push down
+        pos.z = Math.ceil(pos.z) - 0.1;
       }
+      
+      // Double check we're in a valid position
+      if (!isPositionValid(pos.x, pos.z)) {
+        // Emergency fallback - force to last known good position
+        pos.z = Math.floor(pos.z) + 0.5;
+        vel.z = 0;
+      }
+    }
+    
+    // Final safety check - ensure player is in a valid position
+    if (!isPositionValid(pos.x, pos.z)) {
+      console.warn("⚠️ Player out of bounds! Resetting to start position.");
+      pos.x = 1;
+      pos.z = 1;
+      vel.x = 0;
+      vel.z = 0;
     }
     
     // Update debug info with latest values
@@ -2674,10 +2699,13 @@ function App() {
     }
     
     // Check for victory condition
-    const MAZE_SIZE = window.MAZE_SIZE || 21;
     if (Math.floor(pos.x) === MAZE_SIZE - 1 && Math.floor(pos.z) === MAZE_SIZE - 2) {
       console.log("🏆 Victory detected in physics update!");
-      celebrate();
+      if (typeof celebrate === 'function') {
+        celebrate();
+      } else if (gameFunctionsRef.current.celebrate) {
+        gameFunctionsRef.current.celebrate();
+      }
     }
     
     // Log physics data occasionally or when hitting walls
