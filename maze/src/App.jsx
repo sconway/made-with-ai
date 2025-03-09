@@ -2131,7 +2131,7 @@ function App() {
     return () => clearTimeout(timeoutId);
   }, [showTouchControls]);
 
-  // Update the physics update function to properly handle collisions
+  // Update the physics update function with more robust collision detection
   const updatePlayerPhysics = () => {
     if (!gyroscopeActive || hasWon || isTransitioning) return;
     
@@ -2160,9 +2160,10 @@ function App() {
     const gravityZ = physics.gravityZ || 0;
     
     // Constants for physics calculation
-    const gravity = 0.008;      // Gravity strength
+    const gravity = 0.006;      // Gravity strength
     const friction = 0.97;      // Surface friction - higher for smoother movement
     const bounce = 0.3;         // Bounce factor when hitting walls
+    const playerRadius = 0.4;   // Player radius for collision detection (slightly less than 0.5 for better fit)
     
     // Apply gravity to velocity
     vel.x += gravityX * gravity;
@@ -2175,6 +2176,10 @@ function App() {
     // Only process movement if velocity is significant
     if (Math.abs(vel.x) < 0.0005 && Math.abs(vel.z) < 0.0005) return;
     
+    // Original position before movement
+    const originalX = pos.x;
+    const originalZ = pos.z;
+    
     // Calculate potential new position
     let newX = pos.x + vel.x;
     let newZ = pos.z + vel.z;
@@ -2184,58 +2189,154 @@ function App() {
       console.log(`Physics move: pos(${pos.x.toFixed(2)},${pos.z.toFixed(2)}) vel(${vel.x.toFixed(4)},${vel.z.toFixed(4)}) newPos(${newX.toFixed(2)},${newZ.toFixed(2)})`);
     }
     
-    // Define helper function to check if a position is valid (not a wall)
+    // Enhanced isPositionValid function that checks if a position is valid for the player sphere
     const isPositionValid = (x, z) => {
-      // Convert to maze grid coordinates
-      const gridX = Math.floor(x);
-      const gridZ = Math.floor(z);
+      // Calculate grid cell
+      const cellX = Math.floor(x);
+      const cellZ = Math.floor(z);
       
-      if (gridX < 0 || gridX >= MAZE_SIZE || gridZ < 0 || gridZ >= MAZE_SIZE) {
-        return false; // Out of bounds
+      // Basic bounds check
+      if (cellX < 0 || cellX >= MAZE_SIZE || cellZ < 0 || cellZ >= MAZE_SIZE) {
+        return false;
       }
       
-      return maze[gridX][gridZ] === 0; // 0 = path, 1 = wall
+      // Check current cell first (most common case)
+      if (maze[cellX][cellZ] === 1) {
+        return false; // Current cell is a wall
+      }
+      
+      // Check for proximity to walls by checking nearby cells if we're close to their edges
+      
+      // Position within the cell (0.0 to 1.0)
+      const fracX = x - cellX;
+      const fracZ = z - cellZ;
+      
+      // Check right wall
+      if (fracX + playerRadius > 1.0) {
+        // Check if there's a wall to the right
+        if (cellX + 1 < MAZE_SIZE && maze[cellX + 1][cellZ] === 1) {
+          return false;
+        }
+      }
+      
+      // Check left wall
+      if (fracX - playerRadius < 0.0) {
+        // Check if there's a wall to the left
+        if (cellX - 1 >= 0 && maze[cellX - 1][cellZ] === 1) {
+          return false;
+        }
+      }
+      
+      // Check bottom wall
+      if (fracZ + playerRadius > 1.0) {
+        // Check if there's a wall below
+        if (cellZ + 1 < MAZE_SIZE && maze[cellX][cellZ + 1] === 1) {
+          return false;
+        }
+      }
+      
+      // Check top wall
+      if (fracZ - playerRadius < 0.0) {
+        // Check if there's a wall above
+        if (cellZ - 1 >= 0 && maze[cellX][cellZ - 1] === 1) {
+          return false;
+        }
+      }
+      
+      // Additional diagonal checks for corner cases
+      if (fracX + playerRadius > 1.0 && fracZ + playerRadius > 1.0) {
+        // Bottom-right corner
+        if (cellX + 1 < MAZE_SIZE && cellZ + 1 < MAZE_SIZE && 
+            maze[cellX + 1][cellZ + 1] === 1) {
+          return false;
+        }
+      }
+      
+      if (fracX - playerRadius < 0.0 && fracZ + playerRadius > 1.0) {
+        // Bottom-left corner
+        if (cellX - 1 >= 0 && cellZ + 1 < MAZE_SIZE && 
+            maze[cellX - 1][cellZ + 1] === 1) {
+          return false;
+        }
+      }
+      
+      if (fracX + playerRadius > 1.0 && fracZ - playerRadius < 0.0) {
+        // Top-right corner
+        if (cellX + 1 < MAZE_SIZE && cellZ - 1 >= 0 && 
+            maze[cellX + 1][cellZ - 1] === 1) {
+          return false;
+        }
+      }
+      
+      if (fracX - playerRadius < 0.0 && fracZ - playerRadius < 0.0) {
+        // Top-left corner
+        if (cellX - 1 >= 0 && cellZ - 1 >= 0 && 
+            maze[cellX - 1][cellZ - 1] === 1) {
+          return false;
+        }
+      }
+      
+      return true; // Position is valid
     };
     
-    let hitWall = false;
+    // Track if we hit any walls for physics response
+    let hitWallX = false;
+    let hitWallZ = false;
     
-    // Check X movement
+    // Use a two-step collision check for more accurate movement
+    
+    // 1. First check X movement only
     if (isPositionValid(newX, pos.z)) {
       pos.x = newX;
-      mesh.position.x = newX * 2;
     } else {
       // Hit a wall in X direction, bounce
       vel.x = -vel.x * bounce;
-      hitWall = true;
+      hitWallX = true;
       
-      // Move slightly away from the wall to prevent sticking
+      // Move away from the wall - find the maximum valid position
       if (vel.x > 0) {
-        pos.x = Math.floor(pos.x) + 0.9; // Near but not touching the right wall
+        // Moving right, find the rightmost valid position
+        let validX = Math.floor(pos.x) + 1.0 - playerRadius - 0.01;
+        pos.x = Math.min(validX, pos.x);
       } else {
-        pos.x = Math.ceil(pos.x) - 0.1; // Near but not touching the left wall
+        // Moving left, find the leftmost valid position
+        let validX = Math.ceil(pos.x - 1.0) + playerRadius + 0.01;
+        pos.x = Math.max(validX, pos.x);
       }
-      
-      mesh.position.x = pos.x * 2;
     }
     
-    // Check Z movement
+    // 2. Then check Z movement (with updated X position)
     if (isPositionValid(pos.x, newZ)) {
       pos.z = newZ;
-      mesh.position.z = newZ * 2;
     } else {
       // Hit a wall in Z direction, bounce
       vel.z = -vel.z * bounce;
-      hitWall = true;
+      hitWallZ = true;
       
-      // Move slightly away from the wall to prevent sticking
+      // Move away from the wall - find the maximum valid position
       if (vel.z > 0) {
-        pos.z = Math.floor(pos.z) + 0.9; // Near but not touching the bottom wall
+        // Moving down, find the lowest valid position
+        let validZ = Math.floor(pos.z) + 1.0 - playerRadius - 0.01;
+        pos.z = Math.min(validZ, pos.z);
       } else {
-        pos.z = Math.ceil(pos.z) - 0.1; // Near but not touching the top wall
+        // Moving up, find the highest valid position
+        let validZ = Math.ceil(pos.z - 1.0) + playerRadius + 0.01;
+        pos.z = Math.max(validZ, pos.z);
       }
-      
-      mesh.position.z = pos.z * 2;
     }
+    
+    // Final safety check - if we somehow ended up in an invalid position, revert to original
+    if (!isPositionValid(pos.x, pos.z)) {
+      console.warn(`Invalid position after collision resolution! Reverting to ${originalX.toFixed(2)},${originalZ.toFixed(2)}`);
+      pos.x = originalX;
+      pos.z = originalZ;
+      vel.x = 0;
+      vel.z = 0;
+    }
+    
+    // Update mesh position
+    mesh.position.x = pos.x * 2;
+    mesh.position.z = pos.z * 2;
     
     // Update player direction based on velocity
     if (Math.abs(vel.x) > 0.01 || Math.abs(vel.z) > 0.01) {
@@ -2252,7 +2353,7 @@ function App() {
     }
     
     // Log collision for debugging
-    if (hitWall) {
+    if (hitWallX || hitWallZ) {
       console.log(`Wall collision! pos(${pos.x.toFixed(2)},${pos.z.toFixed(2)}) vel(${vel.x.toFixed(4)},${vel.z.toFixed(4)})`);
     }
     
@@ -2443,18 +2544,8 @@ function App() {
     }
   };
 
-  // Update the device orientation handler for more natural controls
+  // Update the device orientation handler for more responsive controls
   const handleDeviceOrientation = (event) => {
-    // Update event counter for debugging
-    setDebugInfo(prev => ({
-      ...prev,
-      eventCount: prev.eventCount + 1,
-      lastUpdate: Date.now(),
-      eventType: 'orientation',
-      beta: event.beta !== null ? parseFloat(event.beta.toFixed(2)) : "null",
-      gamma: event.gamma !== null ? parseFloat(event.gamma.toFixed(2)) : "null"
-    }));
-    
     // Skip if orientation event is empty
     if (event.beta === null && event.gamma === null) {
       return;
@@ -2472,11 +2563,6 @@ function App() {
       let beta = event.beta;   // Forward/backward tilt (-180 to 180)
       let gamma = event.gamma; // Left/right tilt (-90 to 90)
       
-      // Log orientation occasionally
-      if (performance.now() % 5000 < 20) {
-        console.log(`Raw orientation: beta=${beta.toFixed(2)}°, gamma=${gamma.toFixed(2)}°, orientation=${window.orientation || 0}°`);
-      }
-
       // Adjust for different device orientations
       if (window.orientation !== undefined) {
         const orientation = window.orientation;
@@ -2509,9 +2595,9 @@ function App() {
       
       // Use a non-linear response curve for more precision at small angles
       // and faster response at steeper angles
-      const maxAngle = 30;     // Full effect at 30 degrees tilt
-      const deadzone = 2;      // Ignore very small tilts to prevent drift
-      const sensitivity = 1.2; // Adjust sensitivity (higher = more responsive)
+      const maxAngle = 25;     // Full effect at 25 degrees tilt (reduced for more sensitivity)
+      const deadzone = 1.5;    // Smaller deadzone for more responsiveness
+      const sensitivity = 1.5; // Higher sensitivity for more responsive controls
       
       let gravityX = 0;
       let gravityZ = 0;
@@ -2520,8 +2606,8 @@ function App() {
       if (Math.abs(gamma) > deadzone) {
         // Apply a non-linear response curve
         const normalizedTilt = Math.min(Math.abs(gamma) - deadzone, maxAngle - deadzone) / (maxAngle - deadzone);
-        // Use a quadratic curve for smoother control: x^2 shape for more precision at small angles
-        const response = normalizedTilt * normalizedTilt * sensitivity;
+        // Use a power curve for more responsive control
+        const response = Math.pow(normalizedTilt, 1.5) * sensitivity;
         gravityX = response * Math.sign(gamma);
       }
       
@@ -2529,9 +2615,20 @@ function App() {
       if (Math.abs(beta) > deadzone) {
         // Apply a non-linear response curve
         const normalizedTilt = Math.min(Math.abs(beta) - deadzone, maxAngle - deadzone) / (maxAngle - deadzone);
-        // Use a quadratic curve for smoother control
-        const response = normalizedTilt * normalizedTilt * sensitivity;
+        // Use a power curve for more responsive control
+        const response = Math.pow(normalizedTilt, 1.5) * sensitivity;
         gravityZ = response * Math.sign(beta);
+      }
+      
+      // Apply immediate velocity boost for small tilts to make controls feel more responsive
+      if (playerRef.current && playerRef.current.velocity) {
+        const responsiveBoost = 0.001;
+        if (Math.abs(gravityX) > 0.01 && Math.abs(playerRef.current.velocity.x) < 0.01) {
+          playerRef.current.velocity.x += gravityX * responsiveBoost;
+        }
+        if (Math.abs(gravityZ) > 0.01 && Math.abs(playerRef.current.velocity.z) < 0.01) {
+          playerRef.current.velocity.z += gravityZ * responsiveBoost;
+        }
       }
       
       // Store gravity in physics system
@@ -2542,7 +2639,12 @@ function App() {
         // Update debug info
         setDebugInfo(prev => ({
           ...prev,
-          gravity: { x: gravityX, z: gravityZ }
+          beta: parseFloat(beta.toFixed(2)),
+          gamma: parseFloat(gamma.toFixed(2)),
+          gravity: { x: gravityX, z: gravityZ },
+          eventCount: prev.eventCount + 1,
+          lastUpdate: Date.now(),
+          eventType: 'orientation'
         }));
       }
       
@@ -2551,12 +2653,71 @@ function App() {
     }
   };
 
-  // Update the debug overlay to include more information
+  // Update the debug overlay with better visualization
   const DebugOverlay = () => {
     const { beta, gamma, velocity, gravity, eventCount, lastUpdate, eventType, position } = debugInfo;
     const timeSinceUpdate = Date.now() - lastUpdate;
-
-  return (
+    
+    // Calculate a color representing the intensity of movement
+    const velocityMagnitude = Math.sqrt((velocity.x * velocity.x) + (velocity.z * velocity.z));
+    const velocityColor = velocityMagnitude > 0.01 ? 
+      `rgb(${Math.min(255, Math.floor(velocityMagnitude * 2000))}, ${Math.min(255, Math.floor(255 - velocityMagnitude * 500))}, 0)` : 
+      '#4CAF50';
+      
+    // Helper function to render a tilt indicator
+    const TiltIndicator = () => {
+      const size = 60;
+      const centerX = size / 2;
+      const centerY = size / 2;
+      const radius = size * 0.4;
+      
+      // Calculate ball position from gravity
+      const ballX = centerX + (gravity.x * radius * 1.8);
+      const ballY = centerY + (gravity.z * radius * 1.8);
+      
+      return (
+        <div style={{ 
+          position: 'relative', 
+          width: size, 
+          height: size, 
+          backgroundColor: 'rgba(0,0,0,0.3)',
+          borderRadius: '50%',
+          margin: '5px auto'
+        }}>
+          {/* Center crosshair */}
+          <div style={{ 
+            position: 'absolute', 
+            left: centerX - 0.5, 
+            top: 0, 
+            width: 1, 
+            height: size, 
+            backgroundColor: 'rgba(255,255,255,0.3)' 
+          }} />
+          <div style={{ 
+            position: 'absolute', 
+            left: 0, 
+            top: centerY - 0.5, 
+            width: size, 
+            height: 1, 
+            backgroundColor: 'rgba(255,255,255,0.3)' 
+          }} />
+          
+          {/* Ball indicator */}
+          <div style={{ 
+            position: 'absolute', 
+            width: 10, 
+            height: 10, 
+            borderRadius: '50%', 
+            backgroundColor: velocityColor,
+            transform: `translate(${ballX - 5}px, ${ballY - 5}px)`,
+            transition: 'transform 0.1s ease-out, background-color 0.2s',
+            boxShadow: '0 0 5px rgba(0,0,0,0.3)'
+          }} />
+        </div>
+      );
+    };
+    
+    return (
       <div style={{
         position: 'fixed',
         top: 10,
@@ -2571,6 +2732,9 @@ function App() {
         fontFamily: 'monospace'
       }}>
         <h3 style={{ margin: '0 0 8px 0', borderBottom: '1px solid #666' }}>📱 Device Debug</h3>
+        
+        <TiltIndicator />
+        
         <div style={{ display: 'flex', flexDirection: 'column', gap: '5px' }}>
           <div>
             <span style={{ color: '#8cf' }}>Event Type: </span>
@@ -2580,34 +2744,29 @@ function App() {
             <span style={{ marginLeft: '5px', color: timeSinceUpdate < 200 ? '#8f8' : timeSinceUpdate < 1000 ? '#ff8' : '#f88' }}>
               {timeSinceUpdate < 200 ? '●' : timeSinceUpdate < 1000 ? '○' : '✕'}
             </span>
-      </div>
-          <div>
-            <span style={{ color: '#8cf' }}>Gyro Beta: </span>
-            <span style={{ color: Math.abs(beta) > 5 ? '#f88' : '#8f8' }}>{beta}°</span>
           </div>
           <div>
-            <span style={{ color: '#8cf' }}>Gyro Gamma: </span>
-            <span style={{ color: Math.abs(gamma) > 5 ? '#f88' : '#8f8' }}>{gamma}°</span>
-          </div>
-          <div>
-            <span style={{ color: '#8cf' }}>Gravity: </span>
-            <span style={{ color: Math.abs(gravity.x) + Math.abs(gravity.z) > 0.05 ? '#f88' : '#8f8' }}>
-              X: {gravity.x?.toFixed(4) || 0}, Z: {gravity.z?.toFixed(4) || 0}
+            <span style={{ color: '#8cf' }}>Tilt: </span>
+            <span>
+              β:{beta}° γ:{gamma}°
             </span>
           </div>
           <div>
             <span style={{ color: '#8cf' }}>Velocity: </span>
-            <span style={{ color: Math.abs(velocity.x) + Math.abs(velocity.z) > 0.01 ? '#f88' : '#8f8' }}>
-              X: {velocity.x?.toFixed(4) || 0}, Z: {velocity.z?.toFixed(4) || 0}
+            <span style={{ 
+              color: velocityColor,
+              fontWeight: velocityMagnitude > 0.01 ? 'bold' : 'normal'
+            }}>
+              {velocity.x?.toFixed(3) || 0}, {velocity.z?.toFixed(3) || 0}
             </span>
           </div>
           <div>
             <span style={{ color: '#8cf' }}>Position: </span>
             <span>
-              X: {position?.x?.toFixed(2) || '?'}, Z: {position?.z?.toFixed(2) || '?'}
+              ({position?.x?.toFixed(1) || '?'}, {position?.z?.toFixed(1) || '?'})
             </span>
           </div>
-          <button
+          <button 
             onClick={() => {
               if (playerRef.current) {
                 playerRef.current.velocity = { 
