@@ -2161,13 +2161,13 @@ function App() {
     const gravityX = physics.gravityX || 0;
     const gravityZ = physics.gravityZ || 0;
     
-    // Constants for physics calculation
-    const gravity = 0.008;      // Gravity strength
-    const friction = 0.95;      // Surface friction - increased for smoother movement
-    const bounce = 0.4;         // Bounce factor when hitting walls
-    const playerRadius = 0.40;  // Player radius for collision detection
+    // Physics parameters
+    const gravity = 0.01;       // Higher gravity for more responsive movement
+    const friction = 0.97;      // Surface friction
+    const bounce = 0.5;         // Bounciness when hitting walls
+    const playerRadius = 0.45;  // Player radius for collision
     
-    // Apply gravity to velocity
+    // Apply gravity-based acceleration
     vel.x += gravityX * gravity;
     vel.z += gravityZ * gravity;
     
@@ -2175,227 +2175,135 @@ function App() {
     vel.x *= friction;
     vel.z *= friction;
     
-    // Only process movement if velocity is significant
-    if (Math.abs(vel.x) < 0.0003 && Math.abs(vel.z) < 0.0003) return;
+    // Skip update if velocity is too small
+    if (Math.abs(vel.x) < 0.0002 && Math.abs(vel.z) < 0.0002) return;
     
-    // Store original position before any movement
+    // Original position
     const originalX = pos.x;
     const originalZ = pos.z;
     
-    // Calculate potential new position
+    // Calculate new position
     let newX = pos.x + vel.x;
     let newZ = pos.z + vel.z;
     
-    // Track collisions for debugging
+    // Simple and efficient collision detection
+    const isWall = (cellX, cellZ) => {
+      if (cellX < 0 || cellX >= MAZE_SIZE || cellZ < 0 || cellZ >= MAZE_SIZE) {
+        return true; // Out of bounds
+      }
+      return maze[cellX][cellZ] === 1; // 1 = Wall
+    };
+    
+    // For collision tracking
     let collision = false;
     let collisionEdge = '';
-    let xCollisions, zCollisions;
     
-    // Improved collision detection system
-    const isWall = (gridX, gridZ) => {
-      if (gridX < 0 || gridX >= MAZE_SIZE || gridZ < 0 || gridZ >= MAZE_SIZE) {
-        return true; // Out of bounds is treated as a wall
-      }
-      return maze[gridX][gridZ] === 1; // 1 = wall
-    };
+    // For more accurate collisions, test edges with the player radius
     
-    // Check all four corners of the current cell and neighboring cells
-    const getWallCollisions = (x, z) => {
-      // Get the cell coordinates
-      const cellX = Math.floor(x);
-      const cellZ = Math.floor(z);
-      
-      // Calculate position within cell (0 to 1)
-      const fracX = x - cellX;
-      const fracZ = z - cellZ;
-      
-      // Distances from player center to cell edges
-      const distToRightEdge = 1.0 - fracX;
-      const distToLeftEdge = fracX;
-      const distToBottomEdge = 1.0 - fracZ;
-      const distToTopEdge = fracZ;
-      
-      // Check collisions with each possible wall
-      const collisions = {
-        right: false,  // Right edge of current cell
-        left: false,   // Left edge of current cell
-        bottom: false, // Bottom edge of current cell
-        top: false,    // Top edge of current cell
-        
-        rightWall: isWall(cellX + 1, cellZ), // Is there a wall to the right?
-        leftWall: isWall(cellX - 1, cellZ),  // Is there a wall to the left?
-        bottomWall: isWall(cellX, cellZ + 1), // Is there a wall below?
-        topWall: isWall(cellX, cellZ - 1),   // Is there a wall above?
-        
-        // Diagonal walls for corner collisions
-        topLeftWall: isWall(cellX - 1, cellZ - 1),
-        topRightWall: isWall(cellX + 1, cellZ - 1),
-        bottomLeftWall: isWall(cellX - 1, cellZ + 1),
-        bottomRightWall: isWall(cellX + 1, cellZ + 1)
-      };
-      
-      // Check if we're colliding with walls
-      if (collisions.rightWall && distToRightEdge < playerRadius) {
-        collisions.right = true;
-      }
-      
-      if (collisions.leftWall && distToLeftEdge < playerRadius) {
-        collisions.left = true;
-      }
-      
-      if (collisions.bottomWall && distToBottomEdge < playerRadius) {
-        collisions.bottom = true;
-      }
-      
-      if (collisions.topWall && distToTopEdge < playerRadius) {
-        collisions.top = true;
-      }
-      
-      // Check corner collisions (trickier)
-      // Top-left corner
-      if (collisions.topLeftWall && !collisions.topWall && !collisions.leftWall) {
-        const cornerX = cellX;
-        const cornerZ = cellZ;
-        const distToCornerSq = Math.pow(x - cornerX, 2) + Math.pow(z - cornerZ, 2);
-        if (distToCornerSq < playerRadius * playerRadius) {
-          collisions.topLeft = true;
-        }
-      }
-      
-      // Top-right corner
-      if (collisions.topRightWall && !collisions.topWall && !collisions.rightWall) {
-        const cornerX = cellX + 1;
-        const cornerZ = cellZ;
-        const distToCornerSq = Math.pow(x - cornerX, 2) + Math.pow(z - cornerZ, 2);
-        if (distToCornerSq < playerRadius * playerRadius) {
-          collisions.topRight = true;
-        }
-      }
-      
-      // Bottom-left corner
-      if (collisions.bottomLeftWall && !collisions.bottomWall && !collisions.leftWall) {
-        const cornerX = cellX;
-        const cornerZ = cellZ + 1;
-        const distToCornerSq = Math.pow(x - cornerX, 2) + Math.pow(z - cornerZ, 2);
-        if (distToCornerSq < playerRadius * playerRadius) {
-          collisions.bottomLeft = true;
-        }
-      }
-      
-      // Bottom-right corner
-      if (collisions.bottomRightWall && !collisions.bottomWall && !collisions.rightWall) {
-        const cornerX = cellX + 1;
-        const cornerZ = cellZ + 1;
-        const distToCornerSq = Math.pow(x - cornerX, 2) + Math.pow(z - cornerZ, 2);
-        if (distToCornerSq < playerRadius * playerRadius) {
-          collisions.bottomRight = true;
-        }
-      }
-      
-      return collisions;
-    };
+    // Get the cell the player is in
+    const cellX = Math.floor(pos.x);
+    const cellZ = Math.floor(pos.z);
     
-    // First, check if the current cell is a wall (shouldn't happen, but just in case)
+    // Position within the cell (0 to 1)
+    const fracX = pos.x - cellX;
+    const fracZ = pos.z - cellZ;
+    
+    // Try to move in X direction
+    pos.x = newX;
+    
+    // Check if new position is valid
+    const newCellX = Math.floor(pos.x);
+    const newFracX = pos.x - newCellX;
+    
+    // Wall collision in X direction
+    let wallX = false;
+    
+    // Right wall check
+    if (vel.x > 0 && newCellX + 1 < MAZE_SIZE && isWall(newCellX + 1, Math.floor(pos.z))) {
+      const distToWall = (newCellX + 1) - pos.x;
+      if (distToWall < playerRadius) {
+        wallX = true;
+        collision = true;
+        collisionEdge += 'R';
+        pos.x = newCellX + 1 - playerRadius - 0.01;
+        vel.x = -vel.x * bounce; // Bounce
+      }
+    } 
+    // Left wall check
+    else if (vel.x < 0 && newCellX >= 0 && isWall(newCellX, Math.floor(pos.z))) {
+      const distToWall = pos.x - newCellX;
+      if (distToWall < playerRadius) {
+        wallX = true;
+        collision = true;
+        collisionEdge += 'L';
+        pos.x = newCellX + playerRadius + 0.01;
+        vel.x = -vel.x * bounce; // Bounce
+      }
+    }
+    
+    // Try to move in Z direction
+    pos.z = newZ;
+    
+    // Check if new position is valid
+    const newCellZ = Math.floor(pos.z);
+    const newFracZ = pos.z - newCellZ;
+    
+    // Wall collision in Z direction
+    let wallZ = false;
+    
+    // Bottom wall check
+    if (vel.z > 0 && newCellZ + 1 < MAZE_SIZE && isWall(Math.floor(pos.x), newCellZ + 1)) {
+      const distToWall = (newCellZ + 1) - pos.z;
+      if (distToWall < playerRadius) {
+        wallZ = true;
+        collision = true;
+        collisionEdge += 'B';
+        pos.z = newCellZ + 1 - playerRadius - 0.01;
+        vel.z = -vel.z * bounce; // Bounce
+      }
+    } 
+    // Top wall check
+    else if (vel.z < 0 && newCellZ >= 0 && isWall(Math.floor(pos.x), newCellZ)) {
+      const distToWall = pos.z - newCellZ;
+      if (distToWall < playerRadius) {
+        wallZ = true;
+        collision = true;
+        collisionEdge += 'T';
+        pos.z = newCellZ + playerRadius + 0.01;
+        vel.z = -vel.z * bounce; // Bounce
+      }
+    }
+    
+    // Diagonal wall checks (corner cases)
+    if (isWall(newCellX, newCellZ) && !wallX && !wallZ) {
+      // We hit a diagonal corner
+      collision = true;
+      collisionEdge += 'Diag';
+      
+      // Bounce back
+      vel.x = -vel.x * bounce;
+      vel.z = -vel.z * bounce;
+      
+      // Move back to avoid getting stuck
+      pos.x = originalX;
+      pos.z = originalZ;
+    }
+    
+    // Safety check - if we ended up in a wall, revert to original position
     if (isWall(Math.floor(pos.x), Math.floor(pos.z))) {
-      console.warn("Player is inside a wall! Resetting to entrance.");
-      resetPlayerPosition();
-      return;
-    }
-    
-    // Move in X direction first
-    if (vel.x !== 0) {
-      pos.x = newX; // Try moving
-      
-      // Check for collisions after moving
-      xCollisions = getWallCollisions(pos.x, pos.z);
-      
-      // Check for wall collisions
-      if (xCollisions.right || xCollisions.left || 
-          xCollisions.topRight || xCollisions.topLeft || 
-          xCollisions.bottomRight || xCollisions.bottomLeft) {
-        // Mark collision for debugging
-        collision = true;
-        if (xCollisions.right) collisionEdge += 'R';
-        if (xCollisions.left) collisionEdge += 'L';
-        if (xCollisions.topRight) collisionEdge += 'TR';
-        if (xCollisions.topLeft) collisionEdge += 'TL';
-        if (xCollisions.bottomRight) collisionEdge += 'BR';
-        if (xCollisions.bottomLeft) collisionEdge += 'BL';
-        
-        // Collision occurred - calculate how to resolve it
-        if (vel.x > 0 && (xCollisions.right || xCollisions.topRight || xCollisions.bottomRight)) {
-          // Moving right, hit a right wall
-          pos.x = Math.floor(pos.x) + (1.0 - playerRadius - 0.01);
-        } else if (vel.x < 0 && (xCollisions.left || xCollisions.topLeft || xCollisions.bottomLeft)) {
-          // Moving left, hit a left wall
-          pos.x = Math.ceil(pos.x) + playerRadius + 0.01;
-        }
-        
-        // Bounce
-        vel.x = -vel.x * bounce;
-      }
-    }
-    
-    // Then move in Z direction (with updated X position)
-    if (vel.z !== 0) {
-      pos.z = newZ; // Try moving
-      
-      // Check for collisions after moving
-      zCollisions = getWallCollisions(pos.x, pos.z);
-      
-      // Check for wall collisions
-      if (zCollisions.top || zCollisions.bottom || 
-          zCollisions.topRight || zCollisions.topLeft || 
-          zCollisions.bottomRight || zCollisions.bottomLeft) {
-        // Mark collision for debugging
-        collision = true;
-        if (zCollisions.top) collisionEdge += 'T';
-        if (zCollisions.bottom) collisionEdge += 'B';
-        if (zCollisions.topRight && !collisionEdge.includes('TR')) collisionEdge += 'TR';
-        if (zCollisions.topLeft && !collisionEdge.includes('TL')) collisionEdge += 'TL';
-        if (zCollisions.bottomRight && !collisionEdge.includes('BR')) collisionEdge += 'BR';
-        if (zCollisions.bottomLeft && !collisionEdge.includes('BL')) collisionEdge += 'BL';
-        
-        // Collision occurred - calculate how to resolve it
-        if (vel.z > 0 && (zCollisions.bottom || zCollisions.bottomLeft || zCollisions.bottomRight)) {
-          // Moving down, hit a bottom wall
-          pos.z = Math.floor(pos.z) + (1.0 - playerRadius - 0.01);
-        } else if (vel.z < 0 && (zCollisions.top || zCollisions.topLeft || zCollisions.topRight)) {
-          // Moving up, hit a top wall
-          pos.z = Math.ceil(pos.z) + playerRadius + 0.01;
-        }
-        
-        // Bounce
-        vel.z = -vel.z * bounce;
-      }
-    }
-    
-    // Final safety check - make sure we're not inside a wall
-    const finalCollisions = getWallCollisions(pos.x, pos.z);
-    if (finalCollisions.right || finalCollisions.left || finalCollisions.top || finalCollisions.bottom ||
-        finalCollisions.topRight || finalCollisions.topLeft || finalCollisions.bottomRight || finalCollisions.bottomLeft) {
-      // Something went wrong with collision resolution - revert to original position
-      console.warn("Failed to resolve collisions properly - reverting position");
       pos.x = originalX;
       pos.z = originalZ;
       vel.x = 0;
       vel.z = 0;
       collision = true;
-      collisionEdge += 'STUCK';
-    }
-    
-    // Check if the current cell is a wall (again, shouldn't happen)
-    if (isWall(Math.floor(pos.x), Math.floor(pos.z))) {
-      console.error("Player ended up inside a wall after movement! Resetting.");
-      resetPlayerPosition();
-      return;
+      collisionEdge += 'Reset';
     }
     
     // Update mesh position
     mesh.position.x = pos.x * 2;
     mesh.position.z = pos.z * 2;
     
-    // Update player direction based on velocity
+    // Face the ball in the direction of movement
     if (Math.abs(vel.x) > 0.01 || Math.abs(vel.z) > 0.01) {
       const angle = Math.atan2(vel.x, vel.z);
       mesh.rotation.y = angle;
@@ -2409,7 +2317,7 @@ function App() {
       celebrate();
     }
     
-    // Update debug info with collision information
+    // Update debug info
     setDebugInfo(prev => ({
       ...prev,
       velocity: { x: vel.x, z: vel.z },
@@ -2419,46 +2327,37 @@ function App() {
     }));
   };
 
-  // Update initializePhysics to reset player position to entrance
+  // Update initializePhysics to ensure player starts at entrance
   const initializePhysics = () => {
     console.log("⚡ Initializing physics system");
     
-    // Set up global physics config
-    window.physics = {
-      gravity: 0.008,      // Gravity strength
-      maxSpeed: 0.25,      // Maximum speed cap
-      friction: 0.96,      // Surface friction (air/ground)
-      restitution: 0.4,    // Bounciness on collision
-      active: true,        // Whether physics is currently running
-      debug: true,         // Show debug logs
-      lastTime: 0,         // Time tracking for frame rate independence
-      orientation: {       // Store orientation data
-        beta: 0,
-        gamma: 0,
-      },
-      gravityX: 0,         // Current gravity vector X
-      gravityZ: 0,         // Current gravity vector Z
-      initialized: true    // Flag to indicate physics is ready
-    };
-    
-    // Reset player to entrance position
+    // Make sure player starts at the entrance
+    // Reset player to entrance position (1,1)
     if (playerRef.current) {
-      // Set initial position to entrance (typically 1,1)
       playerRef.current.position = { x: 1, z: 1 };
-      
-      // Reset velocity
       playerRef.current.velocity = { x: 0, z: 0 };
-      playerRef.current.acceleration = { x: 0, z: 0 };
       
-      // Update mesh if it exists
       if (playerRef.current.mesh) {
-        playerRef.current.mesh.position.x = 1 * 2; // * 2 for scaling
+        playerRef.current.mesh.position.x = 1 * 2;
         playerRef.current.mesh.position.z = 1 * 2;
-        console.log("Reset player mesh position to entrance");
       }
     }
     
-    // Rest of existing function...
+    // Set up global physics config for a physical marble maze feel
+    window.physics = {
+      gravity: 0.01,       // Base gravity strength for responsive movement
+      maxSpeed: 0.3,       // Maximum speed cap
+      friction: 0.97,      // Surface friction (lower = more friction)
+      restitution: 0.5,    // Bounciness on collision
+      active: true,        // Whether physics is currently running
+      debug: true,         // Show debug info
+      lastTime: 0,         // For frame rate independence
+      initialized: true,   // Flag that physics is ready
+      gravityX: 0,         // Current X gravity
+      gravityZ: 0          // Current Z gravity
+    };
+    
+    console.log("Physics initialized - player at entrance position with gravity-based movement");
   };
 
   // Add a helper function to reset player position
@@ -2478,7 +2377,7 @@ function App() {
     }
   };
 
-  // Update the DebugOverlay to include a reset button
+  // Update the TiltIndicator to better visualize gravity direction
   const DebugOverlay = () => {
     const { beta, gamma, velocity, gravity, position, eventCount, lastUpdate, eventType, collision, collisionEdge } = debugInfo;
     const timeSinceUpdate = Date.now() - lastUpdate;
@@ -2489,16 +2388,20 @@ function App() {
       `rgb(${Math.min(255, Math.floor(velocityMagnitude * 2000))}, ${Math.min(255, Math.floor(255 - velocityMagnitude * 500))}, 0)` : 
       '#4CAF50';
       
-    // Helper function to render a tilt indicator
+    // Helper function to render a tilt and gravity indicator
     const TiltIndicator = () => {
-      const size = 60;
+      const size = 80;
       const centerX = size / 2;
       const centerY = size / 2;
-      const radius = size * 0.4;
+      const radius = size * 0.3;
       
       // Calculate ball position from gravity
       const ballX = centerX + (gravity.x * radius * 1.8);
       const ballY = centerY + (gravity.z * radius * 1.8);
+      
+      // Calculate arrow direction from gravity
+      const arrowLength = Math.sqrt(gravity.x * gravity.x + gravity.z * gravity.z) * radius * 1.5;
+      const arrowAngle = Math.atan2(gravity.z, gravity.x);
       
       return (
         <div style={{ 
@@ -2507,7 +2410,8 @@ function App() {
           height: size, 
           backgroundColor: 'rgba(0,0,0,0.3)',
           borderRadius: '50%',
-          margin: '5px auto'
+          margin: '5px auto',
+          border: '1px solid rgba(255,255,255,0.2)'
         }}>
           {/* Center crosshair */}
           <div style={{ 
@@ -2516,7 +2420,7 @@ function App() {
             top: 0, 
             width: 1, 
             height: size, 
-            backgroundColor: 'rgba(255,255,255,0.3)' 
+            backgroundColor: 'rgba(255,255,255,0.2)' 
           }} />
           <div style={{ 
             position: 'absolute', 
@@ -2524,20 +2428,50 @@ function App() {
             top: centerY - 0.5, 
             width: size, 
             height: 1, 
-            backgroundColor: 'rgba(255,255,255,0.3)' 
+            backgroundColor: 'rgba(255,255,255,0.2)' 
           }} />
+          
+          {/* Gravity arrow */}
+          {arrowLength > 5 && (
+            <div style={{
+              position: 'absolute',
+              width: arrowLength,
+              height: 2,
+              backgroundColor: 'rgba(255,100,100,0.8)',
+              transformOrigin: 'left center',
+              transform: `translate(${centerX}px, ${centerY}px) rotate(${arrowAngle}rad)`,
+              borderRadius: '1px'
+            }}>
+              <div style={{
+                position: 'absolute',
+                right: -2,
+                top: -3,
+                width: 0,
+                height: 0,
+                borderTop: '4px solid transparent',
+                borderBottom: '4px solid transparent',
+                borderLeft: '6px solid rgba(255,100,100,0.8)'
+              }} />
+            </div>
+          )}
           
           {/* Ball indicator */}
           <div style={{ 
             position: 'absolute', 
-            width: 10, 
-            height: 10, 
+            width: 16, 
+            height: 16, 
             borderRadius: '50%', 
             backgroundColor: velocityColor,
-            transform: `translate(${ballX - 5}px, ${ballY - 5}px)`,
-            transition: 'transform 0.1s ease-out, background-color 0.2s',
-            boxShadow: '0 0 5px rgba(0,0,0,0.3)'
+            transform: `translate(${ballX - 8}px, ${ballY - 8}px)`,
+            transition: 'transform 0.05s ease-out, background-color 0.1s',
+            boxShadow: '0 0 5px rgba(0,0,0,0.5)'
           }} />
+          
+          {/* Text labels for directions */}
+          <div style={{ position: 'absolute', left: 0, top: centerY - 12, textAlign: 'center', width: 12, fontSize: 10 }}>L</div>
+          <div style={{ position: 'absolute', right: 0, top: centerY - 12, textAlign: 'center', width: 12, fontSize: 10 }}>R</div>
+          <div style={{ position: 'absolute', top: 0, left: centerX - 6, textAlign: 'center', width: 12, fontSize: 10 }}>U</div>
+          <div style={{ position: 'absolute', bottom: 0, left: centerX - 6, textAlign: 'center', width: 12, fontSize: 10 }}>D</div>
         </div>
       );
     };
@@ -2562,18 +2496,17 @@ function App() {
         
         <div style={{ display: 'flex', flexDirection: 'column', gap: '5px' }}>
           <div>
-            <span style={{ color: '#8cf' }}>Event Type: </span>
-            <span style={{ color: timeSinceUpdate < 500 ? '#8f8' : '#f88' }}>
-              {eventType || 'None'} ({eventCount})
-            </span>
-            <span style={{ marginLeft: '5px', color: timeSinceUpdate < 200 ? '#8f8' : timeSinceUpdate < 1000 ? '#ff8' : '#f88' }}>
-              {timeSinceUpdate < 200 ? '●' : timeSinceUpdate < 1000 ? '○' : '✕'}
+            <span style={{ color: '#8cf' }}>Tilt: </span>
+            <span style={{ fontWeight: 'bold' }}>
+              β:{beta}° γ:{gamma}°
             </span>
           </div>
           <div>
-            <span style={{ color: '#8cf' }}>Tilt: </span>
-            <span>
-              β:{beta}° γ:{gamma}°
+            <span style={{ color: '#8cf' }}>Gravity: </span>
+            <span style={{ 
+              color: Math.abs(gravity.x) + Math.abs(gravity.z) > 0.1 ? '#f88' : '#8f8'
+            }}>
+              X:{gravity.x?.toFixed(2) || 0}, Z:{gravity.z?.toFixed(2) || 0}
             </span>
           </div>
           <div>
@@ -2634,7 +2567,7 @@ function App() {
                 cursor: 'pointer'
               }}
             >
-              Reset Position
+              Reset
             </button>
           </div>
         </div>
@@ -2769,6 +2702,11 @@ function App() {
       let beta = event.beta;   // Forward/backward tilt (-180 to 180)
       let gamma = event.gamma; // Left/right tilt (-90 to 90)
       
+      // Log orientation occasionally
+      if (performance.now() % 5000 < 20) {
+        console.log(`Raw orientation: beta=${beta.toFixed(2)}°, gamma=${gamma.toFixed(2)}°`);
+      }
+      
       // Adjust for different device orientations
       if (window.orientation !== undefined) {
         const orientation = window.orientation;
@@ -2795,47 +2733,38 @@ function App() {
         initializePhysics();
       }
       
-      // Apply smoother mapping for better control
-      const maxAngle = 25;     // Full effect at 25 degrees tilt
-      const deadzone = 1.5;    // Smaller deadzone for more responsiveness
-      const sensitivity = 1.5; // Higher sensitivity for more responsive controls
+      // Physics simulation parameters
+      const maxTilt = 30; // Max angle for full tilt gravity
+      const minTilt = 1;  // Min angle for detecting tilt (deadzone)
       
+      // Calculate gravity vector based on tilt (like a real ball in a physical maze)
+      // Beta controls forward/back tilt: positive = tilt forward (downward), negative = tilt backward (upward)
+      // Gamma controls left/right tilt: positive = tilt right, negative = tilt left
+      
+      // Normalize tilt values to -1.0 to 1.0 range with deadzone
       let gravityX = 0;
       let gravityZ = 0;
       
-      // Calculate X gravity from gamma (left-right tilt)
-      if (Math.abs(gamma) > deadzone) {
-        // Apply a non-linear response curve
-        const normalizedTilt = Math.min(Math.abs(gamma) - deadzone, maxAngle - deadzone) / (maxAngle - deadzone);
-        // Use a power curve for more responsive control
-        const response = Math.pow(normalizedTilt, 1.5) * sensitivity;
-        gravityX = response * Math.sign(gamma);
+      // Left-right tilt (X-axis gravity)
+      if (Math.abs(gamma) > minTilt) {
+        // Map from angle to normalized gravity with deadzone
+        gravityX = Math.sign(gamma) * Math.min(1.0, (Math.abs(gamma) - minTilt) / (maxTilt - minTilt));
       }
       
-      // Calculate Z gravity from beta (forward-backward tilt)
-      if (Math.abs(beta) > deadzone) {
-        // Apply a non-linear response curve
-        const normalizedTilt = Math.min(Math.abs(beta) - deadzone, maxAngle - deadzone) / (maxAngle - deadzone);
-        // Use a power curve for more responsive control
-        const response = Math.pow(normalizedTilt, 1.5) * sensitivity;
-        gravityZ = response * Math.sign(beta);
-      }
-      
-      // Apply immediate velocity boost for small tilts to make controls feel more responsive
-      if (playerRef.current && playerRef.current.velocity) {
-        const responsiveBoost = 0.001;
-        if (Math.abs(gravityX) > 0.01 && Math.abs(playerRef.current.velocity.x) < 0.01) {
-          playerRef.current.velocity.x += gravityX * responsiveBoost;
-        }
-        if (Math.abs(gravityZ) > 0.01 && Math.abs(playerRef.current.velocity.z) < 0.01) {
-          playerRef.current.velocity.z += gravityZ * responsiveBoost;
-        }
+      // Forward-backward tilt (Z-axis gravity)
+      if (Math.abs(beta) > minTilt) {
+        // Map from angle to normalized gravity with deadzone
+        gravityZ = Math.sign(beta) * Math.min(1.0, (Math.abs(beta) - minTilt) / (maxTilt - minTilt));
       }
       
       // Store gravity in physics system
       if (window.physics) {
-        window.physics.gravityX = gravityX;
+        // More direct response (less filtering) for better responsiveness
+        window.physics.gravityX = gravityX; 
         window.physics.gravityZ = gravityZ;
+        
+        // For debugging
+        console.log(`Gravity vector: X=${gravityX.toFixed(2)}, Z=${gravityZ.toFixed(2)}`);
         
         // Update debug info
         setDebugInfo(prev => ({
