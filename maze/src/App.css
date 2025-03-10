@@ -12,6 +12,62 @@ html, body {
   overscroll-behavior: none;
 }
 
+/* Force portrait orientation styles */
+@media screen and (orientation: landscape) {
+  html {
+    /* This transform is specifically to hint mobile browsers to use portrait */
+    transform: rotate(-90deg);
+    transform-origin: left top;
+    width: 100vh;
+    height: 100vw;
+    overflow-x: hidden;
+    position: absolute;
+    top: 100%;
+    left: 0;
+  }
+}
+
+/* Orientation message styles */
+.orientation-message {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background-color: rgba(0, 0, 0, 0.9);
+  color: white;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
+  z-index: 1000;
+  padding: 2rem;
+  text-align: center;
+  font-family: Arial, sans-serif;
+}
+
+.orientation-message svg {
+  width: 5rem;
+  height: 5rem;
+  margin-bottom: 1.5rem;
+  animation: rotate 2s infinite ease;
+}
+
+.orientation-message p {
+  font-size: 1.2rem;
+  margin: 0.5rem 0;
+}
+
+/* Animation for the rotation icon */
+@keyframes rotate-device {
+  0%, 100% {
+    transform: rotate(0deg);
+  }
+  50% {
+    transform: rotate(90deg);
+  }
+}
+
 #root {
   position: absolute;
   left: 0;
