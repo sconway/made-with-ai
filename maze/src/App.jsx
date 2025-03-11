@@ -644,7 +644,14 @@ function App() {
       )
       camera.position.set(0, cameraHeight, 0)
       camera.lookAt(0, 0, 0)
-      console.log('Camera set up')
+
+      // Assign camera to cameraRef for use in other functions
+      cameraRef.current = camera;
+
+      // Make camera available globally for debugging
+      window.gameCamera = camera;
+
+      console.log('Camera set up and assigned to cameraRef')
       
       // Check if running on mobile device
       const isMobile = detectMobile()
@@ -882,70 +889,81 @@ function App() {
 
       // Create walls for the maze
       const createWalls = () => {
-        if (!scene) return;
-        
-        // Clear existing walls if any
-        const existingWalls = scene.children.filter(child => child.name === 'wall');
-        existingWalls.forEach(wall => scene.remove(wall));
-        
-        // Maze cell size - use consistent scaling
-        const CELL_SIZE = 2;
-        window.CELL_SIZE = CELL_SIZE; // Make it accessible globally
-        
-        // Materials
-        const wallMaterial = new THREE.MeshStandardMaterial({
-          color: 0x8844aa,
-          roughness: 0.7,
-          metalness: 0.2
-        });
-        
-        // Create wall geometry once and reuse
-        const wallGeometry = new THREE.BoxGeometry(CELL_SIZE, CELL_SIZE, CELL_SIZE);
-        
-        // Debug: log maze data to ensure it's correct
-        console.log("Creating walls with maze data:", mazeRef.current);
-        
-        // Create walls based on maze grid (1 = wall, 0 = path)
-        for (let i = 0; i < MAZE_SIZE; i++) {
-          for (let j = 0; j < MAZE_SIZE; j++) {
-            if (mazeRef.current[i][j] === 1) {
-              const wall = new THREE.Mesh(wallGeometry, wallMaterial);
-              
-              // Important: Set proper wall position using CELL_SIZE
-              // This needs to line up with the collision system
-              wall.position.set(i * CELL_SIZE, 0, j * CELL_SIZE);
-              
-              wall.castShadow = true;
-              wall.receiveShadow = true;
-              wall.name = 'wall';
-              scene.add(wall);
+        // Only clear the maze group if the game hasn't been won
+        // This preserves the walls when the player has completed the maze
+        if (!hasWon || !mazeRef.current) {
+          console.log('Creating new walls for the maze')
+          
+          // Remove all existing objects from the maze group
+        while(mazeGroup.children.length > 0) {
+          const object = mazeGroup.children[0]
+            
+            // Check if the object is a Group (like the player)
+            if (object.isGroup) {
+              // For groups, dispose of each child's geometry and material
+              object.children.forEach(child => {
+                if (child.geometry) child.geometry.dispose()
+                if (child.material) child.material.dispose()
+              })
+            } else {
+              // For regular meshes, dispose of geometry and material directly
+              if (object.geometry) object.geometry.dispose()
+              if (object.material) object.material.dispose()
+            }
+            
+          mazeGroup.remove(object)
+        }
+
+          // Create new walls based on the maze grid
+        for (let x = 0; x < MAZE_SIZE; x++) {
+          for (let z = 0; z < MAZE_SIZE; z++) {
+            if (maze[x][z] === 1) {
+              const wallGeometry = new THREE.BoxGeometry(
+                WALL_THICKNESS,
+                WALL_HEIGHT,
+                WALL_THICKNESS
+              )
+              const wall = new THREE.Mesh(wallGeometry, wallMaterial)
+              wall.position.set(
+                (x - MAZE_SIZE/2) * WALL_THICKNESS,
+                WALL_HEIGHT/2,
+                (z - MAZE_SIZE/2) * WALL_THICKNESS
+              )
+              mazeGroup.add(wall)
+
+              if (x === 0 || x === MAZE_SIZE-1 || z === 0 || z === MAZE_SIZE-1) {
+                if (x < MAZE_SIZE-1 && maze[x+1][z] === 1) {
+                  const horizontalWall = new THREE.Mesh(
+                    new THREE.BoxGeometry(WALL_THICKNESS, WALL_HEIGHT, WALL_THICKNESS),
+                    wallMaterial
+                  )
+                  horizontalWall.position.set(
+                    (x - MAZE_SIZE/2 + 0.5) * WALL_THICKNESS,
+                    WALL_HEIGHT/2,
+                    (z - MAZE_SIZE/2) * WALL_THICKNESS
+                  )
+                  mazeGroup.add(horizontalWall)
+                }
+                
+                if (z < MAZE_SIZE-1 && maze[x][z+1] === 1) {
+                  const verticalWall = new THREE.Mesh(
+                    new THREE.BoxGeometry(WALL_THICKNESS, WALL_HEIGHT, WALL_THICKNESS),
+                    wallMaterial
+                  )
+                  verticalWall.position.set(
+                    (x - MAZE_SIZE/2) * WALL_THICKNESS,
+                    WALL_HEIGHT/2,
+                    (z - MAZE_SIZE/2 + 0.5) * WALL_THICKNESS
+                  )
+                  mazeGroup.add(verticalWall)
+                }
+              }
             }
           }
+          }
+        } else {
+          console.log('Game has been won, preserving existing maze walls')
         }
-        
-        // Add floor
-        const floorGeometry = new THREE.PlaneGeometry(MAZE_SIZE * CELL_SIZE + CELL_SIZE, MAZE_SIZE * CELL_SIZE + CELL_SIZE);
-        const floorMaterial = new THREE.MeshStandardMaterial({
-          color: 0x333333,
-          roughness: 0.9,
-          metalness: 0.1
-        });
-        
-        const floor = new THREE.Mesh(floorGeometry, floorMaterial);
-        floor.rotation.x = -Math.PI / 2;
-        
-        // Center the floor under the maze
-        floor.position.set(
-          (MAZE_SIZE * CELL_SIZE) / 2 - CELL_SIZE/2,
-          -CELL_SIZE/2,
-          (MAZE_SIZE * CELL_SIZE) / 2 - CELL_SIZE/2
-        );
-        
-        floor.receiveShadow = true;
-        floor.name = 'floor';
-        scene.add(floor);
-        
-        console.log(`✓ Maze walls created with CELL_SIZE=${CELL_SIZE}`);
       }
       console.log('Wall creation function created')
 
@@ -1194,8 +1212,9 @@ function App() {
         
         console.log("Creating player...");
         
-        // Cell size for consistent scaling
-        const CELL_SIZE = window.CELL_SIZE || 2;
+        // Get maze parameters
+        const MAZE_SIZE = window.MAZE_SIZE || 21;
+        const WALL_THICKNESS = window.WALL_THICKNESS || 2;
         
         // Create player sphere
         const geometry = new THREE.SphereGeometry(0.4, 32, 32);
@@ -1210,13 +1229,16 @@ function App() {
         mesh.castShadow = true;
         mesh.receiveShadow = true;
         
-        // Set player at entrance (0,1) - IMPORTANT: Multiply by CELL_SIZE
-        // This is critical for the coordinate system alignment
-        // In maze coordinates, the entrance is at (0,1)
-        const entranceX = 0;
+        // Set player at entrance (1,1) in maze coordinates
+        const entranceX = 1;
         const entranceZ = 1;
         
-        mesh.position.set(entranceX * CELL_SIZE, 0, entranceZ * CELL_SIZE);
+        // Convert from maze coordinates to world coordinates
+        const worldX = (entranceX - MAZE_SIZE/2) * WALL_THICKNESS;
+        const worldZ = (entranceZ - MAZE_SIZE/2) * WALL_THICKNESS;
+        
+        // Set the mesh position in world coordinates
+        mesh.position.set(worldX, WALL_THICKNESS/2, worldZ);
         scene.add(mesh);
         
         // Create a pointer direction indicator (optional)
@@ -1228,15 +1250,16 @@ function App() {
         cone.castShadow = true;
         mesh.add(cone);
         
-        // Initialize player properties in physics coordinates
+        // Initialize player properties
         playerRef.current = {
-          position: { x: entranceX, z: entranceZ },  // Physics coordinates
+          position: { x: entranceX, z: entranceZ },  // Physics coordinates (maze grid)
           velocity: { x: 0, z: 0 },
           direction: new THREE.Vector3(0, 0, 1),
+          worldPosition: new THREE.Vector3(worldX, WALL_THICKNESS/2, worldZ), // World coordinates
           mesh: mesh
         };
         
-        console.log(`✓ Player created at entrance (${entranceX},${entranceZ}) with physics coords. Mesh at (${mesh.position.x}, ${mesh.position.z})`);
+        console.log(`Player created at entrance - Maze coords: (${entranceX},${entranceZ}), World coords: (${worldX},${worldZ})`);
         
         return mesh;
       };
@@ -2163,15 +2186,16 @@ function App() {
   const updatePlayerPhysics = () => {
     if (!gyroscopeActive || hasWon || isTransitioning) return;
     
-    // Get maze reference - ensure it's properly loaded
+    // Get maze reference
     const maze = window.maze || mazeRef.current;
     if (!maze) {
-      console.warn("⚠️ Maze not accessible for physics update");
+      console.warn("No maze available for physics update");
       return;
     }
     
+    // Get maze parameters
     const MAZE_SIZE = window.MAZE_SIZE || 21;
-    const CELL_SIZE = window.CELL_SIZE || 2; // Ensure consistent cell size
+    const WALL_THICKNESS = window.WALL_THICKNESS || 2;
     
     const player = playerRef.current;
     const vel = player.velocity;
@@ -2189,7 +2213,7 @@ function App() {
     const gravityZ = physics.gravityZ || 0;
     
     // Physics parameters
-    const gravity = 0.01;       // Gravity strength
+    const gravity = 0.01;       // Higher gravity for more responsive movement
     const friction = 0.97;      // Surface friction
     const bounce = 0.5;         // Bounciness when hitting walls
     const playerRadius = 0.45;  // Player radius for collision
@@ -2213,164 +2237,131 @@ function App() {
     let newX = pos.x + vel.x;
     let newZ = pos.z + vel.z;
     
-    // Debug collision walls
-    window.collisionDebug = window.collisionDebug || {
-      lastLog: 0,
-      walls: []
-    };
-    
-    // Direct access to check if a cell is a wall
+    // Simple and efficient collision detection
     const isWall = (cellX, cellZ) => {
       if (cellX < 0 || cellX >= MAZE_SIZE || cellZ < 0 || cellZ >= MAZE_SIZE) {
-        return true; // Out of bounds treated as walls
+        return true; // Out of bounds
       }
-      
-      if (!maze[cellX]) {
-        console.error(`Maze data error: Row ${cellX} is undefined`);
-        return true; // Treat as wall
-      }
-      
-      if (maze[cellX][cellZ] === undefined) {
-        console.error(`Maze data error: Cell [${cellX}][${cellZ}] is undefined`);
-        return true; // Treat as wall
-      }
-      
-      const isWallCell = maze[cellX][cellZ] === 1;
-      
-      // Add to debug walls when needed
-      if (isWallCell && performance.now() - window.collisionDebug.lastLog < 100) {
-        window.collisionDebug.walls.push([cellX, cellZ]);
-      }
-      
-      return isWallCell;
+      return maze[cellX][cellZ] === 1; // 1 = Wall
     };
     
-    // For collision tracking
+    // Track collision state
     let collision = false;
     let collisionEdge = '';
     
-    // Log walls occasionally 
-    if (performance.now() - window.collisionDebug.lastLog > 5000) {
-      window.collisionDebug.lastLog = performance.now();
-      window.collisionDebug.walls = [];
-      console.log(`🧩 Player position: (${pos.x.toFixed(2)},${pos.z.toFixed(2)}), mesh: (${mesh.position.x.toFixed(2)},${mesh.position.z.toFixed(2)})`);
-    }
+    // For more accurate collisions, test edges with the player radius
     
-    // Multi-point collision detection - more robust approach
-    // Check multiple points around the player sphere
-    const checkCircleCollision = (circleX, circleZ, radius) => {
-      const cellX = Math.floor(circleX);
-      const cellZ = Math.floor(circleZ);
-      
-      // Check the current cell first
-      if (isWall(cellX, cellZ)) {
-        return true;
-      }
-      
-      // Check surrounding cells based on radius
-      // Check right
-      if (circleX + radius > cellX + 1 && isWall(cellX + 1, cellZ)) {
-        return true;
-      }
-      
-      // Check left
-      if (circleX - radius < cellX && isWall(cellX - 1, cellZ)) {
-        return true;
-      }
-      
-      // Check down
-      if (circleZ + radius > cellZ + 1 && isWall(cellX, cellZ + 1)) {
-        return true;
-      }
-      
-      // Check up
-      if (circleZ - radius < cellZ && isWall(cellX, cellZ - 1)) {
-        return true;
-      }
-      
-      // Check corners only if we're close enough
-      const fracX = circleX - cellX;
-      const fracZ = circleZ - cellZ;
-      
-      // Top-left corner
-      if (fracX - radius < 0 && fracZ - radius < 0) {
-        // Distance to corner
-        const distSq = Math.pow(circleX - cellX, 2) + Math.pow(circleZ - cellZ, 2);
-        if (distSq < radius * radius && isWall(cellX - 1, cellZ - 1)) {
-          return true;
-        }
-      }
-      
-      // Top-right corner
-      if (fracX + radius > 1 && fracZ - radius < 0) {
-        const distSq = Math.pow(circleX - (cellX + 1), 2) + Math.pow(circleZ - cellZ, 2);
-        if (distSq < radius * radius && isWall(cellX + 1, cellZ - 1)) {
-          return true;
-        }
-      }
-      
-      // Bottom-left corner
-      if (fracX - radius < 0 && fracZ + radius > 1) {
-        const distSq = Math.pow(circleX - cellX, 2) + Math.pow(circleZ - (cellZ + 1), 2);
-        if (distSq < radius * radius && isWall(cellX - 1, cellZ + 1)) {
-          return true;
-        }
-      }
-      
-      // Bottom-right corner
-      if (fracX + radius > 1 && fracZ + radius > 1) {
-        const distSq = Math.pow(circleX - (cellX + 1), 2) + Math.pow(circleZ - (cellZ + 1), 2);
-        if (distSq < radius * radius && isWall(cellX + 1, cellZ + 1)) {
-          return true;
-        }
-      }
-      
-      return false;
-    };
+    // Get the cell the player is in
+    const cellX = Math.floor(pos.x);
+    const cellZ = Math.floor(pos.z);
     
-    // Move in X direction first and check collisions
-    let oldX = pos.x;
+    // Position within the cell (0 to 1)
+    const fracX = pos.x - cellX;
+    const fracZ = pos.z - cellZ;
+    
+    // Try to move in X direction
     pos.x = newX;
     
-    if (checkCircleCollision(pos.x, pos.z, playerRadius)) {
-      // Collision in X direction
-      collision = true;
-      collisionEdge += vel.x > 0 ? 'R' : 'L';
-      
-      // Restore position and bounce
-      pos.x = oldX;
-      vel.x = -vel.x * bounce;
+    // Check if new position is valid
+    const newCellX = Math.floor(pos.x);
+    const newFracX = pos.x - newCellX;
+    
+    // Wall collision in X direction
+    let wallX = false;
+    
+    // Right wall check
+    if (vel.x > 0 && newCellX + 1 < MAZE_SIZE && isWall(newCellX + 1, Math.floor(pos.z))) {
+      const distToWall = (newCellX + 1) - pos.x;
+      if (distToWall < playerRadius) {
+        wallX = true;
+        collision = true;
+        collisionEdge += 'R';
+        pos.x = newCellX + 1 - playerRadius - 0.01;
+        vel.x = -vel.x * bounce; // Bounce
+      }
+    } 
+    // Left wall check
+    else if (vel.x < 0 && newCellX >= 0 && isWall(newCellX, Math.floor(pos.z))) {
+      const distToWall = pos.x - newCellX;
+      if (distToWall < playerRadius) {
+        wallX = true;
+        collision = true;
+        collisionEdge += 'L';
+        pos.x = newCellX + playerRadius + 0.01;
+        vel.x = -vel.x * bounce; // Bounce
+      }
     }
     
-    // Then move in Z direction and check collisions
-    let oldZ = pos.z;
+    // Try to move in Z direction
     pos.z = newZ;
     
-    if (checkCircleCollision(pos.x, pos.z, playerRadius)) {
-      // Collision in Z direction
-      collision = true;
-      collisionEdge += vel.z > 0 ? 'B' : 'T';
-      
-      // Restore position and bounce
-      pos.z = oldZ;
-      vel.z = -vel.z * bounce;
+    // Check if new position is valid
+    const newCellZ = Math.floor(pos.z);
+    const newFracZ = pos.z - newCellZ;
+    
+    // Wall collision in Z direction
+    let wallZ = false;
+    
+    // Bottom wall check
+    if (vel.z > 0 && newCellZ + 1 < MAZE_SIZE && isWall(Math.floor(pos.x), newCellZ + 1)) {
+      const distToWall = (newCellZ + 1) - pos.z;
+      if (distToWall < playerRadius) {
+        wallZ = true;
+        collision = true;
+        collisionEdge += 'B';
+        pos.z = newCellZ + 1 - playerRadius - 0.01;
+        vel.z = -vel.z * bounce; // Bounce
+      }
+    } 
+    // Top wall check
+    else if (vel.z < 0 && newCellZ >= 0 && isWall(Math.floor(pos.x), newCellZ)) {
+      const distToWall = pos.z - newCellZ;
+      if (distToWall < playerRadius) {
+        wallZ = true;
+        collision = true;
+        collisionEdge += 'T';
+        pos.z = newCellZ + playerRadius + 0.01;
+        vel.z = -vel.z * bounce; // Bounce
+      }
     }
     
-    // Final safety check - if somehow we're in a wall, go back to original position
-    if (checkCircleCollision(pos.x, pos.z, playerRadius)) {
-      console.warn("Player stuck in wall, reverting to original position");
+    // Diagonal wall checks (corner cases)
+    if (isWall(newCellX, newCellZ) && !wallX && !wallZ) {
+      // We hit a diagonal corner
+      collision = true;
+      collisionEdge += 'Diag';
+      
+      // Bounce back
+      vel.x = -vel.x * bounce;
+      vel.z = -vel.z * bounce;
+      
+      // Move back to avoid getting stuck
+      pos.x = originalX;
+      pos.z = originalZ;
+    }
+    
+    // Safety check - if we ended up in a wall, revert to original position
+    if (isWall(Math.floor(pos.x), Math.floor(pos.z))) {
       pos.x = originalX;
       pos.z = originalZ;
       vel.x = 0;
       vel.z = 0;
       collision = true;
-      collisionEdge += 'STUCK';
+      collisionEdge += 'Reset';
     }
     
-    // Update mesh position - use CELL_SIZE for proper scaling
-    // This is the key transformation between physics coordinates and rendering coordinates
-    mesh.position.x = pos.x * CELL_SIZE;
-    mesh.position.z = pos.z * CELL_SIZE;
+    // Update mesh position - convert from maze coordinates to world coordinates
+    // This is the critical transformation that aligns physics with rendering
+    const worldX = (pos.x - MAZE_SIZE/2) * WALL_THICKNESS;
+    const worldZ = (pos.z - MAZE_SIZE/2) * WALL_THICKNESS;
+    
+    // Update the worldPosition vector
+    if (player.worldPosition) {
+      player.worldPosition.set(worldX, WALL_THICKNESS/2, worldZ);
+    }
+    
+    // Update the mesh position
+    mesh.position.copy(player.worldPosition);
     
     // Face the ball in the direction of movement
     if (Math.abs(vel.x) > 0.01 || Math.abs(vel.z) > 0.01) {
@@ -2379,7 +2370,7 @@ function App() {
       player.direction.set(vel.x, 0, vel.z).normalize();
     }
     
-    // Check for victory - exit is at MAZE_SIZE-2, MAZE_SIZE-2
+    // Check for victory
     if (Math.floor(pos.x) === MAZE_SIZE - 2 && Math.floor(pos.z) === MAZE_SIZE - 2) {
       console.log("Victory reached!");
       setHasWon(true);
@@ -2391,65 +2382,91 @@ function App() {
       ...prev,
       velocity: { x: vel.x, z: vel.z },
       position: { x: pos.x, z: pos.z },
-      meshPosition: { x: mesh.position.x, z: mesh.position.z },
+      worldPosition: { x: worldX, z: worldZ },
       collision,
       collisionEdge
     }));
   };
 
-  // Fix initializePhysics to ensure correct player position
+  // Update initializePhysics to ensure player starts at entrance with correct world coordinates
   const initializePhysics = () => {
     console.log("⚡ Initializing physics system");
     
-    const CELL_SIZE = window.CELL_SIZE || 2;
+    // Get maze parameters
+    const MAZE_SIZE = window.MAZE_SIZE || 21;
+    const WALL_THICKNESS = window.WALL_THICKNESS || 2;
     
-    // Make sure player starts at the entrance (0,1)
+    // Make sure player starts at the entrance (1,1) in maze coordinates
     if (playerRef.current) {
-      playerRef.current.position = { x: 0, z: 1 };
+      // Set physics position (maze coordinates)
+      playerRef.current.position = { x: 1, z: 1 };
       playerRef.current.velocity = { x: 0, z: 0 };
       
+      // Calculate the correct world position
+      // Convert from maze coordinates to world coordinates
+      const worldX = (1 - MAZE_SIZE/2) * WALL_THICKNESS;
+      const worldZ = (1 - MAZE_SIZE/2) * WALL_THICKNESS;
+      
+      console.log(`Converting maze coords (1,1) to world coords (${worldX}, ${worldZ})`);
+      
+      // Update worldPosition for correct rendering
+      if (!playerRef.current.worldPosition) {
+        playerRef.current.worldPosition = new THREE.Vector3(worldX, WALL_THICKNESS/2, worldZ);
+      } else {
+        playerRef.current.worldPosition.set(worldX, WALL_THICKNESS/2, worldZ);
+      }
+      
+      // Update mesh position if it exists
       if (playerRef.current.mesh) {
-        // IMPORTANT: Apply correct scaling to mesh position
-        playerRef.current.mesh.position.x = 0 * CELL_SIZE;
-        playerRef.current.mesh.position.z = 1 * CELL_SIZE;
-        console.log(`✓ Player mesh position set to entrance (0,${CELL_SIZE}) in world coords`);
+        playerRef.current.mesh.position.copy(playerRef.current.worldPosition);
+        console.log(`Set player mesh position to world coords: (${playerRef.current.worldPosition.x}, ${playerRef.current.worldPosition.y}, ${playerRef.current.worldPosition.z})`);
       }
     }
     
-    // Set up global physics config
+    // Set up global physics config for a physical marble maze feel
     window.physics = {
-      gravity: 0.01,      // Base gravity strength
-      maxSpeed: 0.3,      // Maximum speed cap
-      friction: 0.97,     // Surface friction
-      restitution: 0.5,   // Bounciness
-      active: true,       // Whether physics is running
-      debug: true,        // Show debug info
-      lastTime: 0,        // For frame rate independence
-      initialized: true,  // Flag that physics is ready
-      gravityX: 0,        // X gravity
-      gravityZ: 0,        // Z gravity
-      cellSize: CELL_SIZE // Store cell size for consistent scaling
+      gravity: 0.01,       // Base gravity strength for responsive movement
+      maxSpeed: 0.3,       // Maximum speed cap
+      friction: 0.97,      // Surface friction (lower = more friction)
+      restitution: 0.5,    // Bounciness on collision
+      active: true,        // Whether physics is currently running
+      debug: true,         // Show debug info
+      lastTime: 0,         // For frame rate independence
+      initialized: true,   // Flag that physics is ready
+      gravityX: 0,         // Current X gravity
+      gravityZ: 0,         // Current Z gravity
+      mazeSize: MAZE_SIZE, // Store maze size for coordinate conversion
+      wallThickness: WALL_THICKNESS // Store wall thickness for coordinate conversion
     };
     
-    console.log(`✓ Physics initialized - player at entrance (0,1) - CELL_SIZE=${CELL_SIZE}`);
+    console.log("Physics initialized - player at entrance position with gravity-based movement");
   };
 
-  // Update resetPlayerPosition to use correct scaling
+  // Update resetPlayerPosition to use correct coordinate transformation
   const resetPlayerPosition = () => {
-    const CELL_SIZE = window.CELL_SIZE || 2;
+    const MAZE_SIZE = window.MAZE_SIZE || 21;
+    const WALL_THICKNESS = window.WALL_THICKNESS || 2;
     
     if (playerRef.current) {
-      // Reset to entrance position (0,1)
-      playerRef.current.position = { x: 0, z: 1 };
+      // Reset to entrance position (1,1) in maze coordinates
+      playerRef.current.position = { x: 1, z: 1 };
       playerRef.current.velocity = { x: 0, z: 0 };
       
-      // Update mesh position with correct scaling
-      if (playerRef.current.mesh) {
-        playerRef.current.mesh.position.x = 0 * CELL_SIZE;
-        playerRef.current.mesh.position.z = 1 * CELL_SIZE;
+      // Calculate the correct world position
+      const worldX = (1 - MAZE_SIZE/2) * WALL_THICKNESS;
+      const worldZ = (1 - MAZE_SIZE/2) * WALL_THICKNESS;
+      
+      // Update worldPosition for correct rendering
+      if (playerRef.current.worldPosition) {
+        playerRef.current.worldPosition.set(worldX, WALL_THICKNESS/2, worldZ);
       }
       
-      console.log(`✓ Player position reset to entrance. Physics (0,1), Mesh (0,${CELL_SIZE})`);
+      // Update mesh position if it exists
+      if (playerRef.current.mesh) {
+        playerRef.current.mesh.position.copy(playerRef.current.worldPosition);
+      }
+      
+      console.log(`Player position reset to entrance. Physics (1,1), World (${worldX}, ${worldZ})`);
     }
   };
 
@@ -2478,8 +2495,8 @@ function App() {
       // Calculate arrow direction from gravity
       const arrowLength = Math.sqrt(gravity.x * gravity.x + gravity.z * gravity.z) * radius * 1.5;
       const arrowAngle = Math.atan2(gravity.z, gravity.x);
-      
-      return (
+
+  return (
         <div style={{ 
           position: 'relative', 
           width: size, 
@@ -2490,8 +2507,8 @@ function App() {
           border: '1px solid rgba(255,255,255,0.2)'
         }}>
           {/* Center crosshair */}
-          <div style={{ 
-            position: 'absolute', 
+      <div style={{
+        position: 'absolute',
             left: centerX - 0.5, 
             top: 0, 
             width: 1, 
@@ -2528,12 +2545,12 @@ function App() {
                 borderBottom: '4px solid transparent',
                 borderLeft: '6px solid rgba(255,100,100,0.8)'
               }} />
-            </div>
+      </div>
           )}
           
           {/* Ball indicator */}
-          <div style={{ 
-            position: 'absolute', 
+        <div style={{
+          position: 'absolute',
             width: 16, 
             height: 16, 
             borderRadius: '50%', 
@@ -2558,7 +2575,7 @@ function App() {
         top: 10,
         left: 10,
         backgroundColor: 'rgba(0,0,0,0.7)',
-        color: 'white',
+          color: 'white',
         padding: '10px',
         borderRadius: '5px',
         fontSize: '14px',
@@ -2608,7 +2625,7 @@ function App() {
           </div>
           
           <div style={{ display: 'flex', gap: '5px', marginTop: '5px' }}>
-            <button 
+          <button
               onClick={() => {
                 if (playerRef.current) {
                   playerRef.current.velocity = { 
@@ -2618,13 +2635,13 @@ function App() {
                   console.log("Manual impulse applied");
                 }
               }}
-              style={{
+            style={{
                 flex: 1,
                 background: '#4CAF50',
-                border: 'none',
+              border: 'none',
                 borderRadius: '3px',
                 padding: '5px',
-                color: 'white',
+              color: 'white',
                 cursor: 'pointer'
               }}
             >
@@ -2644,7 +2661,7 @@ function App() {
               }}
             >
               Reset
-            </button>
+          </button>
           </div>
         </div>
       </div>
@@ -2889,12 +2906,19 @@ function App() {
     const updateVisualizer = () => {
       if (!window.collisionVisualizer || !playerRef.current?.mesh) return;
       
+      // Make sure we have a camera reference
+      if (!cameraRef.current) {
+        console.warn("Camera reference not available for visualizer update");
+        return;
+      }
+      
       // Convert 3D world position to screen coordinates
       const mesh = playerRef.current.mesh;
       const vector = new THREE.Vector3();
       vector.set(mesh.position.x, mesh.position.y, mesh.position.z);
       
-      vector.project(camera);
+      // Use cameraRef.current instead of camera
+      vector.project(cameraRef.current);
       
       const x = (vector.x * 0.5 + 0.5) * window.innerWidth;
       const y = (-(vector.y * 0.5) + 0.5) * window.innerHeight;
@@ -2923,10 +2947,34 @@ function App() {
     };
   }, [debugInfo.showDebug]);
   
-  // Add portrait orientation lock handler near the top of the component
   useEffect(() => {
-    // Lock orientation to portrait for mobile devices
+    // Initialize playerRef if it doesn't exist yet
+    if (!playerRef.current) {
+      playerRef.current = {
+        position: { x: 1, z: 1 },
+        velocity: { x: 0, z: 0 },
+        direction: new THREE.Vector3(0, 0, 1),
+        worldPosition: new THREE.Vector3(2, 0, 2), // Initialize with proper world coordinates
+        mesh: null
+      };
+      console.log("Initialized playerRef with default values including worldPosition");
+    } else if (!playerRef.current.worldPosition) {
+      // Ensure worldPosition exists even if playerRef was created elsewhere
+      playerRef.current.worldPosition = new THREE.Vector3(2, 0, 2);
+      console.log("Added missing worldPosition to existing playerRef");
+    }
+  }, []);
+  
+  // Add portrait orientation lock handler that only applies to mobile devices
+  useEffect(() => {
+    // Lock orientation to portrait only for mobile devices
     const lockToPortrait = () => {
+      // Only proceed if this is a mobile device
+      if (!detectMobile()) {
+        console.log('Not a mobile device, skipping orientation lock');
+        return;
+      }
+      
       try {
         // Check if Screen Orientation API is available (newer devices)
         if (window.screen && window.screen.orientation) {
@@ -2955,10 +3003,15 @@ function App() {
     
     // Only lock orientation on mobile devices
     if (detectMobile()) {
+      console.log('Mobile device detected, locking to portrait orientation');
       lockToPortrait();
       
-      // Set appropriate meta tag for viewport
+      // Set appropriate meta tag for viewport on mobile
       setViewportMeta('width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, orientation=portrait');
+    } else {
+      console.log('Desktop device detected, allowing any orientation');
+      // For desktop, allow zooming and any orientation
+      setViewportMeta('width=device-width, initial-scale=1.0');
     }
     
     // Clean up event listeners
@@ -2966,10 +3019,10 @@ function App() {
       window.removeEventListener('orientationchange', () => {});
     };
   }, []);
-  
+
   // Add state for orientation message
   const [orientationMessage, setOrientationMessage] = useState('');
-  
+
   // Update the setViewportMeta function to handle orientation parameter
   const setViewportMeta = (content) => {
     let meta = document.querySelector('meta[name="viewport"]');
@@ -2982,48 +3035,36 @@ function App() {
     meta.setAttribute('content', content);
     console.log('✓ Viewport meta set:', content);
     
-    // Add an additional meta tag for orientation if needed
-    let orientationMeta = document.querySelector('meta[name="screen-orientation"]');
-    if (!orientationMeta) {
-      orientationMeta = document.createElement('meta');
-      orientationMeta.name = 'screen-orientation';
-      document.head.appendChild(orientationMeta);
+    // Add orientation meta tags only for mobile
+    if (detectMobile()) {
+      // Add an additional meta tag for orientation if needed
+      let orientationMeta = document.querySelector('meta[name="screen-orientation"]');
+      if (!orientationMeta) {
+        orientationMeta = document.createElement('meta');
+        orientationMeta.name = 'screen-orientation';
+        document.head.appendChild(orientationMeta);
+      }
+      orientationMeta.setAttribute('content', 'portrait');
     }
-    orientationMeta.setAttribute('content', 'portrait');
-  };
-  
-  // Add this before the return statement to include CSS style for the orientation message
-  const orientationWarningStyle = {
-    position: 'fixed',
-    top: 0,
-    left: 0,
-    width: '100%',
-    height: '100%',
-    display: orientationMessage ? 'flex' : 'none',
-    flexDirection: 'column',
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: 'rgba(0, 0, 0, 0.85)',
-    color: 'white',
-    fontSize: '1.5rem',
-    textAlign: 'center',
-    padding: '2rem',
-    zIndex: 9999,
-    fontFamily: 'Arial, sans-serif',
   };
 
-  // Add this JSX element right after the main opening div in the return statement
-  // Look for the return ( ... ) part and add inside the first element
-  // Add after any React Fragments and before other components
-  // ... existing return statement ...
-  
   // Add function to check and handle device orientation
   const checkDeviceOrientation = () => {
-    // Determine if device is in landscape mode
+    // Only check orientation on mobile devices
+    if (!detectMobile()) {
+      // On desktop, always clear orientation message and allow any orientation
+      setOrientationMessage('');
+      if (window.physics) {
+        window.physics.active = true;
+      }
+      return true;
+    }
+    
+    // For mobile devices, determine if device is in landscape mode
     const isLandscape = window.matchMedia("(orientation: landscape)").matches;
     
     // For mobile devices, show warning if in landscape
-    if (detectMobile() && isLandscape) {
+    if (isLandscape) {
       setOrientationMessage('Please rotate your device to portrait mode');
       
       // Optional: pause the game physics when in wrong orientation
@@ -3041,7 +3082,7 @@ function App() {
     
     return !isLandscape;
   };
-  
+
   // Add an event listener for orientation changes
   useEffect(() => {
     // Initial check
@@ -3060,52 +3101,52 @@ function App() {
       }
     };
     
-    // Listen for both orientation change event and resize (which happens on orientation change)
-    window.addEventListener('orientationchange', handleOrientationChange);
-    window.addEventListener('resize', handleOrientationChange);
-    
-    // Add a media query listener for more reliable orientation detection
-    const mediaQuery = window.matchMedia("(orientation: portrait)");
-    mediaQuery.addEventListener('change', handleOrientationChange);
-    
-    return () => {
-      window.removeEventListener('orientationchange', handleOrientationChange);
-      window.removeEventListener('resize', handleOrientationChange);
-      mediaQuery.removeEventListener('change', handleOrientationChange);
-    };
+    // Only add orientation listeners on mobile
+    if (detectMobile()) {
+      // Listen for both orientation change event and resize (which happens on orientation change)
+      window.addEventListener('orientationchange', handleOrientationChange);
+      window.addEventListener('resize', handleOrientationChange);
+      
+      // Add a media query listener for more reliable orientation detection
+      const mediaQuery = window.matchMedia("(orientation: portrait)");
+      mediaQuery.addEventListener('change', handleOrientationChange);
+      
+      return () => {
+        window.removeEventListener('orientationchange', handleOrientationChange);
+        window.removeEventListener('resize', handleOrientationChange);
+        mediaQuery.removeEventListener('change', handleOrientationChange);
+      };
+    }
   }, [isThirdPerson, showTouchControls]);
+
+  // Add orientation warning style
+  const orientationWarningStyle = {
+    position: 'fixed',
+    top: 0,
+    left: 0,
+    width: '100%',
+    height: '100%',
+    display: orientationMessage ? 'flex' : 'none',
+    flexDirection: 'column',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: 'rgba(0, 0, 0, 0.85)',
+    color: 'white',
+    fontSize: '1.5rem',
+    textAlign: 'center',
+    padding: '2rem',
+    zIndex: 9999,
+    fontFamily: 'Arial, sans-serif',
+  };
   
-  // Modify the existing animatePhysics function to respect orientation
-  function animatePhysics(timestamp) {
-    if (!gyroscopeActive || !window.physics || !window.physics.active) return;
-    
-    // Don't update physics if game is paused due to wrong orientation
-    if (orientationMessage) return;
-    
-    // Continue with existing physics update
-    updatePlayerPhysics();
-    
-    // Request next frame
-    requestAnimationFrame(animatePhysics);
-  }
+  // Add camera ref to track the camera across renders
+  const cameraRef = useRef(null);
+  const sceneRef = useRef(null);
+  const rendererRef = useRef(null);
+  const controlsRef = useRef(null);
   
   return (
     <>
-      {/* Add orientation warning overlay */}
-      {orientationMessage && (
-        <div style={orientationWarningStyle}>
-          <div style={{ marginBottom: '1rem' }}>
-            <svg width="64" height="64" viewBox="0 0 24 24">
-              <path fill="white" d="M12,2A10,10 0 0,0 2,12A10,10 0 0,0 12,22A10,10 0 0,0 22,12A10,10 0 0,0 12,2M12,20C7.59,20 4,16.41 4,12C4,7.59 7.59,4 12,4C16.41,4 20,7.59 20,12C20,16.41 16.41,20 12,20M7,13H17V11H7"></path>
-            </svg>
-          </div>
-          <div>{orientationMessage}</div>
-          <div style={{ marginTop: '2rem', fontSize: '1rem', opacity: 0.8 }}>
-            The maze game works best in portrait orientation
-          </div>
-        </div>
-      )}
-      
       <canvas ref={mountRef} style={{ display: 'block', width: '100vw', height: '100vh' }} />
       
       {/* Debug Overlay */}
@@ -3237,6 +3278,19 @@ function App() {
           <span>Tilt to Move</span>
         </div>
       )}
+      
+      {/* Orientation Warning */}
+      <div style={orientationWarningStyle}>
+        <div style={{ marginBottom: '1rem' }}>
+          <svg width="64" height="64" viewBox="0 0 24 24">
+            <path fill="white" d="M7.5,21.5C4.25,21.5 1.5,18.75 1.5,15.5V8.5C1.5,5.5 4,3 7,3H17C20,3 22.5,5.5 22.5,8.5V15.5C22.5,18.75 19.75,21.5 16.5,21.5H7.5M7,5C5.17,5 3.5,6.67 3.5,8.5V15.5C3.5,17.7 5.3,19.5 7.5,19.5H16.5C18.7,19.5 20.5,17.7 20.5,15.5V8.5C20.5,6.67 18.83,5 17,5H7M7,8H17V16H7V8M12,17H7V19H12V17Z" />
+          </svg>
+        </div>
+        <p style={{ margin: '0 0 1rem 0' }}>{orientationMessage}</p>
+        <div style={{ marginTop: '1rem', fontSize: '1rem', opacity: 0.8 }}>
+          The maze game works best in portrait orientation on mobile devices
+        </div>
+      </div>
     </>
   )
 }
