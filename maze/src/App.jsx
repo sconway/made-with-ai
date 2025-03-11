@@ -882,81 +882,70 @@ function App() {
 
       // Create walls for the maze
       const createWalls = () => {
-        // Only clear the maze group if the game hasn't been won
-        // This preserves the walls when the player has completed the maze
-        if (!hasWon || !mazeRef.current) {
-          console.log('Creating new walls for the maze')
-          
-          // Remove all existing objects from the maze group
-        while(mazeGroup.children.length > 0) {
-          const object = mazeGroup.children[0]
-            
-            // Check if the object is a Group (like the player)
-            if (object.isGroup) {
-              // For groups, dispose of each child's geometry and material
-              object.children.forEach(child => {
-                if (child.geometry) child.geometry.dispose()
-                if (child.material) child.material.dispose()
-              })
-            } else {
-              // For regular meshes, dispose of geometry and material directly
-              if (object.geometry) object.geometry.dispose()
-              if (object.material) object.material.dispose()
-            }
-            
-          mazeGroup.remove(object)
-        }
-
-          // Create new walls based on the maze grid
-        for (let x = 0; x < MAZE_SIZE; x++) {
-          for (let z = 0; z < MAZE_SIZE; z++) {
-            if (maze[x][z] === 1) {
-              const wallGeometry = new THREE.BoxGeometry(
-                WALL_THICKNESS,
-                WALL_HEIGHT,
-                WALL_THICKNESS
-              )
-              const wall = new THREE.Mesh(wallGeometry, wallMaterial)
-              wall.position.set(
-                (x - MAZE_SIZE/2) * WALL_THICKNESS,
-                WALL_HEIGHT/2,
-                (z - MAZE_SIZE/2) * WALL_THICKNESS
-              )
-              mazeGroup.add(wall)
-
-              if (x === 0 || x === MAZE_SIZE-1 || z === 0 || z === MAZE_SIZE-1) {
-                if (x < MAZE_SIZE-1 && maze[x+1][z] === 1) {
-                  const horizontalWall = new THREE.Mesh(
-                    new THREE.BoxGeometry(WALL_THICKNESS, WALL_HEIGHT, WALL_THICKNESS),
-                    wallMaterial
-                  )
-                  horizontalWall.position.set(
-                    (x - MAZE_SIZE/2 + 0.5) * WALL_THICKNESS,
-                    WALL_HEIGHT/2,
-                    (z - MAZE_SIZE/2) * WALL_THICKNESS
-                  )
-                  mazeGroup.add(horizontalWall)
-                }
-                
-                if (z < MAZE_SIZE-1 && maze[x][z+1] === 1) {
-                  const verticalWall = new THREE.Mesh(
-                    new THREE.BoxGeometry(WALL_THICKNESS, WALL_HEIGHT, WALL_THICKNESS),
-                    wallMaterial
-                  )
-                  verticalWall.position.set(
-                    (x - MAZE_SIZE/2) * WALL_THICKNESS,
-                    WALL_HEIGHT/2,
-                    (z - MAZE_SIZE/2 + 0.5) * WALL_THICKNESS
-                  )
-                  mazeGroup.add(verticalWall)
-                }
-              }
+        if (!scene) return;
+        
+        // Clear existing walls if any
+        const existingWalls = scene.children.filter(child => child.name === 'wall');
+        existingWalls.forEach(wall => scene.remove(wall));
+        
+        // Maze cell size - use consistent scaling
+        const CELL_SIZE = 2;
+        window.CELL_SIZE = CELL_SIZE; // Make it accessible globally
+        
+        // Materials
+        const wallMaterial = new THREE.MeshStandardMaterial({
+          color: 0x8844aa,
+          roughness: 0.7,
+          metalness: 0.2
+        });
+        
+        // Create wall geometry once and reuse
+        const wallGeometry = new THREE.BoxGeometry(CELL_SIZE, CELL_SIZE, CELL_SIZE);
+        
+        // Debug: log maze data to ensure it's correct
+        console.log("Creating walls with maze data:", mazeRef.current);
+        
+        // Create walls based on maze grid (1 = wall, 0 = path)
+        for (let i = 0; i < MAZE_SIZE; i++) {
+          for (let j = 0; j < MAZE_SIZE; j++) {
+            if (mazeRef.current[i][j] === 1) {
+              const wall = new THREE.Mesh(wallGeometry, wallMaterial);
+              
+              // Important: Set proper wall position using CELL_SIZE
+              // This needs to line up with the collision system
+              wall.position.set(i * CELL_SIZE, 0, j * CELL_SIZE);
+              
+              wall.castShadow = true;
+              wall.receiveShadow = true;
+              wall.name = 'wall';
+              scene.add(wall);
             }
           }
-          }
-        } else {
-          console.log('Game has been won, preserving existing maze walls')
         }
+        
+        // Add floor
+        const floorGeometry = new THREE.PlaneGeometry(MAZE_SIZE * CELL_SIZE + CELL_SIZE, MAZE_SIZE * CELL_SIZE + CELL_SIZE);
+        const floorMaterial = new THREE.MeshStandardMaterial({
+          color: 0x333333,
+          roughness: 0.9,
+          metalness: 0.1
+        });
+        
+        const floor = new THREE.Mesh(floorGeometry, floorMaterial);
+        floor.rotation.x = -Math.PI / 2;
+        
+        // Center the floor under the maze
+        floor.position.set(
+          (MAZE_SIZE * CELL_SIZE) / 2 - CELL_SIZE/2,
+          -CELL_SIZE/2,
+          (MAZE_SIZE * CELL_SIZE) / 2 - CELL_SIZE/2
+        );
+        
+        floor.receiveShadow = true;
+        floor.name = 'floor';
+        scene.add(floor);
+        
+        console.log(`✓ Maze walls created with CELL_SIZE=${CELL_SIZE}`);
       }
       console.log('Wall creation function created')
 
@@ -1201,19 +1190,56 @@ function App() {
 
       // Create player
       const createPlayer = () => {
-        const playerGeometry = new THREE.Group()
+        if (!scene) return;
         
-        // Create a sphere for the player
-        const sphereGeometry = new THREE.SphereGeometry(WALL_THICKNESS/2, 16, 16)
-        const sphereMaterial = new THREE.MeshPhongMaterial({ 
-          color: 0xffff00  // Yellow color
-        })
-        const sphere = new THREE.Mesh(sphereGeometry, sphereMaterial)
+        console.log("Creating player...");
         
-        playerGeometry.add(sphere)
+        // Cell size for consistent scaling
+        const CELL_SIZE = window.CELL_SIZE || 2;
         
-        return playerGeometry
-      }
+        // Create player sphere
+        const geometry = new THREE.SphereGeometry(0.4, 32, 32);
+        const material = new THREE.MeshStandardMaterial({
+          color: 0xff5533,
+          roughness: 0.4,
+          metalness: 0.6,
+          envMapIntensity: 0.8
+        });
+        
+        const mesh = new THREE.Mesh(geometry, material);
+        mesh.castShadow = true;
+        mesh.receiveShadow = true;
+        
+        // Set player at entrance (0,1) - IMPORTANT: Multiply by CELL_SIZE
+        // This is critical for the coordinate system alignment
+        // In maze coordinates, the entrance is at (0,1)
+        const entranceX = 0;
+        const entranceZ = 1;
+        
+        mesh.position.set(entranceX * CELL_SIZE, 0, entranceZ * CELL_SIZE);
+        scene.add(mesh);
+        
+        // Create a pointer direction indicator (optional)
+        const coneGeometry = new THREE.ConeGeometry(0.2, 0.5, 8);
+        const coneMaterial = new THREE.MeshStandardMaterial({ color: 0xffaa33 });
+        const cone = new THREE.Mesh(coneGeometry, coneMaterial);
+        cone.position.y = 0.1;
+        cone.rotation.x = Math.PI / 2;
+        cone.castShadow = true;
+        mesh.add(cone);
+        
+        // Initialize player properties in physics coordinates
+        playerRef.current = {
+          position: { x: entranceX, z: entranceZ },  // Physics coordinates
+          velocity: { x: 0, z: 0 },
+          direction: new THREE.Vector3(0, 0, 1),
+          mesh: mesh
+        };
+        
+        console.log(`✓ Player created at entrance (${entranceX},${entranceZ}) with physics coords. Mesh at (${mesh.position.x}, ${mesh.position.z})`);
+        
+        return mesh;
+      };
       
       // Create initial player
       const player = createPlayer()
@@ -2137,14 +2163,15 @@ function App() {
   const updatePlayerPhysics = () => {
     if (!gyroscopeActive || hasWon || isTransitioning) return;
     
-    // Get maze reference
+    // Get maze reference - ensure it's properly loaded
     const maze = window.maze || mazeRef.current;
     if (!maze) {
-      console.warn("No maze available for physics update");
+      console.warn("⚠️ Maze not accessible for physics update");
       return;
     }
     
     const MAZE_SIZE = window.MAZE_SIZE || 21;
+    const CELL_SIZE = window.CELL_SIZE || 2; // Ensure consistent cell size
     
     const player = playerRef.current;
     const vel = player.velocity;
@@ -2162,7 +2189,7 @@ function App() {
     const gravityZ = physics.gravityZ || 0;
     
     // Physics parameters
-    const gravity = 0.01;       // Higher gravity for more responsive movement
+    const gravity = 0.01;       // Gravity strength
     const friction = 0.97;      // Surface friction
     const bounce = 0.5;         // Bounciness when hitting walls
     const playerRadius = 0.45;  // Player radius for collision
@@ -2186,122 +2213,164 @@ function App() {
     let newX = pos.x + vel.x;
     let newZ = pos.z + vel.z;
     
-    // Simple and efficient collision detection
+    // Debug collision walls
+    window.collisionDebug = window.collisionDebug || {
+      lastLog: 0,
+      walls: []
+    };
+    
+    // Direct access to check if a cell is a wall
     const isWall = (cellX, cellZ) => {
       if (cellX < 0 || cellX >= MAZE_SIZE || cellZ < 0 || cellZ >= MAZE_SIZE) {
-        return true; // Out of bounds
+        return true; // Out of bounds treated as walls
       }
-      return maze[cellX][cellZ] === 1; // 1 = Wall
+      
+      if (!maze[cellX]) {
+        console.error(`Maze data error: Row ${cellX} is undefined`);
+        return true; // Treat as wall
+      }
+      
+      if (maze[cellX][cellZ] === undefined) {
+        console.error(`Maze data error: Cell [${cellX}][${cellZ}] is undefined`);
+        return true; // Treat as wall
+      }
+      
+      const isWallCell = maze[cellX][cellZ] === 1;
+      
+      // Add to debug walls when needed
+      if (isWallCell && performance.now() - window.collisionDebug.lastLog < 100) {
+        window.collisionDebug.walls.push([cellX, cellZ]);
+      }
+      
+      return isWallCell;
     };
     
     // For collision tracking
     let collision = false;
     let collisionEdge = '';
     
-    // For more accurate collisions, test edges with the player radius
+    // Log walls occasionally 
+    if (performance.now() - window.collisionDebug.lastLog > 5000) {
+      window.collisionDebug.lastLog = performance.now();
+      window.collisionDebug.walls = [];
+      console.log(`🧩 Player position: (${pos.x.toFixed(2)},${pos.z.toFixed(2)}), mesh: (${mesh.position.x.toFixed(2)},${mesh.position.z.toFixed(2)})`);
+    }
     
-    // Get the cell the player is in
-    const cellX = Math.floor(pos.x);
-    const cellZ = Math.floor(pos.z);
+    // Multi-point collision detection - more robust approach
+    // Check multiple points around the player sphere
+    const checkCircleCollision = (circleX, circleZ, radius) => {
+      const cellX = Math.floor(circleX);
+      const cellZ = Math.floor(circleZ);
+      
+      // Check the current cell first
+      if (isWall(cellX, cellZ)) {
+        return true;
+      }
+      
+      // Check surrounding cells based on radius
+      // Check right
+      if (circleX + radius > cellX + 1 && isWall(cellX + 1, cellZ)) {
+        return true;
+      }
+      
+      // Check left
+      if (circleX - radius < cellX && isWall(cellX - 1, cellZ)) {
+        return true;
+      }
+      
+      // Check down
+      if (circleZ + radius > cellZ + 1 && isWall(cellX, cellZ + 1)) {
+        return true;
+      }
+      
+      // Check up
+      if (circleZ - radius < cellZ && isWall(cellX, cellZ - 1)) {
+        return true;
+      }
+      
+      // Check corners only if we're close enough
+      const fracX = circleX - cellX;
+      const fracZ = circleZ - cellZ;
+      
+      // Top-left corner
+      if (fracX - radius < 0 && fracZ - radius < 0) {
+        // Distance to corner
+        const distSq = Math.pow(circleX - cellX, 2) + Math.pow(circleZ - cellZ, 2);
+        if (distSq < radius * radius && isWall(cellX - 1, cellZ - 1)) {
+          return true;
+        }
+      }
+      
+      // Top-right corner
+      if (fracX + radius > 1 && fracZ - radius < 0) {
+        const distSq = Math.pow(circleX - (cellX + 1), 2) + Math.pow(circleZ - cellZ, 2);
+        if (distSq < radius * radius && isWall(cellX + 1, cellZ - 1)) {
+          return true;
+        }
+      }
+      
+      // Bottom-left corner
+      if (fracX - radius < 0 && fracZ + radius > 1) {
+        const distSq = Math.pow(circleX - cellX, 2) + Math.pow(circleZ - (cellZ + 1), 2);
+        if (distSq < radius * radius && isWall(cellX - 1, cellZ + 1)) {
+          return true;
+        }
+      }
+      
+      // Bottom-right corner
+      if (fracX + radius > 1 && fracZ + radius > 1) {
+        const distSq = Math.pow(circleX - (cellX + 1), 2) + Math.pow(circleZ - (cellZ + 1), 2);
+        if (distSq < radius * radius && isWall(cellX + 1, cellZ + 1)) {
+          return true;
+        }
+      }
+      
+      return false;
+    };
     
-    // Position within the cell (0 to 1)
-    const fracX = pos.x - cellX;
-    const fracZ = pos.z - cellZ;
-    
-    // Try to move in X direction
+    // Move in X direction first and check collisions
+    let oldX = pos.x;
     pos.x = newX;
     
-    // Check if new position is valid
-    const newCellX = Math.floor(pos.x);
-    const newFracX = pos.x - newCellX;
-    
-    // Wall collision in X direction
-    let wallX = false;
-    
-    // Right wall check
-    if (vel.x > 0 && newCellX + 1 < MAZE_SIZE && isWall(newCellX + 1, Math.floor(pos.z))) {
-      const distToWall = (newCellX + 1) - pos.x;
-      if (distToWall < playerRadius) {
-        wallX = true;
-        collision = true;
-        collisionEdge += 'R';
-        pos.x = newCellX + 1 - playerRadius - 0.01;
-        vel.x = -vel.x * bounce; // Bounce
-      }
-    } 
-    // Left wall check
-    else if (vel.x < 0 && newCellX >= 0 && isWall(newCellX, Math.floor(pos.z))) {
-      const distToWall = pos.x - newCellX;
-      if (distToWall < playerRadius) {
-        wallX = true;
-        collision = true;
-        collisionEdge += 'L';
-        pos.x = newCellX + playerRadius + 0.01;
-        vel.x = -vel.x * bounce; // Bounce
-      }
+    if (checkCircleCollision(pos.x, pos.z, playerRadius)) {
+      // Collision in X direction
+      collision = true;
+      collisionEdge += vel.x > 0 ? 'R' : 'L';
+      
+      // Restore position and bounce
+      pos.x = oldX;
+      vel.x = -vel.x * bounce;
     }
     
-    // Try to move in Z direction
+    // Then move in Z direction and check collisions
+    let oldZ = pos.z;
     pos.z = newZ;
     
-    // Check if new position is valid
-    const newCellZ = Math.floor(pos.z);
-    const newFracZ = pos.z - newCellZ;
-    
-    // Wall collision in Z direction
-    let wallZ = false;
-    
-    // Bottom wall check
-    if (vel.z > 0 && newCellZ + 1 < MAZE_SIZE && isWall(Math.floor(pos.x), newCellZ + 1)) {
-      const distToWall = (newCellZ + 1) - pos.z;
-      if (distToWall < playerRadius) {
-        wallZ = true;
-        collision = true;
-        collisionEdge += 'B';
-        pos.z = newCellZ + 1 - playerRadius - 0.01;
-        vel.z = -vel.z * bounce; // Bounce
-      }
-    } 
-    // Top wall check
-    else if (vel.z < 0 && newCellZ >= 0 && isWall(Math.floor(pos.x), newCellZ)) {
-      const distToWall = pos.z - newCellZ;
-      if (distToWall < playerRadius) {
-        wallZ = true;
-        collision = true;
-        collisionEdge += 'T';
-        pos.z = newCellZ + playerRadius + 0.01;
-        vel.z = -vel.z * bounce; // Bounce
-      }
-    }
-    
-    // Diagonal wall checks (corner cases)
-    if (isWall(newCellX, newCellZ) && !wallX && !wallZ) {
-      // We hit a diagonal corner
+    if (checkCircleCollision(pos.x, pos.z, playerRadius)) {
+      // Collision in Z direction
       collision = true;
-      collisionEdge += 'Diag';
+      collisionEdge += vel.z > 0 ? 'B' : 'T';
       
-      // Bounce back
-      vel.x = -vel.x * bounce;
+      // Restore position and bounce
+      pos.z = oldZ;
       vel.z = -vel.z * bounce;
-      
-      // Move back to avoid getting stuck
-      pos.x = originalX;
-      pos.z = originalZ;
     }
     
-    // Safety check - if we ended up in a wall, revert to original position
-    if (isWall(Math.floor(pos.x), Math.floor(pos.z))) {
+    // Final safety check - if somehow we're in a wall, go back to original position
+    if (checkCircleCollision(pos.x, pos.z, playerRadius)) {
+      console.warn("Player stuck in wall, reverting to original position");
       pos.x = originalX;
       pos.z = originalZ;
       vel.x = 0;
       vel.z = 0;
       collision = true;
-      collisionEdge += 'Reset';
+      collisionEdge += 'STUCK';
     }
     
-    // Update mesh position
-    mesh.position.x = pos.x * 2;
-    mesh.position.z = pos.z * 2;
+    // Update mesh position - use CELL_SIZE for proper scaling
+    // This is the key transformation between physics coordinates and rendering coordinates
+    mesh.position.x = pos.x * CELL_SIZE;
+    mesh.position.z = pos.z * CELL_SIZE;
     
     // Face the ball in the direction of movement
     if (Math.abs(vel.x) > 0.01 || Math.abs(vel.z) > 0.01) {
@@ -2310,8 +2379,8 @@ function App() {
       player.direction.set(vel.x, 0, vel.z).normalize();
     }
     
-    // Check for victory
-    if (Math.floor(pos.x) === MAZE_SIZE - 1 && Math.floor(pos.z) === MAZE_SIZE - 2) {
+    // Check for victory - exit is at MAZE_SIZE-2, MAZE_SIZE-2
+    if (Math.floor(pos.x) === MAZE_SIZE - 2 && Math.floor(pos.z) === MAZE_SIZE - 2) {
       console.log("Victory reached!");
       setHasWon(true);
       celebrate();
@@ -2322,58 +2391,65 @@ function App() {
       ...prev,
       velocity: { x: vel.x, z: vel.z },
       position: { x: pos.x, z: pos.z },
+      meshPosition: { x: mesh.position.x, z: mesh.position.z },
       collision,
       collisionEdge
     }));
   };
 
-  // Update initializePhysics to ensure player starts at entrance
+  // Fix initializePhysics to ensure correct player position
   const initializePhysics = () => {
     console.log("⚡ Initializing physics system");
     
-    // Make sure player starts at the entrance
-    // Reset player to entrance position (1,1)
+    const CELL_SIZE = window.CELL_SIZE || 2;
+    
+    // Make sure player starts at the entrance (0,1)
     if (playerRef.current) {
-      playerRef.current.position = { x: 1, z: 1 };
+      playerRef.current.position = { x: 0, z: 1 };
       playerRef.current.velocity = { x: 0, z: 0 };
       
       if (playerRef.current.mesh) {
-        playerRef.current.mesh.position.x = 1 * 2;
-        playerRef.current.mesh.position.z = 1 * 2;
+        // IMPORTANT: Apply correct scaling to mesh position
+        playerRef.current.mesh.position.x = 0 * CELL_SIZE;
+        playerRef.current.mesh.position.z = 1 * CELL_SIZE;
+        console.log(`✓ Player mesh position set to entrance (0,${CELL_SIZE}) in world coords`);
       }
     }
     
-    // Set up global physics config for a physical marble maze feel
+    // Set up global physics config
     window.physics = {
-      gravity: 0.01,       // Base gravity strength for responsive movement
-      maxSpeed: 0.3,       // Maximum speed cap
-      friction: 0.97,      // Surface friction (lower = more friction)
-      restitution: 0.5,    // Bounciness on collision
-      active: true,        // Whether physics is currently running
-      debug: true,         // Show debug info
-      lastTime: 0,         // For frame rate independence
-      initialized: true,   // Flag that physics is ready
-      gravityX: 0,         // Current X gravity
-      gravityZ: 0          // Current Z gravity
+      gravity: 0.01,      // Base gravity strength
+      maxSpeed: 0.3,      // Maximum speed cap
+      friction: 0.97,     // Surface friction
+      restitution: 0.5,   // Bounciness
+      active: true,       // Whether physics is running
+      debug: true,        // Show debug info
+      lastTime: 0,        // For frame rate independence
+      initialized: true,  // Flag that physics is ready
+      gravityX: 0,        // X gravity
+      gravityZ: 0,        // Z gravity
+      cellSize: CELL_SIZE // Store cell size for consistent scaling
     };
     
-    console.log("Physics initialized - player at entrance position with gravity-based movement");
+    console.log(`✓ Physics initialized - player at entrance (0,1) - CELL_SIZE=${CELL_SIZE}`);
   };
 
-  // Add a helper function to reset player position
+  // Update resetPlayerPosition to use correct scaling
   const resetPlayerPosition = () => {
+    const CELL_SIZE = window.CELL_SIZE || 2;
+    
     if (playerRef.current) {
-      // Reset to entrance position (1,1)
-      playerRef.current.position = { x: 1, z: 1 };
+      // Reset to entrance position (0,1)
+      playerRef.current.position = { x: 0, z: 1 };
       playerRef.current.velocity = { x: 0, z: 0 };
       
-      // Update mesh position
+      // Update mesh position with correct scaling
       if (playerRef.current.mesh) {
-        playerRef.current.mesh.position.x = 1 * 2;
-        playerRef.current.mesh.position.z = 1 * 2;
+        playerRef.current.mesh.position.x = 0 * CELL_SIZE;
+        playerRef.current.mesh.position.z = 1 * CELL_SIZE;
       }
       
-      console.log("Player position reset to entrance");
+      console.log(`✓ Player position reset to entrance. Physics (0,1), Mesh (0,${CELL_SIZE})`);
     }
   };
 
