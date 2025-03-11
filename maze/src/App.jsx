@@ -71,17 +71,17 @@ function App() {
 
   // Update debug info state to include collision info
   const [debugInfo, setDebugInfo] = useState({
+    showDebug: false, // Set to false to hide debug by default
     beta: 0,
     gamma: 0,
     velocity: { x: 0, z: 0 },
-    gravity: { x: 0, z: 0 },
     position: { x: 0, z: 0 },
-    collision: false,
-    collisionEdge: '',
+    gravity: { x: 0, z: 0 },
     eventCount: 0,
     lastUpdate: Date.now(),
-    eventType: 'none',
-    showDebug: true
+    eventType: '',
+    collision: false,
+    collisionEdge: ''
   });
 
   // Move restartGame outside useEffect
@@ -1216,13 +1216,13 @@ function App() {
         const MAZE_SIZE = window.MAZE_SIZE || 21;
         const WALL_THICKNESS = window.WALL_THICKNESS || 2;
         
-        // Create player sphere
+        // Create player sphere with yellow color
         const geometry = new THREE.SphereGeometry(0.4, 32, 32);
         const material = new THREE.MeshStandardMaterial({
-          color: 0xff5533,
-          roughness: 0.4,
-          metalness: 0.6,
-          envMapIntensity: 0.8
+          color: 0xffcc00, // Yellow color
+          roughness: 0.3,
+          metalness: 0.7,
+          envMapIntensity: 0.9
         });
         
         const mesh = new THREE.Mesh(geometry, material);
@@ -1240,15 +1240,6 @@ function App() {
         // Set the mesh position in world coordinates
         mesh.position.set(worldX, WALL_THICKNESS/2, worldZ);
         scene.add(mesh);
-        
-        // Create a pointer direction indicator (optional)
-        const coneGeometry = new THREE.ConeGeometry(0.2, 0.5, 8);
-        const coneMaterial = new THREE.MeshStandardMaterial({ color: 0xffaa33 });
-        const cone = new THREE.Mesh(coneGeometry, coneMaterial);
-        cone.position.y = 0.1;
-        cone.rotation.x = Math.PI / 2;
-        cone.castShadow = true;
-        mesh.add(cone);
         
         // Initialize player properties
         playerRef.current = {
@@ -2376,16 +2367,6 @@ function App() {
       setHasWon(true);
       celebrate();
     }
-    
-    // Update debug info
-    setDebugInfo(prev => ({
-      ...prev,
-      velocity: { x: vel.x, z: vel.z },
-      position: { x: pos.x, z: pos.z },
-      worldPosition: { x: worldX, z: worldZ },
-      collision,
-      collisionEdge
-    }));
   };
 
   // Update initializePhysics to ensure player starts at entrance with correct world coordinates
@@ -2470,209 +2451,6 @@ function App() {
     }
   };
 
-  // Update the TiltIndicator to better visualize gravity direction
-  const DebugOverlay = () => {
-    const { beta, gamma, velocity, gravity, position, eventCount, lastUpdate, eventType, collision, collisionEdge } = debugInfo;
-    const timeSinceUpdate = Date.now() - lastUpdate;
-    
-    // Calculate a color representing the intensity of movement
-    const velocityMagnitude = Math.sqrt((velocity.x * velocity.x) + (velocity.z * velocity.z));
-    const velocityColor = velocityMagnitude > 0.01 ? 
-      `rgb(${Math.min(255, Math.floor(velocityMagnitude * 2000))}, ${Math.min(255, Math.floor(255 - velocityMagnitude * 500))}, 0)` : 
-      '#4CAF50';
-      
-    // Helper function to render a tilt and gravity indicator
-    const TiltIndicator = () => {
-      const size = 80;
-      const centerX = size / 2;
-      const centerY = size / 2;
-      const radius = size * 0.3;
-      
-      // Calculate ball position from gravity
-      const ballX = centerX + (gravity.x * radius * 1.8);
-      const ballY = centerY + (gravity.z * radius * 1.8);
-      
-      // Calculate arrow direction from gravity
-      const arrowLength = Math.sqrt(gravity.x * gravity.x + gravity.z * gravity.z) * radius * 1.5;
-      const arrowAngle = Math.atan2(gravity.z, gravity.x);
-
-  return (
-        <div style={{ 
-          position: 'relative', 
-          width: size, 
-          height: size, 
-          backgroundColor: 'rgba(0,0,0,0.3)',
-          borderRadius: '50%',
-          margin: '5px auto',
-          border: '1px solid rgba(255,255,255,0.2)'
-        }}>
-          {/* Center crosshair */}
-      <div style={{
-        position: 'absolute',
-            left: centerX - 0.5, 
-            top: 0, 
-            width: 1, 
-            height: size, 
-            backgroundColor: 'rgba(255,255,255,0.2)' 
-          }} />
-          <div style={{ 
-            position: 'absolute', 
-            left: 0, 
-            top: centerY - 0.5, 
-            width: size, 
-            height: 1, 
-            backgroundColor: 'rgba(255,255,255,0.2)' 
-          }} />
-          
-          {/* Gravity arrow */}
-          {arrowLength > 5 && (
-            <div style={{
-              position: 'absolute',
-              width: arrowLength,
-              height: 2,
-              backgroundColor: 'rgba(255,100,100,0.8)',
-              transformOrigin: 'left center',
-              transform: `translate(${centerX}px, ${centerY}px) rotate(${arrowAngle}rad)`,
-              borderRadius: '1px'
-            }}>
-              <div style={{
-                position: 'absolute',
-                right: -2,
-                top: -3,
-                width: 0,
-                height: 0,
-                borderTop: '4px solid transparent',
-                borderBottom: '4px solid transparent',
-                borderLeft: '6px solid rgba(255,100,100,0.8)'
-              }} />
-      </div>
-          )}
-          
-          {/* Ball indicator */}
-        <div style={{
-          position: 'absolute',
-            width: 16, 
-            height: 16, 
-            borderRadius: '50%', 
-            backgroundColor: velocityColor,
-            transform: `translate(${ballX - 8}px, ${ballY - 8}px)`,
-            transition: 'transform 0.05s ease-out, background-color 0.1s',
-            boxShadow: '0 0 5px rgba(0,0,0,0.5)'
-          }} />
-          
-          {/* Text labels for directions */}
-          <div style={{ position: 'absolute', left: 0, top: centerY - 12, textAlign: 'center', width: 12, fontSize: 10 }}>L</div>
-          <div style={{ position: 'absolute', right: 0, top: centerY - 12, textAlign: 'center', width: 12, fontSize: 10 }}>R</div>
-          <div style={{ position: 'absolute', top: 0, left: centerX - 6, textAlign: 'center', width: 12, fontSize: 10 }}>U</div>
-          <div style={{ position: 'absolute', bottom: 0, left: centerX - 6, textAlign: 'center', width: 12, fontSize: 10 }}>D</div>
-        </div>
-      );
-    };
-    
-    return (
-      <div style={{
-        position: 'fixed',
-        top: 10,
-        left: 10,
-        backgroundColor: 'rgba(0,0,0,0.7)',
-          color: 'white',
-        padding: '10px',
-        borderRadius: '5px',
-        fontSize: '14px',
-        zIndex: 10000,
-        maxWidth: '300px',
-        fontFamily: 'monospace'
-      }}>
-        <h3 style={{ margin: '0 0 8px 0', borderBottom: '1px solid #666' }}>📱 Device Debug</h3>
-        
-        <TiltIndicator />
-        
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '5px' }}>
-          <div>
-            <span style={{ color: '#8cf' }}>Tilt: </span>
-            <span style={{ fontWeight: 'bold' }}>
-              β:{beta}° γ:{gamma}°
-            </span>
-          </div>
-          <div>
-            <span style={{ color: '#8cf' }}>Gravity: </span>
-            <span style={{ 
-              color: Math.abs(gravity.x) + Math.abs(gravity.z) > 0.1 ? '#f88' : '#8f8'
-            }}>
-              X:{gravity.x?.toFixed(2) || 0}, Z:{gravity.z?.toFixed(2) || 0}
-            </span>
-          </div>
-          <div>
-            <span style={{ color: '#8cf' }}>Velocity: </span>
-            <span style={{ 
-              color: velocityColor,
-              fontWeight: velocityMagnitude > 0.01 ? 'bold' : 'normal'
-            }}>
-              {velocity.x?.toFixed(3) || 0}, {velocity.z?.toFixed(3) || 0}
-            </span>
-          </div>
-          <div>
-            <span style={{ color: '#8cf' }}>Position: </span>
-            <span>
-              ({position?.x?.toFixed(1) || '?'}, {position?.z?.toFixed(1) || '?'})
-            </span>
-          </div>
-          <div>
-            <span style={{ color: '#8cf' }}>Collision: </span>
-            <span style={{ color: collision ? '#f88' : '#8f8' }}>
-              {collision ? `Yes (${collisionEdge})` : 'No'}
-            </span>
-          </div>
-          
-          <div style={{ display: 'flex', gap: '5px', marginTop: '5px' }}>
-          <button
-              onClick={() => {
-                if (playerRef.current) {
-                  playerRef.current.velocity = { 
-                    x: 0.1, 
-                    z: 0.1 
-                  };
-                  console.log("Manual impulse applied");
-                }
-              }}
-            style={{
-                flex: 1,
-                background: '#4CAF50',
-              border: 'none',
-                borderRadius: '3px',
-                padding: '5px',
-              color: 'white',
-                cursor: 'pointer'
-              }}
-            >
-              Impulse
-            </button>
-            
-            <button 
-              onClick={resetPlayerPosition}
-              style={{
-                flex: 1,
-                background: '#2196F3',
-                border: 'none',
-                borderRadius: '3px',
-                padding: '5px',
-                color: 'white',
-                cursor: 'pointer'
-              }}
-            >
-              Reset
-          </button>
-          </div>
-        </div>
-      </div>
-    );
-  };
-
-  // Add a toggle for debug info
-  const toggleDebug = () => {
-    setDebugInfo(prev => ({ ...prev, showDebug: !prev.showDebug }));
-  };
-  
   // Ensure the physics animation loop is properly set up
   useEffect(() => {
     let animationFrameId;
@@ -2876,77 +2654,6 @@ function App() {
     }
   };
   
-  // Add debug visualization for player collision radius
-  useEffect(() => {
-    if (!debugInfo.showDebug) return;
-    
-    // Add visual indicator of player collision radius
-    const addCollisionVisualizer = () => {
-      if (document.getElementById('collision-visualizer')) return;
-      
-      const visualizer = document.createElement('div');
-      visualizer.id = 'collision-visualizer';
-      visualizer.style.cssText = `
-        position: absolute;
-        width: 80px;
-        height: 80px;
-        border-radius: 50%;
-        border: 2px dashed rgba(255, 100, 100, 0.7);
-        pointer-events: none;
-        transform: translate(-50%, -50%);
-        transition: border-color 0.3s;
-        z-index: 1000;
-      `;
-      
-      document.body.appendChild(visualizer);
-      window.collisionVisualizer = visualizer;
-    };
-    
-    // Update visualizer position in animation loop
-    const updateVisualizer = () => {
-      if (!window.collisionVisualizer || !playerRef.current?.mesh) return;
-      
-      // Make sure we have a camera reference
-      if (!cameraRef.current) {
-        console.warn("Camera reference not available for visualizer update");
-        return;
-      }
-      
-      // Convert 3D world position to screen coordinates
-      const mesh = playerRef.current.mesh;
-      const vector = new THREE.Vector3();
-      vector.set(mesh.position.x, mesh.position.y, mesh.position.z);
-      
-      // Use cameraRef.current instead of camera
-      vector.project(cameraRef.current);
-      
-      const x = (vector.x * 0.5 + 0.5) * window.innerWidth;
-      const y = (-(vector.y * 0.5) + 0.5) * window.innerHeight;
-      
-      window.collisionVisualizer.style.left = `${x}px`;
-      window.collisionVisualizer.style.top = `${y}px`;
-      
-      // Update color based on collision state
-      window.collisionVisualizer.style.borderColor = debugInfo.collision ? 
-        'rgba(255, 0, 0, 0.9)' : 'rgba(100, 255, 100, 0.6)';
-      
-      // Schedule next update
-      requestAnimationFrame(updateVisualizer);
-    };
-    
-    // Set up visualizer
-    addCollisionVisualizer();
-    const animId = requestAnimationFrame(updateVisualizer);
-    
-    return () => {
-      cancelAnimationFrame(animId);
-      if (window.collisionVisualizer) {
-        window.collisionVisualizer.remove();
-        window.collisionVisualizer = null;
-      }
-    };
-  }, [debugInfo.showDebug]);
-  
   useEffect(() => {
     // Initialize playerRef if it doesn't exist yet
     if (!playerRef.current) {
@@ -3149,133 +2856,48 @@ function App() {
     <>
       <canvas ref={mountRef} style={{ display: 'block', width: '100vw', height: '100vh' }} />
       
-      {/* Debug Overlay */}
-      {debugInfo.showDebug && <DebugOverlay />}
-      
-      {/* Debug Toggle Button */}
-      <button 
-        onClick={toggleDebug}
-        style={{
-          position: 'fixed',
-          top: 10,
-          right: 10,
-          zIndex: 10000,
-          background: 'rgba(0,0,0,0.7)',
-          color: 'white',
-          border: 'none',
-          borderRadius: '5px',
-          padding: '5px 10px'
-        }}
-      >
-        {debugInfo.showDebug ? 'Hide Debug' : 'Show Debug'}
-      </button>
-      
-      {/* iOS Permission Button */}
-      {showPermissionButton && (
-        <div 
-          className="permission-button-container"
-          onClick={() => console.log("Container clicked")}
-          onTouchStart={() => console.log("Container touch started")}
-        >
-          <button 
-            className="permission-button"
-            onClick={(e) => {
-              e.preventDefault();
-              e.stopPropagation();
-              console.log("Permission button clicked");
-              // Use a timeout to ensure the click event is fully processed
-              setTimeout(() => {
-                requestIOSPermission();
-              }, 10);
-            }}
-            onTouchStart={(e) => {
-              console.log("Button touch started");
-              e.stopPropagation();
-            }}
-            onTouchEnd={(e) => {
-              console.log("Button touch ended");
-              e.preventDefault();
-              e.stopPropagation();
-              // Use a timeout to ensure the touch event is fully processed
-              setTimeout(() => {
-                requestIOSPermission();
-              }, 10);
-            }}
-          >
-            Enable Tilt Controls
-          </button>
-          <p className="permission-text">
-            Tap to allow motion controls for moving the ball with your device
-          </p>
+      {showRestart && (
+        <div className="victory-message">
+          <h1>You Win!</h1>
+          <button onClick={restartGame}>Play Again</button>
         </div>
       )}
       
-      {/* Touch Controls for Mobile */}
       {showTouchControls && (
         <div className="touch-controls">
           <div className="touch-controls-row">
-            <button 
-              ref={upButtonRef}
-              className="touch-button up-button"
-              data-direction="up"
-            >
-              ▲
-            </button>
-    </div>
-          <div className="touch-controls-row">
-            <button 
-              ref={leftButtonRef}
-              className="touch-button left-button"
-              data-direction="left"
-            >
-              ◀
-            </button>
             <div className="touch-button-spacer"></div>
-            <button 
-              ref={rightButtonRef}
-              className="touch-button right-button"
-              data-direction="right"
-            >
-              ▶
-            </button>
+            <div 
+              ref={upButtonRef} 
+              className="touch-button up-button"
+            >▲</div>
+            <div className="touch-button-spacer"></div>
           </div>
           <div className="touch-controls-row">
-            <button 
-              ref={downButtonRef}
-              className="touch-button down-button"
-              data-direction="down"
-            >
-              ▼
-            </button>
+            <div 
+              ref={leftButtonRef} 
+              className="touch-button left-button"
+            >◀</div>
+            <div className="touch-button-spacer"></div>
+            <div 
+              ref={rightButtonRef} 
+              className="touch-button right-button"
+            >▶</div>
           </div>
-        </div>
-      )}
-      
-      {/* UI elements */}
-      {hasWon && (
-        <div className="victory-message">
-          <h1>You Won!</h1>
-          {showRestart && (
-            <button onClick={restartGame}>Play Again</button>
-          )}
+          <div className="touch-controls-row">
+            <div className="touch-button-spacer"></div>
+            <div 
+              ref={downButtonRef} 
+              className="touch-button down-button"
+            >▼</div>
+            <div className="touch-button-spacer"></div>
+          </div>
         </div>
       )}
       
       {showTransitionIndicator && (
         <div className="view-mode-indicator">
-          {isThirdPerson ? 'First-Person View' : 'Top-Down View'}
-        </div>
-      )}
-      
-      {/* Gyroscope indicator for mobile users */}
-      {showGyroscopeIndicator && gyroscopeActive && (
-        <div className="gyroscope-indicator">
-          <div className="gyroscope-icon">
-            <svg viewBox="0 0 24 24" width="24" height="24">
-              <path fill="currentColor" d="M12,2A10,10 0 0,0 2,12A10,10 0 0,0 12,22A10,10 0 0,0 22,12A10,10 0 0,0 12,2M12,4A8,8 0 0,1 20,12A8,8 0 0,1 12,20A8,8 0 0,1 4,12A8,8 0 0,1 12,4M12,6A6,6 0 0,0 6,12A6,6 0 0,0 12,18A6,6 0 0,0 18,12A6,6 0 0,0 12,6M12,8A4,4 0 0,1 16,12A4,4 0 0,1 12,16A4,4 0 0,1 8,12A4,4 0 0,1 12,8Z" />
-            </svg>
-          </div>
-          <span>Tilt to Move</span>
+          {isThirdPerson ? 'First Person View' : 'Top-Down View'}
         </div>
       )}
       
