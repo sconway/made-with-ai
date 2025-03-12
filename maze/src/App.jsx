@@ -262,81 +262,41 @@ function App() {
   };
 
   // Function to handle touch/click on a direction button
-  const handleButtonPress = (direction) => {
-    if (hasWon || isTransitioning) return
+  const handleTouchButtonPress = (direction) => {
+    if (hasWon || isTransitioning) return;
+    
+    console.log(`Button pressed: ${direction}`);
     
     // Apply an impulse to the player's velocity
-    const impulseStrength = 0.03  // Reduced for better physics feel
+    const impulseStrength = 0.03;  // Reduced for better physics feel
     
     switch (direction) {
       case 'up':
-        playerRef.current.velocity.z -= impulseStrength
-        playerRef.current.direction.set(0, 0, -1)
-        break
+        playerRef.current.velocity.z -= impulseStrength;
+        playerRef.current.direction.set(0, 0, -1);
+        break;
       case 'down':
-        playerRef.current.velocity.z += impulseStrength
-        playerRef.current.direction.set(0, 0, 1)
-        break
+        playerRef.current.velocity.z += impulseStrength;
+        playerRef.current.direction.set(0, 0, 1);
+        break;
       case 'left':
-        playerRef.current.velocity.x -= impulseStrength
-        playerRef.current.direction.set(-1, 0, 0)
-        break
+        playerRef.current.velocity.x -= impulseStrength;
+        playerRef.current.direction.set(-1, 0, 0);
+        break;
       case 'right':
-        playerRef.current.velocity.x += impulseStrength
-        playerRef.current.direction.set(1, 0, 0)
-        break
+        playerRef.current.velocity.x += impulseStrength;
+        playerRef.current.direction.set(1, 0, 0);
+        break;
     }
     
     // Limit maximum velocity
-    const maxVelocity = 0.2
-    const vel = playerRef.current.velocity
-    const magnitude = Math.sqrt(vel.x * vel.x + vel.z * vel.z)
+    const maxVelocity = 0.2;
+    const vel = playerRef.current.velocity;
+    const magnitude = Math.sqrt(vel.x * vel.x + vel.z * vel.z);
     if (magnitude > maxVelocity) {
-      vel.x = (vel.x / magnitude) * maxVelocity
-      vel.z = (vel.z / magnitude) * maxVelocity
+      vel.x = (vel.x / magnitude) * maxVelocity;
+      vel.z = (vel.z / magnitude) * maxVelocity;
     }
-  }
-
-  // Better event handlers that prevent all default behaviors
-  const setupButton = (ref, direction) => {
-    if (!ref.current) return;
-    
-    // Remove existing event listeners if any
-    const element = ref.current;
-    const newElement = element.cloneNode(true);
-    element.parentNode.replaceChild(newElement, element);
-    ref.current = newElement;
-    
-    // Add event listeners with proper preventDefault
-    const touchStartHandler = (e) => {
-      e.preventDefault();
-      e.stopPropagation();
-      handleButtonPress(direction);
-      return false;
-    };
-    
-    const touchEndHandler = (e) => {
-      e.preventDefault();
-      return false;
-    };
-    
-    const mouseDownHandler = (e) => {
-      e.preventDefault();
-      e.stopPropagation();
-      handleButtonPress(direction);
-      return false;
-    };
-    
-    const clickHandler = (e) => {
-      e.preventDefault();
-      e.stopPropagation();
-      return false;
-    };
-    
-    newElement.addEventListener('touchstart', touchStartHandler, { passive: false });
-    newElement.addEventListener('touchend', touchEndHandler, { passive: false });
-    newElement.addEventListener('mousedown', mouseDownHandler, { passive: false });
-    newElement.addEventListener('click', clickHandler, { passive: false });
   };
 
   // Simplified orientation handler
@@ -642,7 +602,10 @@ function App() {
         0.1,
         1000
       )
+      
+      // Position camera directly above the maze for a clean top-down view
       camera.position.set(0, cameraHeight, 0)
+      camera.up.set(0, 0, -1) // Ensure the camera's "up" direction is consistent
       camera.lookAt(0, 0, 0)
 
       // Assign camera to cameraRef for use in other functions
@@ -665,6 +628,7 @@ function App() {
         controls.enableDamping = true
         controls.dampingFactor = 0.1
         controls.target.set(0, 0, 0)
+        // Ensure controls are properly aligned with the camera's up vector
         controls.update()
         console.log('Desktop controls set up')
       } else {
@@ -1800,31 +1764,40 @@ function App() {
           }
         }
         
-        // Skip initial animation if the game has been won
-        if (!initialRotationDone && !hasWon) {
-          const elapsed = currentTime - startTime
-          const progress = Math.min(elapsed / ROTATION_DURATION, 1)
+        // Skip initial animation if the game has been won or we're on desktop
+        if (!initialRotationDone && (!hasWon && !isMobile)) {
+          // For desktop, just set rotation to 0 and mark as done
+          initialRotationDone = true;
+          mazeGroup.rotation.x = 0;
+          mazeGroup.rotation.y = 0;
+          mazeGroup.rotation.z = 0;
+        } else if (!initialRotationDone && !hasWon && isMobile) {
+          // Only do animation on mobile
+          const elapsed = currentTime - startTime;
+          const progress = Math.min(elapsed / ROTATION_DURATION, 1);
           
           if (progress === 1) {
-            initialRotationDone = true
-            mazeGroup.rotation.x = 0
-            mazeGroup.rotation.y = 0
+            initialRotationDone = true;
+            mazeGroup.rotation.x = 0;
+            mazeGroup.rotation.y = 0;
+            mazeGroup.rotation.z = 0;
           } else {
-            const xRotation = THREE.MathUtils.lerp(0, 0, progress)
-            mazeGroup.rotation.x = xRotation
-            mazeGroup.rotation.y = 0
+            // Remove the rotation animation completely - just set to 0
+            mazeGroup.rotation.x = 0;
+            mazeGroup.rotation.y = 0;
+            mazeGroup.rotation.z = 0;
           }
         } else {
           // Mark initial rotation as done if the game has been won
           if (!initialRotationDone && hasWon) {
-            initialRotationDone = true
+            initialRotationDone = true;
           }
           
           // Ensure maze rotation stays at 0 in top-down view
           if (!isThirdPersonRef.current) {
-            mazeGroup.rotation.x = 0
-            mazeGroup.rotation.y = 0
-            mazeGroup.rotation.z = 0
+            mazeGroup.rotation.x = 0;
+            mazeGroup.rotation.y = 0;
+            mazeGroup.rotation.z = 0;
           }
         }
 
@@ -2852,9 +2825,146 @@ function App() {
   const rendererRef = useRef(null);
   const controlsRef = useRef(null);
   
+  // Fix the setupButton function to properly attach event handlers
+  useEffect(() => {
+    // Set up touch control buttons
+    if (showTouchControls) {
+      console.log('Setting up touch control buttons');
+      
+      // Setup each button with its direction
+      if (upButtonRef.current) setupButton(upButtonRef, 'up');
+      if (downButtonRef.current) setupButton(downButtonRef, 'down');
+      if (leftButtonRef.current) setupButton(leftButtonRef, 'left');
+      if (rightButtonRef.current) setupButton(rightButtonRef, 'right');
+    }
+  }, [showTouchControls]);
+
+  // Handle button press for touch controls
+  const handleButtonPress = (direction) => {
+    if (hasWon || isTransitioning) return;
+    
+    console.log(`Button pressed: ${direction}`);
+    
+    // Apply an impulse to the player's velocity
+    const impulseStrength = 0.03;  // Reduced for better physics feel
+    
+    switch (direction) {
+      case 'up':
+        playerRef.current.velocity.z -= impulseStrength;
+        playerRef.current.direction.set(0, 0, -1);
+        break;
+      case 'down':
+        playerRef.current.velocity.z += impulseStrength;
+        playerRef.current.direction.set(0, 0, 1);
+        break;
+      case 'left':
+        playerRef.current.velocity.x -= impulseStrength;
+        playerRef.current.direction.set(-1, 0, 0);
+        break;
+      case 'right':
+        playerRef.current.velocity.x += impulseStrength;
+        playerRef.current.direction.set(1, 0, 0);
+        break;
+    }
+    
+    // Limit maximum velocity
+    const maxVelocity = 0.2;
+    const vel = playerRef.current.velocity;
+    const magnitude = Math.sqrt(vel.x * vel.x + vel.z * vel.z);
+    if (magnitude > maxVelocity) {
+      vel.x = (vel.x / magnitude) * maxVelocity;
+      vel.z = (vel.z / magnitude) * maxVelocity;
+    }
+  };
+
+  // Handle touch events for mobile controls
+  const handleTouchEvent = (e, direction) => {
+    e.preventDefault();
+    e.stopPropagation();
+    handleTouchButtonPress(direction);
+  };
+
+  // Setup button with event handlers
+  const setupButton = (ref, direction) => {
+    if (!ref.current) return;
+    
+    console.log(`Setting up ${direction} button`);
+    
+    // Clear any existing event listeners
+    const button = ref.current;
+    const newButton = button.cloneNode(true);
+    button.parentNode.replaceChild(newButton, button);
+    ref.current = newButton;
+    
+    // Add event listeners
+    const touchStartHandler = (e) => handleTouchEvent(e, direction);
+    const touchEndHandler = (e) => e.preventDefault();
+    const mouseDownHandler = (e) => handleTouchEvent(e, direction);
+    const clickHandler = (e) => handleTouchEvent(e, direction);
+    
+    newButton.addEventListener('touchstart', touchStartHandler, { passive: false });
+    newButton.addEventListener('touchend', touchEndHandler, { passive: false });
+    newButton.addEventListener('mousedown', mouseDownHandler);
+    newButton.addEventListener('click', clickHandler);
+    
+    console.log(`Event listeners added to ${direction} button`);
+  };
+  
   return (
     <>
       <canvas ref={mountRef} style={{ display: 'block', width: '100vw', height: '100vh' }} />
+      
+      {/* iOS Permission Button */}
+      {showPermissionButton && (
+        <div 
+          className="permission-button-container"
+          onClick={() => console.log("Container clicked")}
+          onTouchStart={() => console.log("Container touch started")}
+        >
+          <button 
+            className="permission-button"
+            onClick={(e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              console.log("Permission button clicked");
+              // Use a timeout to ensure the click event is fully processed
+              setTimeout(() => {
+                requestIOSPermission();
+              }, 10);
+            }}
+            onTouchStart={(e) => {
+              console.log("Button touch started");
+              e.stopPropagation();
+            }}
+            onTouchEnd={(e) => {
+              console.log("Button touch ended");
+              e.preventDefault();
+              e.stopPropagation();
+              // Use a timeout to ensure the touch event is fully processed
+              setTimeout(() => {
+                requestIOSPermission();
+              }, 10);
+            }}
+          >
+            Enable Tilt Controls
+          </button>
+          <p className="permission-text">
+            Tap to allow motion controls for moving the ball with your device
+          </p>
+        </div>
+      )}
+      
+      {/* Gyroscope indicator for mobile users */}
+      {showGyroscopeIndicator && gyroscopeActive && (
+        <div className="gyroscope-indicator">
+          <div className="gyroscope-icon">
+            <svg viewBox="0 0 24 24" width="24" height="24">
+              <path fill="currentColor" d="M12,2A10,10 0 0,0 2,12A10,10 0 0,0 12,22A10,10 0 0,0 22,12A10,10 0 0,0 12,2M12,4A8,8 0 0,1 20,12A8,8 0 0,1 12,20A8,8 0 0,1 4,12A8,8 0 0,1 12,4M12,6A6,6 0 0,0 6,12A6,6 0 0,0 12,18A6,6 0 0,0 18,12A6,6 0 0,0 12,6M12,8A4,4 0 0,1 16,12A4,4 0 0,1 12,16A4,4 0 0,1 8,12A4,4 0 0,1 12,8Z" />
+            </svg>
+          </div>
+          <span>Tilt to Move</span>
+        </div>
+      )}
       
       {showRestart && (
         <div className="victory-message">
@@ -2867,29 +2977,41 @@ function App() {
         <div className="touch-controls">
           <div className="touch-controls-row">
             <div className="touch-button-spacer"></div>
-            <div 
+            <button 
               ref={upButtonRef} 
               className="touch-button up-button"
-            >▲</div>
+              data-direction="up"
+            >
+              ▲
+            </button>
             <div className="touch-button-spacer"></div>
           </div>
           <div className="touch-controls-row">
-            <div 
+            <button 
               ref={leftButtonRef} 
               className="touch-button left-button"
-            >◀</div>
+              data-direction="left"
+            >
+              ◀
+            </button>
             <div className="touch-button-spacer"></div>
-            <div 
+            <button 
               ref={rightButtonRef} 
               className="touch-button right-button"
-            >▶</div>
+              data-direction="right"
+            >
+              ▶
+            </button>
           </div>
           <div className="touch-controls-row">
             <div className="touch-button-spacer"></div>
-            <div 
+            <button 
               ref={downButtonRef} 
               className="touch-button down-button"
-            >▼</div>
+              data-direction="down"
+            >
+              ▼
+            </button>
             <div className="touch-button-spacer"></div>
           </div>
         </div>

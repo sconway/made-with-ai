@@ -12,8 +12,8 @@ html, body {
   overscroll-behavior: none;
 }
 
-/* Force portrait orientation styles */
-@media screen and (orientation: landscape) {
+/* Force portrait orientation styles - ONLY FOR MOBILE DEVICES */
+@media only screen and (orientation: landscape) and (max-width: 768px) and (max-height: 600px) {
   html {
     /* This transform is specifically to hint mobile browsers to use portrait */
     transform: rotate(-90deg);
