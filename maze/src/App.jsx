@@ -119,6 +119,34 @@ function App() {
     console.log('Resetting maze reference')
     mazeRef.current = null
     
+    // Reset camera orientation for top-down view
+    if (cameraRef.current) {
+      console.log('Resetting camera orientation')
+      const camera = cameraRef.current;
+      
+      // Reset camera position to top-down view
+      const cameraHeight = typeof calculateOptimalCameraHeight === 'function' ? 
+        calculateOptimalCameraHeight() : 30;
+      camera.position.set(0, cameraHeight, 0);
+      
+      // Set the up vector for top-down view
+      camera.up.set(0, 0, -1);
+      
+      // Look at the center of the maze
+      camera.lookAt(0, 0, 0);
+      
+      // Update the camera
+      camera.updateProjectionMatrix();
+      camera.updateMatrixWorld();
+    }
+    
+    // Reset maze group rotation if it exists
+    if (gameFunctionsRef.current.mazeGroup) {
+      console.log('Resetting maze group rotation')
+      const mazeGroup = gameFunctionsRef.current.mazeGroup;
+      mazeGroup.rotation.set(0, 0, 0);
+    }
+    
     // Only generate new maze when explicitly restarting
     console.log('Generating new maze')
     gameFunctionsRef.current.generateMaze()
@@ -605,7 +633,11 @@ function App() {
       
       // Position camera directly above the maze for a clean top-down view
       camera.position.set(0, cameraHeight, 0)
-      camera.up.set(0, 0, -1) // Ensure the camera's "up" direction is consistent
+      
+      // For top-down view, set the up vector to point along negative Z
+      // This ensures the maze is oriented correctly when viewed from above
+      camera.up.set(0, 0, -1)
+      
       camera.lookAt(0, 0, 0)
 
       // Assign camera to cameraRef for use in other functions
@@ -1181,7 +1213,8 @@ function App() {
         const WALL_THICKNESS = window.WALL_THICKNESS || 2;
         
         // Create player sphere with yellow color
-        const geometry = new THREE.SphereGeometry(0.4, 32, 32);
+        // Make the sphere barely smaller than the path width (0.9 units)
+        const geometry = new THREE.SphereGeometry(0.9, 32, 32);
         const material = new THREE.MeshStandardMaterial({
           color: 0xffcc00, // Yellow color
           roughness: 0.3,
@@ -1339,6 +1372,15 @@ function App() {
                 playerRef.current.worldPosition.z
               ) :
               new THREE.Vector3(0, calculateOptimalCameraHeight(), 0)  // Top-down view with optimal height
+            
+            // Reset camera up vector when switching views
+            if (newIsThirdPerson) {
+              // For first-person view, use standard up vector
+              camera.up.set(0, 1, 0);
+            } else {
+              // For top-down view
+              camera.up.set(0, 0, -1);
+            }
             
             const endTarget = newIsThirdPerson ?
               new THREE.Vector3(
@@ -1581,6 +1623,9 @@ function App() {
               )
               console.log('New camera position:', camera.position)
               
+              // Ensure camera is using the correct up vector in first-person mode
+              camera.up.set(0, 1, 0);
+              
               // Update camera look direction
               const lookTarget = camera.position.clone()
               lookTarget.add(playerRef.current.direction.clone().multiplyScalar(WALL_THICKNESS))
@@ -1764,6 +1809,7 @@ function App() {
           }
         }
         
+        // Ensure consistent maze orientation
         // Skip initial animation if the game has been won or we're on desktop
         if (!initialRotationDone && (!hasWon && !isMobile)) {
           // For desktop, just set rotation to 0 and mark as done
@@ -1793,11 +1839,18 @@ function App() {
             initialRotationDone = true;
           }
           
-          // Ensure maze rotation stays at 0 in top-down view
+          // Always ensure maze rotation stays at 0 in top-down view
+          // This is critical for consistent orientation
           if (!isThirdPersonRef.current) {
             mazeGroup.rotation.x = 0;
             mazeGroup.rotation.y = 0;
             mazeGroup.rotation.z = 0;
+            
+            // Also ensure camera is looking at the center with correct up vector
+            if (camera) {
+              camera.up.set(0, 0, -1);
+              camera.lookAt(0, 0, 0);
+            }
           }
         }
 
@@ -1881,7 +1934,15 @@ function App() {
         // If in top-down view, adjust camera height to ensure full maze visibility
         if (!isThirdPersonRef.current) {
           camera.position.y = calculateOptimalCameraHeight()
+          
+          // Ensure consistent camera orientation for top-down view
+          camera.up.set(0, 0, -1)
           camera.lookAt(0, 0, 0)
+          
+          // Also ensure maze group has correct orientation
+          if (gameFunctionsRef.current.mazeGroup) {
+            gameFunctionsRef.current.mazeGroup.rotation.set(0, 0, 0)
+          }
         }
         
         camera.updateProjectionMatrix()
@@ -2180,7 +2241,7 @@ function App() {
     const gravity = 0.01;       // Higher gravity for more responsive movement
     const friction = 0.97;      // Surface friction
     const bounce = 0.5;         // Bounciness when hitting walls
-    const playerRadius = 0.45;  // Player radius for collision
+    const playerRadius = 0.9;   // Player radius for collision - matches sphere size
     
     // Apply gravity-based acceleration
     vel.x += gravityX * gravity;
@@ -2331,7 +2392,17 @@ function App() {
     if (Math.abs(vel.x) > 0.01 || Math.abs(vel.z) > 0.01) {
       const angle = Math.atan2(vel.x, vel.z);
       mesh.rotation.y = angle;
+      
+      // Update player direction vector - this affects the first-person camera view
       player.direction.set(vel.x, 0, vel.z).normalize();
+      
+      // If in first-person view, update the camera look direction
+      if (isThirdPersonRef.current && cameraRef.current) {
+        const camera = cameraRef.current;
+        const lookTarget = camera.position.clone();
+        lookTarget.add(player.direction.clone().multiplyScalar(WALL_THICKNESS));
+        camera.lookAt(lookTarget);
+      }
     }
     
     // Check for victory
