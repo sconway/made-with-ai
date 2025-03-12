@@ -34,7 +34,10 @@ function App() {
     velocity: { x: 0, z: 0 },
     acceleration: { x: 0, z: 0 },
     mass: 1,
-    lastUpdateTime: 0
+    lastUpdateTime: 0,
+    lastMoveTime: 0,
+    lastPosition: { x: 1, z: 1 },
+    stuckTime: 0
   })
   const gameFunctionsRef = useRef({})
   
@@ -106,13 +109,16 @@ function App() {
     // Reset game state
     console.log('Resetting game state')
     setHasWon(false)
+    hasWonRef.current = false
     setShowRestart(false)
     setIsThirdPerson(false) // Reset to top-down view
+    isThirdPersonRef.current = false // Ensure ref is also updated
     exitReachedRef.current = false // Reset exit reached flag
     
     // Reset player position and direction
     console.log('Resetting player position and direction')
     playerRef.current.position = { x: 1, z: 1 }
+    playerRef.current.velocity = { x: 0, z: 0 }
     playerRef.current.direction.set(0, 0, 1) // Default direction (down)
     
     // Reset the maze reference to force a new maze generation
@@ -1066,6 +1072,11 @@ function App() {
       const celebrate = () => {
         console.log('Celebration function called - START');
         
+        // Make sure player is visible during celebration
+        if (playerRef.current.mesh) {
+          playerRef.current.mesh.visible = true;
+        }
+        
         const particleCount = 2000;
         const particles = new THREE.BufferGeometry();
         const positions = new Float32Array(particleCount * 3);
@@ -1075,7 +1086,7 @@ function App() {
         for (let i = 0; i < particleCount; i++) {
           // All particles start at player position
           positions[i * 3] = playerRef.current.worldPosition.x;
-          positions[i * 3 + 1] = playerRef.current.worldPosition.y;
+          positions[i * 3 + 1] = playerRef.current.worldPosition.y + 1.0; // Raise particles slightly for better visibility
           positions[i * 3 + 2] = playerRef.current.worldPosition.z;
 
           // Vibrant colors
@@ -2232,13 +2243,63 @@ function App() {
       return;
     }
     
+    // Track time for stuck detection
+    const now = performance.now();
+    if (!player.lastMoveTime) {
+      player.lastMoveTime = now;
+      player.lastPosition = { x: pos.x, z: pos.z };
+      player.stuckTime = 0;
+    }
+    
+    // Check if player is stuck (hasn't moved significantly in a while)
+    const distMoved = Math.sqrt(
+      Math.pow(pos.x - player.lastPosition.x, 2) + 
+      Math.pow(pos.z - player.lastPosition.z, 2)
+    );
+    
+    // If barely moved for over 1 second, consider the ball stuck
+    if (distMoved < 0.01) {
+      player.stuckTime += (now - player.lastMoveTime);
+      
+      // If stuck for more than 1 second, apply a small impulse in the direction of gravity
+      if (player.stuckTime > 1000) {
+        console.log("Ball appears stuck, applying small impulse");
+        
+        // Apply a small impulse in the direction of gravity
+        const physics = window.physics || {};
+        const gravityDir = new THREE.Vector2(
+          physics.gravityX || 0, 
+          (physics.gravityZ || 0) + 0.3 // Add default downward component
+        ).normalize();
+        
+        // Add a small random component to help escape corners
+        vel.x += gravityDir.x * 0.05 + (Math.random() - 0.5) * 0.02;
+        vel.z += gravityDir.y * 0.05 + (Math.random() - 0.5) * 0.02;
+        
+        // Reset stuck timer
+        player.stuckTime = 0;
+      }
+    } else {
+      // Reset stuck timer if moving
+      player.stuckTime = 0;
+    }
+    
+    // Update last position and time
+    player.lastPosition = { x: pos.x, z: pos.z };
+    player.lastMoveTime = now;
+    
     // Use gravity from device orientation
     const physics = window.physics || {};
     const gravityX = physics.gravityX || 0;
-    const gravityZ = physics.gravityZ || 0;
+    
+    // Add a constant downward gravity component to ensure the ball always
+    // tends to roll downward (positive Z direction in our coordinate system)
+    // This simulates a real physical maze where gravity always pulls downward
+    const baseDownwardGravity = 0.3; // Constant downward pull
+    const gravityZ = (physics.gravityZ || 0) + baseDownwardGravity;
     
     // Physics parameters
-    const gravity = 0.01;       // Higher gravity for more responsive movement
+    const gravity = 0.01;       // Base gravity strength multiplier
     const friction = 0.97;      // Surface friction
     const bounce = 0.5;         // Bounciness when hitting walls
     const playerRadius = 0.9;   // Player radius for collision - matches sphere size
@@ -2250,6 +2311,15 @@ function App() {
     // Apply friction
     vel.x *= friction;
     vel.z *= friction;
+    
+    // Ensure the ball doesn't exceed maximum velocity
+    const maxVelocity = 0.3;
+    const currentVelocity = Math.sqrt(vel.x * vel.x + vel.z * vel.z);
+    if (currentVelocity > maxVelocity) {
+      const scale = maxVelocity / currentVelocity;
+      vel.x *= scale;
+      vel.z *= scale;
+    }
     
     // Skip update if velocity is too small
     if (Math.abs(vel.x) < 0.0002 && Math.abs(vel.z) < 0.0002) return;
@@ -2408,8 +2478,45 @@ function App() {
     // Check for victory
     if (Math.floor(pos.x) === MAZE_SIZE - 2 && Math.floor(pos.z) === MAZE_SIZE - 2) {
       console.log("Victory reached!");
+      
+      // Store the fact that player has reached the exit
+      exitReachedRef.current = true;
+      
+      // Update game state
       setHasWon(true);
+      setShowRestart(true);
+      hasWonRef.current = true;
+      
+      // Trigger celebration animation
       celebrate();
+      
+      // If in first-person view, switch to top-down view to see the celebration
+      if (isThirdPersonRef.current) {
+        console.log("Switching to top-down view for celebration");
+        
+        // Delay the view switch slightly to ensure smooth transition
+        setTimeout(() => {
+          // Store current camera position for smooth transition
+          const currentCameraPos = camera.position.clone();
+          
+          // Update the isThirdPerson state and ref
+          setIsThirdPerson(false);
+          isThirdPersonRef.current = false;
+          
+          // Reset camera for top-down view
+          if (cameraRef.current) {
+            const camera = cameraRef.current;
+            const cameraHeight = typeof calculateOptimalCameraHeight === 'function' ? 
+              calculateOptimalCameraHeight() : 30;
+            
+            // Set up camera for top-down view
+            camera.position.set(0, cameraHeight, 0);
+            camera.up.set(0, 0, -1);
+            camera.lookAt(0, 0, 0);
+            camera.updateProjectionMatrix();
+          }
+        }, 500);
+      }
     }
   };
 
@@ -2459,7 +2566,7 @@ function App() {
       lastTime: 0,         // For frame rate independence
       initialized: true,   // Flag that physics is ready
       gravityX: 0,         // Current X gravity
-      gravityZ: 0,         // Current Z gravity
+      gravityZ: 0.3,       // Initial Z gravity - start with downward pull
       mazeSize: MAZE_SIZE, // Store maze size for coordinate conversion
       wallThickness: WALL_THICKNESS // Store wall thickness for coordinate conversion
     };
@@ -2648,9 +2755,9 @@ function App() {
         initializePhysics();
       }
       
-      // Physics simulation parameters
-      const maxTilt = 30; // Max angle for full tilt gravity
-      const minTilt = 1;  // Min angle for detecting tilt (deadzone)
+      // Physics simulation parameters - more sensitive for better response
+      const maxTilt = 25; // Max angle for full tilt gravity (reduced for more sensitivity)
+      const minTilt = 1;  // Min angle for detecting tilt (small deadzone)
       
       // Calculate gravity vector based on tilt (like a real ball in a physical maze)
       // Beta controls forward/back tilt: positive = tilt forward (downward), negative = tilt backward (upward)
@@ -2672,6 +2779,15 @@ function App() {
         gravityZ = Math.sign(beta) * Math.min(1.0, (Math.abs(beta) - minTilt) / (maxTilt - minTilt));
       }
       
+      // Apply exponential response curve for more sensitivity at small angles
+      // This makes small tilts more effective while still allowing fine control
+      const applyResponseCurve = (value) => {
+        return Math.sign(value) * Math.pow(Math.abs(value), 0.8);
+      };
+      
+      gravityX = applyResponseCurve(gravityX);
+      gravityZ = applyResponseCurve(gravityZ);
+      
       // Store gravity in physics system
       if (window.physics) {
         // More direct response (less filtering) for better responsiveness
@@ -2679,7 +2795,9 @@ function App() {
         window.physics.gravityZ = gravityZ;
         
         // For debugging
-        console.log(`Gravity vector: X=${gravityX.toFixed(2)}, Z=${gravityZ.toFixed(2)}`);
+        if (performance.now() % 2000 < 20) {
+          console.log(`Gravity vector: X=${gravityX.toFixed(2)}, Z=${gravityZ.toFixed(2)}`);
+        }
         
         // Update debug info
         setDebugInfo(prev => ({
@@ -3038,8 +3156,9 @@ function App() {
       )}
       
       {showRestart && (
-        <div className="victory-message">
+        <div className="victory-message" style={{ zIndex: 2000 }}>
           <h1>You Win!</h1>
+          <p>Congratulations on completing the maze!</p>
           <button onClick={restartGame}>Play Again</button>
         </div>
       )}
