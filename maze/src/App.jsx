@@ -2166,13 +2166,20 @@ function App() {
     const preventZoom = (event) => {
       // Prevent pinch zoom on mobile
       if (event.touches && event.touches.length > 1) {
-        event.preventDefault();
+        // Only prevent default if the target is not a button
+        if (event.target.tagName !== 'BUTTON') {
+          event.preventDefault();
+        }
       }
     };
     
     // Prevent double-tap zoom
     const preventDoubleTapZoom = (event) => {
-      event.preventDefault();
+      // Only prevent default if the target is not a button
+      // This allows buttons like the restart button to work properly
+      if (event.target.tagName !== 'BUTTON') {
+        event.preventDefault();
+      }
     };
     
     // Apply viewport meta
@@ -2180,12 +2187,20 @@ function App() {
     
     // Add touch event listeners to prevent zooming
     document.addEventListener('touchmove', preventZoom, { passive: false });
-    document.addEventListener('touchstart', preventDoubleTapZoom, { passive: false });
+    
+    // Only add the touchstart listener to the canvas element, not the entire document
+    // This allows buttons like the restart button to work properly
+    const canvas = mountRef.current;
+    if (canvas) {
+      canvas.addEventListener('touchstart', preventDoubleTapZoom, { passive: false });
+    }
     
     // Clean up
     return () => {
       document.removeEventListener('touchmove', preventZoom);
-      document.removeEventListener('touchstart', preventDoubleTapZoom);
+      if (canvas) {
+        canvas.removeEventListener('touchstart', preventDoubleTapZoom);
+      }
     };
   }, []);
 
@@ -3159,7 +3174,20 @@ function App() {
         <div className="victory-message" style={{ zIndex: 2000 }}>
           <h1>You Win!</h1>
           <p>Congratulations on completing the maze!</p>
-          <button onClick={restartGame}>Play Again</button>
+          <button 
+            onClick={(e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              restartGame();
+            }}
+            onTouchStart={(e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              restartGame();
+            }}
+          >
+            Play Again
+          </button>
         </div>
       )}
       
