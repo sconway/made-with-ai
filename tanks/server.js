@@ -1,4 +1,4 @@
-import { WebSocketServer } from 'ws';
+import { WebSocketServer, WebSocket } from 'ws';
 import { createServer } from 'http';
 import express from 'express';
 import path from 'path';
@@ -9,7 +9,10 @@ const __dirname = path.dirname(__filename);
 
 const app = express();
 const server = createServer(app);
-const wss = new WebSocketServer({ server });
+const wss = new WebSocketServer({ 
+    server,
+    path: '/socket'
+});
 
 const isProduction = process.env.NODE_ENV === 'production';
 
@@ -20,6 +23,12 @@ app.use((req, res, next) => {
     } else if (req.url.endsWith('.mjs')) {
         res.set('Content-Type', 'application/javascript; charset=utf-8');
     }
+    next();
+});
+
+// Log all incoming requests for debugging
+app.use((req, res, next) => {
+    console.log('Incoming request:', req.method, req.url);
     next();
 });
 
@@ -39,90 +48,99 @@ if (isProduction) {
 // Store connected clients
 const clients = new Map();
 
+// Log WebSocket server status
+console.log('WebSocket server initialized with path:', wss.options.path);
+
 // Handle WebSocket connections
-wss.on('connection', (ws) => {
+wss.on('connection', (ws, req) => {
+    console.log('New client connecting...', req.url);
+    
     // Generate unique client ID
     const clientId = Math.random().toString(36).substr(2, 9);
     
     // Store client information
-    clients.set(ws, {
+    const clientInfo = {
         id: clientId,
         position: { x: 0, y: 0, z: 0 },
         rotation: { y: 0 },
         health: 500,
         score: 0
-    });
+    };
+    clients.set(ws, clientInfo);
+
+    // Get list of other clients for initialization
+    const otherClients = Array.from(clients.entries())
+        .filter(([socket]) => socket !== ws)
+        .map(([_, info]) => info);
+
+    console.log(`Client ${clientId} connected. Other clients:`, otherClients.map(c => c.id));
 
     // Send initial setup to new client
     ws.send(JSON.stringify({
         type: 'init',
         id: clientId,
-        clients: Array.from(clients.values())
+        clients: otherClients
     }));
 
     // Broadcast new player to all other clients
     broadcast({
         type: 'playerJoined',
-        client: clients.get(ws)
+        client: clientInfo
     }, ws);
 
-    console.log(`Client ${clientId} connected`);
-
     // Handle incoming messages
-    ws.on('message', (message) => {
+    ws.on('message', (data) => {
         try {
-            const data = JSON.parse(message);
+            const message = JSON.parse(data);
             
-            // Update client data
-            const client = clients.get(ws);
-            if (client) {
-                switch (data.type) {
-                    case 'update':
-                        client.position = data.position;
-                        client.rotation = data.rotation;
-                        client.health = data.health;
-                        client.score = data.score;
-                        broadcast({
-                            type: 'playerUpdate',
-                            id: client.id,
-                            position: client.position,
-                            rotation: client.rotation,
-                            health: client.health,
-                            score: client.score
-                        }, ws);
-                        break;
-
-                    case 'projectile':
-                    case 'explosion':
-                    case 'tankHit':
-                    case 'tankDestroyed':
-                    case 'obstacleDestroyed':
-                        // Add client ID to message and broadcast
-                        data.id = client.id;
-                        broadcast(data);
-                        break;
-
-                    case 'ping':
-                        ws.send(JSON.stringify({ type: 'pong' }));
-                        break;
-                }
+            if (message.type === 'ping') {
+                // Handle ping messages silently
+                return;
             }
+
+            // Add client ID to message
+            message.id = clientId;
+
+            // Handle different message types
+            switch (message.type) {
+                case 'update':
+                    // Update client info
+                    if (message.position) clientInfo.position = message.position;
+                    if (message.rotation) clientInfo.rotation = message.rotation;
+                    break;
+                    
+                case 'projectile':
+                case 'explosion':
+                case 'obstacleDestroyed':
+                case 'tankDamaged':
+                case 'tankDestroyed':
+                    // These messages are broadcast as-is
+                    break;
+                    
+                default:
+                    console.log('Unknown message type:', message.type);
+                    return;
+            }
+
+            // Broadcast message to other clients
+            broadcast(message, ws);
         } catch (error) {
             console.error('Error handling message:', error);
         }
     });
 
-    // Handle client disconnect
+    // Handle client disconnection
     ws.on('close', () => {
-        const client = clients.get(ws);
-        if (client) {
-            console.log(`Client ${client.id} disconnected`);
-            broadcast({
-                type: 'playerLeft',
-                id: client.id
-            });
-            clients.delete(ws);
-        }
+        console.log(`Client ${clientId} disconnected`);
+        
+        // Remove client from storage
+        clients.delete(ws);
+        
+        // Broadcast player left message
+        broadcast({
+            type: 'playerLeft',
+            id: clientId
+        });
     });
 });
 

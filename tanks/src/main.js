@@ -2264,19 +2264,25 @@ function connectToServer() {
     ws = null;
   }
 
-  ws = new WebSocket('ws://localhost:10000');
+  // Determine WebSocket URL based on environment
+  const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+  const wsUrl = `${protocol}//${window.location.host}/socket`;
+  
+  console.log('Attempting to connect to WebSocket server at:', wsUrl);
+  ws = new WebSocket(wsUrl);
 
   // Add connection timeout
   const connectionTimeout = setTimeout(() => {
-    if (ws.readyState !== WebSocket.OPEN) {
+    if (ws && ws.readyState !== WebSocket.OPEN) {
       console.log('Connection timeout, retrying...');
       ws.close();
+      setTimeout(connectToServer, 3000);
     }
   }, 5000);
 
   ws.onopen = () => {
+    console.log('Successfully connected to WebSocket server');
     clearTimeout(connectionTimeout);
-    console.log('Connected to server');
     reconnecting = false;
     startHeartbeat();
 
@@ -2368,12 +2374,6 @@ function handleServerMessage(message) {
         return;
       }
 
-      // If we already have this client ID and we're not reconnecting, skip initialization
-      if (clientId === message.id && !reconnecting) {
-        console.log('Already initialized with this client ID, skipping');
-        return;
-      }
-
       clientId = message.id;
       console.log('Initialized with client ID:', clientId);
 
@@ -2383,32 +2383,12 @@ function handleServerMessage(message) {
       });
       otherPlayers.clear();
 
-      // If we're reconnecting and have state data, restore our position
-      if (reconnecting && message.state) {
-        if (playerTank && message.state.position) {
-          playerTank.position.set(
-            message.state.position.x,
-            message.state.position.y,
-            message.state.position.z
-          );
-        }
-        if (playerTank && message.state.rotation) {
-          playerTank.rotation.y = message.state.rotation.y;
-        }
-        if (message.state.health) {
-          gameState.health = message.state.health;
-        }
-        if (message.state.score) {
-          gameState.score = message.state.score;
-        }
-        reconnecting = false;
-      }
-
       // Add other players from the server's client list
       if (Array.isArray(message.clients)) {
+        console.log('Adding other players:', message.clients);
         message.clients.forEach(client => {
           if (client && client.id && client.id !== clientId) {
-            console.log('Adding other player:', client.id);
+            console.log('Adding player:', client.id);
             addOtherPlayer(client);
           }
         });
@@ -2418,9 +2398,6 @@ function handleServerMessage(message) {
     case 'playerJoined':
       if (message.client && message.client.id && message.client.id !== clientId) {
         console.log('New player joined:', message.client.id);
-        // Remove existing tank for this ID if it exists
-        removeOtherPlayer(message.client.id);
-        // Add the new player
         addOtherPlayer(message.client);
       }
       break;
@@ -2643,40 +2620,35 @@ function createOtherPlayerTank() {
 
 // Add other player to the scene
 function addOtherPlayer(playerData) {
-  // Validate player data
-  if (!playerData || !playerData.id) {
-    console.error('Invalid player data received:', playerData);
-    return;
-  }
-
-  // Remove any existing tank for this player ID
+  console.log('Adding player:', playerData);
+  
+  // Remove any existing tank for this player
   removeOtherPlayer(playerData.id);
 
-  // Create new player tank
-  const otherPlayer = createOtherPlayerTank();
+  // Create new tank for other player
+  const otherTank = createOtherPlayerTank();
+  otherTank.userData.id = playerData.id;
 
-  // Set position with fallback to default values
-  if (playerData.position && typeof playerData.position === 'object') {
-    otherPlayer.position.set(
+  // Set initial position and rotation
+  if (playerData.position) {
+    otherTank.position.set(
       playerData.position.x || 0,
       playerData.position.y || 0,
       playerData.position.z || 0
     );
-  } else {
-    otherPlayer.position.set(0, 0, 0);
   }
 
-  // Set rotation with fallback to default value
-  if (playerData.rotation && typeof playerData.rotation === 'object') {
-    otherPlayer.rotation.y = playerData.rotation.y || 0;
-  } else {
-    otherPlayer.rotation.y = 0;
+  if (playerData.rotation) {
+    otherTank.rotation.y = playerData.rotation.y || 0;
   }
 
-  // Store the player
-  otherPlayers.set(playerData.id, otherPlayer);
-  console.log(`Added player ${playerData.id} at position:`, otherPlayer.position);
-  console.log('Current other players:', Array.from(otherPlayers.keys()));
+  // Store tank's health
+  otherTank.userData.health = playerData.health || settings.tankMaxHealth;
+
+  // Add to scene and store in otherPlayers map
+  scene.add(otherTank);
+  otherPlayers.set(playerData.id, otherTank);
+  console.log('Other players after add:', Array.from(otherPlayers.keys()));
 }
 
 // Remove other player from the scene
@@ -2692,32 +2664,39 @@ function removeOtherPlayer(playerId) {
 
 // Update other player's position and rotation
 function updateOtherPlayer(playerData) {
-  if (!playerData || !playerData.id || playerData.id === clientId) {
+  const otherTank = otherPlayers.get(playerData.id);
+  
+  if (!otherTank) {
+    console.log('Creating missing tank for player:', playerData.id);
+    addOtherPlayer(playerData);
     return;
   }
 
-  let player = otherPlayers.get(playerData.id);
-  if (!player) {
-    console.log(`Player ${playerData.id} not found, creating new tank`);
-    addOtherPlayer(playerData);
-    player = otherPlayers.get(playerData.id);
-    if (!player) return;
-  }
-
-  // Update position if valid
-  if (playerData.position && typeof playerData.position === 'object') {
+  // Update position with lerp for smooth movement
+  if (playerData.position) {
     const targetPosition = new THREE.Vector3(
-      playerData.position.x || player.position.x,
-      playerData.position.y || player.position.y,
-      playerData.position.z || player.position.z
+      playerData.position.x,
+      playerData.position.y,
+      playerData.position.z
     );
-    player.position.lerp(targetPosition, 0.3);
+    otherTank.position.lerp(targetPosition, 0.3);
   }
 
-  // Update rotation if valid
-  if (playerData.rotation && typeof playerData.rotation === 'object') {
-    const targetRotation = playerData.rotation.y || player.rotation.y;
-    player.rotation.y += (targetRotation - player.rotation.y) * 0.3;
+  // Update rotation with lerp for smooth rotation
+  if (playerData.rotation) {
+    const currentRotation = otherTank.rotation.y;
+    let targetRotation = playerData.rotation.y;
+
+    // Ensure we rotate the shortest direction
+    while (targetRotation - currentRotation > Math.PI) targetRotation -= Math.PI * 2;
+    while (targetRotation - currentRotation < -Math.PI) targetRotation += Math.PI * 2;
+
+    otherTank.rotation.y += (targetRotation - currentRotation) * 0.3;
+  }
+
+  // Update health
+  if (playerData.health !== undefined) {
+    otherTank.userData.health = playerData.health;
   }
 }
 

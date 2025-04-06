@@ -7,10 +7,13 @@ export default defineConfig({
     outDir: 'dist'
   },
   server: {
+    port: 5173, // Default Vite port
     proxy: {
-      '/ws': {
+      '/socket': {
         target: 'ws://localhost:3000',
-        ws: true
+        ws: true,
+        secure: false,
+        changeOrigin: true
       }
     }
   }
