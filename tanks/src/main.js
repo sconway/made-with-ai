@@ -30,7 +30,7 @@ const gameState = {
 
 // Settings
 const settings = {
-  tankSpeed: 18,
+  tankSpeed: 36,
   tankRotationSpeed: 1.5,
   projectileSpeed: 60,
   reloadTime: 0.5,
@@ -41,7 +41,10 @@ const settings = {
   tankCollisionRadius: 5,
   obstacleCollisionRadius: 4,
   minRespawnTime: 10,  // Minimum seconds before respawn
-  maxRespawnTime: 15   // Maximum seconds before respawn
+  maxRespawnTime: 15,   // Maximum seconds before respawn
+  tankMaxHealth: 500,  // Tank can take 5 hits (projectiles do 100 damage)
+  projectileDamage: 100,  // Damage per projectile hit
+  tankRespawnTime: 3  // Seconds before tank respawns
 };
 
 // Game controls state
@@ -55,37 +58,84 @@ const controls_state = {
   lastShot: 0
 };
 
+// WebSocket connection
+let ws;
+let clientId;
+let reconnecting = false;
+const otherPlayers = new Map();
+
+// Light pool for managing dynamic lights
+const lightPool = {
+  lights: [],
+  maxLights: 20, // Maximum number of dynamic lights allowed
+  inUse: new Set(),
+
+  initialize() {
+    // Create pool of reusable lights
+    for (let i = 0; i < this.maxLights; i++) {
+      const light = new THREE.PointLight(0xFFFF00, 0, 20);
+      light.visible = false;
+      scene.add(light);
+      this.lights.push(light);
+    }
+  },
+
+  acquire(color, intensity, distance) {
+    // Find first available light
+    const light = this.lights.find(l => !this.inUse.has(l));
+    if (light) {
+      light.color.setHex(color);
+      light.intensity = intensity;
+      light.distance = distance;
+      light.visible = true;
+      this.inUse.add(light);
+      return light;
+    }
+    return null;
+  },
+
+  release(light) {
+    if (light && this.inUse.has(light)) {
+      light.visible = false;
+      this.inUse.delete(light);
+    }
+  }
+};
+
 // Initialize the game
 function init() {
   // Create loading manager
   const loadingManager = setupLoading();
-  
+
   // For development, use placeholder textures
   createPlaceholderTextures();
-  
+
   // Create scene
   scene = new THREE.Scene();
   scene.fog = new THREE.FogExp2(0xDFE9F3, 0.0025);
-  
+
+  // Create UI elements
+  createGameUI();
+
   // Create center cube
   const cubeGeometry = new THREE.BoxGeometry(5, 5, 5);
   const cubeMaterial = new THREE.MeshStandardMaterial({ color: 0xff0000 });
   const centerCube = new THREE.Mesh(cubeGeometry, cubeMaterial);
   centerCube.position.set(0, 2.5, 0);
   scene.add(centerCube);
-  
+
   // Create camera
   camera = new THREE.PerspectiveCamera(
-    75, 
-    window.innerWidth / window.innerHeight, 
-    0.1, 
+    75,
+    window.innerWidth / window.innerHeight,
+    0.1,
     1000
   );
   // Set initial position behind and above where the tank will spawn
   camera.position.set(0, 10, -25);
   // Look forward along positive Z-axis
   camera.lookAt(0, 3, 100);
-  
+
   // Create renderer
   renderer = new THREE.WebGLRenderer({ antialias: true });
   renderer.setSize(window.innerWidth, window.innerHeight);
@@ -95,59 +145,72 @@ function init() {
   renderer.outputEncoding = THREE.sRGBEncoding;
   renderer.toneMapping = THREE.ACESFilmicToneMapping;
   renderer.toneMappingExposure = 1.2;
-  document.getElementById('app').appendChild(renderer.domElement);
-  
+
+  // Add renderer to page with full viewport styling
+  const container = document.getElementById('app');
+  container.style.margin = '0';
+  container.style.padding = '0';
+  container.style.width = '100vw';
+  container.style.height = '100vh';
+  container.style.overflow = 'hidden';
+  container.style.position = 'fixed';
+  container.style.top = '0';
+  container.style.left = '0';
+  container.appendChild(renderer.domElement);
+
   // Add orbit controls for development
   controls = new OrbitControls(camera, renderer.domElement);
   controls.enableDamping = true;
   controls.dampingFactor = 0.05;
   controls.maxPolarAngle = Math.PI / 2 - 0.1;
-  
+
   // Setup lights
   setupLights();
-  
+
   // Create game environment
   createSkybox();
   createClouds();
   createMountains();
   createRoads();
-  
+
   // Create initial chunks around origin
   for (let x = -viewDistance; x <= viewDistance; x++) {
     for (let z = -viewDistance; z <= viewDistance; z++) {
       createTerrainChunk(x, z);
     }
   }
-  
+
   // Create obstacles
   createObstacles();
   createTrees();
-  
+
   // Create player tank
   createPlayerTank();
-  
+
   // Setup event listeners
   setupEventListeners();
-  
+
   // Simulate loading complete for development
   setTimeout(() => {
     const loadingScreen = document.getElementById('loading-screen');
     const loadingBarFill = document.getElementById('loading-bar-fill');
-    
+
     loadingBarFill.style.width = '100%';
-    
+
     setTimeout(() => {
       loadingScreen.style.opacity = '0';
       setTimeout(() => {
         loadingScreen.style.display = 'none';
       }, 500);
-      
+
       startGame();
     }, 500);
   }, 1500);
-  
+
   // Start the game loop
   animate();
+
+  lightPool.initialize();
 }
 
 // Create lighting for the scene
@@ -155,12 +218,12 @@ function setupLights() {
   // Ambient light
   const ambientLight = new THREE.AmbientLight(0xffffff, 0.4);
   scene.add(ambientLight);
-  
+
   // Directional light (sun)
   const directionalLight = new THREE.DirectionalLight(0xffffff, 0.8);
   directionalLight.position.set(50, 200, 100);
   directionalLight.castShadow = true;
-  
+
   // Optimize shadow settings
   directionalLight.shadow.mapSize.width = 1024;
   directionalLight.shadow.mapSize.height = 1024;
@@ -170,9 +233,9 @@ function setupLights() {
   directionalLight.shadow.camera.right = 200;
   directionalLight.shadow.camera.top = 200;
   directionalLight.shadow.camera.bottom = -200;
-  
+
   scene.add(directionalLight);
-  
+
   // Add hemisphere light for better ambient colors
   const hemisphereLight = new THREE.HemisphereLight(0x87CEEB, 0x3D9970, 0.6);
   scene.add(hemisphereLight);
@@ -190,7 +253,7 @@ function setupEventListeners() {
       case ' ': controls_state.shoot = true; break;
     }
   });
-  
+
   window.addEventListener('keyup', (e) => {
     switch (e.key.toLowerCase()) {
       case 'w': controls_state.moveForward = false; break;
@@ -200,27 +263,31 @@ function setupEventListeners() {
       case ' ': controls_state.shoot = false; break;
     }
   });
-  
+
   // Touch controls for mobile
   if (isMobile) {
     createMobileControls();
   }
-  
+
   // Handle window resizing
   window.addEventListener('resize', () => {
+    // Update camera
     camera.aspect = window.innerWidth / window.innerHeight;
     camera.updateProjectionMatrix();
+
+    // Update renderer
     renderer.setSize(window.innerWidth, window.innerHeight);
-    
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+
     // Update mobile status
     isMobile = window.innerWidth < 768;
-    
+
     // Update mobile controls
     if (isMobile) {
       createMobileControls();
     }
   });
-  
+
   // Ensure orbit controls are disabled during gameplay
   controls.enabled = false;
 }
@@ -235,22 +302,22 @@ function createSkybox() {
 function createTerrain() {
   // Create a large flat plane for the ground
   const textureLoader = new THREE.TextureLoader();
-  
+
   // Load textures
   const grassTexture = textureLoader.load('/textures/grass.jpg');
   const grassRoughness = textureLoader.load('/textures/grass_roughness.jpg');
   const grassNormal = textureLoader.load('/textures/grass_normal.jpg');
-  
+
   // Repeat textures
   grassTexture.wrapS = grassTexture.wrapT = THREE.RepeatWrapping;
   grassRoughness.wrapS = grassRoughness.wrapT = THREE.RepeatWrapping;
   grassNormal.wrapS = grassNormal.wrapT = THREE.RepeatWrapping;
-  
+
   const repeatFactor = 30;
   grassTexture.repeat.set(repeatFactor, repeatFactor);
   grassRoughness.repeat.set(repeatFactor, repeatFactor);
   grassNormal.repeat.set(repeatFactor, repeatFactor);
-  
+
   // Create material
   const groundMaterial = new THREE.MeshStandardMaterial({
     map: grassTexture,
@@ -260,20 +327,20 @@ function createTerrain() {
     roughness: 0.8,
     metalness: 0.1
   });
-  
+
   // Create geometry
   const groundGeometry = new THREE.PlaneGeometry(
-    settings.terrainSize, 
-    settings.terrainSize, 
-    64, 
+    settings.terrainSize,
+    settings.terrainSize,
+    64,
     64
   );
-  
+
   // Create mesh
   const ground = new THREE.Mesh(groundGeometry, groundMaterial);
   ground.rotation.x = -Math.PI / 2;
   ground.receiveShadow = true;
-  
+
   // Add to scene
   scene.add(ground);
   terrain = ground;
@@ -289,7 +356,7 @@ function createClouds() {
 function createCloud() {
   // Create a group for cloud particles
   const cloudGroup = new THREE.Group();
-  
+
   // Cloud material
   const cloudMaterial = new THREE.MeshStandardMaterial({
     color: 0xffffff,
@@ -298,43 +365,43 @@ function createCloud() {
     roughness: 1.0,
     metalness: 0.0
   });
-  
+
   // Create multiple spheres for a fluffy look
   const particleCount = 5 + Math.floor(Math.random() * 5);
-  
+
   for (let i = 0; i < particleCount; i++) {
     const size = 5 + Math.random() * 10;
     const geometry = new THREE.SphereGeometry(size, 7, 7);
     const mesh = new THREE.Mesh(geometry, cloudMaterial);
-    
+
     // Position the sphere randomly within the cloud
     mesh.position.set(
       (Math.random() - 0.5) * 15,
       (Math.random() - 0.5) * 5,
       (Math.random() - 0.5) * 15
     );
-    
+
     cloudGroup.add(mesh);
   }
-  
+
   // Position the cloud randomly in the sky
   cloudGroup.position.set(
     (Math.random() - 0.5) * settings.terrainSize,
     80 + Math.random() * 40,
     (Math.random() - 0.5) * settings.terrainSize
   );
-  
+
   // Random scale for variety
   const scale = 1 + Math.random();
   cloudGroup.scale.set(scale, scale, scale);
-  
+
   // Add velocity for movement
   cloudGroup.userData.velocity = new THREE.Vector3(
     (Math.random() - 0.5) * 5,
     0,
     (Math.random() - 0.5) * 5
   );
-  
+
   // Add to scene and clouds array
   scene.add(cloudGroup);
   clouds.push(cloudGroup);
@@ -343,19 +410,19 @@ function createCloud() {
 // Create mountains
 function createMountains() {
   const mountainCount = isMobile ? 5 : 8;
-  
+
   for (let i = 0; i < mountainCount; i++) {
     // Create a mountain using a cone geometry
     const height = 80 + Math.random() * 120;
     const radius = 60 + Math.random() * 80;
-    
+
     const mountainGeometry = new THREE.ConeGeometry(
-      radius, 
-      height, 
-      16, 
+      radius,
+      height,
+      16,
       4
     );
-    
+
     // Create mountain material
     const mountainMaterial = new THREE.MeshStandardMaterial({
       color: 0x4B4B4B,
@@ -363,28 +430,28 @@ function createMountains() {
       metalness: 0.1,
       flatShading: true
     });
-    
+
     // Create mesh
     const mountain = new THREE.Mesh(mountainGeometry, mountainMaterial);
-    
+
     // Position mountain around the starting area
     const angle = (i / mountainCount) * Math.PI * 2;
     const distance = 400; // Fixed distance from origin
-    
+
     mountain.position.x = Math.cos(angle) * distance;
     mountain.position.z = Math.sin(angle) * distance;
     mountain.position.y = height / 2;
-    
+
     // Rotate slightly for variation
     mountain.rotation.y = Math.random() * Math.PI * 2;
-    
+
     // Add mountain data for collision detection
     mountain.userData.type = 'mountain';
     mountain.userData.health = Infinity;
     mountain.userData.collisionRadius = radius * 0.9;
     mountain.userData.halfHeight = height / 2;
     mountain.userData.isDestroyed = false;
-    
+
     // Add mountain to scene and obstacles array
     scene.add(mountain);
     obstacles.push(mountain);
@@ -397,13 +464,13 @@ function createRoads() {
   const roadTexture = textureLoader.load('/textures/road.jpg');
   roadTexture.wrapS = roadTexture.wrapT = THREE.RepeatWrapping;
   roadTexture.repeat.set(1, 30);
-  
+
   const roadMaterial = new THREE.MeshStandardMaterial({
     map: roadTexture,
     roughness: 0.7,
     metalness: 0.1
   });
-  
+
   // Create main roads
   createSingleRoad(roadMaterial, new THREE.Vector3(-200, 0.1, 0), new THREE.Vector3(200, 0.1, 0));
   createSingleRoad(roadMaterial, new THREE.Vector3(0, 0.1, -200), new THREE.Vector3(0, 0.1, 200));
@@ -413,19 +480,19 @@ function createSingleRoad(material, start, end) {
   // Calculate road length and direction
   const direction = new THREE.Vector3().subVectors(end, start);
   const length = direction.length();
-  
+
   // Create road geometry
   const roadGeometry = new THREE.PlaneGeometry(15, length);
   const road = new THREE.Mesh(roadGeometry, material);
-  
+
   // Position and rotate road
   road.position.copy(start.clone().add(direction.clone().multiplyScalar(0.5)));
   road.rotation.x = -Math.PI / 2;
-  
+
   // Calculate the angle to rotate around Y axis
   const angle = Math.atan2(direction.x, direction.z);
   road.rotation.y = angle;
-  
+
   // Add road to scene
   road.receiveShadow = true;
   scene.add(road);
@@ -437,45 +504,46 @@ function createObstacles() {
   for (let i = 0; i < settings.obstacleCount; i++) {
     // Select a random type of obstacle
     const obstacleType = Math.floor(Math.random() * 3);
-    
+
     let obstacle;
-    
+
     switch (obstacleType) {
       case 0: obstacle = createCrate(); break;
       case 1: obstacle = createBarrel(); break;
       case 2: obstacle = createBarrier(); break;
       default: obstacle = createCrate();
     }
-    
+
     // Position randomly around the starting area
     let validPosition = false;
     let position = new THREE.Vector3();
-    
+
     while (!validPosition) {
       position = new THREE.Vector3(
         (Math.random() - 0.5) * 400,  // Initial spawn area
         0,
         (Math.random() - 0.5) * 400
       );
-      
-      // Avoid center area for player spawn
+
+      // Avoid center area for player spawn - increased safe zone
       const distanceFromCenter = position.length();
-      
+
       // Avoid roads
       const onRoad = (
-        (Math.abs(position.x) < 15 && Math.abs(position.z) > 15) || 
+        (Math.abs(position.x) < 15 && Math.abs(position.z) > 15) ||
         (Math.abs(position.z) < 15 && Math.abs(position.x) > 15)
       );
-      
-      if (distanceFromCenter > 40 && !onRoad) {
+
+      // Increased minimum distance from center to 60 units
+      if (distanceFromCenter > 60 && !onRoad) {
         validPosition = true;
       }
     }
-    
+
     // Set position
     obstacle.position.copy(position);
     obstacle.position.y = obstacle.userData.halfHeight;
-    
+
     // Add to scene and obstacles array
     scene.add(obstacle);
     obstacles.push(obstacle);
@@ -485,20 +553,20 @@ function createObstacles() {
 function createCrate() {
   const size = 5 + Math.random() * 3;
   const geometry = new THREE.BoxGeometry(size, size, size);
-  
+
   const textureLoader = new THREE.TextureLoader();
   const crateTexture = textureLoader.load('/textures/crate.jpg');
-  
-  const material = new THREE.MeshStandardMaterial({ 
+
+  const material = new THREE.MeshStandardMaterial({
     map: crateTexture,
     roughness: 0.7,
     metalness: 0.2
   });
-  
+
   const crate = new THREE.Mesh(geometry, material);
   crate.castShadow = true;
   crate.receiveShadow = true;
-  
+
   // Store original properties for respawning
   crate.userData.originalScale = new THREE.Vector3().copy(crate.scale);
   crate.userData.type = 'crate';
@@ -506,7 +574,7 @@ function createCrate() {
   crate.userData.halfHeight = size / 2;
   crate.userData.collisionRadius = size / 2;
   crate.userData.isDestroyed = false;
-  
+
   return crate;
 }
 
@@ -515,25 +583,25 @@ function createBarrel() {
   const radiusBottom = 2.5;
   const height = 7;
   const geometry = new THREE.CylinderGeometry(
-    radiusTop, 
-    radiusBottom, 
-    height, 
+    radiusTop,
+    radiusBottom,
+    height,
     16
   );
-  
-  const material = new THREE.MeshStandardMaterial({ 
+
+  const material = new THREE.MeshStandardMaterial({
     color: 0xF04040,
     roughness: 0.6,
     metalness: 0.4
   });
-  
+
   const barrel = new THREE.Mesh(geometry, material);
   barrel.castShadow = true;
   barrel.receiveShadow = true;
-  
+
   // Rotate randomly
   barrel.rotation.y = Math.random() * Math.PI * 2;
-  
+
   // Store original properties for respawning
   barrel.userData.originalScale = new THREE.Vector3().copy(barrel.scale);
   barrel.userData.type = 'barrel';
@@ -542,7 +610,7 @@ function createBarrel() {
   barrel.userData.collisionRadius = radiusTop;
   barrel.userData.isDestroyed = false;
   barrel.userData.isExplosive = true;
-  
+
   return barrel;
 }
 
@@ -551,20 +619,20 @@ function createBarrier() {
   const height = 5;
   const depth = 3;
   const geometry = new THREE.BoxGeometry(width, height, depth);
-  
-  const material = new THREE.MeshStandardMaterial({ 
+
+  const material = new THREE.MeshStandardMaterial({
     color: 0xCCCCCC,
     roughness: 0.9,
     metalness: 0.1
   });
-  
+
   const barrier = new THREE.Mesh(geometry, material);
   barrier.castShadow = true;
   barrier.receiveShadow = true;
-  
+
   // Rotate randomly
   barrier.rotation.y = Math.random() * Math.PI * 2;
-  
+
   // Store original properties for respawning
   barrier.userData.originalScale = new THREE.Vector3().copy(barrier.scale);
   barrier.userData.type = 'barrier';
@@ -572,7 +640,7 @@ function createBarrier() {
   barrier.userData.halfHeight = height / 2;
   barrier.userData.collisionRadius = Math.sqrt(width * width + depth * depth) / 2;
   barrier.userData.isDestroyed = false;
-  
+
   return barrier;
 }
 
@@ -586,7 +654,7 @@ function createTrees() {
 function createTree() {
   // Create tree group
   const treeGroup = new THREE.Group();
-  
+
   // Create trunk
   const trunkGeometry = new THREE.CylinderGeometry(1, 1.5, 10, 8);
   const trunkMaterial = new THREE.MeshStandardMaterial({
@@ -594,37 +662,37 @@ function createTree() {
     roughness: 0.9,
     metalness: 0.0
   });
-  
+
   const trunk = new THREE.Mesh(trunkGeometry, trunkMaterial);
   trunk.castShadow = true;
   trunk.receiveShadow = true;
   trunk.position.y = 5;
-  
+
   // Create foliage (4 cones for a stylized look)
   const foliageMaterial = new THREE.MeshStandardMaterial({
     color: 0x2E8B57,
     roughness: 1.0,
     metalness: 0.0
   });
-  
+
   // Bottom foliage
   const foliage1 = createFoliageCone(6, 8, foliageMaterial);
   foliage1.position.y = 8;
-  
+
   // Middle foliage
   const foliage2 = createFoliageCone(5, 7, foliageMaterial);
   foliage2.position.y = 12;
-  
+
   // Top foliage
   const foliage3 = createFoliageCone(3, 6, foliageMaterial);
   foliage3.position.y = 15;
-  
+
   // Add all parts to the tree group
   treeGroup.add(trunk);
   treeGroup.add(foliage1);
   treeGroup.add(foliage2);
   treeGroup.add(foliage3);
-  
+
   // Store tree data
   treeGroup.userData.type = 'tree';
   treeGroup.userData.health = 40;
@@ -632,10 +700,10 @@ function createTree() {
   treeGroup.userData.collisionRadius = 6;
   treeGroup.userData.halfHeight = 10;
   treeGroup.userData.isDestroyed = false;
-  
+
   // Add some random rotation
   treeGroup.rotation.y = Math.random() * Math.PI * 2;
-  
+
   return treeGroup; // Make sure to return the tree group
 }
 
@@ -650,7 +718,7 @@ function createFoliageCone(radius, height, material) {
 function createPlayerTank() {
   // Create tank group
   player = new THREE.Group();
-  
+
   // Create tank body
   const bodyGeometry = new THREE.BoxGeometry(10, 4, 15);
   const bodyMaterial = new THREE.MeshStandardMaterial({
@@ -658,12 +726,12 @@ function createPlayerTank() {
     roughness: 0.7,
     metalness: 0.3
   });
-  
+
   const body = new THREE.Mesh(bodyGeometry, bodyMaterial);
   body.castShadow = true;
   body.receiveShadow = true;
   body.position.y = 4;
-  
+
   // Create tank turret
   const turretGeometry = new THREE.CylinderGeometry(4, 4, 3, 8);
   const turretMaterial = new THREE.MeshStandardMaterial({
@@ -671,13 +739,13 @@ function createPlayerTank() {
     roughness: 0.7,
     metalness: 0.3
   });
-  
+
   const turret = new THREE.Mesh(turretGeometry, turretMaterial);
   turret.castShadow = true;
   turret.receiveShadow = true;
   turret.position.y = 7.5;
   turret.rotation.x = Math.PI / 2;
-  
+
   // Create tank barrel
   const barrelGeometry = new THREE.CylinderGeometry(0.8, 0.8, 12, 8);
   const barrelMaterial = new THREE.MeshStandardMaterial({
@@ -685,43 +753,46 @@ function createPlayerTank() {
     roughness: 0.6,
     metalness: 0.4
   });
-  
+
   const barrel = new THREE.Mesh(barrelGeometry, barrelMaterial);
   barrel.castShadow = true;
   barrel.receiveShadow = true;
   barrel.position.z = 6;
   barrel.rotation.x = Math.PI / 2;
-  
+
   // Add barrel to turret
   turret.add(barrel);
-  
+
   // Create tank treads
   const leftTread = createTankTread();
   leftTread.position.set(-5.5, 2, 0);
-  
+
   const rightTread = createTankTread();
   rightTread.position.set(5.5, 2, 0);
-  
+
   // Add all parts to the tank group
   player.add(body);
   player.add(turret);
   player.add(leftTread);
   player.add(rightTread);
-  
+
   // Position tank
   player.position.set(0, 0, 0);
-  
+
   // Store turret for rotation
   player.userData.turret = turret;
   player.userData.collisionRadius = 7.5;
-  
+  player.userData.health = settings.tankMaxHealth;
+  player.userData.isDestroyed = false;
+  player.userData.type = 'tank';
+
   // Add to scene
   scene.add(player);
   playerTank = player;
-  
+
   // Initialize orbital controls
   controls.enabled = false;
-  
+
   // Create and set up the camera
   setupThirdPersonCamera();
 }
@@ -732,15 +803,15 @@ function setupThirdPersonCamera() {
   if (camera.parent !== scene) {
     scene.attach(camera);
   }
-  
+
   // Set initial camera position
   camera.position.set(0, 20, -35);
-  
+
   // Initially look at the tank's position
   if (playerTank) {
     camera.lookAt(playerTank.position);
   }
-  
+
   // Disable orbit controls during gameplay
   if (controls) {
     controls.enabled = false;
@@ -750,35 +821,35 @@ function setupThirdPersonCamera() {
 // This function is called in the animation loop to update the camera
 function updateCameraPosition() {
   if (!playerTank || !scene) return;
-  
+
   // Ensure camera is still attached to scene
   if (camera.parent !== scene) {
     scene.attach(camera);
   }
-  
+
   // Calculate relative offset from tank
   const distanceBehind = 35; // Distance behind tank
   const heightAbove = 20;    // Height above tank
-  
+
   // Calculate camera position relative to tank's rotation
   const tankDirection = new THREE.Vector3(
     Math.sin(playerTank.rotation.y),
     0,
     Math.cos(playerTank.rotation.y)
   );
-  
+
   // Position camera behind tank based on tank's rotation
   const cameraOffset = tankDirection.clone().multiplyScalar(-distanceBehind);
   camera.position.copy(playerTank.position).add(cameraOffset);
   camera.position.y = playerTank.position.y + heightAbove;
-  
+
   // Calculate look target point (above the tank's turret)
   const lookTarget = playerTank.position.clone();
   lookTarget.y = playerTank.position.y + 7.5; // Height of tank (4) + turret height (3.5)
-  
+
   // Make camera look at the point above tank
   camera.lookAt(lookTarget);
-  
+
   // Ensure orbit controls are disabled during gameplay
   if (controls) {
     controls.enabled = false;
@@ -792,13 +863,13 @@ function createTankTread() {
     roughness: 0.8,
     metalness: 0.2
   });
-  
+
   const tread = new THREE.Mesh(treadGeometry, treadMaterial);
   tread.castShadow = true;
   tread.receiveShadow = true;
-  
+
   return tread;
-  
+
 }
 
 // Create mobile controls interface
@@ -808,7 +879,7 @@ function createMobileControls() {
   if (existingControls) {
     existingControls.remove();
   }
-  
+
   // Create container for mobile controls
   const controlsContainer = document.createElement('div');
   controlsContainer.id = 'mobile-controls';
@@ -822,7 +893,7 @@ function createMobileControls() {
   controlsContainer.style.boxSizing = 'border-box';
   controlsContainer.style.zIndex = '100';
   controlsContainer.style.pointerEvents = 'none'; // Container itself doesn't catch events
-  
+
   // Create movement joystick div
   const movementJoystick = document.createElement('div');
   movementJoystick.id = 'movement-joystick';
@@ -833,7 +904,7 @@ function createMobileControls() {
   movementJoystick.style.border = '2px solid rgba(255, 255, 255, 0.5)';
   movementJoystick.style.position = 'relative';
   movementJoystick.style.pointerEvents = 'auto';
-  
+
   // Create joystick knob
   const joystickKnob = document.createElement('div');
   joystickKnob.id = 'joystick-knob';
@@ -845,9 +916,9 @@ function createMobileControls() {
   joystickKnob.style.top = '35px';
   joystickKnob.style.left = '35px';
   joystickKnob.style.pointerEvents = 'none';
-  
+
   movementJoystick.appendChild(joystickKnob);
-  
+
   // Create shoot button
   const shootButton = document.createElement('div');
   shootButton.id = 'shoot-button';
@@ -865,17 +936,17 @@ function createMobileControls() {
   shootButton.style.userSelect = 'none';
   shootButton.style.pointerEvents = 'auto';
   shootButton.innerText = 'FIRE';
-  
+
   // Add elements to container
   controlsContainer.appendChild(movementJoystick);
   controlsContainer.appendChild(shootButton);
-  
+
   // Add container to document
   document.body.appendChild(controlsContainer);
-  
+
   // Set up joystick event handlers
   setupMobileJoystick(movementJoystick, joystickKnob);
-  
+
   // Set up shoot button event handlers
   setupShootButton(shootButton);
 }
@@ -884,25 +955,25 @@ function setupMobileJoystick(joystickElement, knobElement) {
   let isDragging = false;
   let centerX, centerY;
   const maxDistance = 35;
-  
+
   // Set initial center position
   const updateCenter = () => {
     const rect = joystickElement.getBoundingClientRect();
     centerX = rect.left + rect.width / 2;
     centerY = rect.top + rect.height / 2;
   };
-  
+
   // Initialize center on load
   updateCenter();
   window.addEventListener('resize', updateCenter);
-  
+
   // Touch start event
   joystickElement.addEventListener('touchstart', (e) => {
     isDragging = true;
     updateJoystickPosition(e.touches[0].clientX, e.touches[0].clientY);
     e.preventDefault();
   });
-  
+
   // Touch move event
   window.addEventListener('touchmove', (e) => {
     if (isDragging) {
@@ -910,7 +981,7 @@ function setupMobileJoystick(joystickElement, knobElement) {
       e.preventDefault();
     }
   });
-  
+
   // Touch end event
   window.addEventListener('touchend', () => {
     if (isDragging) {
@@ -918,29 +989,29 @@ function setupMobileJoystick(joystickElement, knobElement) {
       resetJoystick();
     }
   });
-  
+
   // Update joystick position
   function updateJoystickPosition(x, y) {
     const deltaX = x - centerX;
     const deltaY = y - centerY;
-    
+
     // Calculate distance and angle
     const distance = Math.min(Math.sqrt(deltaX * deltaX + deltaY * deltaY), maxDistance);
     const angle = Math.atan2(deltaY, deltaX);
-    
+
     // Calculate new position
     const knobX = distance * Math.cos(angle);
     const knobY = distance * Math.sin(angle);
-    
+
     // Update knob position
     knobElement.style.transform = `translate(${knobX}px, ${knobY}px)`;
-    
+
     // Update control states
     if (distance > 10) {
       // Forward/backward based on Y position
       controls_state.moveForward = deltaY < -10;
       controls_state.moveBackward = deltaY > 10;
-      
+
       // Left/right based on X position
       controls_state.rotateLeft = deltaX < -10;
       controls_state.rotateRight = deltaX > 10;
@@ -948,13 +1019,13 @@ function setupMobileJoystick(joystickElement, knobElement) {
       resetControlStates();
     }
   }
-  
+
   // Reset joystick position
   function resetJoystick() {
     knobElement.style.transform = 'translate(0px, 0px)';
     resetControlStates();
   }
-  
+
   function resetControlStates() {
     controls_state.moveForward = false;
     controls_state.moveBackward = false;
@@ -970,7 +1041,7 @@ function setupShootButton(buttonElement) {
     buttonElement.style.transform = 'scale(0.9)';
     e.preventDefault();
   });
-  
+
   // Touch end event
   buttonElement.addEventListener('touchend', (e) => {
     controls_state.shoot = false;
@@ -982,17 +1053,17 @@ function setupShootButton(buttonElement) {
 // Game animation loop
 function animate() {
   requestAnimationFrame(animate);
-  
+
   // Calculate delta time
   deltaTime = clock.getDelta();
-  
+
   // Clear console logs after 5 seconds to avoid flooding
   if (clock.elapsedTime > 5 && !window.clearedLogs) {
     console.clear();
     console.log("Cleared initial logs. Continuing with critical debug output only.");
     window.clearedLogs = true;
   }
-  
+
   // Verify camera is correctly attached to scene - run once after 1 second
   if (clock.elapsedTime > 1 && !window.checkedCamera) {
     if (camera.parent !== scene) {
@@ -1004,7 +1075,7 @@ function animate() {
     }
     window.checkedCamera = true;
   }
-  
+
   // Update game entities
   if (isGameActive) {
     updatePlayerTank();
@@ -1016,7 +1087,36 @@ function animate() {
     updateTerrainChunks();
     updateCameraPosition();
   }
-  
+
+  // Update explosion particles in the main loop
+  const explosionGroups = scene.children.filter(child => child.userData.isExplosion);
+  for (const group of explosionGroups) {
+    group.userData.lifetime += deltaTime;
+
+    if (group.userData.lifetime >= group.userData.maxLifetime) {
+      if (group.userData.light) {
+        lightPool.release(group.userData.light);
+      }
+      scene.remove(group);
+      continue;
+    }
+
+    // Update light position if it exists
+    if (group.userData.light) {
+      group.userData.light.position.copy(group.position);
+      group.userData.light.position.y += 2;
+    }
+
+    const lifeRatio = 1 - group.userData.lifetime / group.userData.maxLifetime;
+    group.scale.setScalar(lifeRatio);
+
+    group.children.forEach(particle => {
+      if (!particle.userData.isExplosionParticle) return;
+      particle.position.add(particle.userData.velocity.clone().multiplyScalar(deltaTime));
+      particle.userData.velocity.y -= 20 * deltaTime;
+    });
+  }
+
   // Render scene
   renderer.render(scene, camera);
 }
@@ -1024,14 +1124,14 @@ function animate() {
 // Update player tank position and rotation
 function updatePlayerTank() {
   if (!playerTank) return;
-  
+
   // Track if rotation changed
   let rotationChanged = false;
   let positionChanged = false;
-  
+
   // Store original rotation for comparison
   const originalRotationY = playerTank.rotation.y;
-  
+
   // Rotate tank
   if (controls_state.rotateLeft) {
     playerTank.rotation.y += settings.tankRotationSpeed * deltaTime;
@@ -1041,14 +1141,14 @@ function updatePlayerTank() {
     playerTank.rotation.y -= settings.tankRotationSpeed * deltaTime;
     rotationChanged = true;
   }
-  
+
   // If tank rotated, just update its rotation
   if (rotationChanged) {
     // Force rotation to stay within 0 to 2π range for consistency
     playerTank.rotation.y = playerTank.rotation.y % (Math.PI * 2);
     if (playerTank.rotation.y < 0) playerTank.rotation.y += Math.PI * 2;
   }
-  
+
   // Move tank forward/backward
   let moveDistance = 0;
   if (controls_state.moveForward) {
@@ -1059,7 +1159,7 @@ function updatePlayerTank() {
     moveDistance = -settings.tankSpeed * deltaTime;
     positionChanged = true;
   }
-  
+
   if (moveDistance !== 0) {
     // Calculate new position
     const moveVector = new THREE.Vector3(
@@ -1067,13 +1167,13 @@ function updatePlayerTank() {
       0,
       Math.cos(playerTank.rotation.y) * moveDistance
     );
-    
+
     // Store current position
     const oldPosition = playerTank.position.clone();
-    
+
     // Update position (no boundary checks)
     playerTank.position.add(moveVector);
-    
+
     // Check obstacle collisions
     if (checkTankObstacleCollisions()) {
       // Collision detected, revert to old position
@@ -1081,14 +1181,14 @@ function updatePlayerTank() {
       positionChanged = false;
     }
   }
-  
+
   // Shoot projectiles
   if (controls_state.shoot && controls_state.canShoot) {
     fireProjectile();
     controls_state.canShoot = false;
     controls_state.lastShot = clock.elapsedTime;
   }
-  
+
   // Check if can shoot again
   if (!controls_state.canShoot && clock.elapsedTime - controls_state.lastShot >= settings.reloadTime) {
     controls_state.canShoot = true;
@@ -1098,193 +1198,487 @@ function updatePlayerTank() {
 // Check collisions between tank and obstacles
 function checkTankObstacleCollisions() {
   if (!playerTank) return false;
-  
+
   // Get tank position
   const tankPosition = new THREE.Vector3(
     playerTank.position.x,
     0,
     playerTank.position.z
   );
-  
+
   // Check distance to all obstacles
   for (const obstacle of obstacles) {
     if (obstacle.userData.isDestroyed) continue;
-    
+
     // Get obstacle position
     const obstaclePosition = new THREE.Vector3(
       obstacle.position.x,
       0,
       obstacle.position.z
     );
-    
+
     // Calculate distance
     const distance = tankPosition.distanceTo(obstaclePosition);
-    
+
     // Check if collision
     const collisionDistance = settings.tankCollisionRadius + obstacle.userData.collisionRadius;
-    
+
     if (distance < collisionDistance) {
       return true;
     }
   }
-  
+
   return false;
 }
 
-// Fire a projectile from the tank
-function fireProjectile() {
-  if (!playerTank) return;
-  
-  // Get turret position and rotation
-  const turret = playerTank.userData.turret;
-  
-  // Create projectile with larger size and more segments for better visibility
-  const projectileGeometry = new THREE.SphereGeometry(2, 16, 16); // Increased size further
-  const projectileMaterial = new THREE.MeshStandardMaterial({ 
+// Performance-optimized object pools
+const objectPools = {
+  projectiles: [],
+  particles: [],
+  maxProjectiles: 20,
+  maxParticles: 50
+};
+
+// Shared geometries for better performance
+const sharedGeometries = {
+  projectile: new THREE.SphereGeometry(2, 12, 8),  // Balanced detail
+  particle: new THREE.SphereGeometry(0.3, 6, 4)    // Simple but effective particles
+};
+
+// Optimized materials with good visual quality
+const sharedMaterials = {
+  projectile: new THREE.MeshStandardMaterial({
     color: 0xFFFF00,
     emissive: 0xFFFF00,
     emissiveIntensity: 2,
     metalness: 0.3,
     roughness: 0.2
-  });
-  const projectile = new THREE.Mesh(projectileGeometry, projectileMaterial);
+  }),
+  particle: new THREE.MeshBasicMaterial({
+    color: 0xFF5500,
+    emissive: 0xFF5500,
+    emissiveIntensity: 1.5,
+    transparent: true,
+    opacity: 0.8
+  })
+};
+
+// Get or create pooled object
+function getPooledObject(type) {
+  const pool = objectPools[type];
+  if (!pool) return null;
   
-  // Get the tank's forward direction
+  for (let i = 0; i < pool.length; i++) {
+    if (!pool[i].visible) {
+      pool[i].visible = true;
+      return pool[i];
+    }
+  }
+  
+  // Create new object if pool isn't full
+  if (type === 'projectiles' && pool.length < objectPools.maxProjectiles) {
+    const obj = new THREE.Mesh(sharedGeometries.projectile, sharedMaterials.projectile);
+    obj.visible = true;
+    pool.push(obj);
+    return obj;
+  } else if (type === 'particles' && pool.length < objectPools.maxParticles) {
+    const obj = new THREE.Mesh(sharedGeometries.particle, sharedMaterials.particle.clone());
+    obj.visible = true;
+    pool.push(obj);
+    return obj;
+  }
+  
+  return null;
+}
+
+// Optimized projectile firing
+function fireProjectile() {
+  if (!playerTank) return;
+
+  const projectile = getPooledObject('projectiles');
+  if (!projectile) return;
+
+  const turret = playerTank.userData.turret;
   const tankDirection = new THREE.Vector3(
     Math.sin(playerTank.rotation.y),
     0,
     Math.cos(playerTank.rotation.y)
   );
-  
-  // Position projectile at the end of the barrel
-  const barrelLength = 12;
-  const barrelOffset = tankDirection.clone().multiplyScalar(barrelLength);
+
+  // Position projectile at turret
   const turretPosition = turret.getWorldPosition(new THREE.Vector3());
-  
   projectile.position.copy(turretPosition);
-  projectile.position.y = turretPosition.y; // Keep the same height as turret
-  projectile.position.add(barrelOffset); // Move it to the end of the barrel
-  
-  // Store direction and speed
-  projectile.userData.direction = tankDirection;
+  projectile.position.y = turretPosition.y;
+  projectile.position.add(tankDirection.multiplyScalar(12)); // Barrel length
+
+  // Set projectile properties
+  projectile.userData.direction = tankDirection.clone();
   projectile.userData.speed = settings.projectileSpeed;
   projectile.userData.lifetime = 0;
-  
-  // Add to scene and projectiles array
+
+  // Add light only if we have capacity
+  const light = lightPool.acquire(0xFFFF00, 3, 15);
+  if (light) {
+    projectile.userData.light = light;
+    light.position.copy(projectile.position);
+  }
+
   scene.add(projectile);
   projectiles.push(projectile);
-  
-  // Add point light to projectile for better visibility
-  const projectileLight = new THREE.PointLight(0xFFFF00, 8, 20); // Increased intensity and distance
-  projectile.add(projectileLight);
-  
-  // Add muzzle flash effect
-  createMuzzleFlash(projectile.position.clone(), tankDirection);
+
+  // Quick muzzle flash
+  createMuzzleFlash(projectile.position.clone());
 }
 
-// Create muzzle flash effect
-function createMuzzleFlash(position, direction) {
-  // Create light
-  const flashLight = new THREE.PointLight(0xFFAA00, 5, 15);
-  flashLight.position.copy(position);
-  scene.add(flashLight);
-  
-  // Remove after short time
-  setTimeout(() => {
-    scene.remove(flashLight);
-  }, 100);
-}
-
-// Update all projectiles
-function updateProjectiles() {
-  for (let i = projectiles.length - 1; i >= 0; i--) {
-    const projectile = projectiles[i];
-    
-    // Update position
-    const movement = projectile.userData.direction.clone();
-    movement.multiplyScalar(projectile.userData.speed * deltaTime);
-    projectile.position.add(movement);
-    
-    // Update lifetime
-    projectile.userData.lifetime += deltaTime;
-    
-    // Check for collisions
-    if (checkProjectileCollisions(projectile)) {
-      // Remove projectile
-      scene.remove(projectile);
-      projectiles.splice(i, 1);
-      continue;
-    }
-    
-    // Remove if too old (based on distance traveled)
-    const distanceFromTank = projectile.position.distanceTo(playerTank.position);
-    if (projectile.userData.lifetime > 3) {  // Only use lifetime, not distance
-      scene.remove(projectile);
-      projectiles.splice(i, 1);
-    }
+// Optimized muzzle flash
+function createMuzzleFlash(position) {
+  const light = lightPool.acquire(0xFFAA00, 3, 8);
+  if (light) {
+    light.position.copy(position);
+    setTimeout(() => lightPool.release(light), 50); // Very quick flash
   }
 }
 
-// Check if projectile collides with obstacles
+// Efficient projectile update
+function updateProjectiles() {
+  const removeList = [];
+  const currentTime = performance.now();
+  
+  for (const projectile of projectiles) {
+    if (!projectile.visible) continue;
+
+    // Update position
+    projectile.position.addScaledVector(projectile.userData.direction, projectile.userData.speed * deltaTime);
+    
+    // Update light if present
+    if (projectile.userData.light) {
+      projectile.userData.light.position.copy(projectile.position);
+    }
+
+    projectile.userData.lifetime += deltaTime;
+
+    // Force cleanup of old projectiles (over 3 seconds)
+    if (projectile.userData.lifetime > 3) {
+      removeList.push(projectile);
+      continue;
+    }
+
+    // Check for collisions
+    if (checkProjectileCollisions(projectile)) {
+      removeList.push(projectile);
+    }
+  }
+
+  // Batch remove projectiles
+  for (const projectile of removeList) {
+    cleanupProjectile(projectile);
+  }
+}
+
+// Clean up a projectile and its associated resources
+function cleanupProjectile(projectile) {
+  if (projectile.userData.light) {
+    lightPool.release(projectile.userData.light);
+    projectile.userData.light = null;
+  }
+  
+  scene.remove(projectile);
+  projectile.visible = false;
+  
+  const index = projectiles.indexOf(projectile);
+  if (index > -1) {
+    projectiles.splice(index, 1);
+  }
+}
+
+// Create explosion effect
+function createExplosion(position, isLarge = false) {
+  const particleCount = isLarge ? 8 : 5;
+  const explosionForce = isLarge ? 10 : 6;
+  const totalDuration = 500; // Reduced to 0.5 seconds
+  const startTime = performance.now();
+  const particles = [];
+
+  // Create and track explosion group
+  const explosionGroup = new THREE.Group();
+  explosionGroup.position.copy(position);
+  scene.add(explosionGroup);
+
+  // Quick bright flash
+  const light = lightPool.acquire(0xFF5500, isLarge ? 4 : 2, isLarge ? 15 : 10);
+  if (light) {
+    light.position.copy(position).add(new THREE.Vector3(0, 2, 0));
+    setTimeout(() => lightPool.release(light), 100); // Shorter light duration
+  }
+
+  // Create particles
+  for (let i = 0; i < particleCount; i++) {
+    const particle = getPooledObject('particles');
+    if (!particle) continue;
+
+    // Random position within explosion radius
+    const angle = Math.random() * Math.PI * 2;
+    const radius = Math.random() * 2;
+    particle.position.set(
+      Math.cos(angle) * radius,
+      Math.random() * 2,
+      Math.sin(angle) * radius
+    );
+
+    // Set velocity
+    const upwardForce = 6 + Math.random() * 4;
+    particle.userData.velocity = new THREE.Vector3(
+      Math.cos(angle) * explosionForce * Math.random(),
+      upwardForce,
+      Math.sin(angle) * explosionForce * Math.random()
+    );
+
+    particle.userData.lifetime = 0;
+    particle.userData.maxLifetime = 0.3; // Shorter particle lifetime
+
+    explosionGroup.add(particle);
+    particles.push(particle);
+  }
+
+  // Animation cleanup function
+  const cleanupExplosion = () => {
+    // Remove all particles
+    particles.forEach(particle => {
+      if (particle.parent) {
+        particle.parent.remove(particle);
+      }
+      particle.visible = false;
+    });
+    
+    // Remove explosion group
+    if (explosionGroup.parent) {
+      explosionGroup.parent.remove(explosionGroup);
+    }
+    
+    // Release light if still active
+    if (light && light.parent) {
+      lightPool.release(light);
+    }
+  };
+
+  // Update function
+  const updateExplosion = () => {
+    const elapsed = performance.now() - startTime;
+    
+    // Force cleanup after total duration
+    if (elapsed >= totalDuration) {
+      cleanupExplosion();
+      return;
+    }
+
+    // Update particles
+    particles.forEach(particle => {
+      if (!particle.visible) return;
+
+      particle.userData.lifetime += deltaTime;
+      
+      // Remove particle if it exceeded its lifetime
+      if (particle.userData.lifetime >= particle.userData.maxLifetime) {
+        particle.visible = false;
+        return;
+      }
+
+      // Update position
+      particle.position.addScaledVector(particle.userData.velocity, deltaTime);
+      particle.userData.velocity.y -= 15 * deltaTime; // Gravity
+
+      // Fade out
+      const fadeProgress = particle.userData.lifetime / particle.userData.maxLifetime;
+      particle.material.opacity = Math.max(0, 1 - fadeProgress);
+    });
+
+    // Continue animation if any particles are still visible
+    if (particles.some(p => p.visible)) {
+      requestAnimationFrame(updateExplosion);
+    } else {
+      cleanupExplosion();
+    }
+  };
+
+  // Start animation
+  requestAnimationFrame(updateExplosion);
+
+  // Force cleanup after total duration
+  setTimeout(cleanupExplosion, totalDuration);
+}
+
+// Check if projectile collides with obstacles or tanks
 function checkProjectileCollisions(projectile) {
+  // Increased projectile collision radius for more generous hit detection
+  const projectileRadius = 3;
+
   // Check distance to all obstacles
   for (let i = 0; i < obstacles.length; i++) {
     const obstacle = obstacles[i];
-    
+
     // Skip destroyed obstacles
     if (obstacle.userData.isDestroyed) continue;
-    
-    // Calculate distance
+
+    // Calculate distance from projectile center to obstacle center
     const distance = projectile.position.distanceTo(obstacle.position);
-    
-    // Check collision with increased collision radius for better hit detection
-    if (distance < obstacle.userData.collisionRadius + 2) {
-      // Create explosion at impact point
-      createExplosion(projectile.position.clone(), false);
-      
-      // Apply massive damage to ensure destruction
+
+    // More generous collision check using combined radii
+    const combinedRadius = projectileRadius + obstacle.userData.collisionRadius;
+    if (distance < combinedRadius) {
+      // Apply damage to obstacle
       damageObstacle(obstacle, 1000);
-      
-      // If obstacle is destroyed, create a larger explosion
-      if (obstacle.userData.health <= 0) {
-        createExplosion(obstacle.position.clone(), true);
-        
-        // If obstacle was explosive, damage nearby obstacles
-        if (obstacle.userData.isExplosive) {
-          applyExplosionDamage(obstacle.position, 25, 1000);
-        }
+
+      // If obstacle was explosive, damage nearby obstacles
+      if (obstacle.userData.isExplosive) {
+        applyExplosionDamage(obstacle.position, 25, 1000);
       }
-      
+
       return true;
     }
   }
-  
+
+  // Check collision with other tanks
+  for (const [id, tank] of otherPlayers) {
+    if (tank.userData.isDestroyed) continue;
+
+    // Calculate distance from projectile center to tank center
+    const distance = projectile.position.distanceTo(tank.position);
+
+    // More generous collision check using combined radii
+    const combinedRadius = projectileRadius + tank.userData.collisionRadius;
+    if (distance < combinedRadius) {
+      // Create impact explosion
+      createExplosion(tank.position.clone(), false);
+      
+      // Apply direct damage to tank
+      tank.userData.health -= settings.projectileDamage;
+      
+      // Notify server about hit
+      if (ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({
+          type: 'tankHit',
+          targetId: id,
+          shooterId: clientId,
+          damage: settings.projectileDamage,
+          position: tank.position.clone()
+        }));
+      }
+
+      // Check if tank is destroyed
+      if (tank.userData.health <= 0 && !tank.userData.isDestroyed) {
+        tank.userData.isDestroyed = true;
+        createExplosion(tank.position.clone(), true);
+        scene.remove(tank);
+        
+        // Award points for destroying tank
+        gameState.score += 100;
+        updateUI();
+
+        // Notify server about destruction
+        if (ws && ws.readyState === WebSocket.OPEN) {
+          ws.send(JSON.stringify({
+            type: 'tankDestroyed',
+            id: id,
+            destroyedBy: clientId,
+            position: tank.position.clone()
+          }));
+        }
+
+        setTimeout(() => respawnTank(tank), settings.tankRespawnTime * 1000);
+      }
+
+      return true;
+    }
+  }
+
+  // Check collision with player tank
+  if (playerTank && !playerTank.userData.isDestroyed) {
+    // Calculate distance from projectile center to player tank center
+    const distance = projectile.position.distanceTo(playerTank.position);
+
+    // More generous collision check using combined radii
+    const combinedRadius = projectileRadius + playerTank.userData.collisionRadius;
+    if (distance < combinedRadius) {
+      // Create impact explosion
+      createExplosion(playerTank.position.clone(), false);
+      
+      // Apply direct damage to player tank
+      playerTank.userData.health -= settings.projectileDamage;
+      gameState.health = (playerTank.userData.health / settings.tankMaxHealth) * 100;
+      updateUI();
+
+      // Notify server about hit
+      if (ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({
+          type: 'tankHit',
+          targetId: clientId,
+          shooterId: clientId,
+          damage: settings.projectileDamage,
+          position: playerTank.position.clone()
+        }));
+      }
+
+      // Check if player tank is destroyed
+      if (playerTank.userData.health <= 0 && !playerTank.userData.isDestroyed) {
+        playerTank.userData.isDestroyed = true;
+        createExplosion(playerTank.position.clone(), true);
+        scene.remove(playerTank);
+        gameOver();
+
+        // Notify server about destruction
+        if (ws && ws.readyState === WebSocket.OPEN) {
+          ws.send(JSON.stringify({
+            type: 'tankDestroyed',
+            id: clientId,
+            destroyedBy: clientId,
+            position: playerTank.position.clone()
+          }));
+        }
+      }
+
+      return true;
+    }
+  }
+
   return false;
 }
 
 // Apply damage to an obstacle
 function damageObstacle(obstacle, damageAmount) {
-  // Apply damage
-  obstacle.userData.health -= damageAmount;
+  if (!obstacle || obstacle.userData.isDestroyed) return;
   
-  // Check if destroyed
-  if (obstacle.userData.health <= 0 && !obstacle.userData.isDestroyed) {
-    // Ensure the obstacle is marked as destroyed
+  obstacle.userData.health -= damageAmount;
+
+  if (obstacle.userData.health <= 0) {
+    // Immediately destroy obstacle without any effects
     obstacle.userData.isDestroyed = true;
-    
-    // Scale down to show destruction
     obstacle.scale.set(0.1, 0.1, 0.1);
-    
-    // Add to respawn queue with random delay
-    const respawnDelay = settings.minRespawnTime + 
-      Math.random() * (settings.maxRespawnTime - settings.minRespawnTime);
+
+    // Award 1 point for destroying an obstacle
+    gameState.score += 1;
+    updateUI();
+
+    // If obstacle was explosive, damage nearby obstacles without effects
+    if (obstacle.userData.isExplosive) {
+      applyExplosionDamage(obstacle.position, 25, 1000);
+    }
+
+    // Add to respawn queue
     addToRespawnQueue(obstacle);
+
+    // Notify server about score update
+    if (ws && ws.readyState === WebSocket.OPEN) {
+      ws.send(JSON.stringify({
+        type: 'update',
+        score: gameState.score
+      }));
+    }
   }
 }
 
 // Add obstacle to respawn queue
 function addToRespawnQueue(obstacle) {
-  const respawnTime = settings.minRespawnTime + 
+  const respawnTime = settings.minRespawnTime +
     Math.random() * (settings.maxRespawnTime - settings.minRespawnTime);
   respawnQueue.push({
     obstacle: obstacle,
@@ -1296,7 +1690,7 @@ function addToRespawnQueue(obstacle) {
 function updateRespawnQueue() {
   for (let i = respawnQueue.length - 1; i >= 0; i--) {
     const item = respawnQueue[i];
-    
+
     // Check if time to respawn
     if (clock.elapsedTime >= item.respawnTime) {
       respawnObstacle(item.obstacle);
@@ -1307,13 +1701,23 @@ function updateRespawnQueue() {
 
 // Respawn an obstacle
 function respawnObstacle(obstacle) {
-  // Reset properties
+  // Check if tank is too close to the obstacle's position
+  if (playerTank) {
+    const distance = obstacle.position.distanceTo(playerTank.position);
+    if (distance < settings.tankCollisionRadius + obstacle.userData.collisionRadius + 5) {
+      const respawnTime = clock.elapsedTime + 2;
+      respawnQueue.push({ obstacle, respawnTime });
+      return;
+    }
+  }
+
+  // Reset properties immediately
   obstacle.userData.isDestroyed = false;
-  obstacle.userData.health = obstacle.userData.type === 'barrel' ? 20 : 
-                             obstacle.userData.type === 'crate' ? 30 : 
-                             obstacle.userData.type === 'tree' ? 40 : 50;
-  
-  // Reset scale
+  obstacle.userData.health = obstacle.userData.type === 'barrel' ? 20 :
+    obstacle.userData.type === 'crate' ? 30 :
+    obstacle.userData.type === 'tree' ? 40 : 50;
+
+  // Reset scale immediately
   obstacle.scale.copy(obstacle.userData.originalScale);
 }
 
@@ -1321,118 +1725,17 @@ function respawnObstacle(obstacle) {
 function applyExplosionDamage(position, radius, damage) {
   for (const obstacle of obstacles) {
     if (obstacle.userData.isDestroyed) continue;
-    
+
     // Calculate distance
     const distance = position.distanceTo(obstacle.position);
-    
+
     // Check if in explosion radius
     if (distance < radius) {
       // Calculate damage based on distance (more damage closer to explosion)
       const actualDamage = damage * (1 - distance / radius);
       damageObstacle(obstacle, actualDamage);
-      
-      // Create explosion if destroyed
-      if (obstacle.userData.health <= 0) {
-        createExplosion(obstacle.position.clone(), obstacle.userData.isExplosive);
-      }
     }
   }
-}
-
-// Create explosion effect
-function createExplosion(position, isLarge = false) {
-  // Create explosion particles
-  const particleCount = isLarge ? 30 : 15;
-  const explosionRadius = isLarge ? 10 : 5;
-  
-  for (let i = 0; i < particleCount; i++) {
-    // Create particle
-    const particleGeometry = new THREE.SphereGeometry(
-      0.3 + Math.random() * 0.5,
-      4,
-      4
-    );
-    
-    // Create glowing particle material
-    const particleMaterial = new THREE.MeshStandardMaterial({
-      color: new THREE.Color(
-        0.8 + Math.random() * 0.2,
-        0.3 + Math.random() * 0.3,
-        0.1
-      ),
-      emissive: new THREE.Color(0xFF5500),
-      emissiveIntensity: 2
-    });
-    
-    const particle = new THREE.Mesh(particleGeometry, particleMaterial);
-    
-    // Set position
-    particle.position.copy(position);
-    particle.position.y += 1 + Math.random() * 2;
-    
-    // Set random velocity with more upward momentum
-    const velocity = new THREE.Vector3(
-      (Math.random() - 0.5) * 2,
-      0.5 + Math.random() * 2, // More upward velocity
-      (Math.random() - 0.5) * 2
-    );
-    
-    velocity.normalize().multiplyScalar(8 + Math.random() * 8); // Increased velocity
-    particle.userData.velocity = velocity;
-    particle.userData.lifetime = 0;
-    particle.userData.maxLifetime = 0.5 + Math.random() * 0.5;
-    
-    // Add point light to some particles
-    if (Math.random() < 0.3) {
-      const particleLight = new THREE.PointLight(0xFF5500, 2, 5);
-      particle.add(particleLight);
-    }
-    
-    // Add to scene
-    scene.add(particle);
-    
-    // Create animation to move particle and then remove it
-    const animateParticle = () => {
-      particle.userData.lifetime += deltaTime;
-      
-      // Move particle
-      const movement = particle.userData.velocity.clone();
-      movement.multiplyScalar(deltaTime);
-      particle.position.add(movement);
-      
-      // Apply gravity
-      particle.userData.velocity.y -= 15 * deltaTime; // Increased gravity
-      
-      // Scale down over time
-      const lifeRatio = 1 - particle.userData.lifetime / particle.userData.maxLifetime;
-      particle.scale.set(lifeRatio, lifeRatio, lifeRatio);
-      
-      // Check if particle should be removed
-      if (particle.userData.lifetime >= particle.userData.maxLifetime) {
-        scene.remove(particle);
-      } else {
-        requestAnimationFrame(animateParticle);
-      }
-    };
-    
-    // Start animation
-    animateParticle();
-  }
-  
-  // Add explosion light
-  const explosionLight = new THREE.PointLight(
-    0xFF5500,
-    isLarge ? 5 : 2,
-    isLarge ? 30 : 15
-  );
-  explosionLight.position.copy(position);
-  explosionLight.position.y += 2;
-  scene.add(explosionLight);
-  
-  // Remove light after animation
-  setTimeout(() => {
-    scene.remove(explosionLight);
-  }, 500);
 }
 
 // Update cloud positions
@@ -1442,13 +1745,13 @@ function updateClouds() {
     const movement = cloud.userData.velocity.clone();
     movement.multiplyScalar(deltaTime * 0.2);
     cloud.position.add(movement);
-    
+
     // Wrap clouds around when they get too far (relative to player position)
     if (playerTank) {
       const maxDistance = 1000; // Maximum distance from player before wrapping
       const dx = cloud.position.x - playerTank.position.x;
       const dz = cloud.position.z - playerTank.position.z;
-      
+
       if (dx > maxDistance) cloud.position.x -= maxDistance * 2;
       if (dx < -maxDistance) cloud.position.x += maxDistance * 2;
       if (dz > maxDistance) cloud.position.z -= maxDistance * 2;
@@ -1460,7 +1763,7 @@ function updateClouds() {
 // Check all collisions in the game
 function checkCollisions() {
   // Tank-obstacle collisions handled in updatePlayerTank
-  
+
   // Projectile-obstacle collisions handled in updateProjectiles
 }
 
@@ -1472,23 +1775,27 @@ function checkTexturesLoaded() {
 
 // Update game UI
 function updateUI() {
+  // Update health bar
+  const healthBar = document.getElementById('health-bar');
+  if (healthBar) {
+    const healthPercent = Math.max(0, Math.min(100, gameState.health));
+    healthBar.style.width = `${healthPercent}%`;
+    
+    // Update health bar color based on health level
+    healthBar.className = '';
+    if (healthPercent <= 25) {
+      healthBar.classList.add('danger');
+    } else if (healthPercent <= 50) {
+      healthBar.classList.add('warning');
+    }
+  }
+
   // Update score display
   const scoreDisplay = document.getElementById('score-display');
-  scoreDisplay.textContent = `Score: ${gameState.score}`;
-  
-  // Update health bar
-  const healthBarFill = document.getElementById('health-bar-fill');
-  healthBarFill.style.width = `${gameState.health}%`;
-  
-  // Change color based on health
-  if (gameState.health > 60) {
-    healthBarFill.style.backgroundColor = '#4CAF50'; // Green
-  } else if (gameState.health > 30) {
-    healthBarFill.style.backgroundColor = '#FFC107'; // Amber
-  } else {
-    healthBarFill.style.backgroundColor = '#F44336'; // Red
+  if (scoreDisplay) {
+    scoreDisplay.textContent = `Score: ${gameState.score}`;
   }
-  
+
   // Check for game over
   if (gameState.health <= 0 && !gameState.isGameOver) {
     gameOver();
@@ -1498,55 +1805,123 @@ function updateUI() {
 // Game over function
 function gameOver() {
   gameState.isGameOver = true;
-  
+  isGameActive = false;
+
   // Show game over screen
   const gameOverScreen = document.getElementById('game-over');
-  gameOverScreen.style.display = 'flex';
-  
-  // Update final score
-  const finalScoreElement = document.getElementById('final-score');
-  finalScoreElement.textContent = gameState.score;
-  
-  // Disable controls
-  isGameActive = false;
+  if (!gameOverScreen) {
+    // Create game over screen if it doesn't exist
+    const screen = document.createElement('div');
+    screen.id = 'game-over';
+    screen.style.position = 'fixed';
+    screen.style.top = '0';
+    screen.style.left = '0';
+    screen.style.width = '100%';
+    screen.style.height = '100%';
+    screen.style.backgroundColor = 'rgba(0, 0, 0, 0.8)';
+    screen.style.display = 'flex';
+    screen.style.flexDirection = 'column';
+    screen.style.justifyContent = 'center';
+    screen.style.alignItems = 'center';
+    screen.style.color = 'white';
+    screen.style.fontSize = '24px';
+    screen.style.zIndex = '1000';
+
+    const gameOverText = document.createElement('h1');
+    gameOverText.textContent = 'YOUR TANK WAS DESTROYED!';
+    gameOverText.style.marginBottom = '20px';
+    gameOverText.style.fontSize = '36px';
+    gameOverText.style.color = '#FF4444';
+
+    const scoreText = document.createElement('p');
+    scoreText.id = 'final-score';
+    scoreText.textContent = `Score: ${gameState.score}`;
+    scoreText.style.marginBottom = '40px';
+    scoreText.style.fontSize = '24px';
+
+    const restartButton = document.createElement('button');
+    restartButton.id = 'restart-button';
+    restartButton.textContent = 'Play Again';
+    restartButton.style.padding = '15px 30px';
+    restartButton.style.fontSize = '20px';
+    restartButton.style.backgroundColor = '#4CAF50';
+    restartButton.style.border = 'none';
+    restartButton.style.borderRadius = '5px';
+    restartButton.style.color = 'white';
+    restartButton.style.cursor = 'pointer';
+    restartButton.style.transition = 'background-color 0.2s';
+    
+    restartButton.addEventListener('mouseover', () => {
+      restartButton.style.backgroundColor = '#45a049';
+    });
+    
+    restartButton.addEventListener('mouseout', () => {
+      restartButton.style.backgroundColor = '#4CAF50';
+    });
+    
+    restartButton.addEventListener('click', restartGame);
+
+    screen.appendChild(gameOverText);
+    screen.appendChild(scoreText);
+    screen.appendChild(restartButton);
+    document.body.appendChild(screen);
+  } else {
+    gameOverScreen.style.display = 'flex';
+    const finalScoreElement = document.getElementById('final-score');
+    if (finalScoreElement) {
+      finalScoreElement.textContent = `Score: ${gameState.score}`;
+    }
+  }
 }
 
 // Restart game
 function restartGame() {
+  // Clear all active animations
+  for (const [objectId] of activeAnimations) {
+    cleanupAnimation(objectId);
+  }
+
   // Reset game state
   gameState.score = 0;
   gameState.health = 100;
   gameState.isGameOver = false;
-  
-  // Reset player position
+
+  // Reset player tank
   if (playerTank) {
+    cleanupAnimation(playerTank.uuid);
     playerTank.position.set(0, 0, 0);
     playerTank.rotation.y = 0;
+    playerTank.userData.health = settings.tankMaxHealth;
+    playerTank.userData.isDestroyed = false;
+    playerTank.scale.set(1, 1, 1);
   }
-  
+
   // Reset obstacles
   for (const obstacle of obstacles) {
     if (obstacle.userData.isDestroyed) {
+      cleanupAnimation(obstacle.uuid);
       respawnObstacle(obstacle);
     }
   }
-  
+
   // Clear projectiles
   for (const projectile of projectiles) {
     scene.remove(projectile);
   }
   projectiles = [];
-  
+
   // Clear respawn queue
   respawnQueue = [];
-  
+
   // Hide game over screen
   const gameOverScreen = document.getElementById('game-over');
-  gameOverScreen.style.display = 'none';
-  
+  if (gameOverScreen) {
+    gameOverScreen.style.display = 'none';
+  }
+
   // Enable controls
   isGameActive = true;
-  
+
   // Update UI
   updateUI();
 }
@@ -1556,28 +1931,28 @@ function setupLoading() {
   // Get loading elements
   const loadingScreen = document.getElementById('loading-screen');
   const loadingBarFill = document.getElementById('loading-bar-fill');
-  
+
   // Create texture loader with loading manager
   const manager = new THREE.LoadingManager();
-  
+
   // Track loading progress
-  manager.onProgress = function(url, itemsLoaded, itemsTotal) {
+  manager.onProgress = function (url, itemsLoaded, itemsTotal) {
     const progress = itemsLoaded / itemsTotal * 100;
     loadingBarFill.style.width = `${progress}%`;
   };
-  
+
   // Handle loading complete
-  manager.onLoad = function() {
+  manager.onLoad = function () {
     // Hide loading screen
     loadingScreen.style.opacity = '0';
     setTimeout(() => {
       loadingScreen.style.display = 'none';
     }, 500);
-    
+
     // Start game
     startGame();
   };
-  
+
   return manager;
 }
 
@@ -1586,12 +1961,14 @@ function startGame() {
   // Set up restart button
   const restartButton = document.getElementById('restart-button');
   restartButton.addEventListener('click', restartGame);
-  
+
   // Start game loop
   isGameActive = true;
-  
+
   // First UI update
   updateUI();
+
+  connectToServer();
 }
 
 // Add placeholder textures for development
@@ -1604,7 +1981,7 @@ function createPlaceholderTextures() {
     const ctx = canvas.getContext('2d');
     ctx.fillStyle = color;
     ctx.fillRect(0, 0, 256, 256);
-    
+
     // Add some pattern
     ctx.fillStyle = 'rgba(255, 255, 255, 0.2)';
     for (let i = 0; i < 10; i++) {
@@ -1614,74 +1991,74 @@ function createPlaceholderTextures() {
         }
       }
     }
-    
+
     return new THREE.CanvasTexture(canvas);
   };
-  
+
   // Create textures for different elements
   const textures = {
     grass: createCanvasTexture('#4CAF50'),
     road: createCanvasTexture('#555555'),
     crate: createCanvasTexture('#8B4513')
   };
-  
+
   // Override the original createSkybox function
   window.originalCreateSkybox = createSkybox;
-  createSkybox = function() {
+  createSkybox = function () {
     // Just set the background color, no walls or geometry
     scene.background = new THREE.Color('#87CEEB');
   };
-  
+
   // Override createTerrain function
-  createTerrain = function() {
+  createTerrain = function () {
     // Create a large flat plane for the ground
     const groundMaterial = new THREE.MeshStandardMaterial({
       map: textures.grass,
       roughness: 0.8,
       metalness: 0.1
     });
-    
+
     // Create geometry for initial chunk
     const groundGeometry = new THREE.PlaneGeometry(chunkSize, chunkSize, 32, 32);
-    
+
     // Create mesh
     const ground = new THREE.Mesh(groundGeometry, groundMaterial);
     ground.rotation.x = -Math.PI / 2;
     ground.receiveShadow = true;
-    
+
     // Add to scene
     scene.add(ground);
     terrain = ground;
   };
-  
+
   // Override createRoads function
-  createRoads = function() {
+  createRoads = function () {
     const roadMaterial = new THREE.MeshStandardMaterial({
       map: textures.road,
       roughness: 0.7,
       metalness: 0.1
     });
-    
+
     // Create main roads
     createSingleRoad(roadMaterial, new THREE.Vector3(-200, 0.1, 0), new THREE.Vector3(200, 0.1, 0));
     createSingleRoad(roadMaterial, new THREE.Vector3(0, 0.1, -200), new THREE.Vector3(0, 0.1, 200));
   };
-  
+
   // Override createCrate function
-  createCrate = function() {
+  createCrate = function () {
     const size = 5 + Math.random() * 3;
     const geometry = new THREE.BoxGeometry(size, size, size);
-    
-    const material = new THREE.MeshStandardMaterial({ 
+
+    const material = new THREE.MeshStandardMaterial({
       map: textures.crate,
       roughness: 0.7,
       metalness: 0.2
     });
-    
+
     const crate = new THREE.Mesh(geometry, material);
     crate.castShadow = true;
     crate.receiveShadow = true;
-    
+
     // Store original properties for respawning
     crate.userData.originalScale = new THREE.Vector3().copy(crate.scale);
     crate.userData.type = 'crate';
@@ -1689,7 +2066,7 @@ function createPlaceholderTextures() {
     crate.userData.halfHeight = size / 2;
     crate.userData.collisionRadius = size / 2;
     crate.userData.isDestroyed = false;
-    
+
     return crate;
   };
 }
@@ -1697,11 +2074,11 @@ function createPlaceholderTextures() {
 // Add new function for chunk management
 function updateTerrainChunks() {
   if (!playerTank) return;
-  
+
   // Get current chunk coordinates based on tank position
   const currentChunkX = Math.floor(playerTank.position.x / chunkSize);
   const currentChunkZ = Math.floor(playerTank.position.z / chunkSize);
-  
+
   // Calculate which chunks should be loaded
   const chunksToLoad = new Set();
   for (let x = -viewDistance; x <= viewDistance; x++) {
@@ -1710,14 +2087,14 @@ function updateTerrainChunks() {
       const chunkZ = currentChunkZ + z;
       const chunkKey = `${chunkX},${chunkZ}`;
       chunksToLoad.add(chunkKey);
-      
+
       // Create chunk if it doesn't exist
       if (!chunks.has(chunkKey)) {
         createTerrainChunk(chunkX, chunkZ);
       }
     }
   }
-  
+
   // Remove chunks that are too far away
   for (const [chunkKey, chunk] of chunks) {
     if (!chunksToLoad.has(chunkKey)) {
@@ -1739,7 +2116,7 @@ function createTerrainChunk(chunkX, chunkZ) {
   // Calculate chunk position
   const posX = chunkX * chunkSize;
   const posZ = chunkZ * chunkSize;
-  
+
   // Create terrain for this chunk
   const groundGeometry = new THREE.PlaneGeometry(chunkSize, chunkSize, 32, 32);
   const groundMaterial = new THREE.MeshStandardMaterial({
@@ -1747,51 +2124,97 @@ function createTerrainChunk(chunkX, chunkZ) {
     roughness: 0.8,
     metalness: 0.1
   });
-  
+
   const ground = new THREE.Mesh(groundGeometry, groundMaterial);
   ground.rotation.x = -Math.PI / 2;
-  ground.position.set(posX + chunkSize/2, 0, posZ + chunkSize/2);
+  ground.position.set(posX + chunkSize / 2, 0, posZ + chunkSize / 2);
   ground.receiveShadow = true;
   scene.add(ground);
-  
+
   // Create obstacles for this chunk
   const chunkObstacles = [];
   const obstacleCount = 5 + Math.floor(Math.random() * 5);
-  
+
   for (let i = 0; i < obstacleCount; i++) {
     const obstacleType = Math.floor(Math.random() * 3);
     let obstacle;
-    
+
     switch (obstacleType) {
       case 0: obstacle = createCrate(); break;
       case 1: obstacle = createBarrel(); break;
       case 2: obstacle = createBarrier(); break;
     }
-    
+
     // Position randomly within chunk
-    obstacle.position.x = posX + Math.random() * chunkSize;
-    obstacle.position.z = posZ + Math.random() * chunkSize;
-    obstacle.position.y = obstacle.userData.halfHeight;
-    
-    scene.add(obstacle);
-    obstacles.push(obstacle);
-    chunkObstacles.push(obstacle);
+    let validPosition = false;
+    let attempts = 0;
+    const maxAttempts = 10;
+
+    while (!validPosition && attempts < maxAttempts) {
+      const testX = posX + Math.random() * chunkSize;
+      const testZ = posZ + Math.random() * chunkSize;
+
+      // Calculate distance from origin (tank spawn point)
+      const distanceFromOrigin = Math.sqrt(testX * testX + testZ * testZ);
+
+      // Check if position is too close to tank spawn point (increased safe zone)
+      if (distanceFromOrigin < 60) {
+        attempts++;
+        continue;
+      }
+
+      // Check distance from other obstacles
+      let tooClose = false;
+      for (const existingObstacle of chunkObstacles) {
+        const dx = testX - existingObstacle.position.x;
+        const dz = testZ - existingObstacle.position.z;
+        const distance = Math.sqrt(dx * dx + dz * dz);
+        if (distance < 15) { // Minimum distance between obstacles
+          tooClose = true;
+          break;
+        }
+      }
+
+      if (!tooClose) {
+        obstacle.position.x = testX;
+        obstacle.position.z = testZ;
+        obstacle.position.y = obstacle.userData.halfHeight;
+        validPosition = true;
+      }
+
+      attempts++;
+    }
+
+    if (validPosition) {
+      scene.add(obstacle);
+      obstacles.push(obstacle);
+      chunkObstacles.push(obstacle);
+    }
   }
-  
+
   // Create trees for this chunk
   const treeCount = 3 + Math.floor(Math.random() * 4);
   for (let i = 0; i < treeCount; i++) {
     const tree = createTree();
-    
+
     // Find a valid position for the tree
     let validPosition = false;
     let attempts = 0;
     const maxAttempts = 10;
-    
+
     while (!validPosition && attempts < maxAttempts) {
       const testX = posX + Math.random() * chunkSize;
       const testZ = posZ + Math.random() * chunkSize;
-      
+
+      // Calculate distance from origin (tank spawn point)
+      const distanceFromOrigin = Math.sqrt(testX * testX + testZ * testZ);
+
+      // Check if position is too close to tank spawn point (increased safe zone)
+      if (distanceFromOrigin < 60) {
+        attempts++;
+        continue;
+      }
+
       // Check distance from other obstacles
       let tooClose = false;
       for (const obstacle of chunkObstacles) {
@@ -1803,23 +2226,23 @@ function createTerrainChunk(chunkX, chunkZ) {
           break;
         }
       }
-      
+
       if (!tooClose) {
         tree.position.x = testX;
         tree.position.z = testZ;
         validPosition = true;
       }
-      
+
       attempts++;
     }
-    
+
     if (validPosition) {
       scene.add(tree);
       obstacles.push(tree);
       chunkObstacles.push(tree);
     }
   }
-  
+
   // Store chunk data
   chunks.set(`${chunkX},${chunkZ}`, {
     terrain: ground,
@@ -1827,5 +2250,745 @@ function createTerrainChunk(chunkX, chunkZ) {
   });
 }
 
+// Connect to WebSocket server
+function connectToServer() {
+  // Don't create a new connection if we already have one
+  if (ws && ws.readyState === WebSocket.OPEN) {
+    console.log('Already connected to server');
+    return;
+  }
+
+  // Close existing connection if any
+  if (ws) {
+    ws.close();
+    ws = null;
+  }
+
+  ws = new WebSocket('ws://localhost:3000');
+
+  // Add connection timeout
+  const connectionTimeout = setTimeout(() => {
+    if (ws.readyState !== WebSocket.OPEN) {
+      console.log('Connection timeout, retrying...');
+      ws.close();
+    }
+  }, 5000);
+
+  ws.onopen = () => {
+    clearTimeout(connectionTimeout);
+    console.log('Connected to server');
+    reconnecting = false;
+    startHeartbeat();
+
+    // Clear all other players
+    otherPlayers.forEach((player, id) => {
+      scene.remove(player);
+    });
+    otherPlayers.clear();
+  };
+
+  ws.onmessage = (event) => {
+    try {
+      const message = JSON.parse(event.data);
+      handleServerMessage(message);
+    } catch (error) {
+      console.error('Error parsing message:', error);
+    }
+  };
+
+  ws.onclose = (event) => {
+    console.log('Disconnected from server', event.code, event.reason);
+
+    // Only attempt reconnection if:
+    // 1. The tab is visible
+    // 2. The connection wasn't closed intentionally
+    // 3. We're not already trying to reconnect
+    if (!document.hidden && !reconnecting) {
+      console.log('Tab is visible, attempting reconnection');
+      reconnecting = true;
+      setTimeout(connectToServer, 3000);
+    }
+
+    // Clear all other players
+    otherPlayers.forEach((player, id) => {
+      scene.remove(player);
+    });
+    otherPlayers.clear();
+  };
+
+  ws.onerror = (error) => {
+    console.error('WebSocket error:', error);
+  };
+}
+
+// Add heartbeat to keep connection alive
+let heartbeatInterval;
+function startHeartbeat() {
+  if (heartbeatInterval) {
+    clearInterval(heartbeatInterval);
+  }
+
+  heartbeatInterval = setInterval(() => {
+    if (ws && ws.readyState === WebSocket.OPEN) {
+      ws.send(JSON.stringify({ type: 'ping' }));
+    }
+  }, 30000); // Send heartbeat every 30 seconds
+}
+
+// Modify the visibility change handler
+function handleVisibilityChange() {
+  if (document.hidden) {
+    // Tab is hidden, stop heartbeat but keep connection
+    if (heartbeatInterval) {
+      clearInterval(heartbeatInterval);
+    }
+  } else {
+    // Tab is visible again, restart heartbeat
+    startHeartbeat();
+    
+    // If we're disconnected, reconnect
+    if (!ws || ws.readyState !== WebSocket.OPEN) {
+      console.log('Tab visible, reconnecting');
+      connectToServer();
+    }
+  }
+}
+
+// Handle messages from server
+function handleServerMessage(message) {
+  if (!message || !message.type) {
+    console.error('Invalid message received:', message);
+    return;
+  }
+
+  switch (message.type) {
+    case 'init':
+      if (!message.id) {
+        console.error('Invalid init message, no client ID:', message);
+        return;
+      }
+
+      // If we already have this client ID and we're not reconnecting, skip initialization
+      if (clientId === message.id && !reconnecting) {
+        console.log('Already initialized with this client ID, skipping');
+        return;
+      }
+
+      clientId = message.id;
+      console.log('Initialized with client ID:', clientId);
+
+      // Clear all existing other players
+      otherPlayers.forEach((player, id) => {
+        scene.remove(player);
+      });
+      otherPlayers.clear();
+
+      // If we're reconnecting and have state data, restore our position
+      if (reconnecting && message.state) {
+        if (playerTank && message.state.position) {
+          playerTank.position.set(
+            message.state.position.x,
+            message.state.position.y,
+            message.state.position.z
+          );
+        }
+        if (playerTank && message.state.rotation) {
+          playerTank.rotation.y = message.state.rotation.y;
+        }
+        if (message.state.health) {
+          gameState.health = message.state.health;
+        }
+        if (message.state.score) {
+          gameState.score = message.state.score;
+        }
+        reconnecting = false;
+      }
+
+      // Add other players from the server's client list
+      if (Array.isArray(message.clients)) {
+        message.clients.forEach(client => {
+          if (client && client.id && client.id !== clientId) {
+            console.log('Adding other player:', client.id);
+            addOtherPlayer(client);
+          }
+        });
+      }
+      break;
+
+    case 'playerJoined':
+      if (message.client && message.client.id && message.client.id !== clientId) {
+        console.log('New player joined:', message.client.id);
+        // Remove existing tank for this ID if it exists
+        removeOtherPlayer(message.client.id);
+        // Add the new player
+        addOtherPlayer(message.client);
+      }
+      break;
+
+    case 'playerLeft':
+      if (message.id && message.id !== clientId) {
+        console.log('Player left:', message.id);
+        removeOtherPlayer(message.id);
+      }
+      break;
+
+    case 'playerUpdate':
+      if (message.id && message.id !== clientId) {
+        updateOtherPlayer(message);
+      }
+      break;
+
+    case 'projectile':
+      if (message.id !== clientId) {
+        handleOtherPlayerProjectile(message);
+      }
+      break;
+
+    case 'explosion':
+      createExplosion(
+        new THREE.Vector3(
+          message.position.x,
+          message.position.y,
+          message.position.z
+        ),
+        message.isLarge
+      );
+      break;
+
+    case 'obstacleDestroyed':
+      handleObstacleDestroyed(message);
+      break;
+
+    case 'tankDamaged':
+      if (message.id === clientId) {
+        // Update our tank's health
+        if (playerTank) {
+          playerTank.userData.health = message.health;
+          gameState.health = (message.health / settings.tankMaxHealth) * 100;
+          updateUI();
+        }
+      } else {
+        // Update other tank's health
+        const otherTank = otherPlayers.get(message.id);
+        if (otherTank) {
+          otherTank.userData.health = message.health;
+        }
+      }
+      break;
+
+    case 'tankDestroyed':
+      if (message.id === clientId) {
+        // Our tank was destroyed
+        if (playerTank) {
+          playerTank.userData.health = 0;
+          playerTank.userData.isDestroyed = true;
+          createExplosion(playerTank.position.clone(), true);
+          scene.remove(playerTank);
+          gameOver();
+        }
+      } else {
+        // Another player's tank was destroyed
+        const otherTank = otherPlayers.get(message.id);
+        if (otherTank) {
+          otherTank.userData.health = 0;
+          otherTank.userData.isDestroyed = true;
+          createExplosion(otherTank.position.clone(), true);
+          scene.remove(otherTank);
+          setTimeout(() => respawnTank(otherTank), settings.tankRespawnTime * 1000);
+
+          // Award points if we destroyed this tank
+          if (message.destroyedBy === clientId) {
+            gameState.score += 100;
+            updateUI();
+          }
+        }
+      }
+      break;
+
+    case 'tankHit':
+      // Handle tank being hit
+      if (message.targetId === clientId) {
+        // Our tank was hit
+        if (playerTank) {
+          // Create impact explosion
+          createExplosion(playerTank.position.clone(), false);
+          
+          // Apply damage
+          playerTank.userData.health -= message.damage;
+          gameState.health = (playerTank.userData.health / settings.tankMaxHealth) * 100;
+          updateUI();
+
+          // Check if destroyed
+          if (playerTank.userData.health <= 0 && !playerTank.userData.isDestroyed) {
+            playerTank.userData.isDestroyed = true;
+            createExplosion(playerTank.position.clone(), true);
+            scene.remove(playerTank);
+            gameOver();
+
+            // Notify server about destruction
+            if (ws && ws.readyState === WebSocket.OPEN) {
+              ws.send(JSON.stringify({
+                type: 'tankDestroyed',
+                id: clientId,
+                destroyedBy: message.shooterId,
+                position: playerTank.position
+              }));
+            }
+          }
+        }
+      } else {
+        // Another tank was hit
+        const otherTank = otherPlayers.get(message.targetId);
+        if (otherTank) {
+          // Create impact explosion
+          createExplosion(otherTank.position.clone(), false);
+          
+          // Apply damage
+          otherTank.userData.health -= message.damage;
+
+          // Check if destroyed
+          if (otherTank.userData.health <= 0 && !otherTank.userData.isDestroyed) {
+            otherTank.userData.isDestroyed = true;
+            createExplosion(otherTank.position.clone(), true);
+            scene.remove(otherTank);
+
+            // Award points if we destroyed the tank
+            if (message.shooterId === clientId) {
+              gameState.score += 100;
+              updateUI();
+            }
+
+            setTimeout(() => respawnTank(otherTank), settings.tankRespawnTime * 1000);
+          }
+        }
+      }
+      break;
+  }
+}
+
+// Create tank for other players
+function createOtherPlayerTank() {
+  // Create tank group
+  const otherTank = new THREE.Group();
+
+  // Create tank body
+  const bodyGeometry = new THREE.BoxGeometry(10, 4, 15);
+  const bodyMaterial = new THREE.MeshStandardMaterial({
+    color: 0x8B0000, // Different color to distinguish from main player
+    roughness: 0.7,
+    metalness: 0.3
+  });
+
+  const body = new THREE.Mesh(bodyGeometry, bodyMaterial);
+  body.castShadow = true;
+  body.receiveShadow = true;
+  body.position.y = 4;
+
+  // Create tank turret
+  const turretGeometry = new THREE.CylinderGeometry(4, 4, 3, 8);
+  const turretMaterial = new THREE.MeshStandardMaterial({
+    color: 0x8B0000,
+    roughness: 0.7,
+    metalness: 0.3
+  });
+
+  const turret = new THREE.Mesh(turretGeometry, turretMaterial);
+  turret.castShadow = true;
+  turret.receiveShadow = true;
+  turret.position.y = 7.5;
+  turret.rotation.x = Math.PI / 2;
+
+  // Create tank barrel
+  const barrelGeometry = new THREE.CylinderGeometry(0.8, 0.8, 12, 8);
+  const barrelMaterial = new THREE.MeshStandardMaterial({
+    color: 0x333333,
+    roughness: 0.6,
+    metalness: 0.4
+  });
+
+  const barrel = new THREE.Mesh(barrelGeometry, barrelMaterial);
+  barrel.castShadow = true;
+  barrel.receiveShadow = true;
+  barrel.position.z = 6;
+  barrel.rotation.x = Math.PI / 2;
+
+  // Add barrel to turret
+  turret.add(barrel);
+
+  // Create tank treads
+  const leftTread = createTankTread();
+  leftTread.position.set(-5.5, 2, 0);
+
+  const rightTread = createTankTread();
+  rightTread.position.set(5.5, 2, 0);
+
+  // Add all parts to the tank group
+  otherTank.add(body);
+  otherTank.add(turret);
+  otherTank.add(leftTread);
+  otherTank.add(rightTread);
+
+  // Store turret for rotation
+  otherTank.userData.turret = turret;
+  otherTank.userData.collisionRadius = 7.5;
+  otherTank.userData.health = settings.tankMaxHealth; // Set same health as player tank
+  otherTank.userData.isDestroyed = false;
+  otherTank.userData.type = 'tank';
+
+  // Add to scene
+  scene.add(otherTank);
+
+  return otherTank;
+}
+
+// Add other player to the scene
+function addOtherPlayer(playerData) {
+  // Validate player data
+  if (!playerData || !playerData.id) {
+    console.error('Invalid player data received:', playerData);
+    return;
+  }
+
+  // Remove any existing tank for this player ID
+  removeOtherPlayer(playerData.id);
+
+  // Create new player tank
+  const otherPlayer = createOtherPlayerTank();
+
+  // Set position with fallback to default values
+  if (playerData.position && typeof playerData.position === 'object') {
+    otherPlayer.position.set(
+      playerData.position.x || 0,
+      playerData.position.y || 0,
+      playerData.position.z || 0
+    );
+  } else {
+    otherPlayer.position.set(0, 0, 0);
+  }
+
+  // Set rotation with fallback to default value
+  if (playerData.rotation && typeof playerData.rotation === 'object') {
+    otherPlayer.rotation.y = playerData.rotation.y || 0;
+  } else {
+    otherPlayer.rotation.y = 0;
+  }
+
+  // Store the player
+  otherPlayers.set(playerData.id, otherPlayer);
+  console.log(`Added player ${playerData.id} at position:`, otherPlayer.position);
+  console.log('Current other players:', Array.from(otherPlayers.keys()));
+}
+
+// Remove other player from the scene
+function removeOtherPlayer(playerId) {
+  const player = otherPlayers.get(playerId);
+  if (player) {
+    console.log(`Removing player ${playerId}`);
+    scene.remove(player);
+    otherPlayers.delete(playerId);
+    console.log('Current other players:', Array.from(otherPlayers.keys()));
+  }
+}
+
+// Update other player's position and rotation
+function updateOtherPlayer(playerData) {
+  if (!playerData || !playerData.id || playerData.id === clientId) {
+    return;
+  }
+
+  let player = otherPlayers.get(playerData.id);
+  if (!player) {
+    console.log(`Player ${playerData.id} not found, creating new tank`);
+    addOtherPlayer(playerData);
+    player = otherPlayers.get(playerData.id);
+    if (!player) return;
+  }
+
+  // Update position if valid
+  if (playerData.position && typeof playerData.position === 'object') {
+    const targetPosition = new THREE.Vector3(
+      playerData.position.x || player.position.x,
+      playerData.position.y || player.position.y,
+      playerData.position.z || player.position.z
+    );
+    player.position.lerp(targetPosition, 0.3);
+  }
+
+  // Update rotation if valid
+  if (playerData.rotation && typeof playerData.rotation === 'object') {
+    const targetRotation = playerData.rotation.y || player.rotation.y;
+    player.rotation.y += (targetRotation - player.rotation.y) * 0.3;
+  }
+}
+
+// Handle projectile fired by other player
+function handleOtherPlayerProjectile(projectileData) {
+  const position = new THREE.Vector3(
+    projectileData.position.x,
+    projectileData.position.y,
+    projectileData.position.z
+  );
+  const direction = new THREE.Vector3(
+    projectileData.direction.x,
+    projectileData.direction.y,
+    projectileData.direction.z
+  );
+
+  const projectile = createProjectile(position, direction);
+  projectile.userData.speed = projectileData.speed;
+  projectiles.push(projectile);
+}
+
+// Create a projectile object
+function createProjectile(position, direction) {
+  const projectileGeometry = new THREE.SphereGeometry(2, 16, 16);
+  const projectileMaterial = new THREE.MeshStandardMaterial({
+    color: 0xFFFF00,
+    emissive: 0xFFFF00,
+    emissiveIntensity: 2,
+    metalness: 0.3,
+    roughness: 0.2
+  });
+  const projectile = new THREE.Mesh(projectileGeometry, projectileMaterial);
+
+  projectile.position.copy(position);
+  projectile.userData.direction = direction;
+
+  const projectileLight = new THREE.PointLight(0xFFFF00, 8, 20);
+  projectile.add(projectileLight);
+
+  scene.add(projectile);
+  return projectile;
+}
+
+// Handle destroyed obstacle
+function handleObstacleDestroyed(data) {
+  const obstacle = obstacles.find(obs =>
+    obs.position.distanceTo(new THREE.Vector3(
+      data.position.x,
+      data.position.y,
+      data.position.z
+    )) < 1
+  );
+
+  if (obstacle) {
+    // Apply damage without effects
+    damageObstacle(obstacle, 1000);
+  }
+}
+
+// Modify updatePlayerTank to send position updates
+const originalUpdatePlayerTank = updatePlayerTank;
+updatePlayerTank = function () {
+  originalUpdatePlayerTank();
+
+  if (ws && ws.readyState === WebSocket.OPEN && playerTank) {
+    ws.send(JSON.stringify({
+      type: 'update',
+      position: playerTank.position,
+      rotation: { y: playerTank.rotation.y },
+      health: gameState.health,
+      score: gameState.score
+    }));
+  }
+};
+
+// Modify fireProjectile to broadcast to other players
+const originalFireProjectile = fireProjectile;
+fireProjectile = function () {
+  originalFireProjectile();
+
+  if (ws && ws.readyState === WebSocket.OPEN && playerTank) {
+    const projectile = projectiles[projectiles.length - 1];
+    ws.send(JSON.stringify({
+      type: 'projectile',
+      position: projectile.position,
+      direction: projectile.userData.direction,
+      speed: projectile.userData.speed
+    }));
+  }
+};
+
+// Modify createExplosion to broadcast to other players
+const originalCreateExplosion = createExplosion;
+createExplosion = function (position, isLarge) {
+  originalCreateExplosion(position, isLarge);
+
+  if (ws && ws.readyState === WebSocket.OPEN) {
+    ws.send(JSON.stringify({
+      type: 'explosion',
+      position: position,
+      isLarge: isLarge
+    }));
+  }
+};
+
+// Modify damageObstacle to broadcast destroyed obstacles
+const originalDamageObstacle = damageObstacle;
+damageObstacle = function (obstacle, damageAmount) {
+  const wasAlive = !obstacle.userData.isDestroyed;
+  originalDamageObstacle(obstacle, damageAmount);
+
+  if (wasAlive && obstacle.userData.isDestroyed && ws && ws.readyState === WebSocket.OPEN) {
+    ws.send(JSON.stringify({
+      type: 'obstacleDestroyed',
+      obstacleId: obstacles.indexOf(obstacle),
+      position: obstacle.position
+    }));
+  }
+};
+
+// Connect to server when game starts
+const originalStartGame = startGame;
+startGame = function () {
+  originalStartGame();
+  connectToServer();
+};
+
 // Initialize the game when the page loads
 window.addEventListener('load', init);
+
+// Add visibility change handler at the top level with other event listeners
+window.addEventListener('visibilitychange', handleVisibilityChange);
+
+// Create game UI elements
+function createGameUI() {
+  // Remove any existing UI
+  const existingUI = document.getElementById('game-ui');
+  if (existingUI) {
+    existingUI.remove();
+  }
+
+  // Create game UI container
+  const gameUI = document.createElement('div');
+  gameUI.id = 'game-ui';
+  
+  // Create health bar container
+  const healthBarContainer = document.createElement('div');
+  healthBarContainer.id = 'health-bar-container';
+  
+  // Create health bar
+  const healthBar = document.createElement('div');
+  healthBar.id = 'health-bar';
+  healthBar.style.width = '100%';
+  healthBarContainer.appendChild(healthBar);
+  
+  // Create score display
+  const scoreDisplay = document.createElement('div');
+  scoreDisplay.id = 'score-display';
+  scoreDisplay.textContent = 'Score: 0';
+  
+  // Add elements to UI container
+  gameUI.appendChild(healthBarContainer);
+  gameUI.appendChild(scoreDisplay);
+  
+  // Add UI container to document
+  document.body.appendChild(gameUI);
+
+  // Initial UI update
+  updateUI();
+}
+
+// Apply damage to a tank
+function damageTank(tank, damageAmount) {
+  if (!tank || tank.userData.isDestroyed) return;
+
+  tank.userData.health -= damageAmount;
+
+  // Update UI if it's the player's tank
+  if (tank === playerTank) {
+    gameState.health = (tank.userData.health / settings.tankMaxHealth) * 100;
+    updateUI();
+
+    // Notify server about damage taken
+    if (ws && ws.readyState === WebSocket.OPEN) {
+      ws.send(JSON.stringify({
+        type: 'tankDamaged',
+        id: clientId,
+        health: tank.userData.health,
+        position: tank.position
+      }));
+    }
+  }
+
+  // Check if tank is destroyed (health <= 0)
+  if (tank.userData.health <= 0 && !tank.userData.isDestroyed) {
+    tank.userData.isDestroyed = true;
+
+    // Create destruction effect
+    createExplosion(tank.position.clone(), true);
+
+    // Handle local tank destruction
+    if (tank === playerTank) {
+      // Notify server about our tank being destroyed
+      if (ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({
+          type: 'tankDestroyed',
+          id: clientId,
+          position: tank.position,
+          destroyedBy: clientId
+        }));
+      }
+      
+      // Remove tank and show game over
+      scene.remove(tank);
+      gameOver();
+    } else {
+      // This is another player's tank
+      scene.remove(tank);
+      setTimeout(() => respawnTank(tank), settings.tankRespawnTime * 1000);
+      
+      // Award points and notify server
+      gameState.score += 100;
+      updateUI();
+      
+      if (ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({
+          type: 'tankDestroyed',
+          id: tank.userData.id,
+          position: tank.position,
+          destroyedBy: clientId
+        }));
+      }
+    }
+  }
+}
+
+// Respawn a tank
+function respawnTank(tank) {
+  if (!tank) return;
+
+  // Reset tank properties
+  tank.userData.health = settings.tankMaxHealth;
+  tank.userData.isDestroyed = false;
+  tank.scale.copy(tank.userData.originalScale);
+  tank.rotation.set(0, tank.rotation.y, 0); // Reset rotations except Y
+  
+  // Add tank back to scene
+  scene.add(tank);
+
+  // Notify other players
+  if (ws && ws.readyState === WebSocket.OPEN) {
+    ws.send(JSON.stringify({
+      type: 'tankRespawned',
+      id: tank.userData.id
+    }));
+  }
+}
+
+// Track active animations
+const activeAnimations = new Map();
+
+// Clean up function for animations
+function cleanupAnimation(objectId) {
+  const animationData = activeAnimations.get(objectId);
+  if (animationData) {
+    if (animationData.frameId) {
+      cancelAnimationFrame(animationData.frameId);
+    }
+    if (animationData.timeoutId) {
+      clearTimeout(animationData.timeoutId);
+    }
+    activeAnimations.delete(objectId);
+  }
+}

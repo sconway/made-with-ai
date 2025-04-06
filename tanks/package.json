@@ -1,18 +1,21 @@
 {
-  "name": "text-transform",
-  "private": true,
-  "version": "0.0.0",
+  "name": "multiplayer-tanks",
+  "version": "1.0.0",
+  "description": "Multiplayer tank simulator game",
+  "main": "server.js",
   "type": "module",
   "scripts": {
+    "start": "node server.js",
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview"
   },
-  "devDependencies": {
-    "vite": "^6.2.0"
-  },
   "dependencies": {
+    "three": "^0.160.0",
+    "ws": "^8.16.0"
+  },
+  "devDependencies": {
     "@vitejs/plugin-react": "^4.3.4",
-    "three": "^0.174.0"
+    "vite": "^5.0.8"
   }
 }
