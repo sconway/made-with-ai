@@ -3,8 +3,15 @@ import react from '@vitejs/plugin-react'
 
 export default defineConfig({
   plugins: [react()],
-  base: '/made-with-ai/tanks/dist/',
   build: {
     outDir: 'dist'
+  },
+  server: {
+    proxy: {
+      '/ws': {
+        target: 'ws://localhost:3000',
+        ws: true
+      }
+    }
   }
 })

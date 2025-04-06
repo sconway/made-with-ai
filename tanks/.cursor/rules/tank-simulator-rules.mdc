@@ -1,0 +1,16 @@
+---
+description: 
+globs: 
+alwaysApply: true
+---
+
+# The goal of this project is to have a tank simulator game that can be played by many different users. There is a server and a client. The server maintains all of the clients that are connected and updates all of them via websockets so all players can play together in real-time. Each client has it's own version of the game map, but all clients should be viewing the same state of the world from their own perspective/tank.
+
+- The game is to be deployed on render.com
+- The deployed game should be run with a single command: "npm run start"
+- When running locally the game should be run with the command: "npm run dev"
+- Both commands should start the game and allow clients to connect, but the "npm run start" command should serve files from the "/dist" directory.
+  The "npm run dev" command should serve files from the src directory, but keep in mind that the index.html file is outside of this directory.
+- This command starts the server and serves up the client for the user to view in a browser
+- The game should use port 100000 to match what render.com is using once things are deployed
+
