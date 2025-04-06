@@ -2264,7 +2264,7 @@ function connectToServer() {
     ws = null;
   }
 
-  ws = new WebSocket('ws://localhost:3000');
+  ws = new WebSocket('ws://localhost:10000');
 
   // Add connection timeout
   const connectionTimeout = setTimeout(() => {

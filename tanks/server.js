@@ -211,7 +211,7 @@ setInterval(() => {
 }, 5000);
 
 // Start server
-const PORT = process.env.PORT || 3000;
+const PORT = process.env.PORT || 10000;
 server.listen(PORT, () => {
     console.log(`WebSocket server is running on port ${PORT}`);
 }); 
