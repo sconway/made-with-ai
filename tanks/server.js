@@ -64,14 +64,21 @@ wss.on('connection', (ws, req) => {
         position: { x: 0, y: 0, z: 0 },
         rotation: { y: 0 },
         health: 500,
-        score: 0
+        score: 0,
+        lastUpdate: Date.now()
     };
     clients.set(ws, clientInfo);
 
     // Get list of other clients for initialization
     const otherClients = Array.from(clients.entries())
         .filter(([socket]) => socket !== ws)
-        .map(([_, info]) => info);
+        .map(([_, info]) => ({
+            id: info.id,
+            position: info.position,
+            rotation: info.rotation,
+            health: info.health,
+            score: info.score
+        }));
 
     console.log(`Client ${clientId} connected. Other clients:`, otherClients.map(c => c.id));
 
@@ -98,6 +105,12 @@ wss.on('connection', (ws, req) => {
                 return;
             }
 
+            const client = clients.get(ws);
+            if (!client) {
+                console.error('Message received from unknown client');
+                return;
+            }
+
             // Add client ID to message
             message.id = clientId;
 
@@ -105,25 +118,77 @@ wss.on('connection', (ws, req) => {
             switch (message.type) {
                 case 'update':
                     // Update client info
-                    if (message.position) clientInfo.position = message.position;
-                    if (message.rotation) clientInfo.rotation = message.rotation;
+                    if (message.position) {
+                        client.position = message.position;
+                    }
+                    if (message.rotation) {
+                        client.rotation = message.rotation;
+                    }
+                    if (message.health !== undefined) {
+                        client.health = message.health;
+                    }
+                    if (message.score !== undefined) {
+                        client.score = message.score;
+                    }
+                    client.lastUpdate = Date.now();
+
+                    // Broadcast update to other clients
+                    broadcast({
+                        type: 'playerUpdate',
+                        id: client.id,
+                        position: client.position,
+                        rotation: client.rotation,
+                        health: client.health,
+                        score: client.score,
+                        timestamp: message.timestamp
+                    }, ws);
+                    break;
+
+                case 'tankHit':
+                    console.log('Tank hit:', message);
+                    // Broadcast tank hit to all clients (including sender)
+                    broadcast({
+                        type: 'tankHit',
+                        targetId: message.targetId,
+                        shooterId: message.shooterId,
+                        damage: message.damage,
+                        position: message.position
+                    });
+                    break;
+
+                case 'tankDestroyed':
+                    console.log('Tank destroyed:', message);
+                    // Broadcast tank destroyed to all clients
+                    broadcast({
+                        type: 'tankDestroyed',
+                        id: message.id,
+                        destroyedBy: message.destroyedBy,
+                        position: message.position
+                    });
+                    break;
+
+                case 'tankRespawned':
+                    console.log('Tank respawned:', message);
+                    // Broadcast tank respawn to all clients
+                    broadcast({
+                        type: 'tankRespawned',
+                        id: message.id,
+                        position: message.position,
+                        rotation: message.rotation
+                    });
                     break;
                     
                 case 'projectile':
                 case 'explosion':
                 case 'obstacleDestroyed':
-                case 'tankDamaged':
-                case 'tankDestroyed':
                     // These messages are broadcast as-is
+                    broadcast(message, ws);
                     break;
                     
                 default:
                     console.log('Unknown message type:', message.type);
                     return;
             }
-
-            // Broadcast message to other clients
-            broadcast(message, ws);
         } catch (error) {
             console.error('Error handling message:', error);
         }
@@ -141,6 +206,12 @@ wss.on('connection', (ws, req) => {
             type: 'playerLeft',
             id: clientId
         });
+    });
+
+    // Handle errors
+    ws.on('error', (error) => {
+        console.error('WebSocket error:', error);
+        ws.close();
     });
 });
 

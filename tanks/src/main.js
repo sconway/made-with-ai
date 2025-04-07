@@ -42,9 +42,12 @@ const settings = {
   obstacleCollisionRadius: 4,
   minRespawnTime: 10,  // Minimum seconds before respawn
   maxRespawnTime: 15,   // Maximum seconds before respawn
-  tankMaxHealth: 500,  // Tank can take 5 hits (projectiles do 100 damage)
-  projectileDamage: 100,  // Damage per projectile hit
-  tankRespawnTime: 3  // Seconds before tank respawns
+  tankMaxHealth: 500,  // Tank health (5 hits to destroy)
+  projectileDamage: 100,  // Damage per hit
+  tankRespawnTime: 3,  // Seconds until respawn
+  projectileLifetime: 3000,
+  maxProjectiles: 5,
+  projectileCooldown: 500
 };
 
 // Game controls state
@@ -795,6 +798,13 @@ function createPlayerTank() {
 
   // Create and set up the camera
   setupThirdPersonCamera();
+
+  // Initialize health
+  player.userData.health = settings.tankMaxHealth;
+  player.userData.isDestroyed = false;
+  player.userData.type = 'tank';
+
+  console.log('Player tank created with health:', settings.tankMaxHealth);
 }
 
 // Helper function to update camera position and orientation
@@ -1512,6 +1522,60 @@ function checkProjectileCollisions(projectile) {
   // Increased projectile collision radius for more generous hit detection
   const projectileRadius = 3;
 
+  // Check collision with other tanks
+  for (const [id, tank] of otherPlayers) {
+    if (tank.userData.isDestroyed) continue;
+
+    // Calculate distance from projectile center to tank center
+    const distance = projectile.position.distanceTo(tank.position);
+
+    // More generous collision check using combined radii
+    const combinedRadius = projectileRadius + tank.userData.collisionRadius;
+    if (distance < combinedRadius) {
+      // Create impact explosion
+      createExplosion(projectile.position.clone(), false);
+      
+      // Notify server about hit
+      if (ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({
+          type: 'tankHit',
+          targetId: id,
+          shooterId: clientId,
+          damage: settings.projectileDamage,
+          position: projectile.position.clone()
+        }));
+      }
+
+      return true;
+    }
+  }
+
+  // Check collision with player tank
+  if (playerTank && !playerTank.userData.isDestroyed) {
+    // Calculate distance from projectile center to player tank center
+    const distance = projectile.position.distanceTo(playerTank.position);
+
+    // More generous collision check using combined radii
+    const combinedRadius = projectileRadius + playerTank.userData.collisionRadius;
+    if (distance < combinedRadius) {
+      // Create impact explosion
+      createExplosion(projectile.position.clone(), false);
+      
+      // Notify server about hit
+      if (ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({
+          type: 'tankHit',
+          targetId: clientId,
+          shooterId: clientId,
+          damage: settings.projectileDamage,
+          position: projectile.position.clone()
+        }));
+      }
+
+      return true;
+    }
+  }
+
   // Check distance to all obstacles
   for (let i = 0; i < obstacles.length; i++) {
     const obstacle = obstacles[i];
@@ -1531,109 +1595,6 @@ function checkProjectileCollisions(projectile) {
       // If obstacle was explosive, damage nearby obstacles
       if (obstacle.userData.isExplosive) {
         applyExplosionDamage(obstacle.position, 25, 1000);
-      }
-
-      return true;
-    }
-  }
-
-  // Check collision with other tanks
-  for (const [id, tank] of otherPlayers) {
-    if (tank.userData.isDestroyed) continue;
-
-    // Calculate distance from projectile center to tank center
-    const distance = projectile.position.distanceTo(tank.position);
-
-    // More generous collision check using combined radii
-    const combinedRadius = projectileRadius + tank.userData.collisionRadius;
-    if (distance < combinedRadius) {
-      // Create impact explosion
-      createExplosion(tank.position.clone(), false);
-      
-      // Apply direct damage to tank
-      tank.userData.health -= settings.projectileDamage;
-      
-      // Notify server about hit
-      if (ws && ws.readyState === WebSocket.OPEN) {
-        ws.send(JSON.stringify({
-          type: 'tankHit',
-          targetId: id,
-          shooterId: clientId,
-          damage: settings.projectileDamage,
-          position: tank.position.clone()
-        }));
-      }
-
-      // Check if tank is destroyed
-      if (tank.userData.health <= 0 && !tank.userData.isDestroyed) {
-        tank.userData.isDestroyed = true;
-        createExplosion(tank.position.clone(), true);
-        scene.remove(tank);
-        
-        // Award points for destroying tank
-        gameState.score += 100;
-        updateUI();
-
-        // Notify server about destruction
-        if (ws && ws.readyState === WebSocket.OPEN) {
-          ws.send(JSON.stringify({
-            type: 'tankDestroyed',
-            id: id,
-            destroyedBy: clientId,
-            position: tank.position.clone()
-          }));
-        }
-
-        setTimeout(() => respawnTank(tank), settings.tankRespawnTime * 1000);
-      }
-
-      return true;
-    }
-  }
-
-  // Check collision with player tank
-  if (playerTank && !playerTank.userData.isDestroyed) {
-    // Calculate distance from projectile center to player tank center
-    const distance = projectile.position.distanceTo(playerTank.position);
-
-    // More generous collision check using combined radii
-    const combinedRadius = projectileRadius + playerTank.userData.collisionRadius;
-    if (distance < combinedRadius) {
-      // Create impact explosion
-      createExplosion(playerTank.position.clone(), false);
-      
-      // Apply direct damage to player tank
-      playerTank.userData.health -= settings.projectileDamage;
-      gameState.health = (playerTank.userData.health / settings.tankMaxHealth) * 100;
-      updateUI();
-
-      // Notify server about hit
-      if (ws && ws.readyState === WebSocket.OPEN) {
-        ws.send(JSON.stringify({
-          type: 'tankHit',
-          targetId: clientId,
-          shooterId: clientId,
-          damage: settings.projectileDamage,
-          position: playerTank.position.clone()
-        }));
-      }
-
-      // Check if player tank is destroyed
-      if (playerTank.userData.health <= 0 && !playerTank.userData.isDestroyed) {
-        playerTank.userData.isDestroyed = true;
-        createExplosion(playerTank.position.clone(), true);
-        scene.remove(playerTank);
-        gameOver();
-
-        // Notify server about destruction
-        if (ws && ws.readyState === WebSocket.OPEN) {
-          ws.send(JSON.stringify({
-            type: 'tankDestroyed',
-            id: clientId,
-            destroyedBy: clientId,
-            position: playerTank.position.clone()
-          }));
-        }
       }
 
       return true;
@@ -1803,127 +1764,69 @@ function updateUI() {
 }
 
 // Game over function
-function gameOver() {
+function gameOver(destroyedBy) {
   gameState.isGameOver = true;
   isGameActive = false;
 
   // Show game over screen
-  const gameOverScreen = document.getElementById('game-over');
-  if (!gameOverScreen) {
-    // Create game over screen if it doesn't exist
-    const screen = document.createElement('div');
-    screen.id = 'game-over';
-    screen.style.position = 'fixed';
-    screen.style.top = '0';
-    screen.style.left = '0';
-    screen.style.width = '100%';
-    screen.style.height = '100%';
-    screen.style.backgroundColor = 'rgba(0, 0, 0, 0.8)';
-    screen.style.display = 'flex';
-    screen.style.flexDirection = 'column';
-    screen.style.justifyContent = 'center';
-    screen.style.alignItems = 'center';
-    screen.style.color = 'white';
-    screen.style.fontSize = '24px';
-    screen.style.zIndex = '1000';
+  const gameOverScreen = document.createElement('div');
+  gameOverScreen.id = 'game-over';
+  gameOverScreen.style.position = 'fixed';
+  gameOverScreen.style.top = '0';
+  gameOverScreen.style.left = '0';
+  gameOverScreen.style.width = '100%';
+  gameOverScreen.style.height = '100%';
+  gameOverScreen.style.backgroundColor = 'rgba(0, 0, 0, 0.8)';
+  gameOverScreen.style.display = 'flex';
+  gameOverScreen.style.flexDirection = 'column';
+  gameOverScreen.style.justifyContent = 'center';
+  gameOverScreen.style.alignItems = 'center';
+  gameOverScreen.style.color = 'white';
+  gameOverScreen.style.fontSize = '24px';
+  gameOverScreen.style.zIndex = '1000';
 
-    const gameOverText = document.createElement('h1');
-    gameOverText.textContent = 'YOUR TANK WAS DESTROYED!';
-    gameOverText.style.marginBottom = '20px';
-    gameOverText.style.fontSize = '36px';
-    gameOverText.style.color = '#FF4444';
+  const gameOverText = document.createElement('h1');
+  gameOverText.textContent = destroyedBy === clientId ? 'SELF DESTRUCTION!' : 'YOUR TANK WAS DESTROYED!';
+  gameOverText.style.marginBottom = '20px';
+  gameOverText.style.fontSize = '36px';
+  gameOverText.style.color = '#FF4444';
 
-    const scoreText = document.createElement('p');
-    scoreText.id = 'final-score';
-    scoreText.textContent = `Score: ${gameState.score}`;
-    scoreText.style.marginBottom = '40px';
-    scoreText.style.fontSize = '24px';
+  const scoreText = document.createElement('p');
+  scoreText.textContent = `Final Score: ${gameState.score}`;
+  scoreText.style.marginBottom = '40px';
+  scoreText.style.fontSize = '24px';
 
-    const restartButton = document.createElement('button');
-    restartButton.id = 'restart-button';
-    restartButton.textContent = 'Play Again';
-    restartButton.style.padding = '15px 30px';
-    restartButton.style.fontSize = '20px';
+  const restartButton = document.createElement('button');
+  restartButton.textContent = 'Play Again';
+  restartButton.style.padding = '15px 30px';
+  restartButton.style.fontSize = '20px';
+  restartButton.style.backgroundColor = '#4CAF50';
+  restartButton.style.border = 'none';
+  restartButton.style.borderRadius = '5px';
+  restartButton.style.color = 'white';
+  restartButton.style.cursor = 'pointer';
+  restartButton.style.transition = 'background-color 0.2s';
+  
+  restartButton.addEventListener('mouseover', () => {
+    restartButton.style.backgroundColor = '#45a049';
+  });
+  
+  restartButton.addEventListener('mouseout', () => {
     restartButton.style.backgroundColor = '#4CAF50';
-    restartButton.style.border = 'none';
-    restartButton.style.borderRadius = '5px';
-    restartButton.style.color = 'white';
-    restartButton.style.cursor = 'pointer';
-    restartButton.style.transition = 'background-color 0.2s';
-    
-    restartButton.addEventListener('mouseover', () => {
-      restartButton.style.backgroundColor = '#45a049';
-    });
-    
-    restartButton.addEventListener('mouseout', () => {
-      restartButton.style.backgroundColor = '#4CAF50';
-    });
-    
-    restartButton.addEventListener('click', restartGame);
+  });
+  
+  restartButton.addEventListener('click', restartGame);
 
-    screen.appendChild(gameOverText);
-    screen.appendChild(scoreText);
-    screen.appendChild(restartButton);
-    document.body.appendChild(screen);
-  } else {
-    gameOverScreen.style.display = 'flex';
-    const finalScoreElement = document.getElementById('final-score');
-    if (finalScoreElement) {
-      finalScoreElement.textContent = `Score: ${gameState.score}`;
-    }
-  }
+  gameOverScreen.appendChild(gameOverText);
+  gameOverScreen.appendChild(scoreText);
+  gameOverScreen.appendChild(restartButton);
+  document.body.appendChild(gameOverScreen);
 }
 
 // Restart game
 function restartGame() {
-  // Clear all active animations
-  for (const [objectId] of activeAnimations) {
-    cleanupAnimation(objectId);
-  }
-
-  // Reset game state
-  gameState.score = 0;
-  gameState.health = 100;
-  gameState.isGameOver = false;
-
-  // Reset player tank
-  if (playerTank) {
-    cleanupAnimation(playerTank.uuid);
-    playerTank.position.set(0, 0, 0);
-    playerTank.rotation.y = 0;
-    playerTank.userData.health = settings.tankMaxHealth;
-    playerTank.userData.isDestroyed = false;
-    playerTank.scale.set(1, 1, 1);
-  }
-
-  // Reset obstacles
-  for (const obstacle of obstacles) {
-    if (obstacle.userData.isDestroyed) {
-      cleanupAnimation(obstacle.uuid);
-      respawnObstacle(obstacle);
-    }
-  }
-
-  // Clear projectiles
-  for (const projectile of projectiles) {
-    scene.remove(projectile);
-  }
-  projectiles = [];
-
-  // Clear respawn queue
-  respawnQueue = [];
-
-  // Hide game over screen
-  const gameOverScreen = document.getElementById('game-over');
-  if (gameOverScreen) {
-    gameOverScreen.style.display = 'none';
-  }
-
-  // Enable controls
-  isGameActive = true;
-
-  // Update UI
-  updateUI();
+  // Reload the page to restart
+  window.location.reload();
 }
 
 // Set up asset loading
@@ -2455,23 +2358,37 @@ function handleServerMessage(message) {
 
     case 'tankDestroyed':
       if (message.id === clientId) {
-        // Our tank was destroyed
-        if (playerTank) {
+        // Our tank was destroyed - show game over
+        if (playerTank && !playerTank.userData.isDestroyed) {
           playerTank.userData.health = 0;
           playerTank.userData.isDestroyed = true;
-          createExplosion(playerTank.position.clone(), true);
+          createExplosion(
+            new THREE.Vector3(
+              message.position.x,
+              message.position.y,
+              message.position.z
+            ), 
+            true
+          );
           scene.remove(playerTank);
-          gameOver();
+          gameOver(message.destroyedBy);
         }
       } else {
         // Another player's tank was destroyed
         const otherTank = otherPlayers.get(message.id);
-        if (otherTank) {
+        if (otherTank && !otherTank.userData.isDestroyed) {
           otherTank.userData.health = 0;
           otherTank.userData.isDestroyed = true;
-          createExplosion(otherTank.position.clone(), true);
+          createExplosion(
+            new THREE.Vector3(
+              message.position.x,
+              message.position.y,
+              message.position.z
+            ), 
+            true
+          );
           scene.remove(otherTank);
-          setTimeout(() => respawnTank(otherTank), settings.tankRespawnTime * 1000);
+          otherPlayers.delete(message.id); // Remove from otherPlayers map
 
           // Award points if we destroyed this tank
           if (message.destroyedBy === clientId) {
@@ -2486,21 +2403,32 @@ function handleServerMessage(message) {
       // Handle tank being hit
       if (message.targetId === clientId) {
         // Our tank was hit
-        if (playerTank) {
+        if (playerTank && !playerTank.userData.isDestroyed) {
           // Create impact explosion
-          createExplosion(playerTank.position.clone(), false);
+          createExplosion(
+            new THREE.Vector3(
+              message.position.x,
+              message.position.y,
+              message.position.z
+            ), 
+            false
+          );
           
-          // Apply damage
-          playerTank.userData.health -= message.damage;
-          gameState.health = (playerTank.userData.health / settings.tankMaxHealth) * 100;
+          // Get current health and reduce it
+          const currentHealth = playerTank.userData.health || settings.tankMaxHealth;
+          const newHealth = Math.max(0, currentHealth - message.damage);
+          
+          console.log(`Tank hit! Current Health: ${currentHealth}, Damage: ${message.damage}, New Health: ${newHealth}`);
+          
+          // Update tank health
+          playerTank.userData.health = newHealth;
+          gameState.health = (newHealth / settings.tankMaxHealth) * 100;
           updateUI();
 
           // Check if destroyed
-          if (playerTank.userData.health <= 0 && !playerTank.userData.isDestroyed) {
+          if (newHealth <= 0 && !playerTank.userData.isDestroyed) {
+            console.log('Tank destroyed! Final health:', newHealth);
             playerTank.userData.isDestroyed = true;
-            createExplosion(playerTank.position.clone(), true);
-            scene.remove(playerTank);
-            gameOver();
 
             // Notify server about destruction
             if (ws && ws.readyState === WebSocket.OPEN) {
@@ -2508,7 +2436,7 @@ function handleServerMessage(message) {
                 type: 'tankDestroyed',
                 id: clientId,
                 destroyedBy: message.shooterId,
-                position: playerTank.position
+                position: playerTank.position.clone()
               }));
             }
           }
@@ -2516,28 +2444,42 @@ function handleServerMessage(message) {
       } else {
         // Another tank was hit
         const otherTank = otherPlayers.get(message.targetId);
-        if (otherTank) {
+        if (otherTank && !otherTank.userData.isDestroyed) {
           // Create impact explosion
-          createExplosion(otherTank.position.clone(), false);
+          createExplosion(
+            new THREE.Vector3(
+              message.position.x,
+              message.position.y,
+              message.position.z
+            ), 
+            false
+          );
           
-          // Apply damage
-          otherTank.userData.health -= message.damage;
+          // Get current health and reduce it
+          const currentHealth = otherTank.userData.health || settings.tankMaxHealth;
+          const newHealth = Math.max(0, currentHealth - message.damage);
+          
+          console.log(`Other tank hit! Current Health: ${currentHealth}, Damage: ${message.damage}, New Health: ${newHealth}`);
+          
+          // Update tank health
+          otherTank.userData.health = newHealth;
 
-          // Check if destroyed
-          if (otherTank.userData.health <= 0 && !otherTank.userData.isDestroyed) {
-            otherTank.userData.isDestroyed = true;
-            createExplosion(otherTank.position.clone(), true);
-            scene.remove(otherTank);
-
-            // Award points if we destroyed the tank
-            if (message.shooterId === clientId) {
-              gameState.score += 100;
-              updateUI();
-            }
-
-            setTimeout(() => respawnTank(otherTank), settings.tankRespawnTime * 1000);
-          }
+          // Do NOT remove the tank here - wait for server confirmation of destruction
         }
+      }
+      break;
+
+    case 'tankRespawned':
+      if (message.id !== clientId) {
+        console.log('Tank respawned:', message);
+        // Create new tank for respawned player
+        const playerData = {
+          id: message.id,
+          position: message.position,
+          rotation: message.rotation,
+          health: settings.tankMaxHealth
+        };
+        addOtherPlayer(playerData);
       }
       break;
   }
@@ -2615,6 +2557,13 @@ function createOtherPlayerTank() {
   // Add to scene
   scene.add(otherTank);
 
+  // Initialize health
+  otherTank.userData.health = settings.tankMaxHealth;
+  otherTank.userData.isDestroyed = false;
+  otherTank.userData.type = 'tank';
+
+  console.log('Other tank created with health:', settings.tankMaxHealth);
+
   return otherTank;
 }
 
@@ -2662,6 +2611,10 @@ function removeOtherPlayer(playerId) {
   }
 }
 
+// Add timestamp and rate limiting for updates
+let lastUpdateTime = 0;
+const UPDATE_INTERVAL = 1000 / 30; // 30 updates per second
+
 // Update other player's position and rotation
 function updateOtherPlayer(playerData) {
   const otherTank = otherPlayers.get(playerData.id);
@@ -2672,33 +2625,94 @@ function updateOtherPlayer(playerData) {
     return;
   }
 
-  // Update position with lerp for smooth movement
-  if (playerData.position) {
-    const targetPosition = new THREE.Vector3(
-      playerData.position.x,
-      playerData.position.y,
-      playerData.position.z
-    );
-    otherTank.position.lerp(targetPosition, 0.3);
+  // Store the target state
+  otherTank.userData.targetPosition = new THREE.Vector3(
+    playerData.position.x,
+    playerData.position.y,
+    playerData.position.z
+  );
+  
+  otherTank.userData.targetRotation = playerData.rotation.y;
+  
+  // Initialize start position and time if not set
+  if (!otherTank.userData.startPosition) {
+    otherTank.userData.startPosition = otherTank.position.clone();
+    otherTank.userData.startRotation = otherTank.rotation.y;
+    otherTank.userData.interpolationStart = performance.now();
+  } else {
+    // Update start state
+    otherTank.userData.startPosition.copy(otherTank.position);
+    otherTank.userData.startRotation = otherTank.rotation.y;
+    otherTank.userData.interpolationStart = performance.now();
   }
 
-  // Update rotation with lerp for smooth rotation
-  if (playerData.rotation) {
-    const currentRotation = otherTank.rotation.y;
-    let targetRotation = playerData.rotation.y;
-
-    // Ensure we rotate the shortest direction
-    while (targetRotation - currentRotation > Math.PI) targetRotation -= Math.PI * 2;
-    while (targetRotation - currentRotation < -Math.PI) targetRotation += Math.PI * 2;
-
-    otherTank.rotation.y += (targetRotation - currentRotation) * 0.3;
-  }
-
-  // Update health
+  // Update health immediately
   if (playerData.health !== undefined) {
     otherTank.userData.health = playerData.health;
   }
 }
+
+// Add smooth interpolation in the animation loop
+function updateOtherPlayers() {
+  const now = performance.now();
+  
+  otherPlayers.forEach((tank) => {
+    if (tank.userData.targetPosition && tank.userData.interpolationStart) {
+      const progress = Math.min(
+        (now - tank.userData.interpolationStart) / UPDATE_INTERVAL,
+        1
+      );
+      
+      // Smooth position interpolation
+      tank.position.lerpVectors(
+        tank.userData.startPosition,
+        tank.userData.targetPosition,
+        progress
+      );
+      
+      // Smooth rotation interpolation
+      let startRot = tank.userData.startRotation;
+      let targetRot = tank.userData.targetRotation;
+      
+      // Ensure we rotate the shortest direction
+      while (targetRot - startRot > Math.PI) targetRot -= Math.PI * 2;
+      while (targetRot - startRot < -Math.PI) targetRot += Math.PI * 2;
+      
+      tank.rotation.y = startRot + (targetRot - startRot) * progress;
+    }
+  });
+}
+
+// Modify updatePlayerTank to include rate limiting
+const originalUpdatePlayerTank = updatePlayerTank;
+updatePlayerTank = function () {
+  originalUpdatePlayerTank();
+
+  const now = performance.now();
+  if (ws && ws.readyState === WebSocket.OPEN && playerTank && 
+      now - lastUpdateTime >= UPDATE_INTERVAL) {
+    lastUpdateTime = now;
+    ws.send(JSON.stringify({
+      type: 'update',
+      position: {
+        x: playerTank.position.x,
+        y: playerTank.position.y,
+        z: playerTank.position.z
+      },
+      rotation: { y: playerTank.rotation.y },
+      health: gameState.health,
+      score: gameState.score,
+      timestamp: now
+    }));
+  }
+};
+
+// Add updateOtherPlayers to the animation loop
+const originalAnimate = animate;
+animate = function () {
+  updateOtherPlayers();
+  originalAnimate();
+};
 
 // Handle projectile fired by other player
 function handleOtherPlayerProjectile(projectileData) {
@@ -2755,22 +2769,6 @@ function handleObstacleDestroyed(data) {
     damageObstacle(obstacle, 1000);
   }
 }
-
-// Modify updatePlayerTank to send position updates
-const originalUpdatePlayerTank = updatePlayerTank;
-updatePlayerTank = function () {
-  originalUpdatePlayerTank();
-
-  if (ws && ws.readyState === WebSocket.OPEN && playerTank) {
-    ws.send(JSON.stringify({
-      type: 'update',
-      position: playerTank.position,
-      rotation: { y: playerTank.rotation.y },
-      health: gameState.health,
-      score: gameState.score
-    }));
-  }
-};
 
 // Modify fireProjectile to broadcast to other players
 const originalFireProjectile = fireProjectile;
@@ -2935,24 +2933,136 @@ function damageTank(tank, damageAmount) {
 
 // Respawn a tank
 function respawnTank(tank) {
-  if (!tank) return;
+  if (!tank || !tank.userData.id) return;
 
   // Reset tank properties
   tank.userData.health = settings.tankMaxHealth;
   tank.userData.isDestroyed = false;
-  tank.scale.copy(tank.userData.originalScale);
-  tank.rotation.set(0, tank.rotation.y, 0); // Reset rotations except Y
-  
-  // Add tank back to scene
-  scene.add(tank);
 
-  // Notify other players
+  // Find a valid spawn position
+  let validPosition = false;
+  let spawnPosition = new THREE.Vector3();
+  let attempts = 0;
+  const maxAttempts = 10;
+
+  while (!validPosition && attempts < maxAttempts) {
+    // Generate random position within a reasonable range
+    spawnPosition.set(
+      (Math.random() - 0.5) * 400,
+      0,
+      (Math.random() - 0.5) * 400
+    );
+
+    // Check distance from other tanks
+    let tooClose = false;
+    
+    // Check distance from player tank
+    if (playerTank && !playerTank.userData.isDestroyed) {
+      const distanceToPlayer = spawnPosition.distanceTo(playerTank.position);
+      if (distanceToPlayer < 60) {
+        tooClose = true;
+      }
+    }
+
+    // Check distance from other tanks
+    if (!tooClose) {
+      for (const [id, otherTank] of otherPlayers) {
+        if (otherTank !== tank && !otherTank.userData.isDestroyed) {
+          const distanceToOther = spawnPosition.distanceTo(otherTank.position);
+          if (distanceToOther < 60) {
+            tooClose = true;
+            break;
+          }
+        }
+      }
+    }
+
+    if (!tooClose) {
+      validPosition = true;
+    }
+
+    attempts++;
+  }
+
+  // Set position and rotation
+  tank.position.copy(spawnPosition);
+  tank.rotation.set(0, Math.random() * Math.PI * 2, 0);
+
+  // Create respawn effect
+  createRespawnEffect(tank.position.clone());
+
+  // Notify other players about the respawn
   if (ws && ws.readyState === WebSocket.OPEN) {
     ws.send(JSON.stringify({
       type: 'tankRespawned',
-      id: tank.userData.id
+      id: tank.userData.id,
+      position: tank.position.clone(),
+      rotation: { y: tank.rotation.y }
     }));
   }
+}
+
+// Create a visual effect for tank respawning
+function createRespawnEffect(position) {
+  // Create a light flash
+  const light = lightPool.acquire(0x00FF00, 4, 20);
+  if (light) {
+    light.position.copy(position).add(new THREE.Vector3(0, 5, 0));
+    setTimeout(() => lightPool.release(light), 1000);
+  }
+
+  // Create particles rising from the ground
+  const particleCount = 20;
+  const particles = new THREE.Group();
+  particles.position.copy(position);
+
+  for (let i = 0; i < particleCount; i++) {
+    const particle = new THREE.Mesh(
+      new THREE.SphereGeometry(0.3),
+      new THREE.MeshBasicMaterial({
+        color: 0x00FF00,
+        transparent: true,
+        opacity: 0.8
+      })
+    );
+
+    const angle = (i / particleCount) * Math.PI * 2;
+    const radius = 5;
+    particle.position.set(
+      Math.cos(angle) * radius,
+      0,
+      Math.sin(angle) * radius
+    );
+
+    particles.add(particle);
+  }
+
+  scene.add(particles);
+
+  // Animate particles
+  let time = 0;
+  function animateParticles() {
+    time += 0.05;
+    particles.children.forEach((particle, i) => {
+      const angle = (i / particleCount) * Math.PI * 2;
+      particle.position.y = time * 10;
+      particle.position.x = Math.cos(angle + time) * (5 - time/2);
+      particle.position.z = Math.sin(angle + time) * (5 - time/2);
+      particle.material.opacity = Math.max(0, 1 - time/2);
+    });
+
+    if (time < 2) {
+      requestAnimationFrame(animateParticles);
+    } else {
+      scene.remove(particles);
+      particles.children.forEach(particle => {
+        particle.geometry.dispose();
+        particle.material.dispose();
+      });
+    }
+  }
+
+  animateParticles();
 }
 
 // Track active animations
