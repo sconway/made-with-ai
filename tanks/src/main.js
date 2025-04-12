@@ -1768,6 +1768,13 @@ function gameOver(destroyedBy) {
   gameState.isGameOver = true;
   isGameActive = false;
 
+  // Disconnect from server
+  if (ws) {
+    console.log('Disconnecting from server due to tank destruction');
+    ws.close();
+    ws = null;
+  }
+
   // Show game over screen
   const gameOverScreen = document.createElement('div');
   gameOverScreen.id = 'game-over';
@@ -1790,11 +1797,13 @@ function gameOver(destroyedBy) {
   gameOverText.style.marginBottom = '20px';
   gameOverText.style.fontSize = '36px';
   gameOverText.style.color = '#FF4444';
+  gameOverText.style.textAlign = 'center'; // Center text
 
   const scoreText = document.createElement('p');
   scoreText.textContent = `Final Score: ${gameState.score}`;
   scoreText.style.marginBottom = '40px';
   scoreText.style.fontSize = '24px';
+  scoreText.style.textAlign = 'center'; // Center text
 
   const restartButton = document.createElement('button');
   restartButton.textContent = 'Play Again';
@@ -1821,6 +1830,12 @@ function gameOver(destroyedBy) {
   gameOverScreen.appendChild(scoreText);
   gameOverScreen.appendChild(restartButton);
   document.body.appendChild(gameOverScreen);
+
+  // Stop heartbeat
+  if (heartbeatInterval) {
+    clearInterval(heartbeatInterval);
+    heartbeatInterval = null;
+  }
 }
 
 // Restart game
@@ -2300,14 +2315,14 @@ function handleServerMessage(message) {
 
     case 'playerJoined':
       if (message.client && message.client.id && message.client.id !== clientId) {
-        console.log('New player joined:', message.client.id);
+        console.log('New player joined:', message.client.id); // Log player ID on join
         addOtherPlayer(message.client);
       }
       break;
 
     case 'playerLeft':
       if (message.id && message.id !== clientId) {
-        console.log('Player left:', message.id);
+        console.log('Player left:', message.id); // Log player ID on leave
         removeOtherPlayer(message.id);
       }
       break;
@@ -2358,7 +2373,7 @@ function handleServerMessage(message) {
 
     case 'tankDestroyed':
       if (message.id === clientId) {
-        // Our tank was destroyed - show game over
+        // Our tank was destroyed - show game over and disconnect
         if (playerTank && !playerTank.userData.isDestroyed) {
           playerTank.userData.health = 0;
           playerTank.userData.isDestroyed = true;
@@ -2371,6 +2386,8 @@ function handleServerMessage(message) {
             true
           );
           scene.remove(playerTank);
+          
+          // Disconnect and show game over
           gameOver(message.destroyedBy);
         }
       } else {
@@ -2388,7 +2405,7 @@ function handleServerMessage(message) {
             true
           );
           scene.remove(otherTank);
-          otherPlayers.delete(message.id); // Remove from otherPlayers map
+          otherPlayers.delete(message.id);
 
           // Award points if we destroyed this tank
           if (message.destroyedBy === clientId) {
@@ -2417,6 +2434,8 @@ function handleServerMessage(message) {
           // Get current health and reduce it
           const currentHealth = playerTank.userData.health || settings.tankMaxHealth;
           const newHealth = Math.max(0, currentHealth - message.damage);
+          
+          console.log(`My tank hit by player ${message.shooterId} for ${message.damage} damage.`); // Log when my tank is hit
           
           console.log(`Tank hit! Current Health: ${currentHealth}, Damage: ${message.damage}, New Health: ${newHealth}`);
           
@@ -2458,6 +2477,9 @@ function handleServerMessage(message) {
           // Get current health and reduce it
           const currentHealth = otherTank.userData.health || settings.tankMaxHealth;
           const newHealth = Math.max(0, currentHealth - message.damage);
+          
+          console.log(`Player ${message.targetId}'s tank hit by player ${message.shooterId} for ${message.damage} damage.`); // Log when another tank is hit
+          console.log(`  -> Other tank (${message.targetId}) health after hit (client-side): ${newHealth}`);
           
           console.log(`Other tank hit! Current Health: ${currentHealth}, Damage: ${message.damage}, New Health: ${newHealth}`);
           
@@ -2562,20 +2584,25 @@ function createOtherPlayerTank() {
   otherTank.userData.isDestroyed = false;
   otherTank.userData.type = 'tank';
 
-  console.log('Other tank created with health:', settings.tankMaxHealth);
+  console.log('Other tank created:', otherTank); // Log created tank object
+  console.log('Other tank visibility:', otherTank.visible);
 
   return otherTank;
 }
 
 // Add other player to the scene
 function addOtherPlayer(playerData) {
-  console.log('Adding player:', playerData);
-  
+  console.log('Attempting to add player:', playerData.id, 'with data:', playerData); // Log entry
+
   // Remove any existing tank for this player
   removeOtherPlayer(playerData.id);
 
   // Create new tank for other player
   const otherTank = createOtherPlayerTank();
+  if (!otherTank) {
+    console.error('Failed to create tank mesh for player:', playerData.id);
+    return;
+  }
   otherTank.userData.id = playerData.id;
 
   // Set initial position and rotation
@@ -2594,20 +2621,32 @@ function addOtherPlayer(playerData) {
   // Store tank's health
   otherTank.userData.health = playerData.health || settings.tankMaxHealth;
 
-  // Add to scene and store in otherPlayers map
+  // Add to scene and check parent
   scene.add(otherTank);
+  if (otherTank.parent === scene) {
+    console.log(`Successfully added tank ${playerData.id} to the scene.`);
+  } else {
+    console.error(`Failed to add tank ${playerData.id} to the scene. Current parent:`, otherTank.parent);
+  }
+
+  // Add to scene and store in otherPlayers map
   otherPlayers.set(playerData.id, otherTank);
-  console.log('Other players after add:', Array.from(otherPlayers.keys()));
+  console.log('Other players map after add:', Array.from(otherPlayers.keys()));
 }
 
 // Remove other player from the scene
 function removeOtherPlayer(playerId) {
   const player = otherPlayers.get(playerId);
   if (player) {
-    console.log(`Removing player ${playerId}`);
+    console.log(`Attempting to remove player ${playerId}. Current parent:`, player.parent); // Log removal attempt
     scene.remove(player);
+    if (player.parent !== scene) {
+      console.log(`Successfully removed player ${playerId} from scene.`);
+    } else {
+      console.error(`Failed to remove player ${playerId} from scene.`);
+    }
     otherPlayers.delete(playerId);
-    console.log('Current other players:', Array.from(otherPlayers.keys()));
+    console.log('Current other players map after removal:', Array.from(otherPlayers.keys()));
   }
 }
 
@@ -2716,6 +2755,10 @@ animate = function () {
 
 // Handle projectile fired by other player
 function handleOtherPlayerProjectile(projectileData) {
+  // Use the object pool to get a projectile
+  const projectile = getPooledObject('projectiles');
+  if (!projectile) return; // No available projectiles in the pool
+
   const position = new THREE.Vector3(
     projectileData.position.x,
     projectileData.position.y,
@@ -2727,31 +2770,22 @@ function handleOtherPlayerProjectile(projectileData) {
     projectileData.direction.z
   );
 
-  const projectile = createProjectile(position, direction);
-  projectile.userData.speed = projectileData.speed;
-  projectiles.push(projectile);
-}
-
-// Create a projectile object
-function createProjectile(position, direction) {
-  const projectileGeometry = new THREE.SphereGeometry(2, 16, 16);
-  const projectileMaterial = new THREE.MeshStandardMaterial({
-    color: 0xFFFF00,
-    emissive: 0xFFFF00,
-    emissiveIntensity: 2,
-    metalness: 0.3,
-    roughness: 0.2
-  });
-  const projectile = new THREE.Mesh(projectileGeometry, projectileMaterial);
-
+  // Set projectile properties from received data
   projectile.position.copy(position);
-  projectile.userData.direction = direction;
+  projectile.userData.direction = direction.clone();
+  projectile.userData.speed = projectileData.speed || settings.projectileSpeed; // Use default if speed is missing
+  projectile.userData.lifetime = 0; // Reset lifetime
 
-  const projectileLight = new THREE.PointLight(0xFFFF00, 8, 20);
-  projectile.add(projectileLight);
+  // Add a temporary light if available (similar to local fire)
+  const light = lightPool.acquire(0xFFFF00, 3, 15);
+  if (light) {
+    projectile.userData.light = light;
+    light.position.copy(projectile.position);
+  }
 
+  // Add to scene and projectiles array for updates/collisions
   scene.add(projectile);
-  return projectile;
+  projectiles.push(projectile);
 }
 
 // Handle destroyed obstacle
