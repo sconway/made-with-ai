@@ -159,7 +159,7 @@ wss.on('connection', (ws) => {
                     for (const [ws, clientData] of clients.entries()) {
                         if (clientData.id === message.targetId) {
                             targetClientData = clientData;
-                            targetWs = ws;d
+                            targetWs = ws;
                             break;
                         }
                     }
