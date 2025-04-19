@@ -1069,7 +1069,7 @@ function animate() {
 
   // Clear console logs after 5 seconds to avoid flooding
   if (clock.elapsedTime > 5 && !window.clearedLogs) {
-    console.clear();
+
     console.log("Cleared initial logs. Continuing with critical debug output only.");
     window.clearedLogs = true;
   }
@@ -1353,13 +1353,13 @@ function createMuzzleFlash(position) {
 function updateProjectiles() {
   const removeList = [];
   const currentTime = performance.now();
-  
+
   for (const projectile of projectiles) {
     if (!projectile.visible) continue;
 
     // Update position
     projectile.position.addScaledVector(projectile.userData.direction, projectile.userData.speed * deltaTime);
-    
+
     // Update light if present
     if (projectile.userData.light) {
       projectile.userData.light.position.copy(projectile.position);
@@ -1367,37 +1367,57 @@ function updateProjectiles() {
 
     projectile.userData.lifetime += deltaTime;
 
-    // Force cleanup of old projectiles (over 3 seconds)
+    // Check for lifetime expiration
     if (projectile.userData.lifetime > 3) {
-      removeList.push(projectile);
-      continue;
+      projectile.visible = false; // Mark for removal
+      // Immediate cleanup for expired projectiles
+      if (projectile.userData.light) {
+        lightPool.release(projectile.userData.light);
+        projectile.userData.light = null;
+      }
+      scene.remove(projectile);
+      removeList.push(projectile); // Still add to list for array splice
+      continue; // Go to next projectile
     }
 
-    // Check for collisions
+    // Check for collisions ONLY if still visible and not expired
     if (checkProjectileCollisions(projectile)) {
-      removeList.push(projectile);
+      projectile.visible = false; // Mark for removal immediately
+      // Immediate cleanup for hit projectiles
+      console.log(`[Projectile Hit Cleanup] Immediately removing projectile after hit.`);
+      if (projectile.userData.light) {
+        lightPool.release(projectile.userData.light);
+        projectile.userData.light = null;
+      }
+      scene.remove(projectile);
+      removeList.push(projectile); // Still add to list for array splice
+      continue; // Skip further processing for this projectile this frame
     }
   }
 
-  // Batch remove projectiles
+  // Batch remove projectiles FROM THE ARRAY
   for (const projectile of removeList) {
-    cleanupProjectile(projectile);
+    // The actual mesh/light cleanup is already done above
+    const index = projectiles.indexOf(projectile);
+    if (index > -1) {
+      projectiles.splice(index, 1);
+      // console.log(`[Cleanup Projectile Array] Projectile removed from array. New count: ${projectiles.length}`); // Reduce log noise
+    } else {
+      // console.log("[Cleanup Projectile Array] Projectile not found in array for removal.");
+    }
   }
 }
 
-// Clean up a projectile and its associated resources
+// Clean up a projectile and its associated resources - NOW MOSTLY JUST ARRAY CLEANUP
 function cleanupProjectile(projectile) {
-  if (projectile.userData.light) {
-    lightPool.release(projectile.userData.light);
-    projectile.userData.light = null;
-  }
-  
-  scene.remove(projectile);
-  projectile.visible = false;
-  
+  // Most cleanup is done immediately in updateProjectiles now
+  // This function primarily ensures it's removed from the array
   const index = projectiles.indexOf(projectile);
   if (index > -1) {
     projectiles.splice(index, 1);
+    console.log(`[Cleanup Projectile Final Check] Projectile array splice successful. New count: ${projectiles.length}`);
+  } else {
+    console.log("[Cleanup Projectile Final Check] Projectile already removed from array?");
   }
 }
 
@@ -1519,85 +1539,65 @@ function createExplosion(position, isLarge = false) {
 
 // Check if projectile collides with obstacles or tanks
 function checkProjectileCollisions(projectile) {
-  // Increased projectile collision radius for more generous hit detection
   const projectileRadius = 3;
 
-  // Check collision with other tanks
+  // Check OTHER tanks FIRST
   for (const [id, tank] of otherPlayers) {
     if (tank.userData.isDestroyed) continue;
-
-    // Calculate distance from projectile center to tank center
     const distance = projectile.position.distanceTo(tank.position);
-
-    // More generous collision check using combined radii
     const combinedRadius = projectileRadius + tank.userData.collisionRadius;
     if (distance < combinedRadius) {
-      // Create impact explosion
       createExplosion(projectile.position.clone(), false);
-      
-      // Notify server about hit
       if (ws && ws.readyState === WebSocket.OPEN) {
-        ws.send(JSON.stringify({
+        const hitData = {
           type: 'tankHit',
-          targetId: id,
-          shooterId: clientId,
+          targetId: id, // The ID of the tank we hit
+          shooterId: clientId, // Our own client ID
           damage: settings.projectileDamage,
           position: projectile.position.clone()
-        }));
+        };
+        // Log exactly what's being sent - RE-ENABLE THIS LOG
+        console.log(`[Client Sending tankHit on OTHER] Target: ${hitData.targetId}, Shooter: ${hitData.shooterId}`);
+        ws.send(JSON.stringify(hitData));
       }
-
-      return true;
+      return true; // EXIT EARLY on hit
     }
   }
 
-  // Check collision with player tank
+  // Check SELF tank (ONLY if no other tank was hit)
   if (playerTank && !playerTank.userData.isDestroyed) {
-    // Calculate distance from projectile center to player tank center
     const distance = projectile.position.distanceTo(playerTank.position);
-
-    // More generous collision check using combined radii
     const combinedRadius = projectileRadius + playerTank.userData.collisionRadius;
     if (distance < combinedRadius) {
-      // Create impact explosion
       createExplosion(projectile.position.clone(), false);
-      
-      // Notify server about hit
       if (ws && ws.readyState === WebSocket.OPEN) {
-        ws.send(JSON.stringify({
+        const hitData = {
           type: 'tankHit',
-          targetId: clientId,
-          shooterId: clientId,
+          targetId: clientId, // Hitting ourselves
+          shooterId: clientId, // We shot it
           damage: settings.projectileDamage,
           position: projectile.position.clone()
-        }));
+        };
+         // Log exactly what's being sent - RE-ENABLE THIS LOG
+        console.log(`[Client Sending tankHit on SELF] Target: ${hitData.targetId}, Shooter: ${hitData.shooterId}`);
+        ws.send(JSON.stringify(hitData));
       }
-
-      return true;
+      return true; // EXIT EARLY on hit
     }
   }
 
-  // Check distance to all obstacles
+  // Check obstacles (ONLY if no tank was hit)
   for (let i = 0; i < obstacles.length; i++) {
     const obstacle = obstacles[i];
-
-    // Skip destroyed obstacles
     if (obstacle.userData.isDestroyed) continue;
-
-    // Calculate distance from projectile center to obstacle center
     const distance = projectile.position.distanceTo(obstacle.position);
-
-    // More generous collision check using combined radii
     const combinedRadius = projectileRadius + obstacle.userData.collisionRadius;
     if (distance < combinedRadius) {
-      // Apply damage to obstacle
       damageObstacle(obstacle, 1000);
-
-      // If obstacle was explosive, damage nearby obstacles
       if (obstacle.userData.isExplosive) {
         applyExplosionDamage(obstacle.position, 25, 1000);
       }
-
-      return true;
+      return true; // EXIT EARLY on hit
     }
   }
 
@@ -1611,29 +1611,16 @@ function damageObstacle(obstacle, damageAmount) {
   obstacle.userData.health -= damageAmount;
 
   if (obstacle.userData.health <= 0) {
-    // Immediately destroy obstacle without any effects
     obstacle.userData.isDestroyed = true;
     obstacle.scale.set(0.1, 0.1, 0.1);
 
-    // Award 1 point for destroying an obstacle
-    gameState.score += 1;
-    updateUI();
-
-    // If obstacle was explosive, damage nearby obstacles without effects
     if (obstacle.userData.isExplosive) {
       applyExplosionDamage(obstacle.position, 25, 1000);
     }
 
-    // Add to respawn queue
     addToRespawnQueue(obstacle);
 
-    // Notify server about score update
-    if (ws && ws.readyState === WebSocket.OPEN) {
-      ws.send(JSON.stringify({
-        type: 'update',
-        score: gameState.score
-      }));
-    }
+    console.log('[Obstacle Destroyed] Score increment disabled client-side.');
   }
 }
 
@@ -1765,14 +1752,23 @@ function updateUI() {
 
 // Game over function
 function gameOver(destroyedBy) {
+  console.log(`[Game Over] Called. Destroyed by: ${destroyedBy || 'unknown'}.`); // Log call
   gameState.isGameOver = true;
   isGameActive = false;
 
-  // Disconnect from server
-  if (ws) {
-    console.log('Disconnecting from server due to tank destruction');
+  // Explicitly close WebSocket connection if it exists and is open
+  if (ws && ws.readyState === WebSocket.OPEN) {
+    console.log('[Game Over] Closing client WebSocket connection.');
     ws.close();
-    ws = null;
+    ws = null; // Prevent future attempts to use the closed socket
+  } else {
+    console.log(`[Game Over] WebSocket not open or doesn't exist. State: ${ws?.readyState}`);
+  }
+
+  // Stop heartbeat
+  if (heartbeatInterval) {
+    clearInterval(heartbeatInterval);
+    heartbeatInterval = null;
   }
 
   // Show game over screen
@@ -1830,12 +1826,15 @@ function gameOver(destroyedBy) {
   gameOverScreen.appendChild(scoreText);
   gameOverScreen.appendChild(restartButton);
   document.body.appendChild(gameOverScreen);
+  console.log('[Game Over] Screen displayed.'); // Log screen display
 
-  // Stop heartbeat
+  // Stop heartbeat is already done above
+  /*
   if (heartbeatInterval) {
     clearInterval(heartbeatInterval);
     heartbeatInterval = null;
   }
+  */
 }
 
 // Restart game
@@ -2225,19 +2224,31 @@ function connectToServer() {
 
     // Only attempt reconnection if:
     // 1. The tab is visible
-    // 2. The connection wasn't closed intentionally
-    // 3. We're not already trying to reconnect
-    if (!document.hidden && !reconnecting) {
-      console.log('Tab is visible, attempting reconnection');
+    // 2. We are not already trying to reconnect
+    // 3. The game is not over (i.e., we weren't kicked due to destruction)
+    if (!document.hidden && !reconnecting && !gameState.isGameOver) {
+      console.log('Tab is visible and game not over, attempting reconnection...');
       reconnecting = true;
       setTimeout(connectToServer, 3000);
+    } else if (gameState.isGameOver) {
+      console.log('WebSocket closed during game over state, no reconnection attempt.');
+    } else if (document.hidden) {
+        console.log('WebSocket closed while tab hidden, no reconnection attempt.');
+    } else if (reconnecting) {
+        console.log('WebSocket closed while already attempting reconnection.');
     }
 
-    // Clear all other players
+    // Clear all other players when disconnected for any reason
     otherPlayers.forEach((player, id) => {
       scene.remove(player);
     });
     otherPlayers.clear();
+
+    // Also stop heartbeat if connection closes unexpectedly
+    if (heartbeatInterval) {
+        clearInterval(heartbeatInterval);
+        heartbeatInterval = null;
+    }
   };
 
   ws.onerror = (error) => {
@@ -2265,22 +2276,41 @@ function handleVisibilityChange() {
     // Tab is hidden, stop heartbeat but keep connection
     if (heartbeatInterval) {
       clearInterval(heartbeatInterval);
+      heartbeatInterval = null; // Ensure it's nullified
+      console.log('[Visibility Change] Tab hidden, heartbeat stopped.');
     }
   } else {
-    // Tab is visible again, restart heartbeat
-    startHeartbeat();
-    
-    // If we're disconnected, reconnect
-    if (!ws || ws.readyState !== WebSocket.OPEN) {
-      console.log('Tab visible, reconnecting');
-      connectToServer();
+    console.log('[Visibility Change] Tab became visible.');
+    // Tab is visible again, restart heartbeat if connected
+    if (ws && ws.readyState === WebSocket.OPEN) {
+        startHeartbeat();
+    }
+
+    // If we're disconnected AND the game isn't over, reconnect
+    if ((!ws || ws.readyState !== WebSocket.OPEN) && !gameState.isGameOver) {
+      console.log('[Visibility Change] Tab visible, ws disconnected, game not over. Reconnecting...');
+      // Ensure not already reconnecting from onclose
+      if (!reconnecting) {
+          reconnecting = true; // Set flag here too
+          connectToServer();
+      } else {
+          console.log('[Visibility Change] Already attempting reconnection, skipping.');
+      }
+    } else if (gameState.isGameOver) {
+        console.log('[Visibility Change] Tab visible, but game is over. No reconnection.');
+    } else {
+        console.log('[Visibility Change] Tab visible and ws connection is OPEN. No reconnection needed.');
     }
   }
 }
 
 // Handle messages from server
 function handleServerMessage(message) {
+  // Remove PRE-SWITCH log
+  // console.log(`[Client Message Handler - PRE-SWITCH] Received type: ${message.type}, Message ID: ${message.id || 'N/A'}. Current Client ID: ${clientId}`);
+
   if (!message || !message.type) {
+    // Keep error log
     console.error('Invalid message received:', message);
     return;
   }
@@ -2288,48 +2318,137 @@ function handleServerMessage(message) {
   switch (message.type) {
     case 'init':
       if (!message.id) {
-        console.error('Invalid init message, no client ID:', message);
+        console.error('CRITICAL: Invalid init message, no client ID provided by server:', message);
         return;
       }
-
       clientId = message.id;
+      // Remove assignment log
+      // console.log(`[Init] Assigned clientId = ${clientId}`);
+      // Keep basic init log
       console.log('Initialized with client ID:', clientId);
+      // Remove list log
+      // console.log('Received initial client list:', message.clients);
 
-      // Clear all existing other players
+      // Remove clear logs
+      // console.log('Clearing existing other players before init.');
+      // console.log('  [Init Clear] otherPlayers keys BEFORE clear:', Array.from(otherPlayers.keys()));
       otherPlayers.forEach((player, id) => {
-        scene.remove(player);
+        // Remove log
+        // console.log(`  Removing pre-init player ${id}`);
+        removeOtherPlayer(id, "from init clear");
       });
       otherPlayers.clear();
+      // Remove log
+      // console.log('  [Init Clear] otherPlayers keys AFTER clear:', Array.from(otherPlayers.keys()));
 
-      // Add other players from the server's client list
       if (Array.isArray(message.clients)) {
-        console.log('Adding other players:', message.clients);
+        // Remove log
+        // console.log('Processing initial client list from server...');
         message.clients.forEach(client => {
           if (client && client.id && client.id !== clientId) {
-            console.log('Adding player:', client.id);
+            // Remove log
+            // console.log(`  Attempting to add existing player ${client.id} from init list.`);
             addOtherPlayer(client);
           }
         });
+        // Remove log
+        // console.log('  [Init Add] otherPlayers keys AFTER adding from list:', Array.from(otherPlayers.keys()));
       }
       break;
 
     case 'playerJoined':
       if (message.client && message.client.id && message.client.id !== clientId) {
-        console.log('New player joined:', message.client.id); // Log player ID on join
+        // Keep basic join log
+        console.log('New player joined:', message.client.id);
+        // Remove detailed logs
+        // console.log(`Received playerJoined for ${message.client.id}`);
+        // console.log('  [playerJoined] otherPlayers keys BEFORE add:', Array.from(otherPlayers.keys()));
         addOtherPlayer(message.client);
+        // console.log('  [playerJoined] otherPlayers keys AFTER add:', Array.from(otherPlayers.keys()));
       }
       break;
 
     case 'playerLeft':
       if (message.id && message.id !== clientId) {
-        console.log('Player left:', message.id); // Log player ID on leave
-        removeOtherPlayer(message.id);
+        // Keep basic left log
+        console.log('Player left:', message.id);
+        // Remove detailed logs
+        // console.log(`Received playerLeft for ${message.id}`);
+        // console.log('  [playerLeft] otherPlayers keys BEFORE remove:', Array.from(otherPlayers.keys()));
+        removeOtherPlayer(message.id, "from playerLeft handler");
+        // console.log('  [playerLeft] otherPlayers keys AFTER remove:', Array.from(otherPlayers.keys()));
       }
       break;
 
     case 'playerUpdate':
-      if (message.id && message.id !== clientId) {
+      if (message.id && message.id === clientId) {
+        // This update is for our own client (likely score update after kill)
+        // console.log(`[PlayerUpdate for Self] Received Score: ${message.score}`);
+        if (message.score !== undefined && message.score !== gameState.score) {
+          gameState.score = message.score;
+          updateUI();
+        }
+        // We generally trust the server for position/rotation but ignore updates for self
+        // to avoid jitter. Health updates come via tankDamaged.
+      } else if (message.id && message.id !== clientId) {
+        // Update for another player
         updateOtherPlayer(message);
+      }
+      break;
+
+    case 'tankDamaged':
+      if (message.id === clientId) {
+        if (playerTank) {
+          playerTank.userData.health = message.health;
+          gameState.health = (message.health / settings.tankMaxHealth) * 100;
+          // Remove log
+          // console.log(`Received damage update: My health is now ${playerTank.userData.health} (${gameState.health.toFixed(1)}%)`);
+          updateUI();
+        }
+      } else {
+        const otherTank = otherPlayers.get(message.id);
+        if (otherTank) {
+          otherTank.userData.health = message.health;
+          // Remove log
+          // console.log(`Received damage update: Player ${message.id} health is now ${otherTank.userData.health}`);
+        }
+      }
+      break;
+
+    case 'tankDestroyed':
+      console.log(`Received tankDestroyed: Target=${message.id}, Destroyed by=${message.destroyedBy}`);
+      if (message.id === clientId) {
+        // Our tank was destroyed - show game over and disconnect
+        if (playerTank && !playerTank.userData.isDestroyed) {
+          // Set game over flag immediately upon receiving the message
+          gameState.isGameOver = true;
+          console.log('[Client Tank Destroyed] gameState.isGameOver set to true.');
+
+          playerTank.userData.health = 0;
+          playerTank.userData.isDestroyed = true;
+          gameState.health = 0;
+          createExplosion(
+            tank.position.clone(),
+            true
+          );
+        }
+      } else {
+        const otherTank = otherPlayers.get(message.id);
+        if (otherTank && !otherTank.userData.isDestroyed) {
+          // Remove detailed log
+          // console.log(`Processing destruction of tank ${message.id}`);
+          // ... (destruction logic)
+          scene.remove(otherTank);
+          otherPlayers.delete(message.id);
+          // Remove detailed log
+          // console.log(`Removed tank ${message.id}. Other players map size: ${otherPlayers.size}`);
+          if (message.destroyedBy === clientId) {
+            // Remove detailed log
+            // console.log(`Awarding 100 points for destroying tank ${message.id}`);
+            gameState.score += 100;
+            updateUI();
+          }
+        } // ... (else log removed)
       }
       break;
 
@@ -2340,155 +2459,13 @@ function handleServerMessage(message) {
       break;
 
     case 'explosion':
-      createExplosion(
-        new THREE.Vector3(
-          message.position.x,
-          message.position.y,
-          message.position.z
-        ),
-        message.isLarge
-      );
-      break;
+      // This case should do nothing as explosions are handled locally
+      // based on tankDestroyed or tankHit events.
+      // console.error("!!! SERVER DEBUG: Ignoring received 'explosion' message."); // Keep this commented unless debugging source
+      break; // Make sure it just breaks
 
     case 'obstacleDestroyed':
       handleObstacleDestroyed(message);
-      break;
-
-    case 'tankDamaged':
-      if (message.id === clientId) {
-        // Update our tank's health
-        if (playerTank) {
-          playerTank.userData.health = message.health;
-          gameState.health = (message.health / settings.tankMaxHealth) * 100;
-          updateUI();
-        }
-      } else {
-        // Update other tank's health
-        const otherTank = otherPlayers.get(message.id);
-        if (otherTank) {
-          otherTank.userData.health = message.health;
-        }
-      }
-      break;
-
-    case 'tankDestroyed':
-      if (message.id === clientId) {
-        // Our tank was destroyed - show game over and disconnect
-        if (playerTank && !playerTank.userData.isDestroyed) {
-          playerTank.userData.health = 0;
-          playerTank.userData.isDestroyed = true;
-          createExplosion(
-            new THREE.Vector3(
-              message.position.x,
-              message.position.y,
-              message.position.z
-            ), 
-            true
-          );
-          scene.remove(playerTank);
-          
-          // Disconnect and show game over
-          gameOver(message.destroyedBy);
-        }
-      } else {
-        // Another player's tank was destroyed
-        const otherTank = otherPlayers.get(message.id);
-        if (otherTank && !otherTank.userData.isDestroyed) {
-          otherTank.userData.health = 0;
-          otherTank.userData.isDestroyed = true;
-          createExplosion(
-            new THREE.Vector3(
-              message.position.x,
-              message.position.y,
-              message.position.z
-            ), 
-            true
-          );
-          scene.remove(otherTank);
-          otherPlayers.delete(message.id);
-
-          // Award points if we destroyed this tank
-          if (message.destroyedBy === clientId) {
-            gameState.score += 100;
-            updateUI();
-          }
-        }
-      }
-      break;
-
-    case 'tankHit':
-      // Handle tank being hit
-      if (message.targetId === clientId) {
-        // Our tank was hit
-        if (playerTank && !playerTank.userData.isDestroyed) {
-          // Create impact explosion
-          createExplosion(
-            new THREE.Vector3(
-              message.position.x,
-              message.position.y,
-              message.position.z
-            ), 
-            false
-          );
-          
-          // Get current health and reduce it
-          const currentHealth = playerTank.userData.health || settings.tankMaxHealth;
-          const newHealth = Math.max(0, currentHealth - message.damage);
-          
-          console.log(`My tank hit by player ${message.shooterId} for ${message.damage} damage.`); // Log when my tank is hit
-          
-          console.log(`Tank hit! Current Health: ${currentHealth}, Damage: ${message.damage}, New Health: ${newHealth}`);
-          
-          // Update tank health
-          playerTank.userData.health = newHealth;
-          gameState.health = (newHealth / settings.tankMaxHealth) * 100;
-          updateUI();
-
-          // Check if destroyed
-          if (newHealth <= 0 && !playerTank.userData.isDestroyed) {
-            console.log('Tank destroyed! Final health:', newHealth);
-            playerTank.userData.isDestroyed = true;
-
-            // Notify server about destruction
-            if (ws && ws.readyState === WebSocket.OPEN) {
-              ws.send(JSON.stringify({
-                type: 'tankDestroyed',
-                id: clientId,
-                destroyedBy: message.shooterId,
-                position: playerTank.position.clone()
-              }));
-            }
-          }
-        }
-      } else {
-        // Another tank was hit
-        const otherTank = otherPlayers.get(message.targetId);
-        if (otherTank && !otherTank.userData.isDestroyed) {
-          // Create impact explosion
-          createExplosion(
-            new THREE.Vector3(
-              message.position.x,
-              message.position.y,
-              message.position.z
-            ), 
-            false
-          );
-          
-          // Get current health and reduce it
-          const currentHealth = otherTank.userData.health || settings.tankMaxHealth;
-          const newHealth = Math.max(0, currentHealth - message.damage);
-          
-          console.log(`Player ${message.targetId}'s tank hit by player ${message.shooterId} for ${message.damage} damage.`); // Log when another tank is hit
-          console.log(`  -> Other tank (${message.targetId}) health after hit (client-side): ${newHealth}`);
-          
-          console.log(`Other tank hit! Current Health: ${currentHealth}, Damage: ${message.damage}, New Health: ${newHealth}`);
-          
-          // Update tank health
-          otherTank.userData.health = newHealth;
-
-          // Do NOT remove the tank here - wait for server confirmation of destruction
-        }
-      }
       break;
 
     case 'tankRespawned':
@@ -2505,6 +2482,9 @@ function handleServerMessage(message) {
       }
       break;
   }
+  // Log after switch, showing ID potentially after init assignment
+  // console.log(`[Client Message Handler - POST-SWITCH] Processed type: ${message.type}, Message ID: ${message.id || 'N/A'}. Current Client ID: ${clientId}`);
+
 }
 
 // Create tank for other players
@@ -2592,62 +2572,48 @@ function createOtherPlayerTank() {
 
 // Add other player to the scene
 function addOtherPlayer(playerData) {
-  console.log('Attempting to add player:', playerData.id, 'with data:', playerData); // Log entry
-
-  // Remove any existing tank for this player
-  removeOtherPlayer(playerData.id);
-
-  // Create new tank for other player
+  // Remove detailed logs
+  // console.log('Attempting to add player:', playerData.id, 'with data:', playerData);
+  // console.log(`Executing addOtherPlayer for ${playerData.id}`);
+  removeOtherPlayer(playerData.id, "from addOtherPlayer pre-add");
   const otherTank = createOtherPlayerTank();
-  if (!otherTank) {
-    console.error('Failed to create tank mesh for player:', playerData.id);
-    return;
-  }
+  if (!otherTank) return;
   otherTank.userData.id = playerData.id;
+  // Remove ID assignment log
+  // console.log(`[addOtherPlayer] Assigned ID: Input=${playerData.id}, Assigned=${otherTank.userData.id}`);
 
-  // Set initial position and rotation
-  if (playerData.position) {
-    otherTank.position.set(
-      playerData.position.x || 0,
-      playerData.position.y || 0,
-      playerData.position.z || 0
-    );
-  }
+  // ... (position/rotation/health setting code) ...
 
-  if (playerData.rotation) {
-    otherTank.rotation.y = playerData.rotation.y || 0;
-  }
-
-  // Store tank's health
-  otherTank.userData.health = playerData.health || settings.tankMaxHealth;
-
-  // Add to scene and check parent
   scene.add(otherTank);
-  if (otherTank.parent === scene) {
-    console.log(`Successfully added tank ${playerData.id} to the scene.`);
-  } else {
-    console.error(`Failed to add tank ${playerData.id} to the scene. Current parent:`, otherTank.parent);
-  }
+  // Remove detailed logs
+  // if (otherTank.parent === scene) { console.log(...) } else { console.error(...) }
+  // console.log(`[addOtherPlayer] Tank ${playerData.id} parent:`, otherTank.parent?.type);
+  // console.log(`[addOtherPlayer] Tank ${playerData.id} visible: ${otherTank.visible}`);
+  // console.log(`[addOtherPlayer] Tank ${playerData.id} position: ...`);
 
-  // Add to scene and store in otherPlayers map
   otherPlayers.set(playerData.id, otherTank);
-  console.log('Other players map after add:', Array.from(otherPlayers.keys()));
+  // Remove map logs
+  // console.log('Other players map after add:', Array.from(otherPlayers.keys()));
+  // console.log(`[addOtherPlayer] otherPlayers map size: ${otherPlayers.size}`);
 }
 
 // Remove other player from the scene
-function removeOtherPlayer(playerId) {
+function removeOtherPlayer(playerId, context = "unknown context") {
+  // Remove context log
+  // console.log(`Executing removeOtherPlayer for ${playerId} (Context: ${context})`);
   const player = otherPlayers.get(playerId);
   if (player) {
-    console.log(`Attempting to remove player ${playerId}. Current parent:`, player.parent); // Log removal attempt
+    // Remove parent check logs
+    // const parentBeforeRemove = player.parent;
     scene.remove(player);
-    if (player.parent !== scene) {
-      console.log(`Successfully removed player ${playerId} from scene.`);
-    } else {
-      console.error(`Failed to remove player ${playerId} from scene.`);
-    }
+    // if (player.parent !== scene) { console.log(...) } else { console.error(...) }
+    // console.log(`[removeOtherPlayer] Tank ${playerId} parent before remove: ...`);
     otherPlayers.delete(playerId);
-    console.log('Current other players map after removal:', Array.from(otherPlayers.keys()));
-  }
+    // Remove map logs
+    // console.log('Current other players map after removal:', Array.from(otherPlayers.keys()));
+    // console.log(`[removeOtherPlayer] otherPlayers map size: ${otherPlayers.size}`);
+  } // Remove else log
+  // else { console.log(...) }
 }
 
 // Add timestamp and rate limiting for updates
@@ -2694,30 +2660,45 @@ function updateOtherPlayer(playerData) {
 // Add smooth interpolation in the animation loop
 function updateOtherPlayers() {
   const now = performance.now();
-  
-  otherPlayers.forEach((tank) => {
+
+  otherPlayers.forEach((tank, id) => { // Added id for logging
     if (tank.userData.targetPosition && tank.userData.interpolationStart) {
+      const interpolationDuration = now - tank.userData.interpolationStart;
       const progress = Math.min(
-        (now - tank.userData.interpolationStart) / UPDATE_INTERVAL,
+        interpolationDuration / UPDATE_INTERVAL, // Use interpolationDuration
         1
       );
-      
+
       // Smooth position interpolation
-      tank.position.lerpVectors(
+      const interpolatedPosition = new THREE.Vector3().lerpVectors(
         tank.userData.startPosition,
         tank.userData.targetPosition,
         progress
       );
-      
+      tank.position.copy(interpolatedPosition);
+
       // Smooth rotation interpolation
       let startRot = tank.userData.startRotation;
       let targetRot = tank.userData.targetRotation;
-      
+
       // Ensure we rotate the shortest direction
       while (targetRot - startRot > Math.PI) targetRot -= Math.PI * 2;
       while (targetRot - startRot < -Math.PI) targetRot += Math.PI * 2;
-      
-      tank.rotation.y = startRot + (targetRot - startRot) * progress;
+
+      const interpolatedRotationY = startRot + (targetRot - startRot) * progress;
+      tank.rotation.y = interpolatedRotationY;
+
+      // Log interpolation details
+      if (progress < 1) { // Log only while interpolating
+          // console.log(`[Interpolation] Tank ${id}: Progress=${progress.toFixed(2)}, Pos=${interpolatedPosition.x.toFixed(1)},${interpolatedPosition.z.toFixed(1)}, RotY=${interpolatedRotationY.toFixed(2)}`);
+      }
+
+      // Reset interpolation start data when finished to prevent re-interpolation
+      if (progress >= 1) {
+        tank.userData.interpolationStart = null; // Clear start time
+        tank.userData.startPosition = null; // Clear start position
+        tank.userData.startRotation = null; // Clear start rotation
+      }
     }
   });
 }
@@ -2825,13 +2806,13 @@ const originalCreateExplosion = createExplosion;
 createExplosion = function (position, isLarge) {
   originalCreateExplosion(position, isLarge);
 
-  if (ws && ws.readyState === WebSocket.OPEN) {
-    ws.send(JSON.stringify({
-      type: 'explosion',
-      position: position,
-      isLarge: isLarge
-    }));
-  }
+  // if (ws && ws.readyState === WebSocket.OPEN) {
+  //   ws.send(JSON.stringify({
+  //     type: 'explosion',
+  //     position: position,
+  //     isLarge: isLarge
+  //   }));
+  // }
 };
 
 // Modify damageObstacle to broadcast destroyed obstacles

@@ -1,5 +1,5 @@
 import express from 'express';
-import { WebSocketServer } from 'ws';
+import { WebSocketServer, WebSocket } from 'ws';
 import { v4 as uuidv4 } from 'uuid';
 import { createServer } from 'http';
 import { fileURLToPath } from 'url';
@@ -48,26 +48,23 @@ if (isProduction) {
 // Store connected clients with their data
 const clients = new Map();
 
-// Log WebSocket server status
-console.log('WebSocket server initialized with path:', wss.options.path);
+console.log('WebSocket server initialized');
 
 // Handle WebSocket connections
 wss.on('connection', (ws) => {
-    // Generate unique client ID
     const clientId = uuidv4();
     console.log(`New client connected: ${clientId}`);
 
-    // Store client data
     clients.set(ws, {
         id: clientId,
         position: { x: 0, y: 0, z: 0 },
         rotation: { y: 0 },
         health: 500,
         score: 0,
-        lastUpdate: Date.now()
+        lastUpdate: Date.now(),
+        lastDamageTime: 0
     });
 
-    // Send initialization data to new client
     const clientList = Array.from(clients.values()).map(client => ({
         id: client.id,
         position: client.position,
@@ -76,79 +73,54 @@ wss.on('connection', (ws) => {
         score: client.score
     }));
 
-    ws.send(JSON.stringify({
+    const initMessage = {
         type: 'init',
         id: clientId,
         clients: clientList
-    }));
+    };
+    ws.send(JSON.stringify(initMessage));
 
-    // Notify other clients about new player (exclude sender)
     broadcast({
         type: 'playerJoined',
-        client: {
-            id: clientId,
-            position: { x: 0, y: 0, z: 0 },
-            rotation: { y: 0 },
-            health: 500,
-            score: 0
-        }
-    }, ws, false); // Exclude sender
+        client: { id: clientId, position: { x: 0, y: 0, z: 0 }, rotation: { y: 0 }, health: 500, score: 0 }
+    }, ws, false);
 
-    // Handle client disconnect
     ws.on('close', () => {
         console.log(`Client disconnected: ${clientId}`);
-        
-        // Notify other clients
-        broadcast({
-            type: 'playerLeft',
-            id: clientId
-        });
-
-        // Remove client from Map
-        clients.delete(ws);
-        
-        // Log current client count
-        console.log(`Current client count: ${clients.size}`);
+        const clientData = clients.get(ws);
+        if (clientData) {
+            broadcast({ type: 'playerLeft', id: clientId });
+            clients.delete(ws);
+            console.log(`Current client count: ${clients.size}`);
+        }
     });
 
-    // Handle client errors
     ws.on('error', (error) => {
         console.error(`Client ${clientId} error:`, error);
-        
-        // Clean up client connection
-        clients.delete(ws);
-        ws.terminate();
-        
-        // Notify other clients
-        broadcast({
-            type: 'playerLeft',
-            id: clientId
-        });
-        
-        // Log current client count
-        console.log(`Current client count: ${clients.size}`);
+        const clientData = clients.get(ws);
+        if (clientData) {
+            broadcast({ type: 'playerLeft', id: clientId });
+            clients.delete(ws);
+            ws.terminate();
+            console.log(`Current client count after error: ${clients.size}`);
+        }
     });
 
-    // Handle incoming messages
     ws.on('message', (data) => {
         try {
             const message = JSON.parse(data);
-            
-            if (message.type === 'ping') {
-                // Handle ping messages silently
-                return;
-            }
+            // Log ALL received message types
+            // console.log(`[Server Received Raw] Type: ${message?.type || 'UNKNOWN'}`);
+
+            if (message.type === 'ping') return;
 
             const client = clients.get(ws);
             if (!client) {
-                console.error('Message received from unknown client');
+                console.error('Message received from unknown client (ws key not found in map)');
                 return;
             }
+            message.id = client.id;
 
-            // Add client ID to message
-            message.id = clientId;
-
-            // Handle different message types
             switch (message.type) {
                 case 'update':
                     // Update client info
@@ -158,12 +130,14 @@ wss.on('connection', (ws) => {
                     if (message.rotation) {
                         client.rotation = message.rotation;
                     }
-                    if (message.health !== undefined) {
-                        client.health = message.health;
-                    }
-                    if (message.score !== undefined) {
-                        client.score = message.score;
-                    }
+                    // Server is authoritative for health, IGNORE health from client update
+                    // if (message.health !== undefined) {
+                    //     client.health = message.health;
+                    // }
+                    // Server is authoritative for score, IGNORE score from client update
+                    // if (message.score !== undefined) {
+                    //     client.score = message.score;
+                    // }
                     client.lastUpdate = Date.now();
 
                     // Broadcast update to all clients including sender
@@ -175,66 +149,113 @@ wss.on('connection', (ws) => {
                         health: client.health,
                         score: client.score,
                         timestamp: message.timestamp
-                    }, ws, true); // Include all clients
+                    }, ws, true);
                     break;
 
                 case 'tankHit':
-                    console.log('Tank hit:', message);
-                    console.log(`Tank hit event: Target=${message.targetId}, Shooter=${message.shooterId}, Damage=${message.damage}`);
-                    // Broadcast tank hit to all clients (including sender)
-                    console.log(`Tank hit event: Target=${message.targetId}, Shooter=${message.shooterId}, Damage=${message.damage}`); // Log tank hit details
-
-                    // Find the target client and log their health AFTER the hit conceptually
                     let targetClientData = null;
-                    clients.forEach((clientData, ws) => {
+                    let targetWs = null;
+
+                    for (const [ws, clientData] of clients.entries()) {
                         if (clientData.id === message.targetId) {
                             targetClientData = clientData;
+                            targetWs = ws;d
+                            break;
                         }
-                    });
-                    if (targetClientData) {
-                        // Note: Health is updated on the client, server just relays. We log the *expected* health.
-                        const expectedHealthAfterHit = Math.max(0, targetClientData.health - message.damage);
-                        console.log(`  -> Target tank (${message.targetId}) expected health after hit (server-side): ${expectedHealthAfterHit}`);
-                    } else {
-                        console.log(`  -> Target tank (${message.targetId}) not found on server.`);
                     }
 
-                    broadcast({
-                        type: 'tankHit',
-                        targetId: message.targetId,
-                        shooterId: message.shooterId,
-                        damage: message.damage,
-                        position: message.position
-                    }, null, true); // Include all clients
-                    break;
+                    // Log health BEFORE any calculation
+                    if (targetClientData) {
+                      // console.log(`  [Server Tank Hit PRE-CALC] Target ${message.targetId} health is: ${targetClientData.health}`);
+                    }
 
-                case 'tankDestroyed':
-                    console.log('Tank destroyed:', message);
-                    // Broadcast tank destroyed to all clients
-                    broadcast({
-                        type: 'tankDestroyed',
-                        id: message.id,
-                        destroyedBy: message.destroyedBy,
-                        position: message.position
-                    }, null, true); // Include all clients
+                    // Apply damage ONLY if target exists, has health, and cooldown passed
+                    if (targetClientData && targetClientData.health > 0) {
+                        const now = Date.now();
+                        const damageCooldown = 200; // 200ms cooldown between hits on the same target
+
+                        if (now - targetClientData.lastDamageTime > damageCooldown) {
+                            // Cooldown passed, process the hit
+                            targetClientData.lastDamageTime = now; // Update last damage time
+
+                            const healthBefore = targetClientData.health;
+                            targetClientData.health -= message.damage;
+                            targetClientData.health = Math.max(0, targetClientData.health);
+                            console.log(`  [Server Tank Hit Calculation] Target ${message.targetId}: Health ${healthBefore} - Damage ${message.damage} = ${targetClientData.health}`);
+
+                            broadcast({ type: 'tankDamaged', id: message.targetId, health: targetClientData.health }, null, true);
+
+                            if (targetClientData.health <= 0) {
+                                console.log(`Tank ${message.targetId} destroyed by ${message.shooterId}`);
+
+                                // Award points to the shooter server-side
+                                let shooterClientData = null;
+                                for (const cData of clients.values()) {
+                                    if (cData.id === message.shooterId) {
+                                        shooterClientData = cData;
+                                        break;
+                                    }
+                                }
+                                if (shooterClientData && shooterClientData.id !== targetClientData.id) { // Check shooter exists and not self-destruct
+                                    shooterClientData.score += 100;
+                                    console.log(`Awarded 100 points to shooter ${message.shooterId}. New score: ${shooterClientData.score}`);
+                                    // Broadcast shooter's score update
+                                    broadcast({
+                                        type: 'playerUpdate',
+                                        id: shooterClientData.id,
+                                        position: shooterClientData.position, // Include position/rotation
+                                        rotation: shooterClientData.rotation,
+                                        health: shooterClientData.health,
+                                        score: shooterClientData.score,
+                                        timestamp: Date.now() // Use current time
+                                    }, null, true); // Send to all (including shooter)
+                                }
+
+                                broadcast({ type: 'tankDestroyed', id: message.targetId, destroyedBy: message.shooterId, position: targetClientData.position }, null, true);
+
+                                if (targetWs) {
+                                    console.log(`Terminating connection for destroyed client ${message.targetId}`);
+                                    targetWs.terminate();
+                                    clients.delete(targetWs);
+                                }
+                            }
+                        } else {
+                            // Hit occurred within cooldown period, ignore it
+                            console.log(`  [Server Tank Hit Cooldown] Hit ignored for Target ${message.targetId}. Time since last hit: ${now - targetClientData.lastDamageTime}ms`);
+                        }
+                    } else if (targetClientData) {
+                         // console.log(`  [Server Tank Hit Skip] Target ${message.targetId} already has 0 health.`);
+                    }
+
+                    // Log final health state after processing this hit
+                    if (targetClientData) {
+                      // console.log(`  [Server Tank Hit POST-CALC] Target ${message.targetId} final health in map: ${clients.get(targetWs)?.health ?? 'N/A (removed?)'}`);
+                    }
                     break;
 
                 case 'tankRespawned':
                     console.log('Tank respawned:', message);
-                    // Broadcast tank respawn to all clients
                     broadcast({
                         type: 'tankRespawned',
                         id: message.id,
                         position: message.position,
                         rotation: message.rotation
-                    }, null, true); // Include all clients
+                    }, null, true);
                     break;
 
                 case 'projectile':
+                    broadcast(message, null, true);
+                    break;
+
                 case 'explosion':
+                    // Add a log here to confirm it's NOT being run
+                    console.error("!!! SERVER ERROR: Unexpectedly entered 'explosion' message handler case!");
+                    // The broadcast below should remain commented out or removed
+                    // broadcast(message, null, true); // Keep this commented/removed
+                    break;
+
                 case 'obstacleDestroyed':
-                    // These messages are broadcast to all clients
-                    broadcast(message, null, true); // Include all clients
+                    broadcast(message, null, true);
                     break;
 
                 default:
@@ -249,55 +270,46 @@ wss.on('connection', (ws) => {
 
 // Broadcast message to all clients except sender
 function broadcast(message, sender = null, includeAll = false) {
-    clients.forEach((clientData, clientWs) => {
-        // Send to all clients if includeAll is true, otherwise exclude sender
-        if ((includeAll || clientWs !== sender) && clientWs.readyState === WebSocketServer.OPEN) {
-            try {
-                clientWs.send(JSON.stringify(message));
-            } catch (error) {
-                console.error('Error broadcasting to client:', error);
-                // Clean up dead connection
-                clients.delete(clientWs);
-                clientWs.terminate();
+    let recipients = 0;
+    const totalClients = clients.size;
+
+    for (const [clientWs, clientData] of clients.entries()) {
+        try {
+            const shouldSend = (includeAll || clientWs !== sender) && clientWs.readyState === WebSocket.OPEN;
+
+            if (shouldSend) {
+                try {
+                    clientWs.send(JSON.stringify(message));
+                    recipients++;
+                } catch (error) {
+                    console.error(`Error sending to client ${clientData.id}:`, error);
+                    clients.delete(clientWs);
+                    clientWs.terminate();
+                }
             }
+        } catch (loopError) {
+            console.error(`!!! Error during broadcast loop for client ${clientData?.id}:`, loopError);
         }
-    });
+    }
 }
 
-// Clean up inactive clients periodically
+// Restore cleanup interval
 setInterval(() => {
     const now = Date.now();
-    const timeout = 30000; // 30 seconds timeout
-
-    // Log current player healths
-    console.log('Current players and health:');
-    if (clients.size === 0) {
-        console.log('  No players connected.');
-    } else {
-        clients.forEach((clientData, ws) => {
-            console.log(`  Player ID: ${clientData.id}, Health: ${clientData.health}`);
-        });
-    }
+    const timeout = 30000;
 
     clients.forEach((clientData, ws) => {
         if (now - clientData.lastUpdate > timeout) {
             console.log(`Client ${clientData.id} timed out`);
-            
-            // Clean up client connection
-            clients.delete(ws);
+            const wasPresent = clients.delete(ws);
             ws.terminate();
-            
-            // Notify other clients
-            broadcast({
-                type: 'playerLeft',
-                id: clientData.id
-            });
+            if (wasPresent) {
+                const leaveMessage = { type: 'playerLeft', id: clientData.id };
+                broadcast(leaveMessage);
+            }
         }
     });
-    
-    // Log current client count
-    console.log(`Active clients after cleanup: ${clients.size}`);
-}, 10000); // Run cleanup every 10 seconds
+}, 10000);
 
 // Handle WebSocket upgrade
 server.on('upgrade', (request, socket, head) => {
