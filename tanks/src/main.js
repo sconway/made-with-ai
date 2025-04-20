@@ -20,6 +20,7 @@ let chunks = new Map(); // Store active terrain chunks
 const chunkSize = 200; // Size of each terrain chunk
 const viewDistance = 2; // How many chunks to load in each direction
 const loadedChunks = new Set(); // Track currently loaded chunk coordinates
+let clientMessageCounter = 0; // Counter for unique message IDs
 
 // Game state
 const gameState = {
@@ -1203,6 +1204,20 @@ function updatePlayerTank() {
   if (!controls_state.canShoot && clock.elapsedTime - controls_state.lastShot >= settings.reloadTime) {
     controls_state.canShoot = true;
   }
+
+  const now = performance.now();
+  if (ws && ws.readyState === WebSocket.OPEN && playerTank &&
+      now - lastUpdateTime >= UPDATE_INTERVAL) {
+    lastUpdateTime = now;
+    // Use the helper function to create the message
+    const message = createClientMessage('update', {
+        position: { x: playerTank.position.x, y: playerTank.position.y, z: playerTank.position.z },
+        rotation: { y: playerTank.rotation.y },
+        // score: gameState.score, // Score is server-authoritative
+        timestamp: now
+    });
+    ws.send(JSON.stringify(message));
+  }
 }
 
 // Check collisions between tank and obstacles
@@ -1325,6 +1340,7 @@ function fireProjectile() {
   projectile.userData.direction = tankDirection.clone();
   projectile.userData.speed = settings.projectileSpeed;
   projectile.userData.lifetime = 0;
+  projectile.userData.ownerId = clientId; // Set owner ID
 
   // Add light only if we have capacity
   const light = lightPool.acquire(0xFFFF00, 3, 15);
@@ -1338,6 +1354,15 @@ function fireProjectile() {
 
   // Quick muzzle flash
   createMuzzleFlash(projectile.position.clone());
+
+  if (ws && ws.readyState === WebSocket.OPEN) {
+    const message = createClientMessage('projectile', {
+      position: projectile.position,
+      direction: projectile.userData.direction,
+      speed: projectile.userData.speed
+    });
+    ws.send(JSON.stringify(message));
+  }
 }
 
 // Optimized muzzle flash
@@ -1539,6 +1564,11 @@ function createExplosion(position, isLarge = false) {
 
 // Check if projectile collides with obstacles or tanks
 function checkProjectileCollisions(projectile) {
+  // **** EXIT EARLY IF PROJECTILE IS NOT OWNED BY THIS CLIENT ****
+  if (projectile.userData.ownerId !== clientId) {
+    return false; // Only process collisions for our own projectiles
+  }
+
   const projectileRadius = 3;
 
   // Check OTHER tanks FIRST
@@ -1549,15 +1579,14 @@ function checkProjectileCollisions(projectile) {
     if (distance < combinedRadius) {
       createExplosion(projectile.position.clone(), false);
       if (ws && ws.readyState === WebSocket.OPEN) {
-        const hitData = {
-          type: 'tankHit',
-          targetId: id, // The ID of the tank we hit
-          shooterId: clientId, // Our own client ID
-          damage: settings.projectileDamage,
-          position: projectile.position.clone()
-        };
-        // Log exactly what's being sent - RE-ENABLE THIS LOG
-        console.log(`[Client Sending tankHit on OTHER] Target: ${hitData.targetId}, Shooter: ${hitData.shooterId}`);
+        // Use the helper function to create the message
+        const hitData = createClientMessage('tankHit', {
+            targetId: id,
+            shooterId: clientId,
+            damage: settings.projectileDamage,
+            position: projectile.position.clone()
+        });
+        console.log(`[Client Sending tankHit on OTHER] MsgID: ${hitData.msgId}, Target: ${hitData.targetId}, Shooter: ${hitData.shooterId}`);
         ws.send(JSON.stringify(hitData));
       }
       return true; // EXIT EARLY on hit
@@ -1571,15 +1600,14 @@ function checkProjectileCollisions(projectile) {
     if (distance < combinedRadius) {
       createExplosion(projectile.position.clone(), false);
       if (ws && ws.readyState === WebSocket.OPEN) {
-        const hitData = {
-          type: 'tankHit',
-          targetId: clientId, // Hitting ourselves
-          shooterId: clientId, // We shot it
-          damage: settings.projectileDamage,
-          position: projectile.position.clone()
-        };
-         // Log exactly what's being sent - RE-ENABLE THIS LOG
-        console.log(`[Client Sending tankHit on SELF] Target: ${hitData.targetId}, Shooter: ${hitData.shooterId}`);
+        // Use the helper function to create the message
+        const hitData = createClientMessage('tankHit', {
+            targetId: clientId,
+            shooterId: clientId,
+            damage: settings.projectileDamage,
+            position: projectile.position.clone()
+        });
+        console.log(`[Client Sending tankHit on SELF] MsgID: ${hitData.msgId}, Target: ${hitData.targetId}, Shooter: ${hitData.shooterId}`);
         ws.send(JSON.stringify(hitData));
       }
       return true; // EXIT EARLY on hit
@@ -1607,7 +1635,7 @@ function checkProjectileCollisions(projectile) {
 // Apply damage to an obstacle
 function damageObstacle(obstacle, damageAmount) {
   if (!obstacle || obstacle.userData.isDestroyed) return;
-  
+
   obstacle.userData.health -= damageAmount;
 
   if (obstacle.userData.health <= 0) {
@@ -1620,7 +1648,15 @@ function damageObstacle(obstacle, damageAmount) {
 
     addToRespawnQueue(obstacle);
 
-    console.log('[Obstacle Destroyed] Score increment disabled client-side.');
+    // Send message to server indicating obstacle destruction
+    if (ws && ws.readyState === WebSocket.OPEN) {
+      const message = createClientMessage('obstacleDestroyed', {
+          position: { x: obstacle.position.x, y: obstacle.position.y, z: obstacle.position.z }
+      });
+      // Remove log
+      // console.log(`[Client Sending obstacleDestroyed] MsgID: ${message.msgId}`);
+      ws.send(JSON.stringify(message));
+    }
   }
 }
 
@@ -2736,9 +2772,8 @@ animate = function () {
 
 // Handle projectile fired by other player
 function handleOtherPlayerProjectile(projectileData) {
-  // Use the object pool to get a projectile
   const projectile = getPooledObject('projectiles');
-  if (!projectile) return; // No available projectiles in the pool
+  if (!projectile) return;
 
   const position = new THREE.Vector3(
     projectileData.position.x,
@@ -2754,8 +2789,10 @@ function handleOtherPlayerProjectile(projectileData) {
   // Set projectile properties from received data
   projectile.position.copy(position);
   projectile.userData.direction = direction.clone();
-  projectile.userData.speed = projectileData.speed || settings.projectileSpeed; // Use default if speed is missing
-  projectile.userData.lifetime = 0; // Reset lifetime
+  projectile.userData.speed = projectileData.speed || settings.projectileSpeed;
+  projectile.userData.lifetime = 0;
+  // Set owner based on the ID in the message data (who fired it)
+  projectile.userData.ownerId = projectileData.id; // Set owner ID
 
   // Add a temporary light if available (similar to local fire)
   const light = lightPool.acquire(0xFFFF00, 3, 15);
@@ -3095,4 +3132,14 @@ function cleanupAnimation(objectId) {
     }
     activeAnimations.delete(objectId);
   }
+}
+
+// Function to create a message with a unique ID
+function createClientMessage(type, payload = {}) {
+  clientMessageCounter++;
+  return {
+    msgId: `${clientId}-${clientMessageCounter}`,
+    type: type,
+    ...payload
+  };
 }
