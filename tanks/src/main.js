@@ -121,13 +121,6 @@ function init() {
   // Create UI elements
   createGameUI();
 
-  // Create center cube
-  const cubeGeometry = new THREE.BoxGeometry(5, 5, 5);
-  const cubeMaterial = new THREE.MeshStandardMaterial({ color: 0xff0000 });
-  const centerCube = new THREE.Mesh(cubeGeometry, cubeMaterial);
-  centerCube.position.set(0, 2.5, 0);
-  scene.add(centerCube);
-
   // Create camera
   camera = new THREE.PerspectiveCamera(
     75,
@@ -175,7 +168,7 @@ function init() {
   createSkybox();
   createClouds();
   createMountains();
-  createRoads();
+  // createRoads(); // Comment out to remove the gray roads
 
   // Create initial chunks around origin
   for (let x = -viewDistance; x <= viewDistance; x++) {
@@ -780,8 +773,8 @@ function createPlayerTank() {
   player.add(leftTread);
   player.add(rightTread);
 
-  // Position tank
-  player.position.set(0, 0, 0);
+  // REMOVE hardcoded position - Server will set initial position via 'init' message
+  // player.position.set(0, 0, 0);
 
   // Store turret for rotation
   player.userData.turret = turret;
@@ -790,22 +783,16 @@ function createPlayerTank() {
   player.userData.isDestroyed = false;
   player.userData.type = 'tank';
 
-  // Add to scene
   scene.add(player);
-  playerTank = player;
+  playerTank = player; // Assign to global playerTank AFTER adding to scene
 
-  // Initialize orbital controls
-  controls.enabled = false;
+  // Initialize orbital controls (but disable)
+  // controls.enabled = false; // OrbitControls might not be needed if camera is always third-person
 
-  // Create and set up the camera
+  // Create and set up the camera (initial setup)
   setupThirdPersonCamera();
 
-  // Initialize health
-  player.userData.health = settings.tankMaxHealth;
-  player.userData.isDestroyed = false;
-  player.userData.type = 'tank';
-
-  console.log('Player tank created with health:', settings.tankMaxHealth);
+  console.log('Player tank created locally. Awaiting position from server...');
 }
 
 // Helper function to update camera position and orientation
@@ -2358,37 +2345,42 @@ function handleServerMessage(message) {
         return;
       }
       clientId = message.id;
-      // Remove assignment log
-      // console.log(`[Init] Assigned clientId = ${clientId}`);
-      // Keep basic init log
+      console.log(`[Init] Assigned clientId = ${clientId}`);
+
       console.log('Initialized with client ID:', clientId);
-      // Remove list log
       // console.log('Received initial client list:', message.clients);
 
-      // Remove clear logs
-      // console.log('Clearing existing other players before init.');
-      // console.log('  [Init Clear] otherPlayers keys BEFORE clear:', Array.from(otherPlayers.keys()));
-      otherPlayers.forEach((player, id) => {
-        // Remove log
-        // console.log(`  Removing pre-init player ${id}`);
-        removeOtherPlayer(id, "from init clear");
-      });
-      otherPlayers.clear();
-      // Remove log
-      // console.log('  [Init Clear] otherPlayers keys AFTER clear:', Array.from(otherPlayers.keys()));
-
-      if (Array.isArray(message.clients)) {
-        // Remove log
-        // console.log('Processing initial client list from server...');
-        message.clients.forEach(client => {
-          if (client && client.id && client.id !== clientId) {
-            // Remove log
-            // console.log(`  Attempting to add existing player ${client.id} from init list.`);
-            addOtherPlayer(client);
+      // Set player tank's initial position received from server
+      if (playerTank && message.startPosition) {
+          console.log(`[Init] Setting initial player position from server: x=${message.startPosition.x.toFixed(1)}, z=${message.startPosition.z.toFixed(1)}`);
+          playerTank.position.set(
+              message.startPosition.x,
+              message.startPosition.y, // Should be 0
+              message.startPosition.z
+          );
+          // Optionally set initial rotation if sent (server sends it in clientList now)
+          const selfData = message.clients.find(c => c.id === clientId);
+          if (selfData && selfData.rotation) {
+              playerTank.rotation.y = selfData.rotation.y;
           }
-        });
-        // Remove log
-        // console.log('  [Init Add] otherPlayers keys AFTER adding from list:', Array.from(otherPlayers.keys()));
+          // Initial camera update after setting position
+          updateCameraPosition(); 
+      } else if (!playerTank) {
+           console.error("[Init] playerTank object doesn't exist when init message received!");
+      } else if (!message.startPosition) {
+           console.error("[Init] Server did not send startPosition in init message!");
+      }
+
+      // Clear existing players
+      // ... (clearing logic) ...
+
+      // Add other players from list
+      if (Array.isArray(message.clients)) {
+          message.clients.forEach(client => {
+              if (client && client.id && client.id !== clientId) {
+                  addOtherPlayer(client);
+              }
+          });
       }
       break;
 

@@ -64,10 +64,21 @@ wss.on('connection', (ws) => {
     ws._clientId = clientId; // Store ID on ws object for error logging
     console.log(`New client connected: ${clientId}`);
 
+    // Calculate random starting position
+    const spawnRadius = 100;
+    const angle = Math.random() * Math.PI * 2;
+    const distance = Math.sqrt(Math.random()) * spawnRadius; // sqrt for more uniform distribution
+    const startPosition = {
+        x: Math.cos(angle) * distance,
+        y: 0, // Start on the ground
+        z: Math.sin(angle) * distance
+    };
+    console.log(`  Assigning start position for ${clientId}: x=${startPosition.x.toFixed(1)}, z=${startPosition.z.toFixed(1)}`);
+
     clients.set(ws, {
         id: clientId,
-        position: { x: 0, y: 0, z: 0 },
-        rotation: { y: 0 },
+        position: startPosition, // Use calculated start position
+        rotation: { y: Math.random() * Math.PI * 2 }, // Also randomize starting rotation
         health: 500,
         score: 0,
         lastUpdate: Date.now(),
@@ -75,6 +86,7 @@ wss.on('connection', (ws) => {
         lastObstacleScoreTime: 0
     });
 
+    // Refresh client list AFTER setting the new client's data
     const clientList = Array.from(clients.values()).map(client => ({
         id: client.id,
         position: client.position,
@@ -83,16 +95,25 @@ wss.on('connection', (ws) => {
         score: client.score
     }));
 
+    // Prepare the init message data, including the specific start position for this client
     const initMessage = {
         type: 'init',
         id: clientId,
-        clients: clientList
+        clients: clientList,
+        startPosition: startPosition // Send specific start position to the new client
     };
     ws.send(JSON.stringify(initMessage));
 
+    // Notify other clients about new player with their starting position
     broadcast({
         type: 'playerJoined',
-        client: { id: clientId, position: { x: 0, y: 0, z: 0 }, rotation: { y: 0 }, health: 500, score: 0 }
+        client: { 
+            id: clientId, 
+            position: startPosition, // Use calculated start position
+            rotation: clients.get(ws).rotation, // Use randomized rotation
+            health: 500, 
+            score: 0 
+        }
     }, ws, false);
 
     // --- Attach Listeners --- 
