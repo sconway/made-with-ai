@@ -1,0 +1,277 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Made With AI Projects</title>
+    <style>
+        body {
+            font-family: 'Helvetica Neue', Arial, sans-serif;
+            max-width: 1400px;
+            margin: 0 auto;
+            padding: 30px;
+            background-color: #0a0a0a;
+            color: #f0f0f0;
+        }
+        h1 {
+            text-align: center;
+            margin-bottom: 50px;
+            color: #ffffff;
+            font-weight: 300;
+            font-size: 2.5rem;
+            letter-spacing: 2px;
+            text-transform: uppercase;
+        }
+        .projects-container {
+            column-count: 3;
+            column-gap: 25px;
+        }
+        @media (max-width: 1200px) {
+            .projects-container {
+                column-count: 2;
+            }
+        }
+        @media (max-width: 768px) {
+            .projects-container {
+                column-count: 1;
+            }
+        }
+        .project-card {
+            background: #161616;
+            border-radius: 4px;
+            overflow: hidden;
+            box-shadow: 0 10px 20px rgba(0, 0, 0, 0.3);
+            margin-bottom: 25px;
+            break-inside: avoid;
+            display: inline-block;
+            width: 100%;
+            transition: transform 0.3s ease, box-shadow 0.3s ease;
+            border: 1px solid #222;
+        }
+        .project-card:hover {
+            transform: translateY(-5px);
+            box-shadow: 0 15px 30px rgba(0, 0, 0, 0.4);
+            border-color: #444;
+        }
+        .project-image {
+            height: 240px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            position: relative;
+        }
+        .project-image svg {
+            width: 70%;
+            height: 70%;
+        }
+        .project-info {
+            padding: 25px;
+        }
+        .project-title {
+            margin: 0 0 12px 0;
+            font-size: 22px;
+            color: #ffffff;
+            font-weight: 500;
+        }
+        .project-description {
+            margin: 0 0 20px 0;
+            color: #aaaaaa;
+            font-size: 15px;
+            line-height: 1.6;
+        }
+        .project-link {
+            display: inline-block;
+            text-decoration: none;
+            background-color: transparent;
+            color: #ffffff;
+            padding: 10px 0;
+            font-weight: 400;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            border-bottom: 1px solid #555;
+            transition: all 0.2s ease;
+            font-size: 13px;
+        }
+        .project-link:hover {
+            border-color: #fff;
+        }
+        footer {
+            margin-top: 80px;
+            text-align: center;
+            color: #666666;
+            font-size: 14px;
+            padding-bottom: 30px;
+        }
+    </style>
+</head>
+<body>
+    <h1>Made With AI Projects</h1>
+    
+    <div class="projects-container">
+        <!-- Tanks Project -->
+        <div class="project-card">
+            <div class="project-image" style="background-color: #111111;">
+                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="#ffffff" stroke-width="0.5">
+                    <!-- Tank Body -->
+                    <rect x="3" y="12" width="18" height="6" rx="1" fill="#222" stroke-width="0.8" />
+                    <!-- Tank Treads -->
+                    <line x1="3" y1="18" x2="21" y2="18" stroke-width="1.5" />
+                    <line x1="3" y1="12" x2="21" y2="12" stroke-width="1.5" />
+                    <!-- Tank Treads Details -->
+                    <line x1="4" y1="18" x2="4" y2="12" />
+                    <line x1="6" y1="18" x2="6" y2="12" />
+                    <line x1="8" y1="18" x2="8" y2="12" />
+                    <line x1="10" y1="18" x2="10" y2="12" />
+                    <line x1="12" y1="18" x2="12" y2="12" />
+                    <line x1="14" y1="18" x2="14" y2="12" />
+                    <line x1="16" y1="18" x2="16" y2="12" />
+                    <line x1="18" y1="18" x2="18" y2="12" />
+                    <line x1="20" y1="18" x2="20" y2="12" />
+                    <!-- Tank Turret -->
+                    <rect x="8" y="9" width="8" height="3" rx="1" fill="#333" stroke-width="0.8" />
+                    <!-- Tank Gun -->
+                    <line x1="16" y1="10.5" x2="22" y2="10.5" stroke-width="1.2" />
+                    <!-- Tank Hatch -->
+                    <circle cx="12" cy="8" r="1.5" fill="#444" stroke-width="0.5" />
+                </svg>
+            </div>
+            <div class="project-info">
+                <h2 class="project-title">Tanks</h2>
+                <p class="project-description">A 3D tank simulation game built with Three.js.</p>
+                <a href="https://made-with-ai.onrender.com/" target="_blank" class="project-link">View Project</a>
+            </div>
+        </div>
+        
+        <!-- Text Transform Project -->
+        <div class="project-card">
+            <div class="project-image" style="background-color: #222222;">
+                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="#ffffff" stroke-width="0.8">
+                    <!-- Input Text -->
+                    <text x="3" y="8" fill="#777" font-family="monospace" font-size="1.8">Hello World</text>
+                    <!-- Transform Arrow -->
+                    <line x1="4" y1="12" x2="20" y2="12" stroke="#aaa" stroke-width="0.8" />
+                    <polygon points="20,10 22,12 20,14" fill="#aaa" stroke="none" />
+                    <!-- Output Text (Transformed) -->
+                    <text x="4" y="18" fill="#fff" font-family="monospace" font-size="2" font-style="italic">H3LL0 W0RLD</text>
+                    <!-- Transform Box -->
+                    <rect x="8" y="9" width="8" height="6" rx="1" stroke-dasharray="2 1" fill="none" stroke="#666" stroke-width="0.6" />
+                </svg>
+            </div>
+            <div class="project-info">
+                <h2 class="project-title">Text Transform</h2>
+                <p class="project-description">Text manipulation and transformation tool.</p>
+                <a href="https://sconway.github.io/made-with-ai/text-transform/dist/" target="_blank" class="project-link">View Project</a>
+            </div>
+        </div>
+        
+        <!-- Maze Project -->
+        <div class="project-card">
+            <div class="project-image" style="background-color: #1a1a1a;">
+                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="#ffffff" stroke-width="0.6">
+                    <!-- Maze Grid -->
+                    <rect x="2" y="2" width="20" height="20" fill="none" stroke-width="0.8" />
+                    <!-- Maze Walls -->
+                    <line x1="2" y1="6" x2="18" y2="6" />
+                    <line x1="6" y1="2" x2="6" y2="10" />
+                    <line x1="10" y1="6" x2="10" y2="18" />
+                    <line x1="14" y1="2" x2="14" y2="14" />
+                    <line x1="18" y1="6" x2="18" y2="22" />
+                    <line x1="6" y1="14" x2="14" y2="14" />
+                    <line x1="2" y1="18" x2="10" y2="18" />
+                    <line x1="14" y1="18" x2="18" y2="18" />
+                    <line x1="6" y1="10" x2="14" y2="10" />
+                    <!-- Start Point -->
+                    <circle cx="4" cy="4" r="1" fill="#5cdb95" stroke="none" />
+                    <!-- End Point -->
+                    <circle cx="20" cy="20" r="1" fill="#ff6b6b" stroke="none" />
+                    <!-- Solution Path (partially shown) -->
+                    <line x1="4" y1="4" x2="4" y2="16" stroke="#aaa" stroke-width="0.4" stroke-dasharray="1 1" />
+                    <line x1="4" y1="16" x2="16" y2="16" stroke="#aaa" stroke-width="0.4" stroke-dasharray="1 1" />
+                    <line x1="16" y1="16" x2="16" y2="20" stroke="#aaa" stroke-width="0.4" stroke-dasharray="1 1" />
+                    <line x1="16" y1="20" x2="20" y2="20" stroke="#aaa" stroke-width="0.4" stroke-dasharray="1 1" />
+                </svg>
+            </div>
+            <div class="project-info">
+                <h2 class="project-title">Maze</h2>
+                <p class="project-description">Maze generation and solving visualization.</p>
+                <a href="https://sconway.github.io/made-with-ai/maze/dist/" target="_blank" class="project-link">View Project</a>
+            </div>
+        </div>
+        
+        <!-- Snake Project -->
+        <div class="project-card">
+            <div class="project-image" style="background-color: #151515;">
+                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="#ffffff" stroke-width="0.8">
+                    <!-- Game Border -->
+                    <rect x="2" y="2" width="20" height="20" fill="none" stroke-width="0.6" />
+                    <!-- Snake Body -->
+                    <rect x="8" y="12" width="2" height="2" fill="#eee" stroke="none" />
+                    <rect x="10" y="12" width="2" height="2" fill="#eee" stroke="none" />
+                    <rect x="12" y="12" width="2" height="2" fill="#eee" stroke="none" />
+                    <rect x="14" y="12" width="2" height="2" fill="#eee" stroke="none" />
+                    <rect x="14" y="10" width="2" height="2" fill="#eee" stroke="none" />
+                    <rect x="14" y="8" width="2" height="2" fill="#eee" stroke="none" />
+                    <rect x="12" y="8" width="2" height="2" fill="#eee" stroke="none" />
+                    <!-- Snake Head -->
+                    <rect x="10" y="8" width="2" height="2" fill="#fff" stroke="#fff" stroke-width="0.1" />
+                    <!-- Snake Eye -->
+                    <circle cx="10.7" cy="8.7" r="0.3" fill="#151515" stroke="none" />
+                    <!-- Food -->
+                    <circle cx="18" cy="16" r="1" fill="#ff6b6b" stroke="none" />
+                    <!-- Grid Lines (subtle) -->
+                    <line x1="6" y1="2" x2="6" y2="22" stroke="#333" stroke-width="0.2" />
+                    <line x1="10" y1="2" x2="10" y2="22" stroke="#333" stroke-width="0.2" />
+                    <line x1="14" y1="2" x2="14" y2="22" stroke="#333" stroke-width="0.2" />
+                    <line x1="18" y1="2" x2="18" y2="22" stroke="#333" stroke-width="0.2" />
+                    <line x1="2" y1="6" x2="22" y2="6" stroke="#333" stroke-width="0.2" />
+                    <line x1="2" y1="10" x2="22" y2="10" stroke="#333" stroke-width="0.2" />
+                    <line x1="2" y1="14" x2="22" y2="14" stroke="#333" stroke-width="0.2" />
+                    <line x1="2" y1="18" x2="22" y2="18" stroke="#333" stroke-width="0.2" />
+                </svg>
+            </div>
+            <div class="project-info">
+                <h2 class="project-title">Snake</h2>
+                <p class="project-description">Classic snake game with modern web technologies.</p>
+                <a href="https://sconway.github.io/made-with-ai/snake/dist/" target="_blank" class="project-link">View Project</a>
+            </div>
+        </div>
+        
+        <!-- Atoms Project -->
+        <div class="project-card">
+            <div class="project-image" style="background-color: #191919;">
+                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="#ffffff" stroke-width="0.7">
+                    <!-- Electron Orbits -->
+                    <ellipse cx="12" cy="12" rx="10" ry="5" stroke-opacity="0.7" fill="none" />
+                    <ellipse cx="12" cy="12" rx="5" ry="10" stroke-opacity="0.7" fill="none" />
+                    <ellipse cx="12" cy="12" rx="7.5" ry="7.5" stroke-opacity="0.7" fill="none" transform="rotate(45 12 12)" />
+                    <!-- Nucleus -->
+                    <circle cx="12" cy="12" r="2" fill="#777" stroke="none" />
+                    <!-- Electrons -->
+                    <circle cx="22" cy="12" r="0.7" fill="#fff" stroke="none" />
+                    <circle cx="2" cy="12" r="0.7" fill="#fff" stroke="none" />
+                    <circle cx="12" cy="22" r="0.7" fill="#fff" stroke="none" />
+                    <circle cx="12" cy="2" r="0.7" fill="#fff" stroke="none" />
+                    <circle cx="18.1" cy="18.1" r="0.7" fill="#fff" stroke="none" />
+                    <circle cx="5.9" cy="5.9" r="0.7" fill="#fff" stroke="none" />
+                    <!-- Energy Particles (small random dots) -->
+                    <circle cx="15" cy="9" r="0.3" fill="#aaa" stroke="none" />
+                    <circle cx="10" cy="17" r="0.25" fill="#aaa" stroke="none" />
+                    <circle cx="8" cy="10" r="0.2" fill="#aaa" stroke="none" />
+                    <circle cx="17" cy="14" r="0.15" fill="#aaa" stroke="none" />
+                    <circle cx="7" cy="16" r="0.2" fill="#aaa" stroke="none" />
+                    <circle cx="16" cy="6" r="0.25" fill="#aaa" stroke="none" />
+                </svg>
+            </div>
+            <div class="project-info">
+                <h2 class="project-title">Atoms</h2>
+                <p class="project-description">Interactive atomic particle simulation.</p>
+                <a href="https://sconway.github.io/made-with-ai/atoms/dist/" target="_blank" class="project-link">View Project</a>
+            </div>
+        </div>
+    </div>
+    
+    <footer>
+        <p>All projects in this collection were created with the assistance of AI.</p>
+    </footer>
+</body>
+</html> 
