@@ -3,181 +3,142 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>DecorAI - AI-Powered Interior Design</title>
-    <link rel="stylesheet" href="styles.css">
-    <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <title>DecorAI - AI Room Decoration</title>
     <script src="https://unpkg.com/feather-icons"></script>
+    <link rel="stylesheet" href="/src/styles.css">
 </head>
 <body>
-    <div class="app-container">
-        <header>
-            <div class="logo">
-                <h1>DecorAI</h1>
-                <span class="tagline">Reimagine Your Space</span>
-            </div>
-            <div class="auth-section">
-                <button id="login-btn" class="login-btn">
-                    <i data-feather="user"></i>
-                    <span>Login</span>
+    <div id="app">
+        <header class="header">
+            <div class="container">
+                <div class="logo">
+                    <i data-feather="home"></i>
+                    <h1>DecorAI</h1>
+                </div>
+                <button id="login-btn" class="auth-btn">
+                    <i data-feather="key"></i>
+                    <span>API Key</span>
                 </button>
             </div>
         </header>
-
-        <main>
-            <section class="upload-section">
-                <div class="upload-container" id="upload-container">
-                    <div class="upload-content">
-                        <i data-feather="image" class="upload-icon"></i>
-                        <h2>Upload a room photo</h2>
-                        <p>Take a photo of your room or upload an existing one</p>
-                        <label for="room-upload" class="upload-btn">
-                            <span>Upload Image</span>
-                        </label>
-                        <input type="file" id="room-upload" accept="image/*" hidden>
-                        <button id="camera-btn" class="camera-btn">
-                            <i data-feather="camera"></i>
-                            <span>Take Photo</span>
-                        </button>
-                    </div>
+        <!-- Upload Section -->
+        <section id="upload-section" class="section">
+            <div class="container">
+                <div id="upload-container" class="upload-container">
+                    <i data-feather="upload-cloud"></i>
+                    <h2>Upload Your Room Photo</h2>
+                    <p>Drag and drop your image here, or click to select</p>
+                    <input type="file" id="room-upload" accept="image/*" hidden>
+                    <button id="camera-btn" class="camera-btn">
+                        <i data-feather="camera"></i>
+                        Take Photo
+                    </button>
                 </div>
-                <div class="preview-container hidden" id="preview-container">
-                    <img id="room-preview" src="" alt="Room preview">
+            </div>
+        </section>
+
+        <!-- Preview Section -->
+        <section id="preview-section" class="section hidden">
+            <div class="container">
+                <div class="preview-container">
+                    <img id="room-preview" src="" alt="Room Preview">
                     <div class="preview-actions">
-                        <button id="change-image-btn" class="secondary-btn">
+                        <button id="change-image-btn" class="btn">
                             <i data-feather="refresh-cw"></i>
-                            <span>Change Image</span>
+                            Change Image
                         </button>
-                        <button id="continue-btn" class="primary-btn">
-                            <span>Continue</span>
+                        <button id="continue-btn" class="btn primary">
                             <i data-feather="arrow-right"></i>
+                            Continue
                         </button>
                     </div>
                 </div>
-            </section>
+            </div>
+        </section>
 
-            <section class="room-options-section hidden" id="room-options-section">
-                <h2>Tell us about your room</h2>
-                <div class="room-option">
-                    <input type="radio" id="empty-room" name="room-type" value="empty" checked>
-                    <label for="empty-room">
-                        <div class="option-icon">
-                            <i data-feather="square"></i>
-                        </div>
-                        <div class="option-text">
+        <!-- Room Options Section -->
+        <section id="room-options-section" class="section hidden">
+            <div class="container">
+                <h2>Select Room Type</h2>
+                <div class="room-options">
+                    <label class="room-option">
+                        <input type="radio" name="room-type" value="empty" id="empty-room" checked>
+                        <div class="option-content">
+                            <i data-feather="box"></i>
                             <h3>Empty Room</h3>
-                            <p>Start fresh with new furniture ideas</p>
+                            <p>Start with a blank canvas</p>
                         </div>
                     </label>
-                </div>
-                <div class="room-option">
-                    <input type="radio" id="furnished-room" name="room-type" value="furnished">
-                    <label for="furnished-room">
-                        <div class="option-icon">
+                    <label class="room-option">
+                        <input type="radio" name="room-type" value="furnished" id="furnished-room">
+                        <div class="option-content">
                             <i data-feather="home"></i>
-                        </div>
-                        <div class="option-text">
                             <h3>Furnished Room</h3>
-                            <p>Rearrange existing furniture or add new pieces</p>
+                            <p>Redesign existing space</p>
                         </div>
                     </label>
                 </div>
-                <div class="options-actions">
-                    <button id="back-to-upload-btn" class="secondary-btn">
+                <div class="room-actions">
+                    <button id="back-to-upload-btn" class="btn">
                         <i data-feather="arrow-left"></i>
-                        <span>Back</span>
+                        Back
                     </button>
-                    <button id="generate-btn" class="primary-btn">
-                        <span>Generate Designs</span>
-                        <i data-feather="zap"></i>
+                    <button id="generate-btn" class="btn primary">
+                        <i data-feather="wand-2"></i>
+                        Generate Designs
                     </button>
                 </div>
-            </section>
+            </div>
+        </section>
 
-            <section class="results-section hidden" id="results-section">
-                <div class="results-header">
-                    <h2>Your Design Options</h2>
-                    <p>Swipe to view different design concepts</p>
+        <!-- Results Section -->
+        <section id="results-section" class="section hidden">
+            <div class="container">
+                <div id="loading-indicator" class="loading-indicator hidden">
+                    <div class="spinner"></div>
+                    <p>Generating your designs...</p>
                 </div>
-                <div class="results-display">
-                    <div class="loading-indicator hidden" id="loading-indicator">
-                        <div class="spinner"></div>
-                        <p>Generating amazing designs...</p>
-                        <p class="loading-subtext">This may take a moment</p>
-                    </div>
-                    <div class="design-carousel" id="design-carousel">
-                        <!-- Design variants will be inserted here by JavaScript -->
-                    </div>
-                </div>
+                <div id="design-carousel" class="design-carousel"></div>
                 <div class="results-actions">
-                    <button id="back-to-options-btn" class="secondary-btn">
+                    <button id="back-to-options-btn" class="btn">
                         <i data-feather="arrow-left"></i>
-                        <span>Back</span>
+                        Back
                     </button>
-                    <button id="regenerate-btn" class="secondary-btn">
+                    <button id="regenerate-btn" class="btn">
                         <i data-feather="refresh-cw"></i>
-                        <span>Regenerate</span>
+                        Regenerate
                     </button>
-                    <button id="save-design-btn" class="primary-btn">
+                    <button id="save-design-btn" class="btn primary">
                         <i data-feather="download"></i>
-                        <span>Save Design</span>
+                        Save Design
                     </button>
                 </div>
-            </section>
-        </main>
-
-        <footer>
-            <p>Created with AI • <a href="../index.html">Back to Projects</a></p>
-        </footer>
+            </div>
+        </section>
     </div>
 
     <!-- Auth Modal -->
-    <div class="modal" id="auth-modal">
+    <div id="auth-modal" class="modal">
         <div class="modal-content">
-            <div class="modal-header">
-                <h2 id="auth-modal-title">Enter API Keys</h2>
-                <button id="close-modal-btn" class="close-modal-btn">
-                    <i data-feather="x"></i>
-                </button>
-            </div>
-            <div class="modal-body">
-                <div id="api-key-form" class="auth-form">
-                    <p>DecorAI uses Replicate (Stable Diffusion) to generate room designs. Please provide your Replicate API token below.</p>
+            <button id="close-modal-btn" class="close-btn">
+                <i data-feather="x"></i>
+            </button>
+            <h2>API Keys</h2>
+            <form id="auth-form">
+                <div class="form-group">
+                    <label for="replicate-api-key">Replicate API Key</label>
                     <div class="input-group">
-                        <label for="replicate-api-key">Replicate API Key:</label>
-                        <div class="password-input">
-                            <input type="password" id="replicate-api-key" placeholder="Enter your Replicate token">
-                            <button id="toggle-replicate-key-visibility-btn" type="button" class="toggle-visibility-btn">
-                                <i data-feather="eye"></i>
-                            </button>
-                        </div>
+                        <input type="password" id="replicate-api-key" placeholder="Enter your Replicate API key">
+                        <button type="button" id="toggle-replicate-key-visibility-btn" class="toggle-visibility-btn">
+                            <i data-feather="eye"></i>
+                        </button>
                     </div>
                 </div>
-
-                <div class="auth-info">
-                    <p><i data-feather="info" class="info-icon"></i> Your API keys are stored locally and are never sent to our servers. They are used only for direct API calls to the respective services.</p>
-                    <p><a href="https://replicate.com/account/api-tokens" target="_blank">Get a Replicate API Token <i data-feather="external-link" class="small-icon"></i></a></p>
-                    <p><a href="https://platform.openai.com/api-keys" target="_blank">Get an OpenAI API key <i data-feather="external-link" class="small-icon"></i></a></p>
-                </div>
-                
-                <div class="credits-info">
-                    <h3>API Credits</h3>
-                    <p>Each design generation uses Replicate Stable Diffusion. Costs vary based on generation time. Check Replicate pricing for details.</p>
-                </div>
-                
-                <div id="auth-error" class="auth-error hidden">
-                    <p><i data-feather="alert-circle"></i> <span id="auth-error-message"></span></p>
-                </div>
-            </div>
-            <div class="modal-footer">
-                <button id="auth-action-btn" class="primary-btn">
-                    <span>Save API Keys</span>
-                </button>
-            </div>
+                <button type="submit" id="auth-action-btn" class="btn primary">Save Keys</button>
+            </form>
         </div>
     </div>
 
-    <script src="app.js" type="module"></script>
+    <script type="module" src="/src/main.js"></script>
 </body>
 </html> 

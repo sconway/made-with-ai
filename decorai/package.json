@@ -1,20 +1,27 @@
 {
   "name": "decorai",
-  "private": true,
-  "version": "0.0.0",
+  "version": "1.0.0",
+  "description": "AI-powered room decoration app",
   "type": "module",
   "scripts": {
-    "dev": "vite",
+    "dev:client": "vite",
+    "dev:server": "node server.js",
+    "dev": "concurrently \"npm run dev:client\" \"npm run dev:server\"",
     "build": "vite build",
-    "preview": "vite preview"
-  },
-  "devDependencies": {
-    "vite": "^5.2.0"
+    "preview": "vite preview",
+    "start": "node server.js"
   },
   "dependencies": {
-    "feather-icons": "^4.29.2",
-    "express": "^4.19.2",
     "cors": "^2.8.5",
-    "node-fetch": "^2.7.0"
+    "dotenv": "^16.0.3",
+    "express": "^4.18.2",
+    "node-fetch": "^3.3.0"
+  },
+  "devDependencies": {
+    "concurrently": "^8.0.1",
+    "vite": "^5.0.0"
+  },
+  "engines": {
+    "node": ">=18.0.0"
   }
 }

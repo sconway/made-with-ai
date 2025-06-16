@@ -202,6 +202,8 @@ function initializeApp() {
 }
 
 function updateLoginButton() {
+    if (!loginBtn) return;
+    
     if (replicateApiKey) {
         loginBtn.innerHTML = `<i data-feather="check-circle"></i><span>API Key Set</span>`;
         loginBtn.classList.add('authenticated');
