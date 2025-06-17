@@ -102,11 +102,9 @@ const fallbackImages = {
 };
 
 // Replicate API constants
-const PROXY_SERVER_URL = window.location.hostname === 'localhost' && window.location.port === '4173'
-    ? 'http://localhost:3001'  // Preview mode
-    : window.location.hostname === 'localhost' && window.location.port === '5173'
-        ? 'http://localhost:3001'  // Dev mode
-        : '/api';  // Production mode
+const PROXY_SERVER_URL = window.location.hostname === 'localhost'
+    ? 'http://localhost:3001'  // Local development
+    : '';  // Production - use relative URL
 const REPLICATE_API_URL = `${PROXY_SERVER_URL}/replicate/predictions`;
 const REPLICATE_POLL_URL = `${PROXY_SERVER_URL}/replicate/poll`;
 const REPLICATE_MODEL_VERSION = 'stability-ai/stable-diffusion-3.5-large'; // Example version, check replicate for latest/best
