@@ -18,9 +18,10 @@ const port = process.env.PORT || 3001;
 const corsOptions = {
   origin: process.env.NODE_ENV === 'production' 
     ? process.env.ALLOWED_ORIGIN || 'https://your-production-domain.com'
-    : 'http://localhost:5173',
+    : ['http://localhost:5173', 'http://localhost:4173'], // Add preview mode port
   methods: ['GET', 'POST'],
-  allowedHeaders: ['Content-Type']
+  allowedHeaders: ['Content-Type', 'Authorization'],
+  credentials: true // Enable credentials
 };
 
 app.use(cors(corsOptions));
@@ -34,10 +35,15 @@ if (process.env.NODE_ENV === 'production') {
 // API Routes
 app.post('/replicate/predictions', async (req, res) => {
   try {
+    const apiKey = req.headers.authorization?.split(' ')[1];
+    if (!apiKey) {
+      return res.status(401).json({ error: 'API key is required' });
+    }
+
     const response = await fetch('https://api.replicate.com/v1/predictions', {
       method: 'POST',
       headers: {
-        'Authorization': `Token ${process.env.REPLICATE_API_KEY}`,
+        'Authorization': `Token ${apiKey}`,
         'Content-Type': 'application/json',
       },
       body: JSON.stringify(req.body),
@@ -53,10 +59,15 @@ app.post('/replicate/predictions', async (req, res) => {
 
 app.post('/replicate/poll', async (req, res) => {
   try {
+    const apiKey = req.headers.authorization?.split(' ')[1];
+    if (!apiKey) {
+      return res.status(401).json({ error: 'API key is required' });
+    }
+
     const { predictionUrl } = req.body;
     const response = await fetch(predictionUrl, {
       headers: {
-        'Authorization': `Token ${process.env.REPLICATE_API_KEY}`,
+        'Authorization': `Token ${apiKey}`,
         'Content-Type': 'application/json',
       },
     });

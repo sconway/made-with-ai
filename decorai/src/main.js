@@ -102,7 +102,11 @@ const fallbackImages = {
 };
 
 // Replicate API constants
-const PROXY_SERVER_URL = 'http://localhost:3001'; // URL of our new Node.js proxy
+const PROXY_SERVER_URL = window.location.hostname === 'localhost' && window.location.port === '4173'
+    ? 'http://localhost:3001'  // Preview mode
+    : window.location.hostname === 'localhost' && window.location.port === '5173'
+        ? 'http://localhost:3001'  // Dev mode
+        : '/api';  // Production mode
 const REPLICATE_API_URL = `${PROXY_SERVER_URL}/replicate/predictions`;
 const REPLICATE_POLL_URL = `${PROXY_SERVER_URL}/replicate/poll`;
 const REPLICATE_MODEL_VERSION = 'stability-ai/stable-diffusion-3.5-large'; // Example version, check replicate for latest/best
@@ -487,12 +491,13 @@ async function pollReplicatePrediction(predictionUrl, apiKey) {
     while (attempts < maxAttempts) {
         attempts++;
         try {
-            const response = await fetch(REPLICATE_POLL_URL, { // Use the new proxy poll URL
-                method: 'POST', // Method is POST for our proxy
+            const response = await fetch(REPLICATE_POLL_URL, {
+                method: 'POST',
                 headers: {
-                    'Content-Type': 'application/json'
+                    'Content-Type': 'application/json',
+                    'Authorization': `Token ${apiKey}` // Add API key to headers
                 },
-                body: JSON.stringify({ predictionUrl }) // Send only predictionUrl to proxy
+                body: JSON.stringify({ predictionUrl })
             });
 
             if (!response.ok) {
@@ -554,13 +559,13 @@ async function generateImageWithReplicate(imageBase64, prompt) {
     // Ensure base64 string has the data URI prefix
     const imageInput = imageBase64.startsWith('data:image') ? imageBase64 : `data:image/jpeg;base64,${imageBase64}`;
 
-
     try {
         // 1. Start the prediction by calling our proxy
-        const startResponse = await fetch(REPLICATE_API_URL, { // Use the new proxy predictions URL
+        const startResponse = await fetch(REPLICATE_API_URL, {
             method: 'POST',
             headers: {
-                'Content-Type': 'application/json'
+                'Content-Type': 'application/json',
+                'Authorization': `Token ${replicateApiKey}` // Add API key to headers
             },
             body: JSON.stringify({
                 version: REPLICATE_MODEL_VERSION,
@@ -568,7 +573,6 @@ async function generateImageWithReplicate(imageBase64, prompt) {
                     prompt: prompt,
                     image: imageInput,
                 }
-                // apiKey is NO LONGER sent to the proxy from here
             })
         });
 
