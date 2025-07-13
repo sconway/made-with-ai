@@ -1,14 +1,28 @@
 import { useEffect, useRef, useState } from 'react'
 import * as THREE from 'three'
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls'
+import { EffectComposer } from 'three/examples/jsm/postprocessing/EffectComposer'
+import { RenderPass } from 'three/examples/jsm/postprocessing/RenderPass'
+import { UnrealBloomPass } from 'three/examples/jsm/postprocessing/UnrealBloomPass'
+import { AfterimagePass } from 'three/examples/jsm/postprocessing/AfterimagePass'
+import { ShaderPass } from 'three/examples/jsm/postprocessing/ShaderPass'
 import './App.css'
 
 function App() {
   const mountRef = useRef(null)
   const [isAnimating, setIsAnimating] = useState(true)
-  const [currentView, setCurrentView] = useState('atom') // atom, nucleus, quark
+  const [currentView, setCurrentViewState] = useState('atom')
+  const [targetView, setTargetView] = useState(null)
+  const [isTransitioning, setIsTransitioning] = useState(false)
   const [showParticleInfo, setShowParticleInfo] = useState(null)
   
+  const setCurrentView = (view) => {
+    if (view !== currentView) {
+      setTargetView(view)
+      setIsTransitioning(true)
+    }
+  }
+
   useEffect(() => {
     // Scene setup
     const scene = new THREE.Scene()
@@ -36,17 +50,171 @@ function App() {
     controls.enableDamping = true
     controls.dampingFactor = 0.05
 
+    // Bloom setup
+    const bloomComposer = new EffectComposer(renderer)
+    bloomComposer.renderToScreen = false
+    const bloomRenderPass = new RenderPass(scene, camera)
+    bloomComposer.addPass(bloomRenderPass)
+    const afterimagePass = new AfterimagePass()
+    afterimagePass.uniforms['damp'].value = 0.85
+    bloomComposer.addPass(afterimagePass)
+
+    const bloomPass = new UnrealBloomPass(
+      new THREE.Vector2(window.innerWidth, window.innerHeight),
+      0.75, 1.0, 0.1
+    )
+    bloomComposer.addPass(bloomPass)
+
+    // Final composer
+    const finalComposer = new EffectComposer(renderer)
+    const finalRenderPass = new RenderPass(scene, camera)
+    finalComposer.addPass(finalRenderPass)
+
+    const additiveBloomShader = {
+      uniforms: {
+        tDiffuse: { value: null },
+        bloomTexture: { value: null }
+      },
+      vertexShader: `
+        varying vec2 vUv;
+        void main() {
+          vUv = uv;
+          gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+        }
+      `,
+      fragmentShader: `
+        uniform sampler2D tDiffuse;
+        uniform sampler2D bloomTexture;
+        varying vec2 vUv;
+        void main() {
+          vec4 baseColor = texture2D(tDiffuse, vUv);
+          vec4 bloomColor = texture2D(bloomTexture, vUv);
+          gl_FragColor = baseColor + bloomColor;
+        }
+      `
+    }
+
+    const additiveBloomPass = new ShaderPass(additiveBloomShader)
+    additiveBloomPass.uniforms.bloomTexture.value = bloomComposer.renderTarget2.texture
+    additiveBloomPass.needsSwap = true
+    finalComposer.addPass(additiveBloomPass)
+
     // Particle creation functions
-    const createQuark = (color, position) => {
-      const geometry = new THREE.SphereGeometry(0.3, 16, 16)
-      const material = new THREE.MeshPhongMaterial({
-        color: color,
-        emissive: color,
-        emissiveIntensity: 0.5,
-        specular: 0xffffff,
-        shininess: 100
+    const createParticleSphere = (radius, particleCount, color, useShader = false) => {
+      const geometry = new THREE.BufferGeometry()
+      const positions = new Float32Array(particleCount * 3)
+      const colors = new Float32Array(particleCount * 3)
+
+      for (let i = 0; i < particleCount; i++) {
+        const theta = Math.random() * Math.PI * 2
+        const phi = Math.random() * Math.PI
+        const r = radius * (0.8 + Math.random() * 0.2) // slight variation
+        positions[i*3] = r * Math.sin(phi) * Math.cos(theta)
+        positions[i*3 + 1] = r * Math.sin(phi) * Math.sin(theta)
+        positions[i*3 + 2] = r * Math.cos(phi)
+        colors[i*3] = color.r
+        colors[i*3 + 1] = color.g
+        colors[i*3 + 2] = color.b
+      }
+
+      geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3))
+      geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3))
+
+      let material
+      if (useShader) {
+        material = new THREE.ShaderMaterial({
+          uniforms: {
+            time: { value: 0 },
+          },
+          vertexShader: `
+            varying vec3 vColor;
+            uniform float time;
+            void main() {
+              vColor = color;
+              vec3 pos = position;
+              pos += normal * sin(time + position.x) * 0.1;
+              gl_Position = projectionMatrix * modelViewMatrix * vec4(pos, 1.0);
+              gl_PointSize = 2.0;
+            }
+          `,
+          fragmentShader: `
+            varying vec3 vColor;
+            void main() {
+              gl_FragColor = vec4(vColor, 1.0);
+            }
+          `,
+          vertexColors: true,
+        })
+      } else {
+        material = new THREE.PointsMaterial({
+          size: 0.1,
+          vertexColors: true,
+          transparent: true,
+          opacity: 0.8
+        })
+      }
+      return new THREE.Points(geometry, material)
+    }
+
+    const createParticleTorus = (radius, tubeRadius, particleCount) => {
+      const geometry = new THREE.BufferGeometry()
+      const positions = new Float32Array(particleCount * 3)
+      const colors = new Float32Array(particleCount * 3)
+      const color = new THREE.Color(0x00ff00)
+
+      for (let i = 0; i < particleCount; i++) {
+        const u = Math.random() * Math.PI * 2
+        const v = Math.random() * Math.PI * 2
+        positions[i*3] = (radius + tubeRadius * Math.cos(v)) * Math.cos(u)
+        positions[i*3 + 1] = (radius + tubeRadius * Math.cos(v)) * Math.sin(u)
+        positions[i*3 + 2] = tubeRadius * Math.sin(v)
+        colors[i*3] = color.r
+        colors[i*3 + 1] = color.g
+        colors[i*3 + 2] = color.b
+      }
+
+      geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3))
+      geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3))
+
+      const material = new THREE.PointsMaterial({
+        size: 0.05,
+        vertexColors: true,
+        transparent: true,
+        opacity: 0.6
       })
-      const quark = new THREE.Mesh(geometry, material)
+      return new THREE.Points(geometry, material)
+    }
+
+    const createParticleTube = (curve, particleCount, color) => {
+      const geometry = new THREE.BufferGeometry()
+      const positions = new Float32Array(particleCount * 3)
+      const colors = new Float32Array(particleCount * 3)
+
+      for (let i = 0; i < particleCount; i++) {
+        const t = i / (particleCount - 1)
+        const point = curve.getPointAt(t)
+        positions[i*3] = point.x
+        positions[i*3 + 1] = point.y
+        positions[i*3 + 2] = point.z
+        colors[i*3] = color.r
+        colors[i*3 + 1] = color.g
+        colors[i*3 + 2] = color.b
+      }
+
+      geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3))
+      geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3))
+
+      const material = new THREE.PointsMaterial({
+        size: 0.1,
+        vertexColors: true,
+        transparent: true,
+        opacity: 0.7
+      })
+      return new THREE.Points(geometry, material)
+    }
+
+    const createQuark = (color, position) => {
+      const quark = createParticleSphere(0.3, 200, new THREE.Color(color))
       quark.position.copy(position)
       return quark
     }
@@ -62,27 +230,17 @@ function App() {
         end
       ])
       
-      const geometry = new THREE.TubeGeometry(curve, 20, 0.05, 8, false)
-      const material = new THREE.MeshPhongMaterial({
-        color: 0xffff00,
-        emissive: 0x666600,
-        transparent: true,
-        opacity: 0.6
-      })
-      return new THREE.Mesh(geometry, material)
+      return createParticleTube(curve, 100, new THREE.Color(0xffff00))
     }
 
     const createPhoton = () => {
-      const geometry = new THREE.SphereGeometry(0.2, 16, 16)
-      const material = new THREE.MeshPhongMaterial({
-        color: 0xffffff,
-        emissive: 0xffffff,
-        emissiveIntensity: 1,
-        transparent: true,
-        opacity: 0.8
-      })
-      const photon = new THREE.Mesh(geometry, material)
-      
+      const photonColor = new THREE.Color(0xffffff)
+      const photon = createParticleSphere(0.2, 100, photonColor)
+      photon.material.size = 0.05
+      photon.material.opacity = 0.5
+      photon.material.emissive = photonColor
+      photon.material.emissiveIntensity = 0.5
+
       // Random starting position on a sphere
       const phi = Math.random() * Math.PI * 2
       const theta = Math.random() * Math.PI
@@ -94,9 +252,9 @@ function App() {
       )
       
       photon.velocity = new THREE.Vector3(
-        -photon.position.x / 50,
-        -photon.position.y / 50,
-        -photon.position.z / 50
+        -photon.position.x / 30,
+        -photon.position.y / 30,
+        -photon.position.z / 30
       )
       
       return photon
@@ -111,154 +269,32 @@ function App() {
     scene.add(nucleusGroup)
     scene.add(quarkGroup)
 
+    // Set initial visibility
+    atomGroup.visible = currentView === 'atom'
+    nucleusGroup.visible = currentView === 'nucleus'
+    quarkGroup.visible = currentView === 'quark'
+
     // Atom View Setup
     if (currentView === 'atom') {
-      // Create nucleus
-      const nucleusGeometry = new THREE.SphereGeometry(2, 32, 32)
-      const nucleusShaderMaterial = new THREE.ShaderMaterial({
-        uniforms: {
-          time: { value: 0 },
-          color: { value: new THREE.Color(0xff0000) },
-        },
-        vertexShader: `
-          varying vec3 vNormal;
-          varying vec3 vPosition;
-          uniform float time;
-          
-          void main() {
-            vNormal = normalize(normalMatrix * normal);
-            vPosition = (modelViewMatrix * vec4(position, 1.0)).xyz;
-            
-            // Add pulsing effect to the nucleus
-            vec3 pos = position;
-            float displacement = sin(time * 2.0) * 0.1;
-            pos += normal * displacement;
-            
-            gl_Position = projectionMatrix * modelViewMatrix * vec4(pos, 1.0);
-          }
-        `,
-        fragmentShader: `
-          uniform vec3 color;
-          uniform float time;
-          varying vec3 vNormal;
-          varying vec3 vPosition;
-          
-          void main() {
-            // Create energy core effect
-            vec3 viewDirection = normalize(-vPosition);
-            float rimLight = 1.0 - max(dot(viewDirection, vNormal), 0.0);
-            rimLight = pow(rimLight, 2.0);
-            
-            // Add pulsing glow
-            float pulse = (sin(time * 3.0) + 1.0) * 0.5;
-            
-            // Create plasma-like effect
-            float plasma = sin(vPosition.x * 10.0 + time) * cos(vPosition.y * 10.0 + time) * sin(vPosition.z * 10.0 + time);
-            plasma = (plasma + 1.0) * 0.5;
-            
-            // Combine effects
-            vec3 glowColor = mix(color, vec3(1.0, 0.3, 0.1), pulse * 0.5);
-            vec3 finalColor = mix(glowColor, vec3(1.0, 0.8, 0.4), rimLight) + plasma * 0.3;
-            
-            gl_FragColor = vec4(finalColor, 1.0);
-          }
-        `
-      });
-      const nucleus = new THREE.Mesh(nucleusGeometry, nucleusShaderMaterial)
+      // Create nucleus as particle sphere
+      const nucleusColor = new THREE.Color(0xff0000)
+      const nucleus = createParticleSphere(2, 5000, nucleusColor, true)
       atomGroup.add(nucleus)
 
-      // Create electron shells with particle effects
+      // Create electron shells as particle tori
       const shellRadii = [5, 8, 11]
       shellRadii.forEach((radius, shellIndex) => {
-        const shellGeometry = new THREE.TorusGeometry(radius, 0.02, 16, 100)
-        const shellShaderMaterial = new THREE.ShaderMaterial({
-          uniforms: {
-            time: { value: 0 },
-            baseColor: { value: new THREE.Color(0x00ff00) },
-          },
-          vertexShader: `
-            varying vec3 vPosition;
-            uniform float time;
-            
-            void main() {
-              vPosition = position;
-              
-              // Add wave motion to the shell
-              vec3 pos = position;
-              float wave = sin(pos.x * 5.0 + time * 2.0) * 0.1;
-              pos.y += wave;
-              
-              gl_Position = projectionMatrix * modelViewMatrix * vec4(pos, 1.0);
-            }
-          `,
-          fragmentShader: `
-            uniform vec3 baseColor;
-            uniform float time;
-            varying vec3 vPosition;
-            
-            void main() {
-              // Create flowing energy effect
-              float energy = sin(vPosition.x * 20.0 + time * 3.0) * 0.5 + 0.5;
-              
-              // Add pulsing glow
-              float pulse = (sin(time * 2.0) + 1.0) * 0.5;
-              
-              vec3 finalColor = baseColor * (0.5 + energy * 0.5 + pulse * 0.3);
-              float alpha = 0.3 + energy * 0.4;
-              
-              gl_FragColor = vec4(finalColor, alpha);
-            }
-          `,
-          transparent: true,
-          side: THREE.DoubleSide,
-        });
-        const shell = new THREE.Mesh(shellGeometry, shellShaderMaterial)
+        const shell = createParticleTorus(radius, 0.2, 2000)
         shell.rotation.x = Math.PI / 4 * shellIndex
         shell.rotation.y = Math.PI / 6 * shellIndex
         atomGroup.add(shell)
 
-        // Add electrons with particle effects
+        // Add electrons as small particle spheres
         const electronsCount = (shellIndex + 1) * 2
         const electronGroup = new THREE.Group()
         for(let i = 0; i < electronsCount; i++) {
-          const electronGeometry = new THREE.SphereGeometry(0.3, 16, 16)
-          const electronShaderMaterial = new THREE.ShaderMaterial({
-            uniforms: {
-              time: { value: 0 },
-            },
-            vertexShader: `
-              varying vec3 vNormal;
-              varying vec3 vPosition;
-              
-              void main() {
-                vNormal = normalize(normalMatrix * normal);
-                vPosition = (modelViewMatrix * vec4(position, 1.0)).xyz;
-                gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
-              }
-            `,
-            fragmentShader: `
-              uniform float time;
-              varying vec3 vNormal;
-              varying vec3 vPosition;
-              
-              void main() {
-                // Create electron glow
-                vec3 viewDirection = normalize(-vPosition);
-                float rimLight = 1.0 - max(dot(viewDirection, vNormal), 0.0);
-                rimLight = pow(rimLight, 1.5);
-                
-                // Add energy pulse
-                float pulse = (sin(time * 5.0) + 1.0) * 0.5;
-                
-                vec3 baseColor = vec3(0.0, 1.0, 1.0);  // Cyan color
-                vec3 glowColor = mix(baseColor, vec3(1.0), rimLight);
-                vec3 finalColor = glowColor * (1.0 + pulse * 0.5);
-                
-                gl_FragColor = vec4(finalColor, 1.0);
-              }
-            `
-          });
-          const electron = new THREE.Mesh(electronGeometry, electronShaderMaterial)
+          const electronColor = new THREE.Color(0x00ffff)
+          const electron = createParticleSphere(0.3, 200, electronColor)
           const angle = (i / electronsCount) * Math.PI * 2
           electron.position.x = Math.cos(angle) * radius
           electron.position.y = Math.sin(angle) * radius
@@ -272,18 +308,14 @@ function App() {
     if (currentView === 'nucleus') {
       const protonCount = 3
       const neutronCount = 4
+      const protonColor = new THREE.Color(0xff0000)
+      const neutronColor = new THREE.Color(0x0000ff)
       
-      // Create protons and neutrons
+      // Create protons and neutrons as particle spheres
       for(let i = 0; i < protonCount + neutronCount; i++) {
         const isProton = i < protonCount
-        const geometry = new THREE.SphereGeometry(1, 32, 32)
-        const material = new THREE.MeshPhongMaterial({
-          color: isProton ? 0xff0000 : 0x0000ff,
-          emissive: isProton ? 0x440000 : 0x000044,
-          specular: 0xffffff,
-          shininess: 100
-        })
-        const particle = new THREE.Mesh(geometry, material)
+        const color = isProton ? protonColor : neutronColor
+        const particle = createParticleSphere(1, 1000, color)
         
         // Arrange in a cluster formation
         const angle = (i / (protonCount + neutronCount)) * Math.PI * 2
@@ -310,7 +342,7 @@ function App() {
       )
       quarks.forEach(quark => quarkGroup.add(quark))
 
-      // Create gluons connecting quarks
+      // Create gluons as particle tubes
       for(let i = 0; i < quarks.length; i++) {
         for(let j = i + 1; j < quarks.length; j++) {
           const gluon = createGluon(quarks[i].position, quarks[j].position)
@@ -321,32 +353,53 @@ function App() {
 
     // Add photons
     const photons = []
-    for(let i = 0; i < 10; i++) {
+    for(let i = 0; i < 50; i++) {
       const photon = createPhoton()
       scene.add(photon)
       photons.push(photon)
     }
 
     // Lighting
-    const ambientLight = new THREE.AmbientLight(0xffffff, 0.5)
+    const ambientLight = new THREE.AmbientLight(0xffffff, 0.3)
     scene.add(ambientLight)
 
-    const pointLight1 = new THREE.PointLight(0xffffff, 1)
+    const pointLight1 = new THREE.PointLight(0xffffff, 0.7)
     pointLight1.position.set(10, 10, 10)
     scene.add(pointLight1)
 
-    const pointLight2 = new THREE.PointLight(0xffffff, 0.5)
+    const pointLight2 = new THREE.PointLight(0xffffff, 0.3)
     pointLight2.position.set(-10, -10, -10)
     scene.add(pointLight2)
 
     // Animation
     let animationFrameId = null
+    let transitionStartTime = null
+    const transitionDuration = 1.0 // seconds
+
     const animate = () => {
       if (isAnimating) {
         const time = Date.now() * 0.001
 
         // Update all shader materials
+        scene.traverse((child) => {
+          if (child.material && child.material.uniforms) {
+            child.material.uniforms.time.value = time
+          }
+        })
+
         atomGroup.traverse((child) => {
+          if (child.material && child.material.uniforms) {
+            child.material.uniforms.time.value = time
+          }
+        })
+
+        nucleusGroup.traverse((child) => {
+          if (child.material && child.material.uniforms) {
+            child.material.uniforms.time.value = time
+          }
+        })
+
+        quarkGroup.traverse((child) => {
           if (child.material && child.material.uniforms) {
             child.material.uniforms.time.value = time
           }
@@ -376,7 +429,7 @@ function App() {
           quarkGroup.rotation.y += 0.01
           // Make gluons pulse
           quarkGroup.children.forEach(child => {
-            if (child.material) {
+            if (child.material && child.material.opacity) {
               child.material.opacity = 0.6 + Math.sin(time * 5) * 0.2
             }
           })
@@ -395,15 +448,90 @@ function App() {
               radius * Math.cos(theta)
             )
             photon.velocity.set(
-              -photon.position.x / 50,
-              -photon.position.y / 50,
-              -photon.position.z / 50
+              -photon.position.x / 30,
+              -photon.position.y / 30,
+              -photon.position.z / 30
             )
           }
         })
 
+        // Handle transition
+        if (isTransitioning) {
+          if (transitionStartTime === null) {
+            transitionStartTime = Date.now()
+          }
+
+          const elapsed = (Date.now() - transitionStartTime) / 1000
+          let progress = Math.min(elapsed / transitionDuration, 1)
+
+          // Cubic ease-in-out
+          progress = progress < 0.5 
+            ? 4 * progress * progress * progress 
+            : 1 - Math.pow(-2 * progress + 2, 3) / 2
+
+          const fromGroup = currentView === 'atom' ? atomGroup :
+                           currentView === 'nucleus' ? nucleusGroup : quarkGroup
+          const toGroup = targetView === 'atom' ? atomGroup :
+                         targetView === 'nucleus' ? nucleusGroup : quarkGroup
+
+          // Fade out fromGroup
+          fromGroup.traverse(child => {
+            if (child.material && child.material.opacity !== undefined) {
+              child.material.opacity = 1 - progress
+            }
+          })
+
+          // Fade in toGroup
+          toGroup.visible = true
+          toGroup.traverse(child => {
+            if (child.material && child.material.opacity !== undefined) {
+              child.material.opacity = progress
+            }
+          })
+
+          // Animate camera zoom
+          const targetZ = (targetView === 'nucleus' || targetView === 'quark') ? 5 : 20
+          const startZ = (currentView === 'nucleus' || currentView === 'quark') ? 5 : 20
+          camera.position.z = THREE.MathUtils.lerp(startZ, targetZ, progress)
+
+          // Scale effect with slight overshoot
+          const fromScale = 1 - progress * 0.5 - Math.sin(progress * Math.PI) * 0.1
+          const toScale = 0.5 + progress * 0.5 + Math.sin(progress * Math.PI) * 0.1
+          fromGroup.scale.setScalar(Math.max(fromScale, 0.1))
+          toGroup.scale.setScalar(toScale)
+
+          if (progress >= 1) {
+            setIsTransitioning(false)
+            setCurrentViewState(targetView)
+            setTargetView(null)
+            transitionStartTime = null
+            fromGroup.visible = false
+            atomGroup.visible = targetView === 'atom'
+            nucleusGroup.visible = targetView === 'nucleus'
+            quarkGroup.visible = targetView === 'quark'
+            camera.position.z = targetZ
+            // Reset scales and opacities
+            atomGroup.scale.setScalar(1)
+            nucleusGroup.scale.setScalar(1)
+            quarkGroup.scale.setScalar(1)
+            scene.traverse(child => {
+              if (child.material && child.material.opacity !== undefined) {
+                child.material.opacity = 1
+              }
+            })
+          }
+        }
+
         controls.update()
-        renderer.render(scene, camera)
+
+        // Render bloom without photons
+        photons.forEach(photon => { photon.visible = false })
+        bloomComposer.render()
+
+        // Render final with photons
+        photons.forEach(photon => { photon.visible = true })
+        finalComposer.render()
+
         animationFrameId = requestAnimationFrame(animate)
       }
     }
@@ -415,6 +543,8 @@ function App() {
       camera.updateProjectionMatrix()
       renderer.setSize(window.innerWidth, window.innerHeight)
       renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2))
+      bloomComposer.setSize(window.innerWidth, window.innerHeight)
+      finalComposer.setSize(window.innerWidth, window.innerHeight)
     }
     window.addEventListener('resize', handleResize)
 
@@ -425,15 +555,21 @@ function App() {
         cancelAnimationFrame(animationFrameId)
       }
       scene.traverse(object => {
-        if (object instanceof THREE.Mesh) {
-          object.geometry.dispose()
-          object.material.dispose()
+        if (object.geometry) object.geometry.dispose()
+        if (object.material) {
+          if (Array.isArray(object.material)) {
+            object.material.forEach(mat => mat.dispose())
+          } else {
+            object.material.dispose()
+          }
         }
       })
       renderer.dispose()
       controls.dispose()
+      bloomComposer.dispose()
+      finalComposer.dispose()
     }
-  }, [isAnimating, currentView])
+  }, [isAnimating, currentView, targetView, isTransitioning])
 
   const particleInfo = {
     atom: {
