@@ -624,7 +624,25 @@ function generatePromptsWithItems(basePrompt, style) {
     // Check if we have an empty room but user selected furnished room
     const shouldTreatAsEmpty = isRoomActuallyEmpty && currentRoomType === 'furnished';
     
-    if (currentRoomType === 'empty' || shouldTreatAsEmpty) {
+    // Special case: "start fresh" should always generate, even with no items
+    if (currentRoomType === 'furnished' && furnishedOption === 'start-fresh') {
+        if (selectedRoomItems.size === 0) {
+            result.positivePrompt = `Transform this room into a completely empty space. Remove all furniture, decor, and items. Leave only the architectural elements (walls, floor, ceiling, windows, doors). Create a clean, minimal empty room. Match the style: ${style}.`;
+            result.negativePrompt = `${baseNegativePrompt}, furniture, decor, decorative items, accessories, any furniture, any decor, any items, all furniture, all decor, all items, existing furniture, existing decor, existing items, current furniture, current decor, current items, room contents, room items, room furniture, room decor`;
+        } else {
+            // Get selected and unselected items
+            const selectedItems = roomItems.filter(item => selectedRoomItems.has(item.id));
+            const unselectedItems = roomItems.filter(item => !selectedRoomItems.has(item.id));
+            
+            // Build positive prompt with selected items
+            const selectedItemNames = selectedItems.map(item => item.name.toLowerCase()).join(', ');
+            result.positivePrompt = `Transform this room by removing all existing furniture and items, then add only: ${selectedItemNames}. Create a clean, minimal room with only the specified items. Match the style: ${style}.`;
+            
+            // Build negative prompt with unselected items
+            const unselectedItemNames = unselectedItems.map(item => item.name.toLowerCase()).join(', ');
+            result.negativePrompt = `${baseNegativePrompt}, ${unselectedItemNames}, existing furniture, existing decor, existing items, current furniture, current decor, current items, room contents, room items, room furniture, room decor`;
+        }
+    } else if (currentRoomType === 'empty' || shouldTreatAsEmpty) {
         // Empty room logic (or empty room uploaded but user selected furnished)
         if (selectedRoomItems.size === 0) {
             // No items selected for empty room - don't generate
@@ -660,23 +678,6 @@ function generatePromptsWithItems(basePrompt, style) {
                 
                 result.positivePrompt = `${basePrompt}${style}. Keep all existing furniture and items, rearrange them for better layout, and add: ${selectedItemNames}.`;
                 result.negativePrompt = baseNegativePrompt;
-            }
-        } else if (furnishedOption === 'start-fresh') {
-            if (selectedRoomItems.size === 0) {
-                result.positivePrompt = `${basePrompt}${style}. Remove all existing furniture and items, start with a completely empty room.`;
-                result.negativePrompt = baseNegativePrompt;
-            } else {
-                // Get selected and unselected items
-                const selectedItems = roomItems.filter(item => selectedRoomItems.has(item.id));
-                const unselectedItems = roomItems.filter(item => !selectedRoomItems.has(item.id));
-                
-                // Build positive prompt with selected items
-                const selectedItemNames = selectedItems.map(item => item.name.toLowerCase()).join(', ');
-                result.positivePrompt = `${basePrompt}${style}. Remove all existing furniture and items, then add: ${selectedItemNames}.`;
-                
-                // Build negative prompt with unselected items
-                const unselectedItemNames = unselectedItems.map(item => item.name.toLowerCase()).join(', ');
-                result.negativePrompt = `${baseNegativePrompt}, ${unselectedItemNames}`;
             }
         }
     }
@@ -865,6 +866,9 @@ async function pollReplicatePrediction(predictionUrl, apiKey) {
 
 // Helper: Generate image with SDXL+ControlNet using Replicate with fallback models
 async function generateImageWithControlNet(imageBase64, prompt, negativePrompt, replicateApiKey) {
+    // Check if this is a "start fresh" scenario (empty room generation)
+    const isStartFresh = prompt.includes("completely empty space") || prompt.includes("Remove all furniture") || prompt.includes("empty room");
+    
     // Multiple model options with fallbacks
     const modelOptions = [
         {
@@ -903,7 +907,13 @@ async function generateImageWithControlNet(imageBase64, prompt, negativePrompt, 
                 // ControlNet specific parameters - higher guidance for more precise adherence
                 inputData.guidance_scale = 12.0; // Increased from 7.5 for better prompt adherence
                 inputData.num_inference_steps = 30; // Increased for better quality
-                inputData.controlnet_conditioning_scale = 0.8; // ControlNet strength
+                
+                // For start fresh scenarios, use very low ControlNet strength to preserve room structure but remove furniture
+                if (isStartFresh) {
+                    inputData.controlnet_conditioning_scale = 0.2; // Very low strength to preserve room structure but allow furniture removal
+                } else {
+                    inputData.controlnet_conditioning_scale = 0.8; // Normal ControlNet strength
+                }
             } else {
                 // Standard SD parameters - higher guidance for more precise adherence
                 inputData.guidance_scale = 12.0; // Increased from 7.5 for better prompt adherence
@@ -1083,7 +1093,12 @@ async function generateDesigns() {
     
     // Check if we should generate an image
     if (!prompts.shouldGenerate) {
-        alert('Please select at least one item to add to your empty room before generating a design.');
+        // Only show this alert for empty room scenarios, not for "start fresh"
+        if (currentRoomType === 'empty' || (currentRoomType === 'furnished' && furnishedOption !== 'start-fresh')) {
+            alert('Please select at least one item to add to your empty room before generating a design.');
+        } else {
+            alert('Please select at least one item to add to your room before generating a design.');
+        }
         return;
     }
     

@@ -562,6 +562,7 @@ footer {
   gap: 1rem;
   padding-bottom: 1rem;
   -webkit-overflow-scrolling: touch;
+  justify-content: center;
 }
 
 .design-card {
@@ -778,8 +779,10 @@ footer {
   
   .design-carousel {
       display: grid;
-      grid-template-columns: repeat(2, 1fr);
+      grid-template-columns: repeat(auto-fit, minmax(350px, 400px));
       overflow-x: visible;
+      justify-content: center;
+      gap: 1.5rem;
   }
   
   .design-card {
@@ -793,6 +796,7 @@ footer {
   }
   
   .design-carousel {
-      grid-template-columns: repeat(3, 1fr);
+      grid-template-columns: repeat(auto-fit, minmax(350px, 400px));
+      justify-content: center;
   }
 } 
