@@ -83,21 +83,21 @@ const designDescriptions = {
 
 // Room items that can be added to empty rooms
 const roomItems = [
-    { id: 'sofa', name: 'Sofa', icon: 'couch', category: 'furniture' },
+    { id: 'sofa', name: 'Sofa', icon: 'square', category: 'furniture' },
     { id: 'coffee-table', name: 'Coffee Table', icon: 'table', category: 'furniture' },
     { id: 'dining-table', name: 'Dining Table', icon: 'table', category: 'furniture' },
-    { id: 'chairs', name: 'Chairs', icon: 'chair', category: 'furniture' },
-    { id: 'bed', name: 'Bed', icon: 'bed', category: 'furniture' },
+    { id: 'chairs', name: 'Chairs', icon: 'square', category: 'furniture' },
+    { id: 'bed', name: 'Bed', icon: 'square', category: 'furniture' },
     { id: 'desk', name: 'Desk', icon: 'monitor', category: 'furniture' },
     { id: 'bookshelf', name: 'Bookshelf', icon: 'book-open', category: 'furniture' },
     { id: 'tv', name: 'TV', icon: 'tv', category: 'electronics' },
-    { id: 'lamp', name: 'Lamp', icon: 'lightbulb', category: 'lighting' },
-    { id: 'floor-lamp', name: 'Floor Lamp', icon: 'lightbulb', category: 'lighting' },
+    { id: 'lamp', name: 'Lamp', icon: 'zap', category: 'lighting' },
+    { id: 'floor-lamp', name: 'Floor Lamp', icon: 'zap', category: 'lighting' },
     { id: 'rug', name: 'Rug', icon: 'square', category: 'decor' },
     { id: 'curtains', name: 'Curtains', icon: 'maximize-2', category: 'decor' },
     { id: 'art', name: 'Art', icon: 'image', category: 'decor' },
     { id: 'mirror', name: 'Mirror', icon: 'eye', category: 'decor' },
-    { id: 'plants', name: 'Plants', icon: 'leaf', category: 'decor' },
+    { id: 'plants', name: 'Plants', icon: 'circle', category: 'decor' },
     { id: 'pillows', name: 'Pillows', icon: 'square', category: 'decor' },
     { id: 'throw-blanket', name: 'Throw Blanket', icon: 'square', category: 'decor' },
     { id: 'vase', name: 'Vase', icon: 'droplet', category: 'decor' },
@@ -627,8 +627,8 @@ function generatePromptsWithItems(basePrompt, style) {
     // Special case: "start fresh" should always generate, even with no items
     if (currentRoomType === 'furnished' && furnishedOption === 'start-fresh') {
         if (selectedRoomItems.size === 0) {
-            result.positivePrompt = `Transform this room into a completely empty space. Remove all furniture, decor, and items. Leave only the architectural elements (walls, floor, ceiling, windows, doors). Create a clean, minimal empty room. Match the style: ${style}.`;
-            result.negativePrompt = `${baseNegativePrompt}, furniture, decor, decorative items, accessories, any furniture, any decor, any items, all furniture, all decor, all items, existing furniture, existing decor, existing items, current furniture, current decor, current items, room contents, room items, room furniture, room decor`;
+            result.positivePrompt = `EMPTY ROOM ONLY: Remove EVERYTHING except walls, floor, ceiling, windows, doors. NO furniture, NO decor, NO items, NO objects, NO couches, NO chairs, NO tables, NO TVs, NO lamps, NO rugs, NO curtains, NO art, NO plants, NO accessories. COMPLETELY BARE ROOM. Empty space only. Nothing in the room except architectural elements. Style: ${style}.`;
+            result.negativePrompt = `${baseNegativePrompt}, furniture, decor, decorative items, accessories, any furniture, any decor, any items, all furniture, all decor, all items, existing furniture, existing decor, existing items, current furniture, current decor, current items, room contents, room items, room furniture, room decor, sofa, couch, chair, table, coffee table, dining table, bed, desk, bookshelf, lamp, floor lamp, rug, curtains, art, painting, mirror, plant, plants, pillow, pillows, throw blanket, vase, candle, candles, clock, any object, any item, any piece of furniture, any decoration, any accessory, any furnishing, any household item, any room item, any furniture piece, any decor item, any accessory item, any furnishing item, any household object, any room object, any furniture object, any decor object, any accessory object, any furnishing object, any household piece, any room piece, any furniture piece, any decor piece, any accessory piece, any furnishing piece, any household decoration, any room decoration, any furniture decoration, any decor decoration, any accessory decoration, any furnishing decoration`;
         } else {
             // Get selected and unselected items
             const selectedItems = roomItems.filter(item => selectedRoomItems.has(item.id));
@@ -636,11 +636,11 @@ function generatePromptsWithItems(basePrompt, style) {
             
             // Build positive prompt with selected items
             const selectedItemNames = selectedItems.map(item => item.name.toLowerCase()).join(', ');
-            result.positivePrompt = `Transform this room by removing all existing furniture and items, then add only: ${selectedItemNames}. Create a clean, minimal room with only the specified items. Match the style: ${style}.`;
+            result.positivePrompt = `REMOVE ALL EXISTING FURNITURE: Completely clear the room of all current furniture and items, then add ONLY: ${selectedItemNames}. NO other furniture, NO other decor, NO other items. Clean minimal room with ONLY the specified items. Remove everything else. Style: ${style}.`;
             
             // Build negative prompt with unselected items
             const unselectedItemNames = unselectedItems.map(item => item.name.toLowerCase()).join(', ');
-            result.negativePrompt = `${baseNegativePrompt}, ${unselectedItemNames}, existing furniture, existing decor, existing items, current furniture, current decor, current items, room contents, room items, room furniture, room decor`;
+            result.negativePrompt = `${baseNegativePrompt}, ${unselectedItemNames}, existing furniture, existing decor, existing items, current furniture, current decor, current items, room contents, room items, room furniture, room decor, any furniture not specified, any decor not specified, any items not specified, any objects not specified, any pieces not specified, any furnishings not specified, any decorations not specified, any accessories not specified, any household items not specified, any room items not specified, any furniture pieces not specified, any decor items not specified, any accessory items not specified, any furnishing items not specified, any household objects not specified, any room objects not specified, any furniture objects not specified, any decor objects not specified, any accessory objects not specified, any furnishing objects not specified, any household pieces not specified, any room pieces not specified, any furniture pieces not specified, any decor pieces not specified, any accessory pieces not specified, any furnishing pieces not specified, any household decorations not specified, any room decorations not specified, any furniture decorations not specified, any decor decorations not specified, any accessory decorations not specified, any furnishing decorations not specified`;
         }
     } else if (currentRoomType === 'empty' || shouldTreatAsEmpty) {
         // Empty room logic (or empty room uploaded but user selected furnished)
@@ -864,24 +864,134 @@ async function pollReplicatePrediction(predictionUrl, apiKey) {
     throw new Error(`Replicate prediction timed out after ${maxAttempts} attempts.`);
 }
 
-// Helper: Generate image with SDXL+ControlNet using Replicate with fallback models
-async function generateImageWithControlNet(imageBase64, prompt, negativePrompt, replicateApiKey) {
-    // Check if this is a "start fresh" scenario (empty room generation)
-    const isStartFresh = prompt.includes("completely empty space") || prompt.includes("Remove all furniture") || prompt.includes("empty room");
-    
-    // Multiple model options with fallbacks
+// Helper: Generate empty room using text-to-image (for start fresh scenarios)
+async function generateEmptyRoomWithTextToImage(prompt, negativePrompt, replicateApiKey) {
     const modelOptions = [
         {
-            version: "lucataco/sdxl-controlnet-depth:465fb41789dc2203a9d7158be11d1d2570606a039c65e0e236fd329b5eecb10c",
-            name: "SDXL ControlNet Depth"
-        },
-        {
             version: "stability-ai/stable-diffusion-3.5-large",
-            name: "SD 3.5 Large"
+            name: "SD 3.5 Large",
+            type: "txt2img"
         },
         {
             version: "stability-ai/stable-diffusion-xl-base-1.0",
-            name: "SDXL Base"
+            name: "SDXL Base",
+            type: "txt2img"
+        }
+    ];
+    
+    let lastError = null;
+    
+    for (let i = 0; i < modelOptions.length; i++) {
+        const model = modelOptions[i];
+        console.log(`Attempting empty room generation with model: ${model.name}`);
+        
+        try {
+            const inputData = {
+                prompt: prompt,
+                negative_prompt: negativePrompt,
+                width: 1024,
+                height: 1024,
+                guidance_scale: 15.0,
+                num_inference_steps: 40,
+                scheduler: "K_EULER",
+                seed: Math.floor(Math.random() * 1000000)
+            };
+            
+            const response = await fetchWithRetry(REPLICATE_API_URL, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Authorization': `Token ${replicateApiKey}`
+                },
+                body: JSON.stringify({
+                    version: model.version,
+                    input: inputData
+                })
+            }, 3, 3000);
+            
+            if (!response.ok) {
+                const errorData = await response.json().catch(() => ({}));
+                const error = `Model ${model.name} failed: ${errorData.detail || response.status}`;
+                console.warn(error);
+                lastError = new Error(error);
+                continue;
+            }
+            
+            const prediction = await response.json();
+            if (!prediction.urls || !prediction.urls.get) {
+                const error = `Model ${model.name} did not return a polling URL.`;
+                console.warn(error);
+                lastError = new Error(error);
+                continue;
+            }
+            
+            console.log(`Polling for results from ${model.name}...`);
+            const result = await pollReplicatePrediction(prediction.urls.get, replicateApiKey);
+            console.log(`Successfully generated empty room with ${model.name}`);
+            return result.imageUrls;
+            
+        } catch (error) {
+            console.warn(`Model ${model.name} failed:`, error.message);
+            lastError = error;
+            
+            if (i === modelOptions.length - 1) {
+                throw new Error(`All models failed. Last error: ${error.message}`);
+            }
+            continue;
+        }
+    }
+    
+    throw lastError || new Error('All model attempts failed');
+}
+
+// Helper: Generate image with SDXL+ControlNet using Replicate with fallback models
+async function generateImageWithControlNet(imageBase64, prompt, negativePrompt, replicateApiKey) {
+    // Check if this is a "start fresh" scenario (empty room generation)
+    const isStartFresh = prompt.includes("completely empty space") || prompt.includes("Remove all furniture") || prompt.includes("empty room") || prompt.includes("COMPLETELY EMPTY ROOM") || prompt.includes("REMOVE ALL EXISTING FURNITURE") || prompt.includes("EMPTY ROOM ONLY");
+    
+    // Multiple model options with fallbacks
+    // For "start fresh" scenarios, prioritize img2img models as they're better at dramatic changes
+    const modelOptions = isStartFresh ? [
+        {
+            version: "stability-ai/stable-diffusion-3.5-large",
+            name: "SD 3.5 Large",
+            type: "img2img"
+        },
+        {
+            version: "stability-ai/stable-diffusion-xl-base-1.0",
+            name: "SDXL Base",
+            type: "img2img"
+        },
+        {
+            version: "adirik/t2i-adapter-sdxl-depth-midas:8a89b0ab59a050244a751b6475d91041a8582ba33692ae6fab65e0c51b700328",
+            name: "SDXL Depth Midas",
+            type: "controlnet"
+        },
+        {
+            version: "lucataco/sdxl-controlnet-depth:465fb41789dc2203a9d7158be11d1d2570606a039c65e0e236fd329b5eecb10c",
+            name: "SDXL ControlNet Depth",
+            type: "controlnet"
+        }
+    ] : [
+        {
+            version: "adirik/t2i-adapter-sdxl-depth-midas:8a89b0ab59a050244a751b6475d91041a8582ba33692ae6fab65e0c51b700328",
+            name: "SDXL Depth Midas",
+            type: "controlnet"
+        },
+        {
+            version: "lucataco/sdxl-controlnet-depth:465fb41789dc2203a9d7158be11d1d2570606a039c65e0e236fd329b5eecb10c",
+            name: "SDXL ControlNet Depth",
+            type: "controlnet"
+        },
+        {
+            version: "stability-ai/stable-diffusion-3.5-large",
+            name: "SD 3.5 Large",
+            type: "img2img"
+        },
+        {
+            version: "stability-ai/stable-diffusion-xl-base-1.0",
+            name: "SDXL Base",
+            type: "img2img"
         }
     ];
     
@@ -899,25 +1009,32 @@ async function generateImageWithControlNet(imageBase64, prompt, negativePrompt, 
             
             // Add negative prompt if provided
             if (negativePrompt && negativePrompt.trim()) {
-                inputData.negative_prompt = negativePrompt;
+                // inputData.negative_prompt = negativePrompt;
             }
             
             // Add model-specific parameters
-            if (model.version.includes('controlnet')) {
+            if (model.type === 'controlnet') {
                 // ControlNet specific parameters - higher guidance for more precise adherence
                 inputData.guidance_scale = 12.0; // Increased from 7.5 for better prompt adherence
                 inputData.num_inference_steps = 30; // Increased for better quality
                 
                 // For start fresh scenarios, use very low ControlNet strength to preserve room structure but remove furniture
                 if (isStartFresh) {
-                    inputData.controlnet_conditioning_scale = 0.2; // Very low strength to preserve room structure but allow furniture removal
+                    inputData.controlnet_conditioning_scale = 0.01; // Extremely low strength to allow maximum furniture removal while preserving structure
                 } else {
                     inputData.controlnet_conditioning_scale = 0.8; // Normal ControlNet strength
                 }
-            } else {
-                // Standard SD parameters - higher guidance for more precise adherence
-                inputData.guidance_scale = 12.0; // Increased from 7.5 for better prompt adherence
-                inputData.num_inference_steps = 30; // Increased for better quality
+            } else if (model.type === 'img2img') {
+                // Standard img2img parameters - for start fresh, use very high denoising strength to allow major changes
+                if (isStartFresh) {
+                    inputData.denoising_strength = 0.95; // Very high denoising strength to allow major changes
+                    inputData.guidance_scale = 20.0; // Very high guidance for better prompt adherence
+                    inputData.num_inference_steps = 50; // More steps for better quality
+                } else {
+                    inputData.denoising_strength = 0.7; // Normal denoising strength
+                    inputData.guidance_scale = 12.0; // Normal guidance scale
+                    inputData.num_inference_steps = 30; // Normal inference steps
+                }
                 inputData.scheduler = "K_EULER";
                 inputData.seed = Math.floor(Math.random() * 1000000); // Random seed for variety
             }
