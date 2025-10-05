@@ -14,11 +14,25 @@ const designCarousel = document.getElementById('design-carousel');
 const backToOptionsBtn = document.getElementById('back-to-options-btn');
 const regenerateBtn = document.getElementById('regenerate-btn');
 const saveDesignBtn = document.getElementById('save-design-btn');
+const itemsSelectionError = document.getElementById('items-selection-error');
 
 // Auth elements
 const loginBtn = document.getElementById('login-btn');
 const authModal = document.getElementById('auth-modal');
 const closeModalBtn = document.getElementById('close-modal-btn');
+
+// Error message management
+function showItemsSelectionError() {
+    if (itemsSelectionError) {
+        itemsSelectionError.classList.remove('hidden');
+    }
+}
+
+function hideItemsSelectionError() {
+    if (itemsSelectionError) {
+        itemsSelectionError.classList.add('hidden');
+    }
+}
 const apiKeyInput = document.getElementById('api-key');
 const toggleKeyVisibilityBtn = document.getElementById('toggle-key-visibility-btn');
 const replicateApiKeyInput = document.getElementById('replicate-api-key');
@@ -105,10 +119,10 @@ const roomItems = [
     { id: 'clock', name: 'Clock', icon: 'clock', category: 'decor' }
 ];
 
-// AI prompt templates for different room types - improved for better accuracy
+// AI prompt templates for different room types - simplified for clarity
 const aiPrompts = {
-    empty: "Transform this empty room into a beautifully furnished living space. Add appropriate furniture and decor that matches the room's size and architectural features. Include comfortable seating, functional surfaces, proper lighting, and decorative elements. Ensure the furniture placement creates good flow and conversation areas. Match the style: ",
-    furnished: "Redesign this furnished room to improve its layout, aesthetics, and functionality. Rearrange existing furniture and items to create better flow, conversation areas, and visual balance. Ensure proper spacing and accessibility while maintaining the room's character. Match the style: "
+    empty: "Add furniture to this room. Match the style: ",
+    furnished: "Rearrange furniture in this room. Match the style: "
 };
 
 // Fallback images for when API calls fail
@@ -557,6 +571,11 @@ function populateRoomItems() {
                 selectedRoomItems.delete(item.id);
             }
             console.log('Selected items:', Array.from(selectedRoomItems));
+            
+            // Hide error message when items are selected
+            if (selectedRoomItems.size > 0) {
+                hideItemsSelectionError();
+            }
         });
         
         itemsGrid.appendChild(itemElement);
@@ -569,6 +588,9 @@ function populateRoomItems() {
 // Handle furnished room option changes
 function handleFurnishedOptionChange() {
     const roomItemsSelection = document.getElementById('room-items-selection');
+    
+    // Hide error message when furnished option changes
+    hideItemsSelectionError();
     
     if (furnishedOption === 'keep-existing') {
         // Hide room items selection - keep existing items only
@@ -618,8 +640,12 @@ function generatePromptsWithItems(basePrompt, style) {
         shouldGenerate: true // Flag to indicate if generation should proceed
     };
     
-    // Base negative prompt for all generations - includes structural preservation
-    const baseNegativePrompt = "blurry, distorted, out of frame, unrealistic shadows, text, watermark, signature, low quality, pixelated, artifacts, change walls, change windows, change floor, change ceiling, change doors, change architectural structure, modify room structure, change room layout, change room dimensions, change room shape, change room size, change room proportions, change room geometry, change room boundaries, change room walls, change room windows, change room floor, change room ceiling, change room doors, change room architecture, change room design structure, change room construction, change room building elements, change room structural elements, change room framework, change room skeleton, change room shell, change room envelope, change room perimeter, change room outline, change room footprint, change room floorplan, change room blueprint, change room layout structure, change room spatial arrangement, change room spatial organization, change room spatial configuration, change room spatial layout, change room spatial design, change room spatial structure, change room spatial framework, change room spatial skeleton, change room spatial shell, change room spatial envelope, change room spatial perimeter, change room spatial outline, change room spatial footprint, change room spatial floorplan, change room spatial blueprint";
+    // Simplified architectural preservation constants
+    const ARCHITECTURAL_PRESERVATION_PREFIX = "DO NOT change walls, floor, ceiling, windows, or doors. Only add furniture.";
+    const ARCHITECTURAL_PRESERVATION_SUFFIX = "Same style as the original room.";
+    
+    // Simplified base negative prompt - focused on architectural preservation
+    const baseNegativePrompt = "blurry, distorted, out of frame, unrealistic shadows, text, watermark, signature, low quality, pixelated, artifacts, change walls, change windows, change floor, change ceiling, change doors, architectural changes, structural modifications";
     
     // Check if we have an empty room but user selected furnished room
     const shouldTreatAsEmpty = isRoomActuallyEmpty && currentRoomType === 'furnished';
@@ -627,8 +653,8 @@ function generatePromptsWithItems(basePrompt, style) {
     // Special case: "start fresh" should always generate, even with no items
     if (currentRoomType === 'furnished' && furnishedOption === 'start-fresh') {
         if (selectedRoomItems.size === 0) {
-            result.positivePrompt = `EMPTY ROOM ONLY: Remove EVERYTHING except walls, floor, ceiling, windows, doors. NO furniture, NO decor, NO items, NO objects, NO couches, NO chairs, NO tables, NO TVs, NO lamps, NO rugs, NO curtains, NO art, NO plants, NO accessories. COMPLETELY BARE ROOM. Empty space only. Nothing in the room except architectural elements. Style: ${style}.`;
-            result.negativePrompt = `${baseNegativePrompt}, furniture, decor, decorative items, accessories, any furniture, any decor, any items, all furniture, all decor, all items, existing furniture, existing decor, existing items, current furniture, current decor, current items, room contents, room items, room furniture, room decor, sofa, couch, chair, table, coffee table, dining table, bed, desk, bookshelf, lamp, floor lamp, rug, curtains, art, painting, mirror, plant, plants, pillow, pillows, throw blanket, vase, candle, candles, clock, any object, any item, any piece of furniture, any decoration, any accessory, any furnishing, any household item, any room item, any furniture piece, any decor item, any accessory item, any furnishing item, any household object, any room object, any furniture object, any decor object, any accessory object, any furnishing object, any household piece, any room piece, any furniture piece, any decor piece, any accessory piece, any furnishing piece, any household decoration, any room decoration, any furniture decoration, any decor decoration, any accessory decoration, any furnishing decoration`;
+            result.positivePrompt = `Given this image of a furnished room, remove all furniture, leaving an empty room. DO NOT change walls, floor, ceiling, windows, or doors.`;
+            result.negativePrompt = `${baseNegativePrompt}, furniture, decor, items, objects`;
         } else {
             // Get selected and unselected items
             const selectedItems = roomItems.filter(item => selectedRoomItems.has(item.id));
@@ -636,11 +662,11 @@ function generatePromptsWithItems(basePrompt, style) {
             
             // Build positive prompt with selected items
             const selectedItemNames = selectedItems.map(item => item.name.toLowerCase()).join(', ');
-            result.positivePrompt = `REMOVE ALL EXISTING FURNITURE: Completely clear the room of all current furniture and items, then add ONLY: ${selectedItemNames}. NO other furniture, NO other decor, NO other items. Clean minimal room with ONLY the specified items. Remove everything else. Style: ${style}.`;
+            result.positivePrompt = `DO NOT change walls, floor, ceiling, windows, or doors. Remove all existing furniture, then add ONLY: ${selectedItemNames}. ${ARCHITECTURAL_PRESERVATION_SUFFIX} Style: ${style}.`;
             
             // Build negative prompt with unselected items
             const unselectedItemNames = unselectedItems.map(item => item.name.toLowerCase()).join(', ');
-            result.negativePrompt = `${baseNegativePrompt}, ${unselectedItemNames}, existing furniture, existing decor, existing items, current furniture, current decor, current items, room contents, room items, room furniture, room decor, any furniture not specified, any decor not specified, any items not specified, any objects not specified, any pieces not specified, any furnishings not specified, any decorations not specified, any accessories not specified, any household items not specified, any room items not specified, any furniture pieces not specified, any decor items not specified, any accessory items not specified, any furnishing items not specified, any household objects not specified, any room objects not specified, any furniture objects not specified, any decor objects not specified, any accessory objects not specified, any furnishing objects not specified, any household pieces not specified, any room pieces not specified, any furniture pieces not specified, any decor pieces not specified, any accessory pieces not specified, any furnishing pieces not specified, any household decorations not specified, any room decorations not specified, any furniture decorations not specified, any decor decorations not specified, any accessory decorations not specified, any furnishing decorations not specified`;
+            result.negativePrompt = `${baseNegativePrompt}, ${unselectedItemNames}, existing furniture, other furniture`;
         }
     } else if (currentRoomType === 'empty' || shouldTreatAsEmpty) {
         // Empty room logic (or empty room uploaded but user selected furnished)
@@ -654,30 +680,44 @@ function generatePromptsWithItems(basePrompt, style) {
             const selectedItems = roomItems.filter(item => selectedRoomItems.has(item.id));
             const selectedItemNames = selectedItems.map(item => item.name.toLowerCase()).join(', ');
             
-            // Build extremely precise positive prompt with ONLY selected items
-            result.positivePrompt = `Minimal room design. Add ONLY these items: ${selectedItemNames}. Empty room with nothing else. No additional furniture. No decorations. No extra items. Only the specified items. Clean, minimal space. Style: ${style}.`;
+            // Build simplified positive prompt with ONLY selected items
+            result.positivePrompt = `Given this image of an empty room, add the following items without changing anything about the walls, floor, ceiling, windows, or doors: ${selectedItemNames}. ${ARCHITECTURAL_PRESERVATION_SUFFIX}.`;
             
-            // Build comprehensive negative prompt excluding ALL other furniture/decor items
+            // Build simplified negative prompt excluding other furniture
             const allOtherItems = roomItems.filter(item => !selectedRoomItems.has(item.id));
             const allOtherItemNames = allOtherItems.map(item => item.name.toLowerCase()).join(', ');
-            result.negativePrompt = `${baseNegativePrompt}, ${allOtherItemNames}, sofa, couch, chair, table, coffee table, dining table, bed, desk, bookshelf, lamp, floor lamp, rug, curtains, art, painting, mirror, plant, plants, pillow, pillows, throw blanket, vase, candle, candles, clock, furniture, decor, decoration, decorative items, accessories, any furniture not explicitly listed, any decor not explicitly listed, any items not explicitly mentioned, additional furniture, additional decor, extra items, unnecessary items, unwanted items, unspecified items, unrequested items, other furniture, other decor, other items, more furniture, more decor, more items, extra furniture, extra decor, extra items, additional furniture, additional decor, additional items, unwanted furniture, unwanted decor, unwanted items, unspecified furniture, unspecified decor, unspecified items, unrequested furniture, unrequested decor, unrequested items`;
+            result.negativePrompt = `${baseNegativePrompt}, ${allOtherItemNames}, other furniture`;
         }
     } else {
         // Furnished room logic (and room is actually furnished)
         if (furnishedOption === 'keep-existing') {
-            result.positivePrompt = `${basePrompt}${style}. Keep all existing furniture and items, only rearrange them for better layout and flow. Do not add or remove any items.`;
+            result.positivePrompt = `Given this image of a furnished room, rearrange the furniture to a different layout. Do not change anything about the structural parts of the room like the walls, floors, ceiling, windows, etc. ${ARCHITECTURAL_PRESERVATION_SUFFIX} Style: ${style}.`;
             result.negativePrompt = baseNegativePrompt;
         } else if (furnishedOption === 'add-new') {
             if (selectedRoomItems.size === 0) {
-                result.positivePrompt = `${basePrompt}${style}. Keep all existing furniture and items, only rearrange them for better layout and flow.`;
-                result.negativePrompt = baseNegativePrompt;
+                // No items selected for "add new" - don't generate
+                result.shouldGenerate = false;
+                result.positivePrompt = '';
+                result.negativePrompt = '';
             } else {
                 // Get selected items to add
                 const selectedItems = roomItems.filter(item => selectedRoomItems.has(item.id));
                 const selectedItemNames = selectedItems.map(item => item.name.toLowerCase()).join(', ');
                 
-                result.positivePrompt = `${basePrompt}${style}. Keep all existing furniture and items, rearrange them for better layout, and add: ${selectedItemNames}.`;
+                result.positivePrompt = `Given this image of a furnished room, add ONLY the following items: ${selectedItemNames}. Do not change anything about the structural parts of the room like the walls, floors, ceiling, windows, etc. ${ARCHITECTURAL_PRESERVATION_SUFFIX} Style: ${style}.`;
                 result.negativePrompt = baseNegativePrompt;
+            }
+        } else if (furnishedOption === 'start-fresh') {
+            if (selectedRoomItems.size === 0) {
+                result.positivePrompt = `Given this image of a furnished room, remove all furniture before adding ONLY the following items: (empty room). Do not change anything about the structural parts of the room like the walls, floors, ceiling, windows, etc. ${ARCHITECTURAL_PRESERVATION_SUFFIX} Style: ${style}.`;
+                result.negativePrompt = `${baseNegativePrompt}, furniture, decor, items, objects`;
+            } else {
+                // Get selected items to add
+                const selectedItems = roomItems.filter(item => selectedRoomItems.has(item.id));
+                const selectedItemNames = selectedItems.map(item => item.name.toLowerCase()).join(', ');
+                
+                result.positivePrompt = `Given this image of a furnished room, remove all furniture before adding ONLY the following items: ${selectedItemNames}. Do not change anything about the structural parts of the room like the walls, floors, ceiling, windows, etc. ${ARCHITECTURAL_PRESERVATION_SUFFIX} Style: ${style}.`;
+                result.negativePrompt = `${baseNegativePrompt}, furniture, decor, items, objects`;
             }
         }
     }
@@ -1189,10 +1229,6 @@ async function generateDesigns() {
         return;
     }
 
-    previewContainer.classList.add('hidden');
-    resultsSection.classList.remove('hidden');
-    designCarousel.innerHTML = '';
-    
     // Ensure the room type is correctly set
     const emptyRadio = document.getElementById('empty-room');
     const furnishedRadio = document.getElementById('furnished-room');
@@ -1210,14 +1246,17 @@ async function generateDesigns() {
     
     // Check if we should generate an image
     if (!prompts.shouldGenerate) {
-        // Only show this alert for empty room scenarios, not for "start fresh"
-        if (currentRoomType === 'empty' || (currentRoomType === 'furnished' && furnishedOption !== 'start-fresh')) {
-            alert('Please select at least one item to add to your empty room before generating a design.');
-        } else {
-            alert('Please select at least one item to add to your room before generating a design.');
+        // Show error for empty room scenarios or furnished room with "add new" but no items selected
+        if (currentRoomType === 'empty' || (currentRoomType === 'furnished' && furnishedOption === 'add-new')) {
+            showItemsSelectionError();
         }
         return;
     }
+
+    // Only proceed to next screen if validation passes
+    previewContainer.classList.add('hidden');
+    resultsSection.classList.remove('hidden');
+    designCarousel.innerHTML = '';
     
     const fullPrompt = prompts.positivePrompt;
     const negativePrompt = prompts.negativePrompt;
@@ -1427,7 +1466,10 @@ async function retryImageGeneration() {
         
         // Check if we should generate an image
         if (!prompts.shouldGenerate) {
-            alert('Please select at least one item to add to your empty room before generating a design.');
+            // Show error for empty room scenarios or furnished room with "add new" but no items selected
+            if (currentRoomType === 'empty' || (currentRoomType === 'furnished' && furnishedOption === 'add-new')) {
+                showItemsSelectionError();
+            }
             return;
         }
         
@@ -1926,6 +1968,8 @@ function setupRevealSliderForCard(card, index) {
 function goBackToPreview() {
     resultsSection.classList.add('hidden');
     previewContainer.classList.remove('hidden');
+    // Hide error message when going back to preview
+    hideItemsSelectionError();
 }
 
 function regenerateDesigns() {
@@ -1976,1039 +2020,4 @@ function saveCurrentDesign() {
     }
 }
 
-// Add CSS for camera view, comparison button, and disclaimer
-const style = document.createElement('style');
-style.textContent = `
-    .camera-view {
-        position: fixed;
-        top: 0;
-        left: 0;
-        right: 0;
-        bottom: 0;
-        background-color: #000;
-        z-index: 1000;
-        display: flex;
-        flex-direction: column;
-        align-items: center;
-        justify-content: center;
-    }
-    
-    .camera-view video {
-        max-width: 100%;
-        max-height: 80vh;
-    }
-    
-    .capture-btn {
-        position: absolute;
-        bottom: 40px;
-        background-color: white;
-        border: none;
-        border-radius: 50%;
-        width: 70px;
-        height: 70px;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
-        cursor: pointer;
-    }
-    
-    .cancel-btn {
-        position: absolute;
-        top: 20px;
-        right: 20px;
-        background-color: rgba(0, 0, 0, 0.5);
-        border: none;
-        border-radius: 50%;
-        width: 40px;
-        height: 40px;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        cursor: pointer;
-        color: white;
-    }
-    
-    .drag-over {
-        border-color: var(--primary-color);
-        background-color: rgba(99, 102, 241, 0.05);
-    }
-    
-    .design-card {
-        min-height: 320px;
-        display: flex;
-        flex-direction: column;
-        justify-content: flex-start;
-        border-radius: var(--border-radius);
-        box-shadow: 0 2px 8px rgba(0,0,0,0.04);
-        background: #fff;
-        margin-bottom: 24px;
-        overflow: hidden;
-    }
-    .design-image-container {
-        position: relative;
-        overflow: hidden;
-        min-height: 240px;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        background: #f6f6f7;
-    }
-    
-    .whiteboard-container {
-        width: 100%;
-        height: 240px;
-        position: relative;
-        border-radius: var(--border-radius);
-        background: #ffffff;
-        border: 2px dashed #d1d5db;
-        opacity: 1;
-        transition: opacity 0.4s;
-        display: flex;
-        flex-direction: column;
-        align-items: center;
-        justify-content: center;
-        box-shadow: inset 0 2px 4px rgba(0,0,0,0.06);
-    }
-    .whiteboard-container.fade-out {
-        opacity: 0;
-        transition: opacity 0.4s;
-    }
-    .whiteboard-canvas {
-        width: 100%;
-        height: 100%;
-        border-radius: var(--border-radius);
-        cursor: crosshair;
-        background: #ffffff;
-        touch-action: none;
-        transition: cursor 0.2s;
-    }
-    .whiteboard-canvas:active {
-        cursor: none;
-    }
-    .whiteboard-controls {
-        position: absolute;
-        bottom: 10px;
-        left: 50%;
-        transform: translateX(-50%);
-        display: flex;
-        align-items: center;
-        gap: 8px;
-        background: rgba(255, 255, 255, 0.95);
-        border-radius: 20px;
-        padding: 6px 12px;
-        box-shadow: 0 2px 8px rgba(0,0,0,0.1);
-        backdrop-filter: blur(4px);
-        border: 1px solid rgba(255, 255, 255, 0.5);
-    }
-    .whiteboard-clear {
-        background: none;
-        border: none;
-        width: 24px;
-        height: 24px;
-        border-radius: 50%;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        cursor: pointer;
-        color: #6b7280;
-        transition: all 0.2s;
-    }
-    .whiteboard-clear:hover {
-        background: #f3f4f6;
-        color: #374151;
-    }
-    .whiteboard-colors {
-        display: flex;
-        gap: 4px;
-        margin: 0 8px;
-    }
-    .color-option {
-        width: 20px;
-        height: 20px;
-        border-radius: 50%;
-        cursor: pointer;
-        border: 2px solid transparent;
-        transition: all 0.2s;
-        position: relative;
-    }
-    .color-option:hover {
-        transform: scale(1.1);
-    }
-    .color-option.active {
-        border-color: #374151;
-        transform: scale(1.1);
-    }
-    .color-option.active::after {
-        content: '';
-        position: absolute;
-        top: 50%;
-        left: 50%;
-        transform: translate(-50%, -50%);
-        width: 8px;
-        height: 8px;
-        background: rgba(255, 255, 255, 0.8);
-        border-radius: 50%;
-    }
-    .whiteboard-hint {
-        font-size: 10px;
-        color: #9ca3af;
-        white-space: nowrap;
-        animation: pulse-hint 2s infinite;
-    }
-    @keyframes pulse-hint {
-        0%, 100% { opacity: 0.6; }
-        50% { opacity: 1; }
-    }
-    .design-image {
-        width: 100%;
-        height: 240px;
-        object-fit: cover;
-        border-radius: var(--border-radius);
-        opacity: 0;
-        transition: opacity 0.4s;
-        position: relative;
-        z-index: 2;
-        background: #f6f6f7;
-    }
-    .design-image.fade-in {
-        opacity: 1;
-        transition: opacity 0.4s;
-    }
-    .compare-btn {
-        position: absolute;
-        bottom: 10px;
-        left: 50%;
-        transform: translateX(-50%);
-        background-color: rgba(0, 0, 0, 0.7);
-        color: white;
-        border: none;
-        border-radius: var(--border-radius);
-        padding: 8px 12px;
-        font-size: 12px;
-        cursor: pointer;
-        display: flex;
-        align-items: center;
-        gap: 5px;
-        transition: all 0.2s ease;
-        z-index: 2;
-    }
-    
-    .compare-btn:hover {
-        background-color: rgba(0, 0, 0, 0.9);
-    }
-    
-    .design-disclaimer {
-        position: absolute;
-        top: 0;
-        left: 0;
-        right: 0;
-        background-color: rgba(220, 38, 38, 0.8);
-        color: white;
-        padding: 8px;
-        font-size: 11px;
-        text-align: center;
-        z-index: 2;
-    }
-    
-    .design-disclaimer p {
-        margin: 0;
-        color: white;
-    }
-    
-    .login-btn.authenticated {
-        color: var(--success-color);
-        border-color: var(--success-color);
-    }
-    
-    .design-disclaimer.warning {
-        background-color: rgba(245, 158, 11, 0.8); /* Amber color */
-    }
-    .design-disclaimer.error {
-         background-color: rgba(220, 38, 38, 0.8); /* Red color */
-    }
-    
-    .room-type-selection {
-        margin: 20px 0;
-        padding: 0 20px;
-    }
-    
-    .room-type-selection h3 {
-        margin-bottom: 16px;
-        color: #1f2937;
-        font-size: 1.2rem;
-        font-weight: 600;
-        text-align: center;
-    }
-    
-    .room-options {
-        display: flex;
-        flex-direction: column;
-        gap: 12px;
-        width: 100%;
-    }
-    
-    .room-option {
-        position: relative;
-        flex: 1;
-        min-width: 320px;
-        display: flex;
-    }
-    
-    .room-option input[type="radio"] {
-        position: absolute;
-        opacity: 0;
-        pointer-events: none;
-    }
-    
-    .room-option label {
-        display: flex;
-        align-items: center;
-        gap: 12px;
-        padding: 16px;
-        border: 2px solid #e5e7eb;
-        border-radius: 12px;
-        cursor: pointer;
-        transition: all 0.2s ease;
-        background: #fff;
-        height: 100px;
-        width: 100%;
-        box-sizing: border-box;
-        flex: 1;
-    }
-    
-    .room-option label:hover {
-        border-color: #d1d5db;
-        background: #f9fafb;
-    }
-    
-    .room-option input[type="radio"]:checked + label {
-        border-color: var(--primary-color);
-        background: rgba(99, 102, 241, 0.05);
-    }
-    
-    .room-option .option-icon {
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        width: 40px;
-        height: 40px;
-        border-radius: 8px;
-        background: #f3f4f6;
-        color: #6b7280;
-        transition: all 0.2s ease;
-    }
-    
-    .room-option input[type="radio"]:checked + label .option-icon {
-        background: var(--primary-color);
-        color: white;
-    }
-    
-    .room-option .option-text {
-        flex: 1;
-        display: flex;
-        flex-direction: column;
-        justify-content: center;
-        height: 100%;
-    }
-    
-    .room-option .option-text h4 {
-        margin: 0 0 4px 0;
-        color: #1f2937;
-        font-size: 1rem;
-        font-weight: 600;
-    }
-    
-    .room-option .option-text p {
-        margin: 0;
-        color: #6b7280;
-        font-size: 0.875rem;
-        line-height: 1.4;
-    }
-    
-        @media (min-width: 700px) {
-        .room-options {
-            flex-direction: row;
-            gap: 16px;
-        }
-        
-        .room-option {
-            flex: 1;
-            min-width: 320px;
-        }
-    }
-    
-    @media (max-width: 699px) {
-        .room-options {
-            flex-direction: column;
-            gap: 12px;
-        }
-        
-        .room-option {
-            min-width: auto;
-            width: 100%;
-        }
-    }
-    
-    /* Room Items Selection Styles */
-    .room-items-selection {
-        margin: 20px 0;
-        padding: 0 20px;
-    }
-    
-    .room-items-selection h3 {
-        margin-bottom: 8px;
-        color: #1f2937;
-        font-size: 1.2rem;
-        font-weight: 600;
-        text-align: center;
-    }
-    
-    .selection-hint {
-        text-align: center;
-        color: #6b7280;
-        font-size: 0.875rem;
-        margin-bottom: 20px;
-    }
-    
-    .items-grid {
-        display: grid;
-        grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
-        gap: 12px;
-        max-width: 600px;
-        margin: 0 auto;
-    }
-    
-    .item-option {
-        position: relative;
-    }
-    
-    .item-option input[type="checkbox"] {
-        position: absolute;
-        opacity: 0;
-        pointer-events: none;
-    }
-    
-    .item-label {
-        display: flex;
-        flex-direction: column;
-        align-items: center;
-        gap: 8px;
-        padding: 16px 12px;
-        border: 2px solid #e5e7eb;
-        border-radius: 12px;
-        cursor: pointer;
-        transition: all 0.2s ease;
-        background: #fff;
-        height: 100px;
-        box-sizing: border-box;
-        justify-content: center;
-    }
-    
-    .item-label:hover {
-        border-color: #d1d5db;
-        background: #f9fafb;
-        transform: translateY(-2px);
-    }
-    
-    .item-option input[type="checkbox"]:checked + .item-label {
-        border-color: var(--primary-color);
-        background: rgba(99, 102, 241, 0.05);
-        box-shadow: 0 4px 12px rgba(99, 102, 241, 0.15);
-    }
-    
-    .item-icon {
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        width: 32px;
-        height: 32px;
-        border-radius: 8px;
-        background: #f3f4f6;
-        color: #6b7280;
-        transition: all 0.2s ease;
-    }
-    
-    .item-option input[type="checkbox"]:checked + .item-label .item-icon {
-        background: var(--primary-color);
-        color: white;
-    }
-    
-    .item-name {
-        font-size: 0.875rem;
-        font-weight: 500;
-        color: #374151;
-        text-align: center;
-        line-height: 1.2;
-    }
-    
-    .item-option input[type="checkbox"]:checked + .item-label .item-name {
-        color: var(--primary-color);
-        font-weight: 600;
-    }
-    
-    @media (max-width: 480px) {
-        .items-grid {
-            grid-template-columns: repeat(auto-fit, minmax(100px, 1fr));
-            gap: 8px;
-        }
-        
-        .item-label {
-            padding: 12px 8px;
-            height: 80px;
-        }
-        
-        .item-icon {
-            width: 28px;
-            height: 28px;
-        }
-        
-        .item-name {
-            font-size: 0.8rem;
-        }
-    }
-    
-    /* Furnished Options Styles */
-    .furnished-options {
-        margin: 20px 0;
-        padding: 0 20px;
-    }
-    
-    .furnished-options h3 {
-        margin-bottom: 16px;
-        color: #1f2937;
-        font-size: 1.2rem;
-        font-weight: 600;
-        text-align: center;
-    }
-    
-    .furnished-options-grid {
-        display: flex;
-        flex-direction: column;
-        gap: 16px;
-        max-width: 600px;
-        margin: 0 auto;
-    }
-    
-    .furnished-option {
-        position: relative;
-    }
-    
-    .furnished-option input[type="radio"] {
-        position: absolute;
-        opacity: 0;
-        pointer-events: none;
-    }
-    
-    .furnished-option label {
-        display: flex;
-        align-items: flex-start;
-        gap: 12px;
-        padding: 20px;
-        border: 2px solid #e5e7eb;
-        border-radius: 12px;
-        cursor: pointer;
-        transition: all 0.2s ease;
-        background: #fff;
-        min-height: 120px;
-        width: 100%;
-        box-sizing: border-box;
-        flex: 1;
-    }
-    
-    .furnished-option label:hover {
-        border-color: #d1d5db;
-        background: #f9fafb;
-    }
-    
-    .furnished-option input[type="radio"]:checked + label {
-        border-color: var(--primary-color);
-        background: rgba(99, 102, 241, 0.05);
-    }
-    
-    .furnished-option .option-icon {
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        width: 40px;
-        height: 40px;
-        border-radius: 8px;
-        background: #f3f4f6;
-        color: #6b7280;
-        transition: all 0.2s ease;
-    }
-    
-    .furnished-option input[type="radio"]:checked + label .option-icon {
-        background: var(--primary-color);
-        color: white;
-    }
-    
-    .furnished-option .option-text {
-        flex: 1;
-        display: flex;
-        flex-direction: column;
-        justify-content: flex-start;
-        min-height: 80px;
-    }
-    
-    .furnished-option .option-text h4 {
-        margin: 0 0 8px 0;
-        color: #1f2937;
-        font-size: 1rem;
-        font-weight: 600;
-        line-height: 1.3;
-    }
-    
-    .furnished-option .option-text p {
-        margin: 0;
-        color: #6b7280;
-        font-size: 0.875rem;
-        line-height: 1.5;
-        flex: 1;
-    }
-    
-    @media (min-width: 700px) {
-        .furnished-options-grid {
-            flex-direction: column;
-            gap: 16px;
-        }
-        
-        .furnished-option {
-            width: 100%;
-        }
-    }
-    
-    @media (max-width: 699px) {
-        .furnished-options-grid {
-            flex-direction: column;
-            gap: 12px;
-        }
-        
-        .furnished-option {
-            width: 100%;
-        }
-    }
-     
-     .image-preview-wrapper {
-         position: relative;
-         display: block;
-         width: 100%;
-         max-width: 600px;
-         min-width: 50%;
-         margin: 0 auto;
-         border-radius: var(--border-radius);
-         overflow: hidden;
-         box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
-         transition: transform 0.2s ease;
-     }
-     
-     .image-preview-wrapper:hover {
-         transform: scale(1.02);
-     }
-     
-     .image-preview-wrapper img {
-         display: block;
-         width: 100%;
-         height: auto;
-         border-radius: var(--border-radius);
-     }
-     
-     .image-overlay {
-         position: absolute;
-         top: 0;
-         left: 0;
-         right: 0;
-         bottom: 0;
-         background: rgba(0, 0, 0, 0.5);
-         display: flex;
-         align-items: center;
-         justify-content: center;
-         opacity: 0;
-         transition: opacity 0.3s ease;
-         border-radius: var(--border-radius);
-         backdrop-filter: blur(4px);
-     }
-     
-     .image-preview-wrapper:hover .image-overlay {
-         opacity: 1;
-     }
-     
-     .change-image-overlay-btn {
-         background: rgba(255, 255, 255, 0.95);
-         color: #1f2937;
-         border: none;
-         border-radius: 12px;
-         padding: 16px 24px;
-         font-size: 1rem;
-         font-weight: 600;
-         cursor: pointer;
-         display: flex;
-         align-items: center;
-         gap: 8px;
-         transition: all 0.2s ease;
-         box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
-         backdrop-filter: blur(10px);
-         border: 2px solid rgba(255, 255, 255, 0.5);
-     }
-     
-     .change-image-overlay-btn:hover {
-         background: white;
-         transform: translateY(-2px);
-         box-shadow: 0 6px 20px rgba(0, 0, 0, 0.4);
-     }
-     
-     .change-image-overlay-btn:active {
-         transform: translateY(0);
-         box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
-     }
-     
-     .change-image-overlay-btn i {
-         font-size: 1.1rem;
-     }
-     
-     .preview-container {
-         display: flex;
-         flex-direction: column;
-         align-items: center;
-         padding: 20px;
-         text-align: center;
-     }
-     
-     .preview-actions {
-         display: flex;
-         justify-content: center;
-         margin-top: 24px;
-     }
-    .image-reveal-container {
-        position: relative;
-        width: 100%;
-        height: 240px;
-        overflow: hidden;
-        border-radius: var(--border-radius);
-        background: #f6f6f7;
-    }
-    .image-reveal-container.reveal-loading {
-        display: none;
-    }
-    .image-reveal-container .original-image {
-        position: absolute;
-        top: 0;
-        left: 0;
-        width: 100%;
-        height: 100%;
-        object-fit: cover;
-        border-radius: var(--border-radius);
-        z-index: 2;
-        background: #f6f6f7;
-    }
-    .image-reveal-container .generated-image {
-        position: absolute;
-        top: 0;
-        left: 0;
-        width: 100%;
-        height: 100%;
-        object-fit: cover;
-        border-radius: var(--border-radius);
-        z-index: 3;
-        background: #f6f6f7;
-        transition: opacity 0.2s ease;
-        opacity: 1; /* Ensure it starts visible */
-    }
-    .image-reveal-container .generated-image.fade-in {
-        opacity: 1; /* Initial opacity, can be overridden by slider */
-    }
-    .reveal-slider {
-        position: absolute;
-        right: -28px;
-        top: 50%;
-        transform: translateY(-50%) rotate(90deg);
-        transform-origin: center;
-        width: 140px;
-        height: 12px;
-        background: transparent;
-        -webkit-appearance: none;
-        appearance: none;
-        cursor: grab;
-        z-index: 4;
-        outline: none;
-        opacity: 1;
-        transition: all 0.2s ease;
-        pointer-events: all;
-        filter: drop-shadow(0 2px 4px rgba(0, 0, 0, 0.2));
-    }
-    
-    .slider-backdrop {
-        position: absolute;
-        right: -34px;
-        top: 50%;
-        transform: translateY(-50%);
-        width: 24px;
-        height: 148px;
-        background: rgba(0, 0, 0, 0.2);
-        border-radius: 12px;
-        z-index: 3;
-        backdrop-filter: blur(2px);
-        box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
-    }
-    .reveal-slider:hover {
-        opacity: 1;
-        transform: translateY(-50%) rotate(90deg) scale(1.05);
-        filter: drop-shadow(0 4px 8px rgba(0, 0, 0, 0.3));
-    }
-    .reveal-slider:active {
-        cursor: grabbing;
-        transform: translateY(-50%) rotate(90deg) scale(0.98);
-    }
-    .reveal-slider::-webkit-slider-track {
-        width: 100%;
-        height: 12px;
-        background: linear-gradient(to bottom, #9ca3af 0%, #f9fafb 30%, #e5e7eb 70%, #9ca3af 100%);
-        border-radius: 6px;
-        border: 2px solid rgba(0, 0, 0, 0.4);
-        box-shadow: 
-            inset 0 3px 6px rgba(0, 0, 0, 0.4),
-            inset 0 -2px 2px rgba(255, 255, 255, 1),
-            0 2px 4px rgba(0, 0, 0, 0.3),
-            0 1px 1px rgba(0, 0, 0, 0.2),
-            0 0 0 1px rgba(255, 255, 255, 0.8);
-    }
-    .reveal-slider::-webkit-slider-thumb {
-        -webkit-appearance: none;
-        appearance: none;
-        width: 20px;
-        height: 20px;
-        background: linear-gradient(135deg, #f3f4f6 0%, #e5e7eb 50%, #d1d5db 100%);
-        border-radius: 50%;
-        border: 1px solid rgba(0, 0, 0, 0.15);
-        box-shadow: 
-            inset 0 2px 4px rgba(0, 0, 0, 0.15),
-            inset 0 -1px 1px rgba(255, 255, 255, 0.8),
-            0 1px 2px rgba(0, 0, 0, 0.1);
-        cursor: grab;
-        transition: all 0.2s ease;
-        position: relative;
-    }
-    .reveal-slider::-webkit-slider-thumb:active {
-        background: linear-gradient(135deg, #e5e7eb 0%, #d1d5db 50%, #9ca3af 100%);
-        transform: scale(0.95);
-        cursor: grabbing;
-        box-shadow: 
-            inset 0 3px 6px rgba(0, 0, 0, 0.25),
-            inset 0 -1px 1px rgba(255, 255, 255, 0.6),
-            0 1px 2px rgba(0, 0, 0, 0.1);
-    }
-    .reveal-slider::-webkit-slider-thumb:hover {
-        background: linear-gradient(135deg, #f9fafb 0%, #e5e7eb 50%, #d1d5db 100%);
-        transform: scale(1.05);
-        box-shadow: 
-            inset 0 2px 4px rgba(0, 0, 0, 0.12),
-            inset 0 -1px 1px rgba(255, 255, 255, 0.9),
-            0 1px 3px rgba(0, 0, 0, 0.15);
-    }
-    .reveal-slider::-moz-range-track {
-        width: 100%;
-        height: 12px;
-        background: linear-gradient(to bottom, #9ca3af 0%, #f9fafb 30%, #e5e7eb 70%, #9ca3af 100%);
-        border-radius: 6px;
-        border: 2px solid rgba(0, 0, 0, 0.4);
-        box-shadow: 
-            inset 0 3px 6px rgba(0, 0, 0, 0.4),
-            inset 0 -2px 2px rgba(255, 255, 255, 1),
-            0 2px 4px rgba(0, 0, 0, 0.3),
-            0 1px 1px rgba(0, 0, 0, 0.2),
-            0 0 0 1px rgba(255, 255, 255, 0.8);
-    }
-    .reveal-slider::-moz-range-thumb {
-        width: 20px;
-        height: 20px;
-        background: linear-gradient(135deg, #f3f4f6 0%, #e5e7eb 50%, #d1d5db 100%);
-        border-radius: 50%;
-        border: 1px solid rgba(0, 0, 0, 0.15);
-        box-shadow: 
-            inset 0 2px 4px rgba(0, 0, 0, 0.15),
-            inset 0 -1px 1px rgba(255, 255, 255, 0.8),
-            0 1px 2px rgba(0, 0, 0, 0.1);
-        cursor: grab;
-        transition: all 0.2s ease;
-    }
-    .reveal-slider::-moz-range-thumb:hover {
-        background: linear-gradient(135deg, #f9fafb 0%, #e5e7eb 50%, #d1d5db 100%);
-        transform: scale(1.05);
-        box-shadow: 
-            inset 0 2px 4px rgba(0, 0, 0, 0.12),
-            inset 0 -1px 1px rgba(255, 255, 255, 0.9),
-            0 1px 3px rgba(0, 0, 0, 0.15);
-    }
-    
-    .retry-container {
-        width: 100%;
-        height: 100%;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        background: linear-gradient(135deg, #f8fafc 0%, #e2e8f0 100%);
-        border-radius: var(--border-radius);
-        padding: 20px;
-        box-sizing: border-box;
-    }
-    
-    .retry-content {
-        text-align: center;
-        max-width: 280px;
-    }
-    
-    .retry-icon {
-        color: #f59e0b;
-        font-size: 28px;
-        margin-bottom: 12px;
-    }
-    
-    .retry-message {
-        margin-bottom: 16px;
-    }
-    
-    .retry-message h4 {
-        color: #374151;
-        font-size: 16px;
-        font-weight: 600;
-        margin: 0 0 8px 0;
-    }
-    
-    .retry-message p {
-        color: #6b7280;
-        font-size: 13px;
-        line-height: 1.4;
-        margin: 0;
-    }
-    
-    .retry-btn {
-        background: linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%);
-        color: white;
-        border: none;
-        border-radius: 8px;
-        padding: 10px 16px;
-        font-size: 14px;
-        font-weight: 500;
-        cursor: pointer;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        gap: 8px;
-        margin: 0 auto;
-        transition: all 0.2s ease;
-        box-shadow: 0 2px 4px rgba(99, 102, 241, 0.3);
-    }
-    
-    .retry-btn:hover {
-        background: linear-gradient(135deg, #5856f0 0%, #7c3aed 100%);
-        transform: translateY(-1px);
-        box-shadow: 0 4px 12px rgba(99, 102, 241, 0.4);
-    }
-    
-    .retry-btn:active {
-        transform: translateY(0);
-        box-shadow: 0 2px 4px rgba(99, 102, 241, 0.3);
-    }
-    
-    .retry-btn i {
-        font-size: 16px;
-    }
-    
-    .slider-indicators {
-        position: absolute;
-        right: 35px;
-        top: 0;
-        bottom: 0;
-        width: 12px;
-        z-index: 5;
-        pointer-events: none;
-    }
-    
-    .slider-indicator {
-        display: flex;
-        flex-direction: column;
-        align-items: center;
-        color: white;
-        text-shadow: 0 1px 2px rgba(0, 0, 0, 0.8);
-        font-size: 10px;
-        font-weight: 600;
-        opacity: 0.8;
-        transition: opacity 0.2s ease;
-    }
-    
-    .slider-indicator span {
-        text-transform: uppercase;
-        letter-spacing: 0.5px;
-        white-space: nowrap;
-    }
-    
-    .image-reveal-container:hover .slider-indicator {
-        opacity: 1;
-    }
-    
-    .slider-indicator-top {
-        position: absolute;
-        top: calc(50% - 70px - 8px);
-        left: 50%;
-        transform: translateX(-50%) translateY(-50%);
-        align-items: center;
-    }
-    
-    .slider-indicator-bottom {
-        position: absolute;
-        top: calc(50% + 70px + 8px);
-        left: 50%;
-        transform: translateX(-50%) translateY(-50%);
-        align-items: center;
-    }
-    
-    .slider-hint-arrows {
-        position: absolute;
-        right: -33px;
-        top: 50%;
-        transform: translateY(30px);
-        display: flex;
-        flex-direction: column;
-        gap: 2px;
-        z-index: 6;
-        pointer-events: none;
-        opacity: 0.8;
-        transition: opacity 0.3s ease;
-    }
-    
-    .slider-hint-arrows.hidden {
-        opacity: 0;
-        pointer-events: none;
-    }
-    
-    .slider-hint-arrow {
-        width: 0;
-        height: 0;
-        border-left: 4px solid transparent;
-        border-right: 4px solid transparent;
-        border-top: 6px solid rgba(255, 255, 255, 0.9);
-        filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.8));
-        animation: arrow-bounce 1.5s infinite;
-    }
-    
-    .slider-hint-arrow:nth-child(2) {
-        animation-delay: 0.2s;
-    }
-    
-    .slider-hint-arrow:nth-child(3) {
-        animation-delay: 0.4s;
-    }
-    
-    @keyframes arrow-bounce {
-        0%, 100% {
-            transform: translateY(0);
-            opacity: 0.8;
-        }
-        50% {
-            transform: translateY(3px);
-            opacity: 1;
-        }
-    }
-`;
-
-document.head.appendChild(style); 
+// CSS styles have been moved to styles.css file 
