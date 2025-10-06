@@ -43,6 +43,12 @@
                     </div>
                 </div>
                 <div class="preview-container hidden" id="preview-container">
+                    <div class="preview-header">
+                        <button id="back-to-upload-btn" class="back-to-upload-btn">
+                            <i data-feather="arrow-left"></i>
+                            <span>Back</span>
+                        </button>
+                    </div>
                     <div class="image-preview-wrapper">
                         <img id="room-preview" src="" alt="Room preview">
                         <div class="image-overlay">
@@ -56,7 +62,7 @@
                         <h3>Tell us about your room</h3>
                         <div class="room-options">
                             <div class="room-option">
-                                <input type="radio" id="empty-room" name="room-type" value="empty" checked>
+                                <input type="radio" id="empty-room" name="room-type" value="empty">
                                 <label for="empty-room">
                                     <div class="option-icon">
                                         <i data-feather="square"></i>
@@ -179,6 +185,80 @@
                 </div>
             </section>
         </main>
+
+        <!-- Mobile Options Screen -->
+        <div class="mobile-options-screen" id="mobile-options-screen">
+            <div class="mobile-options-header">
+                <button class="mobile-options-back-btn" id="mobile-options-back-btn">
+                    <i data-feather="arrow-left"></i>
+                    <span>Back</span>
+                </button>
+                <h2 class="mobile-options-title" id="mobile-options-title">Additional Options</h2>
+            </div>
+            <div class="mobile-options-content">
+                <!-- Dynamic room items selection (shown for empty rooms and some furnished room options) -->
+                <div class="room-items-selection" id="mobile-room-items-selection">
+                    <h3 id="mobile-items-selection-title">What would you like to add?</h3>
+                    <p class="selection-hint" id="mobile-items-selection-hint">Select items you'd like to include in your room design</p>
+                    <div class="items-grid" id="mobile-items-grid">
+                        <!-- Items will be populated by JavaScript -->
+                    </div>
+                    <div class="error-message hidden" id="mobile-items-selection-error">
+                        <i data-feather="alert-circle"></i>
+                        <span>Please select at least one item to add to your empty room before generating a design.</span>
+                    </div>
+                </div>
+                
+                <!-- Furnished room options (shown only for furnished rooms) -->
+                <div class="furnished-options" id="mobile-furnished-options">
+                    <h3>How would you like to redesign your room?</h3>
+                    <div class="furnished-options-grid">
+                        <div class="furnished-option">
+                            <input type="radio" id="mobile-keep-existing" name="mobile-furnished-option" value="keep-existing" checked>
+                            <label for="mobile-keep-existing">
+                                <div class="option-icon">
+                                    <i data-feather="move"></i>
+                                </div>
+                                <div class="option-text">
+                                    <h4>Keep Existing Items</h4>
+                                    <p>Rearrange current furniture without adding or removing anything</p>
+                                </div>
+                            </label>
+                        </div>
+                        <div class="furnished-option">
+                            <input type="radio" id="mobile-add-new" name="mobile-furnished-option" value="add-new">
+                            <label for="mobile-add-new">
+                                <div class="option-icon">
+                                    <i data-feather="plus"></i>
+                                </div>
+                                <div class="option-text">
+                                    <h4>Add New Items</h4>
+                                    <p>Keep existing furniture and add new pieces to enhance the space</p>
+                                </div>
+                            </label>
+                        </div>
+                        <div class="furnished-option">
+                            <input type="radio" id="mobile-start-fresh" name="mobile-furnished-option" value="start-fresh">
+                            <label for="mobile-start-fresh">
+                                <div class="option-icon">
+                                    <i data-feather="refresh-cw"></i>
+                                </div>
+                                <div class="option-text">
+                                    <h4>Start Fresh</h4>
+                                    <p>Remove existing items and furnish with completely new pieces</p>
+                                </div>
+                            </label>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div class="mobile-options-actions">
+                <button class="primary-btn" id="mobile-generate-btn">
+                    <span>Generate Design</span>
+                    <i data-feather="zap"></i>
+                </button>
+            </div>
+        </div>
 
         <footer>
             <p>Created with AI • <a href="../index.html">Back to Projects</a></p>

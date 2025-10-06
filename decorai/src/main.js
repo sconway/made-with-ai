@@ -16,6 +16,21 @@ const regenerateBtn = document.getElementById('regenerate-btn');
 const saveDesignBtn = document.getElementById('save-design-btn');
 const itemsSelectionError = document.getElementById('items-selection-error');
 
+// Mobile-specific DOM elements
+const mobileOptionsScreen = document.getElementById('mobile-options-screen');
+const mobileOptionsBackBtn = document.getElementById('mobile-options-back-btn');
+const mobileOptionsTitle = document.getElementById('mobile-options-title');
+const mobileRoomItemsSelection = document.getElementById('mobile-room-items-selection');
+const mobileFurnishedOptions = document.getElementById('mobile-furnished-options');
+const mobileItemsGrid = document.getElementById('mobile-items-grid');
+const mobileItemsSelectionTitle = document.getElementById('mobile-items-selection-title');
+const mobileItemsSelectionHint = document.getElementById('mobile-items-selection-hint');
+const mobileItemsSelectionError = document.getElementById('mobile-items-selection-error');
+const mobileGenerateBtn = document.getElementById('mobile-generate-btn');
+
+// Back to upload button
+const backToUploadBtn = document.getElementById('back-to-upload-btn');
+
 // Auth elements
 const loginBtn = document.getElementById('login-btn');
 const authModal = document.getElementById('auth-modal');
@@ -41,11 +56,12 @@ const authActionBtn = document.getElementById('auth-action-btn');
 
 // State variables
 let currentUploadedImage = null;
-let currentRoomType = 'empty';
+let currentRoomType = null;
 let generatedDesigns = [];
 let selectedRoomItems = new Set(); // Track selected room items
 let furnishedOption = 'keep-existing'; // Track furnished room option
 let isRoomActuallyEmpty = true; // Track if the uploaded room is actually empty
+let isMobile = window.innerWidth <= 768; // Track if we're on mobile
 
 // Auth state
 let openaiApiKey = localStorage.getItem('openai_api_key') || '';
@@ -191,6 +207,37 @@ document.addEventListener('DOMContentLoaded', () => {
                 currentRoomType = e.target.value;
                 console.log(`Room type selected: ${currentRoomType}`);
                 handleRoomTypeChange();
+                
+                // On mobile, show options screen after room type selection
+                if (isMobile) {
+                    showMobileOptionsScreen();
+                }
+            });
+        });
+    }
+    
+    // Mobile-specific event listeners
+    if (mobileOptionsBackBtn) {
+        mobileOptionsBackBtn.addEventListener('click', hideMobileOptionsScreen);
+    }
+    
+    if (mobileGenerateBtn) {
+        mobileGenerateBtn.addEventListener('click', generateDesigns);
+    }
+    
+    // Back to upload button
+    if (backToUploadBtn) {
+        backToUploadBtn.addEventListener('click', goBackToUpload);
+    }
+    
+    // Mobile furnished option selection
+    const mobileFurnishedOptionRadios = document.querySelectorAll('input[name="mobile-furnished-option"]');
+    if (mobileFurnishedOptionRadios) {
+        mobileFurnishedOptionRadios.forEach(radio => {
+            radio.addEventListener('change', (e) => {
+                furnishedOption = e.target.value;
+                console.log(`Mobile furnished option selected: ${furnishedOption}`);
+                handleMobileFurnishedOptionChange();
             });
         });
     }
@@ -258,9 +305,248 @@ function initializeApp() {
     updateLoginButton();
     feather.replace();
     
-    // Initialize room items if empty room is selected by default
+    // Update mobile detection on resize
+    window.addEventListener('resize', () => {
+        isMobile = window.innerWidth <= 768;
+    });
+    
+    // Initialize the generate button state
+    handleRoomTypeChange();
+    
+    // No room type is selected initially - user must make a choice
+}
+
+// Mobile-specific functions
+function showMobileOptionsScreen() {
+    if (!mobileOptionsScreen) return;
+    
+    // Don't show options screen if no room type is selected
+    if (!currentRoomType) {
+        return;
+    }
+    
+    // Update the title based on room type
+    if (mobileOptionsTitle) {
+        mobileOptionsTitle.textContent = currentRoomType === 'empty' ? 'Select Items' : 'Redesign Options';
+    }
+    
+    // Show/hide appropriate sections
     if (currentRoomType === 'empty') {
-        handleRoomTypeChange();
+        if (mobileRoomItemsSelection) {
+            mobileRoomItemsSelection.classList.remove('hidden');
+            updateMobileItemsSelectionUI('empty');
+            populateMobileRoomItems();
+        }
+        if (mobileFurnishedOptions) {
+            mobileFurnishedOptions.classList.add('hidden');
+        }
+    } else {
+        if (mobileFurnishedOptions) {
+            mobileFurnishedOptions.classList.remove('hidden');
+        }
+        if (mobileRoomItemsSelection) {
+            mobileRoomItemsSelection.classList.add('hidden');
+        }
+        handleMobileFurnishedOptionChange();
+    }
+    
+    // Show the mobile options screen
+    mobileOptionsScreen.classList.add('show');
+    
+    // Hide the generate button initially - it will be shown by handleMobileFurnishedOptionChange if needed
+    if (mobileGenerateBtn) {
+        mobileGenerateBtn.style.display = 'none';
+    }
+}
+
+function hideMobileOptionsScreen() {
+    if (mobileOptionsScreen) {
+        mobileOptionsScreen.classList.remove('show');
+    }
+    // Reset generate button visibility when hiding the screen
+    if (mobileGenerateBtn) {
+        mobileGenerateBtn.style.display = 'none';
+    }
+    // Reset room type selection and hide main generate button
+    resetRoomTypeSelection();
+}
+
+function resetRoomTypeSelection() {
+    // Reset the current room type
+    currentRoomType = null;
+    
+    // Uncheck all room type radio buttons
+    const roomTypeRadios = document.querySelectorAll('input[name="room-type"]');
+    roomTypeRadios.forEach(radio => {
+        radio.checked = false;
+    });
+    
+    // Uncheck all furnished option radio buttons
+    const furnishedOptionRadios = document.querySelectorAll('input[name="furnished-option"]');
+    furnishedOptionRadios.forEach(radio => {
+        radio.checked = false;
+    });
+    
+    // Uncheck all mobile furnished option radio buttons
+    const mobileFurnishedOptionRadios = document.querySelectorAll('input[name="mobile-furnished-option"]');
+    mobileFurnishedOptionRadios.forEach(radio => {
+        radio.checked = false;
+    });
+    
+    // Reset furnished option to default
+    furnishedOption = 'keep-existing';
+    
+    // Clear selected room items
+    selectedRoomItems.clear();
+    
+    // Hide all option sections
+    const roomItemsSelection = document.getElementById('room-items-selection');
+    const furnishedOptions = document.getElementById('furnished-options');
+    
+    if (roomItemsSelection) {
+        roomItemsSelection.classList.add('hidden');
+    }
+    if (furnishedOptions) {
+        furnishedOptions.classList.add('hidden');
+    }
+    
+    // Hide the main generate button
+    if (generateBtn) {
+        generateBtn.style.display = 'none';
+    }
+    
+    // Hide error messages
+    hideItemsSelectionError();
+    hideMobileItemsSelectionError();
+}
+
+function goBackToUpload() {
+    // Reset room type selection
+    resetRoomTypeSelection();
+    
+    // Hide preview container and show upload container
+    if (previewContainer) {
+        previewContainer.classList.add('hidden');
+    }
+    if (uploadContainer) {
+        uploadContainer.classList.remove('hidden');
+    }
+    
+    // Reset image upload state
+    resetImageUpload();
+}
+
+function handleMobileFurnishedOptionChange() {
+    if (!mobileRoomItemsSelection) return;
+    
+    // Hide error message when furnished option changes
+    hideMobileItemsSelectionError();
+    
+    if (furnishedOption === 'keep-existing') {
+        // Hide room items selection - keep existing items only
+        mobileRoomItemsSelection.classList.add('hidden');
+        selectedRoomItems.clear();
+        // Show generate button for keep existing option
+        if (mobileGenerateBtn) {
+            mobileGenerateBtn.style.display = 'flex';
+        }
+    } else if (furnishedOption === 'add-new') {
+        // Show room items selection for adding new items
+        mobileRoomItemsSelection.classList.remove('hidden');
+        updateMobileItemsSelectionUI('add-new');
+        populateMobileRoomItems();
+        // Show generate button for add new option
+        if (mobileGenerateBtn) {
+            mobileGenerateBtn.style.display = 'flex';
+        }
+    } else if (furnishedOption === 'start-fresh') {
+        // Show room items selection for starting fresh
+        mobileRoomItemsSelection.classList.remove('hidden');
+        updateMobileItemsSelectionUI('start-fresh');
+        populateMobileRoomItems();
+        // Show generate button for start fresh option
+        if (mobileGenerateBtn) {
+            mobileGenerateBtn.style.display = 'flex';
+        }
+    }
+}
+
+function updateMobileItemsSelectionUI(context) {
+    if (!mobileItemsSelectionTitle || !mobileItemsSelectionHint) return;
+    
+    if (context === 'empty') {
+        mobileItemsSelectionTitle.textContent = 'What would you like to add?';
+        mobileItemsSelectionHint.textContent = 'Select items you\'d like to include in your room design';
+    } else if (context === 'add-new') {
+        mobileItemsSelectionTitle.textContent = 'What additional items would you like?';
+        mobileItemsSelectionHint.textContent = 'Select new items to add to your existing furniture';
+    } else if (context === 'start-fresh') {
+        mobileItemsSelectionTitle.textContent = 'What would you like in your new room?';
+        mobileItemsSelectionHint.textContent = 'Select items to replace your existing furniture';
+    }
+}
+
+function populateMobileRoomItems() {
+    if (!mobileItemsGrid) return;
+    
+    mobileItemsGrid.innerHTML = '';
+    
+    roomItems.forEach(item => {
+        const itemElement = document.createElement('div');
+        itemElement.className = 'item-option';
+        itemElement.setAttribute('data-item-id', item.id);
+        
+        itemElement.innerHTML = `
+            <input type="checkbox" id="mobile-item-${item.id}" class="item-checkbox">
+            <label for="mobile-item-${item.id}" class="item-label">
+                <div class="item-icon">
+                    <i data-feather="${item.icon}"></i>
+                </div>
+                <span class="item-name">${item.name}</span>
+            </label>
+        `;
+        
+        // Add event listener for item selection
+        const checkbox = itemElement.querySelector('.item-checkbox');
+        checkbox.addEventListener('change', (e) => {
+            if (e.target.checked) {
+                selectedRoomItems.add(item.id);
+            } else {
+                selectedRoomItems.delete(item.id);
+            }
+            console.log('Selected items:', Array.from(selectedRoomItems));
+            
+            // Hide error message when items are selected
+            if (selectedRoomItems.size > 0) {
+                hideMobileItemsSelectionError();
+                // Show generate button when items are selected
+                if (mobileGenerateBtn) {
+                    mobileGenerateBtn.style.display = 'flex';
+                }
+            } else {
+                // Hide generate button when no items are selected
+                if (mobileGenerateBtn) {
+                    mobileGenerateBtn.style.display = 'none';
+                }
+            }
+        });
+        
+        mobileItemsGrid.appendChild(itemElement);
+    });
+    
+    // Replace feather icons
+    feather.replace();
+}
+
+function showMobileItemsSelectionError() {
+    if (mobileItemsSelectionError) {
+        mobileItemsSelectionError.classList.remove('hidden');
+    }
+}
+
+function hideMobileItemsSelectionError() {
+    if (mobileItemsSelectionError) {
+        mobileItemsSelectionError.classList.add('hidden');
     }
 }
 
@@ -519,6 +805,36 @@ function handleRoomTypeChange() {
     const roomItemsSelection = document.getElementById('room-items-selection');
     const furnishedOptions = document.getElementById('furnished-options');
     
+    // If no room type is selected, hide everything and return
+    if (!currentRoomType) {
+        if (roomItemsSelection) {
+            roomItemsSelection.classList.add('hidden');
+        }
+        if (furnishedOptions) {
+            furnishedOptions.classList.add('hidden');
+        }
+        if (generateBtn) {
+            generateBtn.style.display = 'none';
+        }
+        return;
+    }
+    
+    // On mobile, hide additional options in the main preview container
+    if (isMobile) {
+        if (roomItemsSelection) {
+            roomItemsSelection.classList.add('hidden');
+        }
+        if (furnishedOptions) {
+            furnishedOptions.classList.add('hidden');
+        }
+        // Hide the main generate button on mobile - it will be shown in the mobile options screen
+        if (generateBtn) {
+            generateBtn.style.display = 'none';
+        }
+        return; // Mobile flow will be handled by showMobileOptionsScreen
+    }
+    
+    // Desktop flow
     if (currentRoomType === 'empty') {
         // Show room items selection for empty rooms
         if (roomItemsSelection) {
@@ -537,6 +853,11 @@ function handleRoomTypeChange() {
         }
         // Handle furnished option change
         handleFurnishedOptionChange();
+    }
+    
+    // Show the main generate button on desktop
+    if (generateBtn) {
+        generateBtn.style.display = 'flex';
     }
 }
 
@@ -1248,9 +1569,18 @@ async function generateDesigns() {
     if (!prompts.shouldGenerate) {
         // Show error for empty room scenarios or furnished room with "add new" but no items selected
         if (currentRoomType === 'empty' || (currentRoomType === 'furnished' && furnishedOption === 'add-new')) {
-            showItemsSelectionError();
+            if (isMobile) {
+                showMobileItemsSelectionError();
+            } else {
+                showItemsSelectionError();
+            }
         }
         return;
+    }
+
+    // Hide mobile options screen if it's open
+    if (isMobile && mobileOptionsScreen) {
+        hideMobileOptionsScreen();
     }
 
     // Only proceed to next screen if validation passes
@@ -1968,8 +2298,9 @@ function setupRevealSliderForCard(card, index) {
 function goBackToPreview() {
     resultsSection.classList.add('hidden');
     previewContainer.classList.remove('hidden');
-    // Hide error message when going back to preview
-    hideItemsSelectionError();
+    
+    // Reset room type selection when going back to preview
+    resetRoomTypeSelection();
 }
 
 function regenerateDesigns() {
