@@ -19,6 +19,10 @@
   padding: 0;
 }
 
+html {
+  overflow-y: auto;
+}
+
 body {
   font-family: 'Inter', sans-serif;
   font-size: 16px;
@@ -58,6 +62,11 @@ a:hover {
   flex-direction: column;
   max-width: 100%;
   margin: 0 auto;
+}
+
+/* Hide mobile options screen by default on all screens */
+.mobile-options-screen {
+  display: none !important;
 }
 
 header {
@@ -795,15 +804,6 @@ footer {
       display: none;
   }
   
-  /* Show additional options screen when needed */
-  .mobile-options-screen {
-      display: block;
-      width: 100%;
-      max-width: 100%;
-      margin: 0;
-      padding: 1rem;
-  }
-  
   /* Mobile room type selection - full width buttons */
   .room-type-selection {
       margin: 1rem 0;
@@ -847,6 +847,24 @@ footer {
   /* Mobile results section */
   .results-section {
       margin-top: 1rem;
+      display: flex;
+      flex-direction: column;
+      height: calc(100vh - 200px);
+      overflow: hidden;
+  }
+  
+  .results-header {
+      position: sticky;
+      top: 0;
+      z-index: 5;
+      background-color: var(--background-color);
+      padding-bottom: 1rem;
+      margin-bottom: 0;
+  }
+  
+  .results-display {
+      flex: 1;
+      padding-bottom: 1rem;
   }
   
   .design-carousel {
@@ -863,9 +881,14 @@ footer {
   }
   
   .results-actions {
+      position: sticky;
+      bottom: 0;
+      background-color: var(--background-color);
+      padding-top: 1rem;
+      border-top: 1px solid var(--border-color);
+      margin-top: 0;
       flex-direction: column;
       gap: 0.75rem;
-      margin-top: 1rem;
   }
   
   .results-actions .primary-btn,
@@ -913,6 +936,7 @@ footer {
   
   /* Mobile options screen styles */
   .mobile-options-screen {
+      display: none !important;
       position: fixed;
       top: 0;
       left: 0;
@@ -928,6 +952,7 @@ footer {
   }
   
   .mobile-options-screen.show {
+      display: block !important;
       transform: translateX(0);
   }
   
@@ -1036,6 +1061,18 @@ footer {
   
   .options-actions, .results-actions {
       justify-content: flex-end;
+  }
+}
+
+@media (min-width: 769px) {
+  .results-actions {
+      flex-direction: row;
+      justify-content: center;
+  }
+  
+  .results-actions .primary-btn,
+  .results-actions .secondary-btn {
+      width: auto;
   }
 }
 
@@ -1386,6 +1423,13 @@ footer {
   background-color: var(--secondary-color);
 }
 
+/* Hide back button on desktop */
+@media (min-width: 769px) {
+  .back-to-upload-btn {
+    display: none;
+  }
+}
+
 /* Room Type Selection Styles */
 .room-type-selection {
   margin: 20px 0;
@@ -1405,6 +1449,8 @@ footer {
   flex-direction: column;
   gap: 12px;
   width: 100%;
+  max-width: 900px;
+  margin: 0 auto;
 }
 
 .room-option {
@@ -1534,7 +1580,7 @@ footer {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
   gap: 12px;
-  max-width: 600px;
+  max-width: 900px;
   margin: 0 auto;
 }
 
@@ -1645,7 +1691,7 @@ footer {
   display: flex;
   flex-direction: column;
   gap: 16px;
-  max-width: 600px;
+  max-width: 900px;
   margin: 0 auto;
 }
 

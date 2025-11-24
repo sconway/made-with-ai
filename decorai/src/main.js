@@ -359,7 +359,7 @@ function showMobileOptionsScreen() {
     }
 }
 
-function hideMobileOptionsScreen() {
+function hideMobileOptionsScreen(shouldResetSelection = true) {
     if (mobileOptionsScreen) {
         mobileOptionsScreen.classList.remove('show');
     }
@@ -367,8 +367,16 @@ function hideMobileOptionsScreen() {
     if (mobileGenerateBtn) {
         mobileGenerateBtn.style.display = 'none';
     }
-    // Reset room type selection and hide main generate button
-    resetRoomTypeSelection();
+    
+    // Only reset room type selection if explicitly requested and we're on the preview screen
+    // Don't reset if we're transitioning to results or regenerating
+    const isOnPreview = resultsSection && resultsSection.classList.contains('hidden');
+    const isOnResults = resultsSection && !resultsSection.classList.contains('hidden');
+    
+    if (shouldResetSelection && isOnPreview && !isOnResults) {
+        // Reset room type selection and hide main generate button
+        resetRoomTypeSelection();
+    }
 }
 
 function resetRoomTypeSelection() {
@@ -1550,14 +1558,27 @@ async function generateDesigns() {
         return;
     }
 
-    // Ensure the room type is correctly set
-    const emptyRadio = document.getElementById('empty-room');
-    const furnishedRadio = document.getElementById('furnished-room');
+    // Check if we're regenerating (already on results screen)
+    const isCurrentlyOnResults = resultsSection && !resultsSection.classList.contains('hidden');
     
-    if (emptyRadio && emptyRadio.checked) {
-        currentRoomType = 'empty';
-    } else if (furnishedRadio && furnishedRadio.checked) {
-        currentRoomType = 'furnished';
+    // Try to determine the room type if not already set
+    if (!currentRoomType) {
+        // First time generation - read from radio buttons
+        const emptyRadio = document.getElementById('empty-room');
+        const furnishedRadio = document.getElementById('furnished-room');
+        
+        if (emptyRadio && emptyRadio.checked) {
+            currentRoomType = 'empty';
+        } else if (furnishedRadio && furnishedRadio.checked) {
+            currentRoomType = 'furnished';
+        }
+    }
+    
+    // Validate that we have a valid room type
+    if (!currentRoomType || !designStyles[currentRoomType]) {
+        console.error('Invalid room type:', currentRoomType, 'isCurrentlyOnResults:', isCurrentlyOnResults);
+        alert('Please select a room type first');
+        return;
     }
     
     const basePrompt = aiPrompts[currentRoomType];
@@ -1578,9 +1599,11 @@ async function generateDesigns() {
         return;
     }
 
-    // Hide mobile options screen if it's open
-    if (isMobile && mobileOptionsScreen) {
-        hideMobileOptionsScreen();
+    // Hide mobile options screen if it's open (but not when we're already on results screen)
+    // Only hide if we're transitioning from preview to results, not when regenerating
+    // Pass false to prevent resetting the room type selection during generation
+    if (isMobile && mobileOptionsScreen && mobileOptionsScreen.classList.contains('show') && !isCurrentlyOnResults) {
+        hideMobileOptionsScreen(false);
     }
 
     // Only proceed to next screen if validation passes
@@ -2299,8 +2322,8 @@ function goBackToPreview() {
     resultsSection.classList.add('hidden');
     previewContainer.classList.remove('hidden');
     
-    // Reset room type selection when going back to preview
-    resetRoomTypeSelection();
+    // Don't reset room type selection - preserve user's choices
+    // This allows them to go back and forth without losing their selections
 }
 
 function regenerateDesigns() {
