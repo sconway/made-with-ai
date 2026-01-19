@@ -1,5 +1,6 @@
 <!DOCTYPE html>
 <html lang="en">
+
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -13,6 +14,7 @@
             background-color: #0a0a0a;
             color: #f0f0f0;
         }
+
         h1 {
             text-align: center;
             margin-bottom: 50px;
@@ -22,37 +24,42 @@
             letter-spacing: 2px;
             text-transform: uppercase;
         }
+
         .projects-container {
-            column-count: 3;
-            column-gap: 25px;
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 25px;
         }
+
         @media (max-width: 1200px) {
             .projects-container {
-                column-count: 2;
+                grid-template-columns: repeat(2, 1fr);
             }
         }
+
         @media (max-width: 768px) {
             .projects-container {
-                column-count: 1;
+                grid-template-columns: 1fr;
             }
         }
+
         .project-card {
             background: #161616;
             border-radius: 4px;
             overflow: hidden;
             box-shadow: 0 10px 20px rgba(0, 0, 0, 0.3);
-            margin-bottom: 25px;
-            break-inside: avoid;
-            display: inline-block;
-            width: 100%;
             transition: transform 0.3s ease, box-shadow 0.3s ease;
             border: 1px solid #222;
+            display: flex;
+            flex-direction: column;
         }
+
         .project-card:hover {
             transform: translateY(-5px);
             box-shadow: 0 15px 30px rgba(0, 0, 0, 0.4);
             border-color: #444;
         }
+
         .project-image {
             height: 240px;
             display: flex;
@@ -60,25 +67,34 @@
             justify-content: center;
             position: relative;
         }
+
         .project-image svg {
             width: 70%;
             height: 70%;
         }
+
         .project-info {
             padding: 25px;
+            flex: 1;
+            display: flex;
+            flex-direction: column;
         }
+
         .project-title {
             margin: 0 0 12px 0;
             font-size: 22px;
             color: #ffffff;
             font-weight: 500;
         }
+
         .project-description {
             margin: 0 0 20px 0;
             color: #aaaaaa;
             font-size: 15px;
             line-height: 1.6;
+            flex: 1;
         }
+
         .project-link {
             display: inline-block;
             text-decoration: none;
@@ -92,9 +108,11 @@
             transition: all 0.2s ease;
             font-size: 13px;
         }
+
         .project-link:hover {
             border-color: #fff;
         }
+
         footer {
             margin-top: 80px;
             text-align: center;
@@ -104,14 +122,55 @@
         }
     </style>
 </head>
+
 <body>
     <h1>Made With AI Projects</h1>
-    
+
     <div class="projects-container">
+        <!-- DecorAI Project -->
+        <div class="project-card">
+            <div class="project-image" style="background-color: #1a1a1a;">
+                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="#ffffff"
+                    stroke-width="0.6">
+                    <!-- Room outline -->
+                    <rect x="2" y="4" width="20" height="18" fill="none" stroke-width="0.8" />
+                    <!-- Floor -->
+                    <line x1="2" y1="22" x2="22" y2="22" stroke-width="0.8" />
+                    <!-- Window -->
+                    <rect x="15" y="6" width="5" height="4" fill="none" stroke-width="0.6" />
+                    <line x1="17.5" y1="6" x2="17.5" y2="10" stroke-width="0.6" />
+                    <line x1="20" y1="6" x2="20" y2="10" stroke-width="0.6" />
+                    <!-- Sofa -->
+                    <rect x="3" y="16" width="8" height="4" rx="0.5" fill="#333" stroke-width="0.6" />
+                    <rect x="4" y="17" width="6" height="2" fill="#444" stroke="none" />
+                    <!-- Coffee Table -->
+                    <rect x="12" y="17" width="4" height="1" rx="0.2" fill="#555" stroke-width="0.5" />
+                    <line x1="13" y1="18" x2="13" y2="20" stroke-width="0.4" />
+                    <line x1="15" y1="18" x2="15" y2="20" stroke-width="0.4" />
+                    <!-- Lamp -->
+                    <circle cx="19" cy="14" r="1.5" fill="#666" stroke-width="0.5" />
+                    <line x1="19" y1="12.5" x2="19" y2="10" stroke-width="0.6" />
+                    <line x1="18" y1="10" x2="20" y2="10" stroke-width="0.6" />
+                    <!-- Decorative elements (AI transformation indicator) -->
+                    <path d="M 4 8 Q 6 6, 8 8 Q 10 10, 12 8" fill="none" stroke="#6366f1" stroke-width="0.5"
+                        stroke-dasharray="1 1" opacity="0.6" />
+                    <circle cx="6" cy="8" r="0.4" fill="#6366f1" opacity="0.8" />
+                    <circle cx="10" cy="8" r="0.4" fill="#6366f1" opacity="0.8" />
+                </svg>
+            </div>
+            <div class="project-info">
+                <h2 class="project-title">DecorAI</h2>
+                <p class="project-description">AI-powered interior design tool that transforms your room photos with new
+                    furniture layouts and styles using Stable Diffusion.</p>
+                <a href="https://decorait.onrender.com/" target="_blank" class="project-link">View Project</a>
+            </div>
+        </div>
+
         <!-- Tanks Project -->
         <div class="project-card">
             <div class="project-image" style="background-color: #111111;">
-                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="#ffffff" stroke-width="0.5">
+                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="#ffffff"
+                    stroke-width="0.5">
                     <!-- Tank Body -->
                     <rect x="3" y="12" width="18" height="6" rx="1" fill="#222" stroke-width="0.8" />
                     <!-- Tank Treads -->
@@ -141,33 +200,38 @@
                 <a href="https://made-with-ai.onrender.com/" target="_blank" class="project-link">View Project</a>
             </div>
         </div>
-        
+
         <!-- Text Transform Project -->
         <div class="project-card">
             <div class="project-image" style="background-color: #222222;">
-                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="#ffffff" stroke-width="0.8">
+                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="#ffffff"
+                    stroke-width="0.8">
                     <!-- Input Text -->
                     <text x="3" y="8" fill="#777" font-family="monospace" font-size="1.8">Hello World</text>
                     <!-- Transform Arrow -->
                     <line x1="4" y1="12" x2="20" y2="12" stroke="#aaa" stroke-width="0.8" />
                     <polygon points="20,10 22,12 20,14" fill="#aaa" stroke="none" />
                     <!-- Output Text (Transformed) -->
-                    <text x="4" y="18" fill="#fff" font-family="monospace" font-size="2" font-style="italic">H3LL0 W0RLD</text>
+                    <text x="4" y="18" fill="#fff" font-family="monospace" font-size="2" font-style="italic">H3LL0
+                        W0RLD</text>
                     <!-- Transform Box -->
-                    <rect x="8" y="9" width="8" height="6" rx="1" stroke-dasharray="2 1" fill="none" stroke="#666" stroke-width="0.6" />
+                    <rect x="8" y="9" width="8" height="6" rx="1" stroke-dasharray="2 1" fill="none" stroke="#666"
+                        stroke-width="0.6" />
                 </svg>
             </div>
             <div class="project-info">
                 <h2 class="project-title">Text Transform</h2>
                 <p class="project-description">Text manipulation and transformation tool.</p>
-                <a href="https://sconway.github.io/made-with-ai/text-transform/dist/" target="_blank" class="project-link">View Project</a>
+                <a href="https://sconway.github.io/made-with-ai/text-transform/dist/" target="_blank"
+                    class="project-link">View Project</a>
             </div>
         </div>
-        
+
         <!-- Maze Project -->
         <div class="project-card">
             <div class="project-image" style="background-color: #1a1a1a;">
-                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="#ffffff" stroke-width="0.6">
+                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="#ffffff"
+                    stroke-width="0.6">
                     <!-- Maze Grid -->
                     <rect x="2" y="2" width="20" height="20" fill="none" stroke-width="0.8" />
                     <!-- Maze Walls -->
@@ -194,14 +258,16 @@
             <div class="project-info">
                 <h2 class="project-title">Maze</h2>
                 <p class="project-description">Maze generation and solving visualization.</p>
-                <a href="https://sconway.github.io/made-with-ai/maze/dist/" target="_blank" class="project-link">View Project</a>
+                <a href="https://sconway.github.io/made-with-ai/maze/dist/" target="_blank" class="project-link">View
+                    Project</a>
             </div>
         </div>
-        
+
         <!-- Snake Project -->
         <div class="project-card">
             <div class="project-image" style="background-color: #151515;">
-                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="#ffffff" stroke-width="0.8">
+                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="#ffffff"
+                    stroke-width="0.8">
                     <!-- Game Border -->
                     <rect x="2" y="2" width="20" height="20" fill="none" stroke-width="0.6" />
                     <!-- Snake Body -->
@@ -232,18 +298,21 @@
             <div class="project-info">
                 <h2 class="project-title">Snake</h2>
                 <p class="project-description">Classic snake game with modern web technologies.</p>
-                <a href="https://sconway.github.io/made-with-ai/snake/dist/" target="_blank" class="project-link">View Project</a>
+                <a href="https://sconway.github.io/made-with-ai/snake/dist/" target="_blank" class="project-link">View
+                    Project</a>
             </div>
         </div>
-        
+
         <!-- Atoms Project -->
         <div class="project-card">
             <div class="project-image" style="background-color: #191919;">
-                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="#ffffff" stroke-width="0.7">
+                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="#ffffff"
+                    stroke-width="0.7">
                     <!-- Electron Orbits -->
                     <ellipse cx="12" cy="12" rx="10" ry="5" stroke-opacity="0.7" fill="none" />
                     <ellipse cx="12" cy="12" rx="5" ry="10" stroke-opacity="0.7" fill="none" />
-                    <ellipse cx="12" cy="12" rx="7.5" ry="7.5" stroke-opacity="0.7" fill="none" transform="rotate(45 12 12)" />
+                    <ellipse cx="12" cy="12" rx="7.5" ry="7.5" stroke-opacity="0.7" fill="none"
+                        transform="rotate(45 12 12)" />
                     <!-- Nucleus -->
                     <circle cx="12" cy="12" r="2" fill="#777" stroke="none" />
                     <!-- Electrons -->
@@ -265,13 +334,15 @@
             <div class="project-info">
                 <h2 class="project-title">Atoms</h2>
                 <p class="project-description">Interactive atomic particle simulation.</p>
-                <a href="https://sconway.github.io/made-with-ai/atoms/dist/" target="_blank" class="project-link">View Project</a>
+                <a href="https://sconway.github.io/made-with-ai/atoms/dist/" target="_blank" class="project-link">View
+                    Project</a>
             </div>
         </div>
     </div>
-    
+
     <footer>
         <p>All projects in this collection were created with the assistance of AI.</p>
     </footer>
 </body>
-</html> 
+
+</html>
