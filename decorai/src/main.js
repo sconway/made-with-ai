@@ -59,7 +59,7 @@ let currentUploadedImage = null;
 let currentRoomType = null;
 let generatedDesigns = [];
 let selectedRoomItems = new Set(); // Track selected room items
-let furnishedOption = 'keep-existing'; // Track furnished room option
+let furnishedOption = null; // Track furnished room option - no default selection
 let isRoomActuallyEmpty = true; // Track if the uploaded room is actually empty
 let isMobile = window.innerWidth <= 768; // Track if we're on mobile
 
@@ -178,7 +178,7 @@ document.addEventListener('DOMContentLoaded', () => {
     // Auth event listeners
     if (loginBtn) loginBtn.addEventListener('click', showAuthModal);
     if (closeModalBtn) closeModalBtn.addEventListener('click', hideAuthModal);
-    
+
     // The original error source:
     if (authModal) {
         authModal.addEventListener('click', event => {
@@ -187,11 +187,11 @@ document.addEventListener('DOMContentLoaded', () => {
             }
         });
     }
-    
+
     // Check existence of elements before adding listeners
     if (toggleKeyVisibilityBtn && apiKeyInput) {
         toggleKeyVisibilityBtn.addEventListener('click', toggleKeyVisibility);
-    } 
+    }
     if (toggleReplicateKeyVisibilityBtn && replicateApiKeyInput) {
         toggleReplicateKeyVisibilityBtn.addEventListener('click', toggleKeyVisibility);
     }
@@ -207,7 +207,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 currentRoomType = e.target.value;
                 console.log(`Room type selected: ${currentRoomType}`);
                 handleRoomTypeChange();
-                
+
                 // On mobile, show options screen after room type selection
                 if (isMobile) {
                     showMobileOptionsScreen();
@@ -215,21 +215,21 @@ document.addEventListener('DOMContentLoaded', () => {
             });
         });
     }
-    
+
     // Mobile-specific event listeners
     if (mobileOptionsBackBtn) {
         mobileOptionsBackBtn.addEventListener('click', hideMobileOptionsScreen);
     }
-    
+
     if (mobileGenerateBtn) {
         mobileGenerateBtn.addEventListener('click', generateDesigns);
     }
-    
+
     // Back to upload button
     if (backToUploadBtn) {
         backToUploadBtn.addEventListener('click', goBackToUpload);
     }
-    
+
     // Mobile furnished option selection
     const mobileFurnishedOptionRadios = document.querySelectorAll('input[name="mobile-furnished-option"]');
     if (mobileFurnishedOptionRadios) {
@@ -241,7 +241,7 @@ document.addEventListener('DOMContentLoaded', () => {
             });
         });
     }
-    
+
     // Furnished room options selection
     const furnishedOptionRadios = document.querySelectorAll('input[name="furnished-option"]');
     if (furnishedOptionRadios) {
@@ -274,14 +274,14 @@ document.addEventListener('DOMContentLoaded', () => {
                 if (isValidImage(file)) {
                     const reader = new FileReader();
 
-                    reader.onload = async function(event) {
+                    reader.onload = async function (event) {
                         currentUploadedImage = event.target.result;
                         if (roomPreview) roomPreview.src = currentUploadedImage;
-                        
+
                         // Detect if the room is empty
                         isRoomActuallyEmpty = await detectEmptyRoom(currentUploadedImage);
                         console.log(`Uploaded room is ${isRoomActuallyEmpty ? 'empty' : 'furnished'}`);
-                        
+
                         if (uploadContainer) uploadContainer.classList.add('hidden');
                         if (previewContainer) previewContainer.classList.remove('hidden');
                     };
@@ -304,32 +304,32 @@ document.addEventListener('DOMContentLoaded', () => {
 function initializeApp() {
     updateLoginButton();
     feather.replace();
-    
+
     // Update mobile detection on resize
     window.addEventListener('resize', () => {
         isMobile = window.innerWidth <= 768;
     });
-    
+
     // Initialize the generate button state
     handleRoomTypeChange();
-    
+
     // No room type is selected initially - user must make a choice
 }
 
 // Mobile-specific functions
 function showMobileOptionsScreen() {
     if (!mobileOptionsScreen) return;
-    
+
     // Don't show options screen if no room type is selected
     if (!currentRoomType) {
         return;
     }
-    
+
     // Update the title based on room type
     if (mobileOptionsTitle) {
         mobileOptionsTitle.textContent = currentRoomType === 'empty' ? 'Select Items' : 'Redesign Options';
     }
-    
+
     // Show/hide appropriate sections
     if (currentRoomType === 'empty') {
         if (mobileRoomItemsSelection) {
@@ -349,10 +349,10 @@ function showMobileOptionsScreen() {
         }
         handleMobileFurnishedOptionChange();
     }
-    
+
     // Show the mobile options screen
     mobileOptionsScreen.classList.add('show');
-    
+
     // Hide the generate button initially - it will be shown by handleMobileFurnishedOptionChange if needed
     if (mobileGenerateBtn) {
         mobileGenerateBtn.style.display = 'none';
@@ -367,12 +367,12 @@ function hideMobileOptionsScreen(shouldResetSelection = true) {
     if (mobileGenerateBtn) {
         mobileGenerateBtn.style.display = 'none';
     }
-    
+
     // Only reset room type selection if explicitly requested and we're on the preview screen
     // Don't reset if we're transitioning to results or regenerating
     const isOnPreview = resultsSection && resultsSection.classList.contains('hidden');
     const isOnResults = resultsSection && !resultsSection.classList.contains('hidden');
-    
+
     if (shouldResetSelection && isOnPreview && !isOnResults) {
         // Reset room type selection and hide main generate button
         resetRoomTypeSelection();
@@ -382,47 +382,47 @@ function hideMobileOptionsScreen(shouldResetSelection = true) {
 function resetRoomTypeSelection() {
     // Reset the current room type
     currentRoomType = null;
-    
+
     // Uncheck all room type radio buttons
     const roomTypeRadios = document.querySelectorAll('input[name="room-type"]');
     roomTypeRadios.forEach(radio => {
         radio.checked = false;
     });
-    
+
     // Uncheck all furnished option radio buttons
     const furnishedOptionRadios = document.querySelectorAll('input[name="furnished-option"]');
     furnishedOptionRadios.forEach(radio => {
         radio.checked = false;
     });
-    
+
     // Uncheck all mobile furnished option radio buttons
     const mobileFurnishedOptionRadios = document.querySelectorAll('input[name="mobile-furnished-option"]');
     mobileFurnishedOptionRadios.forEach(radio => {
         radio.checked = false;
     });
-    
+
     // Reset furnished option to default
-    furnishedOption = 'keep-existing';
-    
+    furnishedOption = null;
+
     // Clear selected room items
     selectedRoomItems.clear();
-    
+
     // Hide all option sections
     const roomItemsSelection = document.getElementById('room-items-selection');
     const furnishedOptions = document.getElementById('furnished-options');
-    
+
     if (roomItemsSelection) {
         roomItemsSelection.classList.add('hidden');
     }
     if (furnishedOptions) {
         furnishedOptions.classList.add('hidden');
     }
-    
+
     // Hide the main generate button
     if (generateBtn) {
         generateBtn.style.display = 'none';
     }
-    
+
     // Hide error messages
     hideItemsSelectionError();
     hideMobileItemsSelectionError();
@@ -431,7 +431,7 @@ function resetRoomTypeSelection() {
 function goBackToUpload() {
     // Reset room type selection
     resetRoomTypeSelection();
-    
+
     // Hide preview container and show upload container
     if (previewContainer) {
         previewContainer.classList.add('hidden');
@@ -439,17 +439,25 @@ function goBackToUpload() {
     if (uploadContainer) {
         uploadContainer.classList.remove('hidden');
     }
-    
+
     // Reset image upload state
     resetImageUpload();
 }
 
 function handleMobileFurnishedOptionChange() {
     if (!mobileRoomItemsSelection) return;
-    
+
     // Hide error message when furnished option changes
     hideMobileItemsSelectionError();
-    
+
+    // Hide generate button if no option is selected
+    if (!furnishedOption) {
+        if (mobileGenerateBtn) {
+            mobileGenerateBtn.style.display = 'none';
+        }
+        return;
+    }
+
     if (furnishedOption === 'keep-existing') {
         // Hide room items selection - keep existing items only
         mobileRoomItemsSelection.classList.add('hidden');
@@ -481,7 +489,7 @@ function handleMobileFurnishedOptionChange() {
 
 function updateMobileItemsSelectionUI(context) {
     if (!mobileItemsSelectionTitle || !mobileItemsSelectionHint) return;
-    
+
     if (context === 'empty') {
         mobileItemsSelectionTitle.textContent = 'What would you like to add?';
         mobileItemsSelectionHint.textContent = 'Select items you\'d like to include in your room design';
@@ -496,14 +504,14 @@ function updateMobileItemsSelectionUI(context) {
 
 function populateMobileRoomItems() {
     if (!mobileItemsGrid) return;
-    
+
     mobileItemsGrid.innerHTML = '';
-    
+
     roomItems.forEach(item => {
         const itemElement = document.createElement('div');
         itemElement.className = 'item-option';
         itemElement.setAttribute('data-item-id', item.id);
-        
+
         itemElement.innerHTML = `
             <input type="checkbox" id="mobile-item-${item.id}" class="item-checkbox">
             <label for="mobile-item-${item.id}" class="item-label">
@@ -513,7 +521,7 @@ function populateMobileRoomItems() {
                 <span class="item-name">${item.name}</span>
             </label>
         `;
-        
+
         // Add event listener for item selection
         const checkbox = itemElement.querySelector('.item-checkbox');
         checkbox.addEventListener('change', (e) => {
@@ -523,7 +531,7 @@ function populateMobileRoomItems() {
                 selectedRoomItems.delete(item.id);
             }
             console.log('Selected items:', Array.from(selectedRoomItems));
-            
+
             // Hide error message when items are selected
             if (selectedRoomItems.size > 0) {
                 hideMobileItemsSelectionError();
@@ -538,10 +546,10 @@ function populateMobileRoomItems() {
                 }
             }
         });
-        
+
         mobileItemsGrid.appendChild(itemElement);
     });
-    
+
     // Replace feather icons
     feather.replace();
 }
@@ -560,7 +568,7 @@ function hideMobileItemsSelectionError() {
 
 function updateLoginButton() {
     if (!loginBtn) return;
-    
+
     if (replicateApiKey) {
         loginBtn.innerHTML = `<i data-feather="check-circle"></i><span>API Key Set</span>`;
         loginBtn.classList.add('authenticated');
@@ -641,19 +649,19 @@ async function handleImageUpload(e) {
     const file = e.target.files[0];
     if (file && isValidImage(file)) {
         const reader = new FileReader();
-        
-        reader.onload = async function(event) {
+
+        reader.onload = async function (event) {
             currentUploadedImage = event.target.result;
             roomPreview.src = currentUploadedImage;
-            
+
             // Detect if the room is empty
             isRoomActuallyEmpty = await detectEmptyRoom(currentUploadedImage);
             console.log(`Uploaded room is ${isRoomActuallyEmpty ? 'empty' : 'furnished'}`);
-            
+
             uploadContainer.classList.add('hidden');
             previewContainer.classList.remove('hidden');
         };
-        
+
         reader.readAsDataURL(file);
     } else if (file) {
         alert('Please upload a valid image file (JPEG, PNG, etc.)');
@@ -671,54 +679,54 @@ function openCamera() {
         // Create a new element for the camera view
         const cameraView = document.createElement('div');
         cameraView.classList.add('camera-view');
-        
+
         const video = document.createElement('video');
         video.setAttribute('autoplay', '');
         video.setAttribute('playsinline', '');
-        
+
         const captureBtn = document.createElement('button');
         captureBtn.classList.add('capture-btn');
         captureBtn.innerHTML = '<i data-feather="camera"></i>';
-        
+
         const cancelBtn = document.createElement('button');
         cancelBtn.classList.add('cancel-btn');
         cancelBtn.innerHTML = '<i data-feather="x"></i>';
-        
+
         cameraView.appendChild(video);
         cameraView.appendChild(captureBtn);
         cameraView.appendChild(cancelBtn);
-        
+
         document.body.appendChild(cameraView);
         feather.replace();
-        
+
         // Get camera access
         navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } })
             .then(stream => {
                 video.srcObject = stream;
                 video.play();
-                
+
                 captureBtn.addEventListener('click', async () => {
                     const canvas = document.createElement('canvas');
                     canvas.width = video.videoWidth;
                     canvas.height = video.videoHeight;
                     const ctx = canvas.getContext('2d');
                     ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-                    
+
                     currentUploadedImage = canvas.toDataURL('image/jpeg');
                     roomPreview.src = currentUploadedImage;
-                    
+
                     // Detect if the room is empty
                     isRoomActuallyEmpty = await detectEmptyRoom(currentUploadedImage);
                     console.log(`Captured room is ${isRoomActuallyEmpty ? 'empty' : 'furnished'}`);
-                    
+
                     uploadContainer.classList.add('hidden');
                     previewContainer.classList.remove('hidden');
-                    
+
                     // Stop the camera stream
                     stream.getTracks().forEach(track => track.stop());
                     cameraView.remove();
                 });
-                
+
                 cancelBtn.addEventListener('click', () => {
                     // Stop the camera stream
                     stream.getTracks().forEach(track => track.stop());
@@ -756,54 +764,54 @@ async function detectEmptyRoom(imageSrc) {
     return new Promise((resolve) => {
         const img = new Image();
         img.crossOrigin = 'anonymous';
-        img.onload = function() {
+        img.onload = function () {
             const canvas = document.createElement('canvas');
             const ctx = canvas.getContext('2d');
             canvas.width = img.width;
             canvas.height = img.height;
             ctx.drawImage(img, 0, 0);
-            
+
             const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
             const data = imageData.data;
-            
+
             // Simple heuristic: check for large areas of uniform color (walls, floors)
             // and lack of distinct objects (furniture)
             let uniformColorPixels = 0;
             let totalPixels = data.length / 4;
-            
+
             // Sample pixels to check for uniformity
             const sampleSize = Math.min(1000, totalPixels);
             const step = Math.floor(totalPixels / sampleSize);
-            
+
             for (let i = 0; i < sampleSize; i++) {
                 const pixelIndex = i * step * 4;
                 const r = data[pixelIndex];
                 const g = data[pixelIndex + 1];
                 const b = data[pixelIndex + 2];
-                
+
                 // Check if this pixel is part of a wall/floor (neutral colors)
                 const isNeutral = Math.abs(r - g) < 30 && Math.abs(g - b) < 30 && Math.abs(r - b) < 30;
                 const isLight = (r + g + b) / 3 > 100;
-                
+
                 if (isNeutral && isLight) {
                     uniformColorPixels++;
                 }
             }
-            
+
             const uniformRatio = uniformColorPixels / sampleSize;
-            
+
             // If more than 70% of sampled pixels are uniform neutral colors, likely empty
             const isEmpty = uniformRatio > 0.7;
-            
+
             console.log(`Room analysis: ${Math.round(uniformRatio * 100)}% uniform neutral colors, likely empty: ${isEmpty}`);
             resolve(isEmpty);
         };
-        
-        img.onerror = function() {
+
+        img.onerror = function () {
             console.log('Could not analyze image, assuming room is furnished');
             resolve(false);
         };
-        
+
         img.src = imageSrc;
     });
 }
@@ -812,7 +820,7 @@ async function detectEmptyRoom(imageSrc) {
 function handleRoomTypeChange() {
     const roomItemsSelection = document.getElementById('room-items-selection');
     const furnishedOptions = document.getElementById('furnished-options');
-    
+
     // If no room type is selected, hide everything and return
     if (!currentRoomType) {
         if (roomItemsSelection) {
@@ -826,7 +834,7 @@ function handleRoomTypeChange() {
         }
         return;
     }
-    
+
     // On mobile, hide additional options in the main preview container
     if (isMobile) {
         if (roomItemsSelection) {
@@ -841,7 +849,7 @@ function handleRoomTypeChange() {
         }
         return; // Mobile flow will be handled by showMobileOptionsScreen
     }
-    
+
     // Desktop flow
     if (currentRoomType === 'empty') {
         // Show room items selection for empty rooms
@@ -854,18 +862,21 @@ function handleRoomTypeChange() {
         if (furnishedOptions) {
             furnishedOptions.classList.add('hidden');
         }
+        // Hide generate button initially for empty rooms - will show when items are selected
+        if (!isMobile && generateBtn) {
+            generateBtn.style.display = 'none';
+        }
     } else {
         // Show furnished options for furnished rooms
         if (furnishedOptions) {
             furnishedOptions.classList.remove('hidden');
         }
-        // Handle furnished option change
+        // Hide generate button initially since no furnished option is selected yet
+        if (!isMobile && generateBtn) {
+            generateBtn.style.display = 'none';
+        }
+        // Handle furnished option change - this will show/hide button based on selection
         handleFurnishedOptionChange();
-    }
-    
-    // Show the main generate button on desktop
-    if (generateBtn) {
-        generateBtn.style.display = 'flex';
     }
 }
 
@@ -873,14 +884,14 @@ function handleRoomTypeChange() {
 function populateRoomItems() {
     const itemsGrid = document.getElementById('items-grid');
     if (!itemsGrid) return;
-    
+
     itemsGrid.innerHTML = '';
-    
+
     roomItems.forEach(item => {
         const itemElement = document.createElement('div');
         itemElement.className = 'item-option';
         itemElement.setAttribute('data-item-id', item.id);
-        
+
         itemElement.innerHTML = `
             <input type="checkbox" id="item-${item.id}" class="item-checkbox">
             <label for="item-${item.id}" class="item-label">
@@ -890,7 +901,7 @@ function populateRoomItems() {
                 <span class="item-name">${item.name}</span>
             </label>
         `;
-        
+
         // Add event listener for item selection
         const checkbox = itemElement.querySelector('.item-checkbox');
         checkbox.addEventListener('change', (e) => {
@@ -900,16 +911,25 @@ function populateRoomItems() {
                 selectedRoomItems.delete(item.id);
             }
             console.log('Selected items:', Array.from(selectedRoomItems));
-            
+
             // Hide error message when items are selected
             if (selectedRoomItems.size > 0) {
                 hideItemsSelectionError();
+                // Show generate button when items are selected (desktop)
+                if (!isMobile && generateBtn) {
+                    generateBtn.style.display = 'flex';
+                }
+            } else {
+                // Hide generate button when no items are selected (desktop)
+                if (!isMobile && generateBtn && currentRoomType === 'empty') {
+                    generateBtn.style.display = 'none';
+                }
             }
         });
-        
+
         itemsGrid.appendChild(itemElement);
     });
-    
+
     // Replace feather icons
     feather.replace();
 }
@@ -917,22 +937,38 @@ function populateRoomItems() {
 // Handle furnished room option changes
 function handleFurnishedOptionChange() {
     const roomItemsSelection = document.getElementById('room-items-selection');
-    
+
     // Hide error message when furnished option changes
     hideItemsSelectionError();
-    
+
+    // Hide generate button if no option is selected
+    if (!furnishedOption) {
+        if (!isMobile && generateBtn) {
+            generateBtn.style.display = 'none';
+        }
+        return;
+    }
+
     if (furnishedOption === 'keep-existing') {
         // Hide room items selection - keep existing items only
         if (roomItemsSelection) {
             roomItemsSelection.classList.add('hidden');
         }
         selectedRoomItems.clear();
+        // Show generate button for keep-existing option (desktop)
+        if (!isMobile && generateBtn) {
+            generateBtn.style.display = 'flex';
+        }
     } else if (furnishedOption === 'add-new') {
         // Show room items selection for adding new items
         if (roomItemsSelection) {
             roomItemsSelection.classList.remove('hidden');
             updateItemsSelectionUI('add-new');
             populateRoomItems();
+        }
+        // Show generate button for add-new option (desktop) - will be hidden if no items selected
+        if (!isMobile && generateBtn) {
+            generateBtn.style.display = 'flex';
         }
     } else if (furnishedOption === 'start-fresh') {
         // Show room items selection for starting fresh
@@ -941,6 +977,10 @@ function handleFurnishedOptionChange() {
             updateItemsSelectionUI('start-fresh');
             populateRoomItems();
         }
+        // Show generate button for start-fresh option (desktop) - will be hidden if no items selected
+        if (!isMobile && generateBtn) {
+            generateBtn.style.display = 'flex';
+        }
     }
 }
 
@@ -948,7 +988,7 @@ function handleFurnishedOptionChange() {
 function updateItemsSelectionUI(context) {
     const title = document.getElementById('items-selection-title');
     const hint = document.getElementById('items-selection-hint');
-    
+
     if (context === 'empty') {
         title.textContent = 'What would you like to add?';
         hint.textContent = 'Select items you\'d like to include in your room design';
@@ -968,17 +1008,17 @@ function generatePromptsWithItems(basePrompt, style) {
         negativePrompt: '',
         shouldGenerate: true // Flag to indicate if generation should proceed
     };
-    
+
     // Simplified architectural preservation constants
     const ARCHITECTURAL_PRESERVATION_PREFIX = "DO NOT change walls, floor, ceiling, windows, or doors. Only add furniture.";
     const ARCHITECTURAL_PRESERVATION_SUFFIX = "Same style as the original room.";
-    
+
     // Simplified base negative prompt - focused on architectural preservation
     const baseNegativePrompt = "blurry, distorted, out of frame, unrealistic shadows, text, watermark, signature, low quality, pixelated, artifacts, change walls, change windows, change floor, change ceiling, change doors, architectural changes, structural modifications";
-    
+
     // Check if we have an empty room but user selected furnished room
     const shouldTreatAsEmpty = isRoomActuallyEmpty && currentRoomType === 'furnished';
-    
+
     // Special case: "start fresh" should always generate, even with no items
     if (currentRoomType === 'furnished' && furnishedOption === 'start-fresh') {
         if (selectedRoomItems.size === 0) {
@@ -988,11 +1028,11 @@ function generatePromptsWithItems(basePrompt, style) {
             // Get selected and unselected items
             const selectedItems = roomItems.filter(item => selectedRoomItems.has(item.id));
             const unselectedItems = roomItems.filter(item => !selectedRoomItems.has(item.id));
-            
+
             // Build positive prompt with selected items
             const selectedItemNames = selectedItems.map(item => item.name.toLowerCase()).join(', ');
             result.positivePrompt = `DO NOT change walls, floor, ceiling, windows, or doors. Remove all existing furniture, then add ONLY: ${selectedItemNames}. ${ARCHITECTURAL_PRESERVATION_SUFFIX} Style: ${style}.`;
-            
+
             // Build negative prompt with unselected items
             const unselectedItemNames = unselectedItems.map(item => item.name.toLowerCase()).join(', ');
             result.negativePrompt = `${baseNegativePrompt}, ${unselectedItemNames}, existing furniture, other furniture`;
@@ -1008,10 +1048,10 @@ function generatePromptsWithItems(basePrompt, style) {
             // Get selected items only - these are the ONLY things that should be in the room
             const selectedItems = roomItems.filter(item => selectedRoomItems.has(item.id));
             const selectedItemNames = selectedItems.map(item => item.name.toLowerCase()).join(', ');
-            
+
             // Build simplified positive prompt with ONLY selected items
             result.positivePrompt = `Given this image of an empty room, add the following items without changing anything about the walls, floor, ceiling, windows, or doors: ${selectedItemNames}. ${ARCHITECTURAL_PRESERVATION_SUFFIX}.`;
-            
+
             // Build simplified negative prompt excluding other furniture
             const allOtherItems = roomItems.filter(item => !selectedRoomItems.has(item.id));
             const allOtherItemNames = allOtherItems.map(item => item.name.toLowerCase()).join(', ');
@@ -1032,7 +1072,7 @@ function generatePromptsWithItems(basePrompt, style) {
                 // Get selected items to add
                 const selectedItems = roomItems.filter(item => selectedRoomItems.has(item.id));
                 const selectedItemNames = selectedItems.map(item => item.name.toLowerCase()).join(', ');
-                
+
                 result.positivePrompt = `Given this image of a furnished room, add ONLY the following items: ${selectedItemNames}. Do not change anything about the structural parts of the room like the walls, floors, ceiling, windows, etc. ${ARCHITECTURAL_PRESERVATION_SUFFIX} Style: ${style}.`;
                 result.negativePrompt = baseNegativePrompt;
             }
@@ -1044,13 +1084,13 @@ function generatePromptsWithItems(basePrompt, style) {
                 // Get selected items to add
                 const selectedItems = roomItems.filter(item => selectedRoomItems.has(item.id));
                 const selectedItemNames = selectedItems.map(item => item.name.toLowerCase()).join(', ');
-                
+
                 result.positivePrompt = `Given this image of a furnished room, remove all furniture before adding ONLY the following items: ${selectedItemNames}. Do not change anything about the structural parts of the room like the walls, floors, ceiling, windows, etc. ${ARCHITECTURAL_PRESERVATION_SUFFIX} Style: ${style}.`;
                 result.negativePrompt = `${baseNegativePrompt}, furniture, decor, items, objects`;
             }
         }
     }
-    
+
     return result;
 }
 
@@ -1120,7 +1160,7 @@ async function fetchWithRetry(url, options = {}, maxRetries = 3, retryDelay = 20
                     await new Promise(resolve => setTimeout(resolve, retryDelay * 2));
                 }
             }
-            
+
             // Set a timeout for fetch (e.g., 30s)
             const controller = new AbortController();
             const timeout = setTimeout(() => controller.abort(), 30000);
@@ -1168,18 +1208,18 @@ async function pollReplicatePrediction(predictionUrl, apiKey) {
                 consecutiveErrors++;
                 const errorData = await response.json().catch(() => ({}));
                 console.error(`Polling error: Status ${response.status}`, errorData);
-                
+
                 // Don't retry on 4xx errors immediately, could be auth issue
                 if (response.status >= 400 && response.status < 500) {
                     throw new Error(`Polling failed with status ${response.status}: ${errorData.detail || 'Client error'}`);
                 }
-                
+
                 // If too many consecutive errors, increase delay
                 if (consecutiveErrors >= maxConsecutiveErrors) {
                     delay = Math.min(delay * 1.5, 10000); // Cap at 10 seconds
                     console.log(`Too many consecutive errors, increasing delay to ${delay}ms`);
                 }
-                
+
                 await new Promise(resolve => setTimeout(resolve, delay));
                 continue;
             }
@@ -1215,17 +1255,17 @@ async function pollReplicatePrediction(predictionUrl, apiKey) {
         } catch (error) {
             consecutiveErrors++;
             console.error(`Polling attempt ${attempts} failed: ${error.message}`);
-            
+
             if (attempts >= maxAttempts) {
                 throw new Error(`Replicate prediction timed out after ${maxAttempts} attempts: ${error.message}`);
             }
-            
+
             // Exponential backoff for consecutive errors
             if (consecutiveErrors >= maxConsecutiveErrors) {
                 delay = Math.min(delay * 1.5, 10000);
                 console.log(`Consecutive errors, increasing delay to ${delay}ms`);
             }
-            
+
             await new Promise(resolve => setTimeout(resolve, delay));
         }
     }
@@ -1247,13 +1287,13 @@ async function generateEmptyRoomWithTextToImage(prompt, negativePrompt, replicat
             type: "txt2img"
         }
     ];
-    
+
     let lastError = null;
-    
+
     for (let i = 0; i < modelOptions.length; i++) {
         const model = modelOptions[i];
         console.log(`Attempting empty room generation with model: ${model.name}`);
-        
+
         try {
             const inputData = {
                 prompt: prompt,
@@ -1265,7 +1305,7 @@ async function generateEmptyRoomWithTextToImage(prompt, negativePrompt, replicat
                 scheduler: "K_EULER",
                 seed: Math.floor(Math.random() * 1000000)
             };
-            
+
             const response = await fetchWithRetry(REPLICATE_API_URL, {
                 method: 'POST',
                 headers: {
@@ -1277,7 +1317,7 @@ async function generateEmptyRoomWithTextToImage(prompt, negativePrompt, replicat
                     input: inputData
                 })
             }, 3, 3000);
-            
+
             if (!response.ok) {
                 const errorData = await response.json().catch(() => ({}));
                 const error = `Model ${model.name} failed: ${errorData.detail || response.status}`;
@@ -1285,7 +1325,7 @@ async function generateEmptyRoomWithTextToImage(prompt, negativePrompt, replicat
                 lastError = new Error(error);
                 continue;
             }
-            
+
             const prediction = await response.json();
             if (!prediction.urls || !prediction.urls.get) {
                 const error = `Model ${model.name} did not return a polling URL.`;
@@ -1293,23 +1333,23 @@ async function generateEmptyRoomWithTextToImage(prompt, negativePrompt, replicat
                 lastError = new Error(error);
                 continue;
             }
-            
+
             console.log(`Polling for results from ${model.name}...`);
             const result = await pollReplicatePrediction(prediction.urls.get, replicateApiKey);
             console.log(`Successfully generated empty room with ${model.name}`);
             return result.imageUrls;
-            
+
         } catch (error) {
             console.warn(`Model ${model.name} failed:`, error.message);
             lastError = error;
-            
+
             if (i === modelOptions.length - 1) {
                 throw new Error(`All models failed. Last error: ${error.message}`);
             }
             continue;
         }
     }
-    
+
     throw lastError || new Error('All model attempts failed');
 }
 
@@ -1317,7 +1357,7 @@ async function generateEmptyRoomWithTextToImage(prompt, negativePrompt, replicat
 async function generateImageWithControlNet(imageBase64, prompt, negativePrompt, replicateApiKey) {
     // Check if this is a "start fresh" scenario (empty room generation)
     const isStartFresh = prompt.includes("completely empty space") || prompt.includes("Remove all furniture") || prompt.includes("empty room") || prompt.includes("COMPLETELY EMPTY ROOM") || prompt.includes("REMOVE ALL EXISTING FURNITURE") || prompt.includes("EMPTY ROOM ONLY");
-    
+
     // Multiple model options with fallbacks
     // For "start fresh" scenarios, prioritize img2img models as they're better at dramatic changes
     const modelOptions = isStartFresh ? [
@@ -1363,30 +1403,30 @@ async function generateImageWithControlNet(imageBase64, prompt, negativePrompt, 
             type: "img2img"
         }
     ];
-    
+
     let lastError = null;
-    
+
     for (let i = 0; i < modelOptions.length; i++) {
         const model = modelOptions[i];
         console.log(`Attempting generation with model: ${model.name}`);
-        
+
         try {
             const inputData = {
                 image: imageBase64,
                 prompt: prompt,
             };
-            
+
             // Add negative prompt if provided
             if (negativePrompt && negativePrompt.trim()) {
                 // inputData.negative_prompt = negativePrompt;
             }
-            
+
             // Add model-specific parameters
             if (model.type === 'controlnet') {
                 // ControlNet specific parameters - higher guidance for more precise adherence
                 inputData.guidance_scale = 12.0; // Increased from 7.5 for better prompt adherence
                 inputData.num_inference_steps = 30; // Increased for better quality
-                
+
                 // For start fresh scenarios, use very low ControlNet strength to preserve room structure but remove furniture
                 if (isStartFresh) {
                     inputData.controlnet_conditioning_scale = 0.01; // Extremely low strength to allow maximum furniture removal while preserving structure
@@ -1407,7 +1447,7 @@ async function generateImageWithControlNet(imageBase64, prompt, negativePrompt, 
                 inputData.scheduler = "K_EULER";
                 inputData.seed = Math.floor(Math.random() * 1000000); // Random seed for variety
             }
-            
+
             const response = await fetchWithRetry(REPLICATE_API_URL, {
                 method: 'POST',
                 headers: {
@@ -1419,7 +1459,7 @@ async function generateImageWithControlNet(imageBase64, prompt, negativePrompt, 
                     input: inputData
                 })
             }, 3, 3000); // Increased retries and timeout for initial request
-            
+
             if (!response.ok) {
                 const errorData = await response.json().catch(() => ({}));
                 const error = `Model ${model.name} failed: ${errorData.detail || response.status}`;
@@ -1427,7 +1467,7 @@ async function generateImageWithControlNet(imageBase64, prompt, negativePrompt, 
                 lastError = new Error(error);
                 continue; // Try next model
             }
-            
+
             const prediction = await response.json();
             if (!prediction.urls || !prediction.urls.get) {
                 const error = `Model ${model.name} did not return a polling URL.`;
@@ -1435,27 +1475,27 @@ async function generateImageWithControlNet(imageBase64, prompt, negativePrompt, 
                 lastError = new Error(error);
                 continue; // Try next model
             }
-            
+
             // Poll for completion
             console.log(`Polling for results from ${model.name}...`);
             const result = await pollReplicatePrediction(prediction.urls.get, replicateApiKey);
             console.log(`Successfully generated with ${model.name}`);
             return result.imageUrls; // Return the array of image URLs
-            
+
         } catch (error) {
             console.warn(`Model ${model.name} failed:`, error.message);
             lastError = error;
-            
+
             // If this is the last model, throw the error
             if (i === modelOptions.length - 1) {
                 throw new Error(`All models failed. Last error: ${error.message}`);
             }
-            
+
             // Continue to next model
             continue;
         }
     }
-    
+
     // This should never be reached, but just in case
     throw lastError || new Error('All model attempts failed');
 }
@@ -1528,7 +1568,7 @@ async function generateImageWithReplicate(imageBase64, prompt) {
         console.log('Replicate prediction started:', prediction);
 
         if (!prediction.urls || !prediction.urls.get) {
-             throw new Error('Replicate API did not return a URL to poll.');
+            throw new Error('Replicate API did not return a URL to poll.');
         }
 
         // 2. Poll for the result using our proxy
@@ -1560,32 +1600,32 @@ async function generateDesigns() {
 
     // Check if we're regenerating (already on results screen)
     const isCurrentlyOnResults = resultsSection && !resultsSection.classList.contains('hidden');
-    
+
     // Try to determine the room type if not already set
     if (!currentRoomType) {
         // First time generation - read from radio buttons
         const emptyRadio = document.getElementById('empty-room');
         const furnishedRadio = document.getElementById('furnished-room');
-        
+
         if (emptyRadio && emptyRadio.checked) {
             currentRoomType = 'empty';
         } else if (furnishedRadio && furnishedRadio.checked) {
             currentRoomType = 'furnished';
         }
     }
-    
+
     // Validate that we have a valid room type
     if (!currentRoomType || !designStyles[currentRoomType]) {
         console.error('Invalid room type:', currentRoomType, 'isCurrentlyOnResults:', isCurrentlyOnResults);
         alert('Please select a room type first');
         return;
     }
-    
+
     const basePrompt = aiPrompts[currentRoomType];
     const style = designStyles[currentRoomType][0]; // Use first style
     const description = designDescriptions[currentRoomType][0]; // Use first description
     const prompts = generatePromptsWithItems(basePrompt, style);
-    
+
     // Check if we should generate an image
     if (!prompts.shouldGenerate) {
         // Show error for empty room scenarios or furnished room with "add new" but no items selected
@@ -1610,7 +1650,12 @@ async function generateDesigns() {
     previewContainer.classList.add('hidden');
     resultsSection.classList.remove('hidden');
     designCarousel.innerHTML = '';
-    
+
+    // Ensure back button is visible
+    if (backToOptionsBtn) {
+        backToOptionsBtn.classList.remove('hidden');
+    }
+
     const fullPrompt = prompts.positivePrompt;
     const negativePrompt = prompts.negativePrompt;
 
@@ -1627,7 +1672,7 @@ async function generateDesigns() {
         needsRetry: false,
         errorMessage: ''
     };
-    
+
     generatedDesigns = [initialDesign];
     displayDesigns(generatedDesigns);
 
@@ -1635,7 +1680,7 @@ async function generateDesigns() {
     try {
         console.log('Starting image generation with prompt:', fullPrompt);
         console.log('Negative prompt:', negativePrompt);
-        
+
         let imageUrls = await generateImageWithControlNet(currentUploadedImage, fullPrompt, negativePrompt, replicateApiKey);
         let imageUrl;
         if (Array.isArray(imageUrls)) {
@@ -1645,17 +1690,17 @@ async function generateDesigns() {
         } else {
             imageUrl = '';
         }
-        
+
         initialDesign.imageUrl = imageUrl;
         initialDesign.loading = false;
         initialDesign.isFallback = false;
-        
+
     } catch (error) {
         console.error(`Error in image generation for design (${style}):`, error);
-        
+
         // Provide user-friendly error messages
         let userFriendlyMessage = 'Image generation failed. Please try again.';
-        
+
         if (error.message.includes('timed out')) {
             userFriendlyMessage = 'Generation took too long and timed out. This can happen during peak usage. Please try again.';
         } else if (error.message.includes('All models failed')) {
@@ -1665,14 +1710,14 @@ async function generateDesigns() {
         } else if (error.message.includes('401') || error.message.includes('unauthorized')) {
             userFriendlyMessage = 'API key issue. Please check your Replicate API key.';
         }
-        
+
         initialDesign.imageUrl = '';
         initialDesign.loading = false;
         initialDesign.isFallback = false;
         initialDesign.needsRetry = true;
         initialDesign.errorMessage = userFriendlyMessage;
     }
-    
+
     // Update the card in the DOM
     updateDesignCard(initialDesign, 0);
 }
@@ -1681,7 +1726,7 @@ function showRetryButton(card, cardData, index) {
     const revealContainer = card.querySelector('.image-reveal-container');
     if (revealContainer) {
         revealContainer.classList.remove('reveal-loading');
-        
+
         // Create retry button container
         const retryContainer = document.createElement('div');
         retryContainer.className = 'retry-container';
@@ -1700,18 +1745,18 @@ function showRetryButton(card, cardData, index) {
                 </button>
             </div>
         `;
-        
+
         // Clear the container and add retry UI
         revealContainer.innerHTML = '';
         revealContainer.appendChild(retryContainer);
-        
+
         // Add click handler for retry button
         const retryBtn = retryContainer.querySelector('.retry-btn');
         retryBtn.addEventListener('click', () => {
             retryImageGeneration();
         });
     }
-    
+
     // Update disclaimer
     const disclaimer = card.querySelector('.design-disclaimer');
     if (disclaimer) {
@@ -1719,38 +1764,38 @@ function showRetryButton(card, cardData, index) {
         disclaimer.classList.add('error');
         disclaimer.style.display = 'block';
     }
-    
+
     // Update description
     const desc = card.querySelector('.design-description');
     if (desc) desc.textContent = cardData.description;
-    
+
     // Replace feather icons
     feather.replace();
 }
 
 async function retryImageGeneration() {
     console.log('Retrying image generation');
-    
+
     // Get the current design data
     const design = generatedDesigns[0];
     if (!design) {
         console.error('No design found');
         return;
     }
-    
+
     // Reset the design to loading state
     design.loading = true;
     design.needsRetry = false;
     design.errorMessage = '';
     design.imageUrl = '';
-    
+
     // Find the card and show loading state
     const card = designCarousel.querySelector('[data-design-id="design-0"]');
     if (card) {
         const revealContainer = card.querySelector('.image-reveal-container');
         if (revealContainer) {
             revealContainer.classList.add('reveal-loading');
-            
+
             // Add whiteboard back for this card
             const whiteboardContainer = document.createElement('div');
             whiteboardContainer.className = 'whiteboard-container';
@@ -1771,52 +1816,57 @@ async function retryImageGeneration() {
                     <div class="whiteboard-hint">Retrying... Draw while waiting!</div>
                 </div>
             `;
-            
+
             // Replace retry container with whiteboard
             revealContainer.innerHTML = `
                 <img class="design-image original-image" src="${design.originalImageUrl}" alt="Original Room">
                 <img class="design-image generated-image" src="" alt="${design.title}" style="opacity: 0; z-index: 3;">
-                <div class="slider-backdrop"></div>
-                <input type="range" class="reveal-slider" min="0" max="100" value="0" orient="vertical" aria-label="Reveal Original Image" title="Slide down to reveal original image">
-                <div class="slider-indicators">
-                    <div class="slider-indicator slider-indicator-top">
-                        <span>Generated</span>
-                    </div>
-                    <div class="slider-indicator slider-indicator-bottom">
-                        <span>Original</span>
-                    </div>
-                </div>
-                <div class="slider-hint-arrows">
-                    <div class="slider-hint-arrow"></div>
-                    <div class="slider-hint-arrow"></div>
-                    <div class="slider-hint-arrow"></div>
-                </div>
             `;
+
+            // Add checkbox after the image container (outside design-image-container)
+            const designCard = revealContainer.closest('.design-card');
+            if (designCard && !designCard.querySelector('.reveal-checkbox-container')) {
+                const checkboxContainer = document.createElement('div');
+                checkboxContainer.className = 'reveal-checkbox-container';
+                checkboxContainer.innerHTML = `
+                    <label class="reveal-checkbox-label">
+                        <input type="checkbox" class="reveal-checkbox" aria-label="Show original image">
+                        <span class="reveal-checkbox-text">Show Original Image</span>
+                    </label>
+                `;
+                // Insert after the design-image-container
+                const imageContainer = designCard.querySelector('.design-image-container');
+                if (imageContainer && imageContainer.nextSibling) {
+                    designCard.insertBefore(checkboxContainer, imageContainer.nextSibling);
+                } else {
+                    designCard.appendChild(checkboxContainer);
+                }
+            }
             revealContainer.insertBefore(whiteboardContainer, revealContainer.firstChild);
-            
+
             // Initialize whiteboard
             const whiteboardCanvas = whiteboardContainer.querySelector('.whiteboard-canvas');
             if (whiteboardCanvas) {
                 initializeWhiteboard(whiteboardCanvas, card);
             }
-            
+
             feather.replace();
         }
-        
+
         // Hide disclaimer
         const disclaimer = card.querySelector('.design-disclaimer');
         if (disclaimer) {
             disclaimer.style.display = 'none';
         }
     }
-    
+
     // Retry the generation
     try {
         // Generate new prompts for retry
         const basePrompt = aiPrompts[currentRoomType];
         const style = designStyles[currentRoomType][0];
         const prompts = generatePromptsWithItems(basePrompt, style);
-        
+
         // Check if we should generate an image
         if (!prompts.shouldGenerate) {
             // Show error for empty room scenarios or furnished room with "add new" but no items selected
@@ -1825,7 +1875,7 @@ async function retryImageGeneration() {
             }
             return;
         }
-        
+
         let imageUrls = await generateImageWithControlNet(currentUploadedImage, prompts.positivePrompt, prompts.negativePrompt, replicateApiKey);
         let imageUrl;
         if (Array.isArray(imageUrls)) {
@@ -1835,14 +1885,14 @@ async function retryImageGeneration() {
         } else {
             imageUrl = '';
         }
-        
+
         design.imageUrl = imageUrl;
         design.loading = false;
         design.needsRetry = false;
         design.isFallback = false;
-        
+
         console.log('Retry successful');
-        
+
     } catch (error) {
         console.error('Retry failed:', error);
         design.imageUrl = '';
@@ -1851,7 +1901,7 @@ async function retryImageGeneration() {
         design.isFallback = false;
         design.errorMessage = error.message;
     }
-    
+
     // Update the card
     updateDesignCard(design, 0);
 }
@@ -1868,28 +1918,33 @@ function updateDesignCard(cardData, index) {
         whiteboard.classList.add('fade-out');
         setTimeout(() => {
             whiteboard.remove();
-            
+
             // Check if we need to show retry button instead of image
             if (cardData.needsRetry) {
                 showRetryButton(card, cardData, index);
                 return;
             }
-            
+
             if (img) {
                 img.onload = () => {
                     console.log(`Image ${index} loaded successfully`);
                     img.style.opacity = 1;
                     img.style.display = 'block';
                     img.style.zIndex = 3;
-                    
+
                     // Remove the reveal-loading class to show the image container
                     const revealContainer = card.querySelector('.image-reveal-container');
                     if (revealContainer) {
                         revealContainer.classList.remove('reveal-loading');
                     }
-                    
+
+                    // Ensure back button is visible when image is shown
+                    if (backToOptionsBtn) {
+                        backToOptionsBtn.classList.remove('hidden');
+                    }
+
                     // Re-setup the reveal slider after image loads
-                    setupRevealSliderForCard(card, index);
+                    setupRevealCheckbox(card, index);
                 };
                 img.onerror = () => {
                     console.error(`Image ${index} failed to load: ${cardData.imageUrl}`);
@@ -1903,70 +1958,45 @@ function updateDesignCard(cardData, index) {
                 img.classList.add('fade-in');
                 img.style.opacity = 1;
                 img.style.zIndex = 3; // Ensure it's on top
-                
-                // Add reveal slider if it doesn't exist
-                const revealContainer = card.querySelector('.image-reveal-container');
-                if (revealContainer && !revealContainer.querySelector('.reveal-slider')) {
-                    console.log(`Adding reveal slider to card ${index}`);
-                    const revealSlider = document.createElement('input');
-                    revealSlider.type = 'range';
-                    revealSlider.className = 'reveal-slider';
-                    revealSlider.min = '0';
-                    revealSlider.max = '100';
-                    revealSlider.value = '0';
-                    revealSlider.setAttribute('orient', 'vertical');
-                    revealSlider.setAttribute('aria-label', 'Reveal Original Image');
-                    revealSlider.setAttribute('title', 'Slide down to reveal original image');
-                    
-                    // Add backdrop for slider visibility
-                    const sliderBackdrop = document.createElement('div');
-                    sliderBackdrop.className = 'slider-backdrop';
-                    revealContainer.appendChild(sliderBackdrop);
-                    
-                    revealContainer.appendChild(revealSlider);
-                    
-                    // Add slider indicators
-                    const sliderIndicators = document.createElement('div');
-                    sliderIndicators.className = 'slider-indicators';
-                    sliderIndicators.innerHTML = `
-                        <div class="slider-indicator slider-indicator-top">
-                            <span>Generated</span>
-                        </div>
-                        <div class="slider-indicator slider-indicator-bottom">
-                            <span>Original</span>
-                        </div>
-                    `;
-                    revealContainer.appendChild(sliderIndicators);
-                    
-                    // Add hint arrows
-                    const hintArrows = document.createElement('div');
-                    hintArrows.className = 'slider-hint-arrows';
-                    hintArrows.innerHTML = `
-                        <div class="slider-hint-arrow"></div>
-                        <div class="slider-hint-arrow"></div>
-                        <div class="slider-hint-arrow"></div>
-                    `;
-                    revealContainer.appendChild(hintArrows);
-                    
-                    // Set up reveal slider functionality for this card
-                    setupRevealSliderForCard(card, index);
+
+                // Add reveal checkbox if it doesn't exist (outside design-image-container)
+                if (card && !card.querySelector('.reveal-checkbox')) {
+                    console.log(`Adding reveal checkbox to card ${index}`);
+                    const checkboxContainer = document.createElement('div');
+                    checkboxContainer.className = 'reveal-checkbox-container';
+                    checkboxContainer.innerHTML = `
+                            <label class="reveal-checkbox-label">
+                                <input type="checkbox" class="reveal-checkbox" aria-label="Show original image">
+                                <span class="reveal-checkbox-text">Show Original Image</span>
+                            </label>
+                        `;
+                    // Insert after the design-image-container
+                    const imageContainer = card.querySelector('.design-image-container');
+                    if (imageContainer && imageContainer.nextSibling) {
+                        card.insertBefore(checkboxContainer, imageContainer.nextSibling);
+                    } else {
+                        card.appendChild(checkboxContainer);
+                    }
+
+                    // Set up reveal checkbox functionality for this card
+                    setupRevealCheckbox(card, index);
                 }
-                
+
                 // Ensure the generated image is fully visible after loading
                 setTimeout(() => {
                     img.style.opacity = 1;
                     img.style.display = 'block';
                     img.style.zIndex = 3;
-                    
+
                     // Remove the reveal-loading class to show the image container
                     const revealContainer = card.querySelector('.image-reveal-container');
                     if (revealContainer) {
                         revealContainer.classList.remove('reveal-loading');
                     }
-                    
+
                     console.log(`Image ${index} should be visible now. Opacity: ${img.style.opacity}, Display: ${img.style.display}`);
                     // Re-setup the reveal slider to ensure it's working
-                    setupRevealSliderForCard(card, index);
+                    setupRevealCheckbox(card, index);
                 }, 100);
             }
             // Update disclaimer and description if fallback
@@ -2001,7 +2031,7 @@ function createFallbackDesigns() {
     const imagesArray = fallbackImages[currentRoomType];
     const stylesArray = designStyles[currentRoomType];
     const descriptionsArray = designDescriptions[currentRoomType];
-    
+
     return [{
         id: 'design-0',
         title: stylesArray[0],
@@ -2015,12 +2045,12 @@ function createFallbackDesigns() {
 
 function displayDesigns(designs) {
     designCarousel.innerHTML = '';
-    
+
     designs.forEach((design, index) => {
         const designCard = document.createElement('div');
         designCard.classList.add('design-card');
         designCard.setAttribute('data-design-id', design.id);
-        
+
         let disclaimer = '';
         if (design.isFallback) {
             disclaimer = `
@@ -2031,10 +2061,10 @@ function displayDesigns(designs) {
         } else {
             disclaimer = `<div class="design-disclaimer" style="display:none"></div>`;
         }
-        
+
         // Only show reveal slider if not loading
         const showRevealSlider = !design.loading;
-        
+
         designCard.innerHTML = `
             <div class="design-image-container">
                 <div class="whiteboard-container${design.loading ? '' : ' fade-out'}">
@@ -2057,21 +2087,28 @@ function displayDesigns(designs) {
                 <div class="image-reveal-container${design.loading ? ' reveal-loading' : ''}">
                     <img class="design-image original-image" src="${design.originalImageUrl}" alt="Original Room">
                     <img class="design-image generated-image${design.loading ? '' : ' fade-in'}" src="${design.loading ? '' : design.imageUrl}" alt="${design.title}" style="opacity:${design.loading ? 0 : 1}; z-index: 3;">
-                    ${showRevealSlider ? `<input type="range" class="reveal-slider" min="0" max="100" value="100" orient="vertical" aria-label="Reveal Original Image" title="Slide down to reveal original image">` : ''}
                 </div>
                 ${disclaimer}
             </div>
+            ${showRevealSlider ? `
+                <div class="reveal-checkbox-container">
+                    <label class="reveal-checkbox-label">
+                        <input type="checkbox" class="reveal-checkbox" aria-label="Show original image">
+                        <span class="reveal-checkbox-text">Show Original Image</span>
+                    </label>
+                </div>
+            ` : ''}
             <div class="design-info">
                 <h3 class="design-title">${design.title}</h3>
                 <p class="design-description">${design.description}</p>
             </div>
         `;
-        
+
         designCarousel.appendChild(designCard);
     });
-    
+
     feather.replace();
-    
+
     // Initialize whiteboard for loading card
     const loadingCard = designCarousel.querySelector('.design-card[data-design-id]');
     if (loadingCard) {
@@ -2080,12 +2117,12 @@ function displayDesigns(designs) {
             initializeWhiteboard(whiteboardCanvas, loadingCard);
         }
     }
-    
-    // Add reveal slider functionality to the card
+
+    // Add reveal checkbox functionality to the card
     const card = designCarousel.querySelector('.design-card');
     if (card) {
-        console.log('Setting up reveal slider for design card');
-        setupRevealSliderForCard(card, 0);
+        console.log('Setting up reveal checkbox for design card');
+        setupRevealCheckbox(card, 0);
     }
 }
 
@@ -2097,14 +2134,14 @@ function initializeWhiteboard(canvas, card) {
     const controls = card.querySelector('.whiteboard-controls');
     const clearBtn = card.querySelector('.whiteboard-clear');
     const colorOptions = card.querySelectorAll('.color-option');
-    
+
     // Whiteboard state
     let isDrawing = false;
     let lastX = 0;
     let lastY = 0;
     let currentColor = '#6366f1';
     let lineWidth = 3;
-    
+
     // Set up canvas with proper sizing
     const rect = canvas.getBoundingClientRect();
     const dpr = window.devicePixelRatio || 1;
@@ -2113,22 +2150,22 @@ function initializeWhiteboard(canvas, card) {
     canvas.style.width = rect.width + 'px';
     canvas.style.height = rect.height + 'px';
     ctx.scale(dpr, dpr);
-    
+
     // Configure drawing style
     ctx.lineCap = 'round';
     ctx.lineJoin = 'round';
     ctx.lineWidth = lineWidth;
     ctx.strokeStyle = currentColor;
-    
+
     // Clear canvas with white background
     function clearCanvas() {
         ctx.fillStyle = '#ffffff';
         ctx.fillRect(0, 0, canvas.width, canvas.height);
     }
-    
+
     // Initialize with white background
     clearCanvas();
-    
+
     // Get drawing coordinates
     function getDrawingCoords(e) {
         const rect = canvas.getBoundingClientRect();
@@ -2139,54 +2176,54 @@ function initializeWhiteboard(canvas, card) {
             y: clientY - rect.top
         };
     }
-    
+
     // Drawing functions
     function startDrawing(e) {
         isDrawing = true;
         const coords = getDrawingCoords(e);
         lastX = coords.x;
         lastY = coords.y;
-        
+
         // Prevent scrolling on mobile
         e.preventDefault();
     }
-    
+
     function draw(e) {
         if (!isDrawing) return;
-        
+
         const coords = getDrawingCoords(e);
-        
+
         ctx.beginPath();
         ctx.moveTo(lastX, lastY);
         ctx.lineTo(coords.x, coords.y);
         ctx.stroke();
-        
+
         lastX = coords.x;
         lastY = coords.y;
-        
+
         // Prevent scrolling on mobile
         e.preventDefault();
     }
-    
+
     function stopDrawing() {
         isDrawing = false;
     }
-    
+
     // Mouse events
     canvas.addEventListener('mousedown', startDrawing);
     canvas.addEventListener('mousemove', draw);
     canvas.addEventListener('mouseup', stopDrawing);
     canvas.addEventListener('mouseout', stopDrawing);
-    
+
     // Touch events
     canvas.addEventListener('touchstart', startDrawing);
     canvas.addEventListener('touchmove', draw);
     canvas.addEventListener('touchend', stopDrawing);
     canvas.addEventListener('touchcancel', stopDrawing);
-    
+
     // Clear button
     clearBtn.addEventListener('click', clearCanvas);
-    
+
     // Color selection
     colorOptions.forEach(option => {
         option.addEventListener('click', () => {
@@ -2199,7 +2236,7 @@ function initializeWhiteboard(canvas, card) {
             ctx.strokeStyle = currentColor;
         });
     });
-    
+
     // Add color styles
     colorOptions.forEach(option => {
         option.style.backgroundColor = option.dataset.color;
@@ -2219,59 +2256,27 @@ function hideHintArrows(card) {
     }
 }
 
-function setupRevealSliderForCard(card, index) {
+function setupRevealCheckbox(card, index) {
     const revealContainer = card.querySelector('.image-reveal-container');
-    const revealSlider = card.querySelector('.reveal-slider');
+    const revealCheckbox = card.querySelector('.reveal-checkbox');
     const generatedImage = card.querySelector('.generated-image');
-    
-    console.log(`Card ${index}: revealContainer=${!!revealContainer}, revealSlider=${!!revealSlider}, generatedImage=${!!generatedImage}`);
-    
-    if (!revealContainer || !revealSlider || !generatedImage) {
+
+    console.log(`Card ${index}: revealContainer=${!!revealContainer}, revealCheckbox=${!!revealCheckbox}, generatedImage=${!!generatedImage}`);
+
+    if (!revealContainer || !revealCheckbox || !generatedImage) {
         console.log(`Missing elements for card ${index}`);
         return;
     }
 
-    // Remove any existing event listeners
-    const newSlider = revealSlider.cloneNode(true);
-    revealSlider.parentNode.replaceChild(newSlider, revealSlider);
+    // Set up checkbox functionality
+    const handleCheckboxChange = (e) => {
+        const isChecked = e.target.checked;
+        // When checked, show original (hide generated), when unchecked, show generated
+        generatedImage.style.opacity = isChecked ? 0 : 1;
+        console.log(`Checkbox ${index} changed: ${isChecked}, generated image opacity: ${generatedImage.style.opacity}`);
+    };
 
-    // Set up slider functionality
-    const handleSliderChange = (e) => {
-        const value = e.target.value;
-        const opacity = (100 - value) / 100; // Invert: 0=full opacity, 100=transparent
-        generatedImage.style.opacity = opacity;
-        console.log(`Slider value: ${value}, opacity: ${opacity}`);
-        console.log(`Generated image opacity after change: ${generatedImage.style.opacity}`);
-    };
-    
-    newSlider.addEventListener('input', handleSliderChange);
-    newSlider.addEventListener('change', handleSliderChange); // Fallback for some browsers
-    
-    // Add debugging for slider interaction
-    newSlider.addEventListener('mousedown', () => {
-        console.log(`Slider ${index} mouse down - starting interaction`);
-        hideHintArrows(card);
-    });
-    
-    newSlider.addEventListener('touchstart', () => {
-        console.log(`Slider ${index} touch start - starting interaction`);
-        hideHintArrows(card);
-    });
-    
-    // Hide arrows on first input/change event
-    let arrowsHidden = false;
-    const hideArrowsOnFirstMove = () => {
-        if (!arrowsHidden) {
-            hideHintArrows(card);
-            arrowsHidden = true;
-        }
-    };
-    
-    newSlider.addEventListener('input', hideArrowsOnFirstMove);
-    newSlider.addEventListener('change', hideArrowsOnFirstMove);
-    
-    // Test slider immediately
-    console.log(`Testing slider ${index} - Current value: ${newSlider.value}, Generated image opacity: ${generatedImage.style.opacity}`);
+    revealCheckbox.addEventListener('change', handleCheckboxChange);
 
     // Also ensure original image is properly positioned
     const originalImage = card.querySelector('.original-image');
@@ -2297,22 +2302,13 @@ function setupRevealSliderForCard(card, index) {
     generatedImage.style.left = '0';
     generatedImage.style.width = '100%';
     generatedImage.style.height = '100%';
-    newSlider.value = 0;
-    
-    // Test layering by temporarily setting opacity to 0.5
-    setTimeout(() => {
-        console.log(`Testing layering for card ${index} - setting opacity to 0.5`);
-        generatedImage.style.opacity = 0.5;
-        setTimeout(() => {
-            console.log(`Restoring opacity to 1 for card ${index}`);
-            generatedImage.style.opacity = 1;
-            newSlider.value = 0;
-        }, 2000); // Show blended for 2 seconds, then restore
-    }, 1000); // Wait 1 second before testing
-    
+
+    // Initialize checkbox to unchecked (show generated image)
+    revealCheckbox.checked = false;
+
     // Force a reflow to ensure styles are applied
     generatedImage.offsetHeight;
-    
+
     console.log(`Initialized card ${index} with opacity: ${generatedImage.style.opacity}, display: ${generatedImage.style.display}`);
     console.log(`Generated image computed style:`, window.getComputedStyle(generatedImage).opacity);
     console.log(`Generated image src:`, generatedImage.src);
@@ -2321,7 +2317,7 @@ function setupRevealSliderForCard(card, index) {
 function goBackToPreview() {
     resultsSection.classList.add('hidden');
     previewContainer.classList.remove('hidden');
-    
+
     // Don't reset room type selection - preserve user's choices
     // This allows them to go back and forth without losing their selections
 }
@@ -2339,36 +2335,36 @@ function saveCurrentDesign() {
         if (designImage) {
             const link = document.createElement('a');
             link.download = 'decorai-design.jpg';
-            
+
             // Create a temporary canvas to convert the image to downloadable format
             const canvas = document.createElement('canvas');
             const ctx = canvas.getContext('2d');
             const img = new Image();
-            
+
             img.crossOrigin = 'anonymous'; // Enable cross-origin image downloading
-            
-            img.onload = function() {
+
+            img.onload = function () {
                 canvas.width = img.width;
                 canvas.height = img.height;
                 ctx.drawImage(img, 0, 0);
-                
+
                 try {
                     link.href = canvas.toDataURL('image/jpeg');
                     link.click();
                 } catch (error) {
                     console.error('Error saving image:', error);
-                    
+
                     // Fallback: open image in new tab
                     window.open(designImage.src, '_blank');
                 }
             };
-            
-            img.onerror = function() {
+
+            img.onerror = function () {
                 console.error('Error loading image for download');
                 // Fallback: open in new tab
                 window.open(designImage.src, '_blank');
             };
-            
+
             img.src = designImage.src;
         }
     }
