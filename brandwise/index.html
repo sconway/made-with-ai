@@ -1,0 +1,197 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>BrandWise - AI-Powered Logo & Brand Generator</title>
+    <link rel="stylesheet" href="/src/styles.css">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <script src="https://unpkg.com/feather-icons"></script>
+</head>
+<body>
+    <div class="app-container">
+        <header>
+            <div class="logo">
+                <h1>BrandWise</h1>
+                <span class="tagline">Create Your Brand Identity</span>
+            </div>
+            <button id="api-keys-btn" class="api-keys-btn">
+                <i data-feather="key"></i>
+                <span>API Keys</span>
+            </button>
+        </header>
+
+        <main>
+            <!-- Input Section -->
+            <section class="input-section" id="input-section">
+                <div class="input-container">
+                    <h2>Describe Your Brand</h2>
+                    <p class="section-description">Tell us about your brand and we'll create a logo, color palette, and mood board for you.</p>
+                    
+                    <form id="brand-form" class="brand-form">
+                        <div class="form-group">
+                            <label for="brand-name">Brand Name</label>
+                            <input 
+                                type="text" 
+                                id="brand-name" 
+                                name="brand-name" 
+                                placeholder="e.g., EcoTech Solutions"
+                                required
+                            >
+                        </div>
+
+                        <div class="form-group">
+                            <label for="brand-description">Brand Description</label>
+                            <textarea 
+                                id="brand-description" 
+                                name="brand-description" 
+                                placeholder="e.g., A modern tech startup focused on sustainable energy solutions..."
+                                rows="4"
+                                required
+                            ></textarea>
+                        </div>
+
+                        <div class="form-group">
+                            <label for="brand-use">What will this brand be used for?</label>
+                            <textarea 
+                                id="brand-use" 
+                                name="brand-use" 
+                                placeholder="e.g., Website, mobile app, business cards, social media..."
+                                rows="3"
+                                required
+                            ></textarea>
+                        </div>
+
+                        <button type="submit" id="generate-btn" class="primary-btn">
+                            <span>Generate Brand Identity</span>
+                            <i data-feather="sparkles"></i>
+                        </button>
+                    </form>
+                </div>
+            </section>
+
+            <!-- Results Section -->
+            <section class="results-section hidden" id="results-section">
+                <div class="results-container">
+                    <div class="results-header">
+                        <div>
+                            <h2 id="results-brand-name">Your Brand Identity</h2>
+                            <p class="brand-name-subtitle" id="brand-name-subtitle"></p>
+                        </div>
+                        <button id="back-btn" class="secondary-btn">
+                            <i data-feather="arrow-left"></i>
+                            <span>Back</span>
+                        </button>
+                    </div>
+
+                    <!-- Loading State -->
+                    <div class="loading-state hidden" id="loading-state">
+                        <div class="loading-spinner"></div>
+                        <p>Generating your brand identity...</p>
+                        <p class="loading-subtitle">This may take a moment</p>
+                    </div>
+
+                    <!-- Results Display -->
+                    <div class="results-display hidden" id="results-display">
+                        <!-- Logo Section -->
+                        <div class="result-card logo-card">
+                            <h3>Logo</h3>
+                            <div class="logo-container">
+                                <img id="generated-logo" class="generated-logo" alt="Generated logo">
+                                <div class="logo-actions">
+                                    <button id="download-logo-btn" class="action-btn">
+                                        <i data-feather="download"></i>
+                                        <span>Download</span>
+                                    </button>
+                                    <button id="regenerate-logo-btn" class="action-btn">
+                                        <i data-feather="refresh-cw"></i>
+                                        <span>Regenerate</span>
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Color Palette Section -->
+                        <div class="result-card color-palette-card">
+                            <h3>Color Palette</h3>
+                            <div class="color-palette-container" id="color-palette-container">
+                                <!-- Colors will be dynamically inserted here -->
+                            </div>
+                            <div class="color-actions">
+                                <button id="regenerate-colors-btn" class="action-btn">
+                                    <i data-feather="refresh-cw"></i>
+                                    <span>Regenerate Colors</span>
+                                </button>
+                            </div>
+                        </div>
+
+                        <!-- Mood Board Section -->
+                        <div class="result-card mood-board-card">
+                            <h3>Mood Board</h3>
+                            <div class="mood-board-container" id="mood-board-container">
+                                <!-- Mood board images will be dynamically inserted here -->
+                            </div>
+                            <div class="mood-board-actions">
+                                <button id="regenerate-mood-board-btn" class="action-btn">
+                                    <i data-feather="refresh-cw"></i>
+                                    <span>Regenerate Mood Board</span>
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </section>
+        </main>
+
+        <footer>
+            <p>Created with AI • <a href="../index.html">Back to Projects</a></p>
+        </footer>
+    </div>
+
+    <!-- API Keys Modal -->
+    <div class="modal-overlay hidden" id="api-keys-modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2>Enter API Keys</h2>
+                <button class="modal-close" id="close-modal-btn">
+                    <i data-feather="x"></i>
+                </button>
+            </div>
+            <div class="modal-body">
+                <p class="modal-description">
+                    BrandWise uses OpenAI's DALL-E 3 to generate logos and mood boards. 
+                    Please provide your OpenAI API key below.
+                </p>
+                <div class="form-group">
+                    <label for="openai-api-key">OpenAI API Key:</label>
+                    <input 
+                        type="password" 
+                        id="openai-api-key" 
+                        placeholder="sk-..."
+                        autocomplete="off"
+                    >
+                    <a href="https://platform.openai.com/api-keys" target="_blank" class="api-link">
+                        Get an OpenAI API Key <i data-feather="external-link"></i>
+                    </a>
+                </div>
+                <p class="api-note">
+                    Your API keys are stored locally and are never sent to our servers. 
+                    They are used only for direct API calls to the respective services.
+                </p>
+                <div class="api-credits">
+                    <h3>API Credits</h3>
+                    <p>Each brand generation uses DALL-E 3. Standard quality images cost $0.040 per image, HD quality costs $0.080 per image. 
+                    Check <a href="https://openai.com/pricing" target="_blank">OpenAI pricing</a> for details.</p>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button id="save-api-keys-btn" class="primary-btn">Save API Keys</button>
+            </div>
+        </div>
+    </div>
+
+    <script type="module" src="/src/main.js"></script>
+</body>
+</html>
