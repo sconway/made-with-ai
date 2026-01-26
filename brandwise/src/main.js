@@ -22,16 +22,34 @@ const apiKeysBtn = document.getElementById('api-keys-btn');
 const apiKeysModal = document.getElementById('api-keys-modal');
 const closeModalBtn = document.getElementById('close-modal-btn');
 const openaiApiKeyInput = document.getElementById('openai-api-key');
+const toggleApiKeyVisibilityBtn = document.getElementById('toggle-api-key-visibility');
 const saveApiKeysBtn = document.getElementById('save-api-keys-btn');
 
 // Results elements
-const generatedLogo = document.getElementById('generated-logo');
+let generatedLogo = document.getElementById('generated-logo');
 const downloadLogoBtn = document.getElementById('download-logo-btn');
 const regenerateLogoBtn = document.getElementById('regenerate-logo-btn');
 const colorPaletteContainer = document.getElementById('color-palette-container');
 const regenerateColorsBtn = document.getElementById('regenerate-colors-btn');
 const moodBoardContainer = document.getElementById('mood-board-container');
 const regenerateMoodBoardBtn = document.getElementById('regenerate-mood-board-btn');
+
+// Color Picker Modal elements
+const colorPickerModal = document.getElementById('color-picker-modal');
+const closeColorPickerBtn = document.getElementById('close-color-picker-btn');
+const colorPicker = document.getElementById('color-picker');
+const colorHexInput = document.getElementById('color-hex-input');
+const colorRInput = document.getElementById('color-r-input');
+const colorGInput = document.getElementById('color-g-input');
+const colorBInput = document.getElementById('color-b-input');
+const colorPreviewSwatch = document.getElementById('color-preview-swatch');
+const cancelColorBtn = document.getElementById('cancel-color-btn');
+const saveColorBtn = document.getElementById('save-color-btn');
+
+// Image Lightbox Modal elements
+const imageLightboxModal = document.getElementById('image-lightbox-modal');
+const closeLightboxBtn = document.getElementById('close-lightbox-btn');
+const lightboxImage = document.getElementById('lightbox-image');
 
 // State
 let openaiApiKey = localStorage.getItem('openai_api_key') || '';
@@ -41,6 +59,7 @@ let currentBrandUse = '';
 let currentLogoUrl = '';
 let currentColors = [];
 let currentMoodBoardUrls = [];
+let editingColorIndex = -1; // Track which color is being edited
 
 // OpenAI API configuration
 const PROXY_SERVER_URL = window.location.hostname === 'localhost'
@@ -61,22 +80,61 @@ document.addEventListener('DOMContentLoaded', () => {
     apiKeysBtn.addEventListener('click', showApiKeysModal);
     closeModalBtn.addEventListener('click', hideApiKeysModal);
     saveApiKeysBtn.addEventListener('click', saveApiKeys);
+    toggleApiKeyVisibilityBtn.addEventListener('click', toggleApiKeyVisibility);
     downloadLogoBtn.addEventListener('click', downloadLogo);
     regenerateLogoBtn.addEventListener('click', () => generateLogo(true));
     regenerateColorsBtn.addEventListener('click', async () => {
-        await generateColorPalette(true);
-        // After regenerating colors, regenerate logo and mood board with new colors
-        await Promise.all([
-            generateLogo(true),
-            generateMoodBoard(true)
-        ]);
+        // Show loading state (same as initial generation)
+        resultsDisplay.classList.add('hidden');
+        loadingState.classList.remove('hidden');
+        
+        try {
+            await generateColorPalette(true);
+            // After regenerating colors, regenerate logo and mood board with new colors
+            // Logo must be generated after colors are ready
+            await generateLogo(true);
+            await generateMoodBoard(true);
+            
+            // Hide loading and show results
+            loadingState.classList.add('hidden');
+            resultsDisplay.classList.remove('hidden');
+        } catch (error) {
+            console.error('Error regenerating brand identity:', error);
+            alert('Error regenerating brand identity. Please try again.');
+            loadingState.classList.add('hidden');
+            resultsDisplay.classList.remove('hidden');
+        }
     });
     regenerateMoodBoardBtn.addEventListener('click', () => generateMoodBoard(true));
+
+    // Color picker modal event listeners
+    closeColorPickerBtn.addEventListener('click', hideColorPickerModal);
+    cancelColorBtn.addEventListener('click', hideColorPickerModal);
+    saveColorBtn.addEventListener('click', saveColorChange);
+    colorPicker.addEventListener('input', updateColorFromPicker);
+    colorHexInput.addEventListener('input', updateColorFromHex);
+    colorRInput.addEventListener('input', updateColorFromRGB);
+    colorGInput.addEventListener('input', updateColorFromRGB);
+    colorBInput.addEventListener('input', updateColorFromRGB);
 
     // Close modal on overlay click
     apiKeysModal.addEventListener('click', (e) => {
         if (e.target === apiKeysModal) {
             hideApiKeysModal();
+        }
+    });
+
+    colorPickerModal.addEventListener('click', (e) => {
+        if (e.target === colorPickerModal) {
+            hideColorPickerModal();
+        }
+    });
+
+    // Image lightbox event listeners
+    closeLightboxBtn.addEventListener('click', hideImageLightbox);
+    imageLightboxModal.addEventListener('click', (e) => {
+        if (e.target === imageLightboxModal) {
+            hideImageLightbox();
         }
     });
 
@@ -123,11 +181,11 @@ async function handleFormSubmit(e) {
         // Generate color palette first, then use those colors for logo and mood board
         await generateColorPalette();
         
-        // Generate logo and mood board using the color palette
-        await Promise.all([
-            generateLogo(),
-            generateMoodBoard()
-        ]);
+        // Generate logo using the color palette (must happen after colors are generated)
+        await generateLogo();
+        
+        // Generate mood board using the color palette
+        await generateMoodBoard();
 
         // Show results
         loadingState.classList.add('hidden');
@@ -146,6 +204,12 @@ async function generateLogo(regenerate = false) {
         return;
     }
 
+    // Ensure we have colors before generating logo
+    if (!currentColors || currentColors.length === 0) {
+        alert('Color palette must be generated first. Please wait for color palette generation to complete.');
+        return;
+    }
+
     // Show loading state
     if (regenerate) {
         regenerateLogoBtn.disabled = true;
@@ -154,38 +218,25 @@ async function generateLogo(regenerate = false) {
     }
 
     try {
-        // Build explicit color instructions
-        let colorInstructions = '';
-        let negativePrompt = '';
-        if (currentColors && currentColors.length > 0) {
-            const colorList = currentColors.map(c => `${c.hex} (${c.name})`).join(', ');
-            const colorHexes = currentColors.map(c => c.hex).join(', ');
-            
-            // Make color instructions extremely explicit and repeated
-            colorInstructions = `MANDATORY COLOR REQUIREMENT - USE ONLY THESE COLORS: ${colorList}. 
-            The logo MUST be created using ONLY these exact colors: ${colorHexes}. 
-            Every element of the logo must use colors from this list. 
-            Do not use white, black, gray, or any other colors. 
-            The logo should be 100% composed of these brand colors: ${colorHexes}.`;
-            
-            negativePrompt = ` STRICTLY AVOID: white, black, gray, off-white, cream, beige, or any colors not in this exact list: ${colorHexes}. 
-            Do not use any colors outside this specific palette.`;
-        }
+        // Build explicit color instructions - ALWAYS use current colors from palette
+        const colorHexes = currentColors.map(c => c.hex).join(', ');
+        
+        // Simplified and clearer prompt - focus on the logo only, not on displaying colors
+        // Keep it concise to stay under DALL-E 3's 4000 character limit
+        const prompt = `Professional logo for "${currentBrandName}": ${currentBrandDescription}. Use case: ${currentBrandUse}. 
 
-        // Put color instructions at the very beginning for maximum weight
-        const prompt = `${colorInstructions}
-        Professional logo design for "${currentBrandName}": ${currentBrandDescription}. Use case: ${currentBrandUse}. 
-        Create a clean, modern logo that represents this brand. The logo should include or be inspired by the brand name "${currentBrandName}". 
-        The logo should be simple, memorable, and suitable for various applications. 
-        Use a transparent or white background. Style: minimalist, professional, contemporary.
-        ${negativePrompt}`;
+Use ONLY these colors: ${colorHexes}. Show ONLY the logo design - no color palettes, swatches, hex codes, or text. Just the logo on transparent or white background. Clean, modern, minimalist style.`;
 
         const logoUrl = await generateImage(prompt, 'logo');
         currentLogoUrl = logoUrl;
         generatedLogo.src = logoUrl;
+        generatedLogo.style.cursor = 'pointer';
+        generatedLogo.title = 'Click to view larger';
         generatedLogo.onerror = () => {
             generatedLogo.src = 'data:image/svg+xml,%3Csvg xmlns="http://www.w3.org/2000/svg" width="400" height="400"%3E%3Crect fill="%23161616" width="400" height="400"/%3E%3Ctext x="50%25" y="50%25" text-anchor="middle" dy=".3em" fill="%23ffffff" font-family="Arial" font-size="20"%3ELogo Generation Error%3C/text%3E%3C/svg%3E';
         };
+        // Add click listener to show in lightbox
+        generatedLogo.addEventListener('click', () => showImageLightbox(logoUrl));
     } catch (error) {
         console.error('Error generating logo:', error);
         alert('Error generating logo. Please try again.');
@@ -207,6 +258,7 @@ async function generateColorPalette(regenerate = false) {
     }
 
     // Show loading state only if regenerating (initial generation shows main loading state)
+    // Note: The main loading state is now handled by the caller for regenerate
     if (regenerate) {
         regenerateColorsBtn.disabled = true;
         regenerateColorsBtn.innerHTML = '<i data-feather="loader"></i><span>Regenerating...</span>';
@@ -324,45 +376,46 @@ async function generateMoodBoard(regenerate = false) {
 // Generate image using OpenAI DALL-E 3 API
 async function generateImage(prompt, type = 'image') {
     try {
-        // Clean up prompt - remove negative prompt section as DALL-E 3 doesn't support it
-        // Instead, incorporate negative instructions into the main prompt
-        let mainPrompt = prompt;
-        if (prompt.includes('Avoid any colors not in this list:')) {
-            const parts = prompt.split('Avoid any colors not in this list:');
-            mainPrompt = parts[0].trim();
-            // DALL-E 3 doesn't support negative prompts, so we'll just use the main prompt
-        }
+        // Clean up prompt - DALL-E 3 doesn't support negative prompts
+        let mainPrompt = prompt.trim();
 
         // DALL-E 3 has a 4000 character limit for prompts, so ensure we're within that
         if (mainPrompt.length > 4000) {
+            console.warn(`Prompt is ${mainPrompt.length} characters, truncating to 4000`);
             mainPrompt = mainPrompt.substring(0, 4000);
         }
+        
+        console.log(`Generating ${type} with prompt (${mainPrompt.length} chars):`, mainPrompt.substring(0, 200) + '...');
 
+        // Note: Server adds the model parameter, we just send prompt and options
+        const requestBody = {
+            prompt: mainPrompt,
+            size: '1024x1024',
+            quality: 'standard',
+            n: 1
+        };
+        
         const response = await fetch(`${OPENAI_API_BASE}/images/generations`, {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
                 'Authorization': `Bearer ${openaiApiKey}`
             },
-            body: JSON.stringify({
-                prompt: mainPrompt,
-                size: '1024x1024',
-                quality: 'standard',
-                n: 1
-            })
+            body: JSON.stringify(requestBody)
         });
 
         if (!response.ok) {
             let errorMessage = 'Unknown error';
-            const responseClone = response.clone(); // Clone to read body multiple times if needed
+            let errorData = null;
             try {
-                const errorData = await response.json();
+                errorData = await response.json();
                 errorMessage = errorData.error?.message || errorData.error || errorData.detail || 'Unknown error';
+                console.error('OpenAI API error response:', errorData);
             } catch {
-                // If JSON parsing fails, try to get text from clone
                 try {
-                    const errorText = await responseClone.text();
+                    const errorText = await response.text();
                     errorMessage = errorText || 'Unknown error';
+                    console.error('OpenAI API error text:', errorText);
                 } catch {
                     errorMessage = `HTTP ${response.status}: ${response.statusText}`;
                 }
@@ -597,13 +650,10 @@ function displayColorPalette(colors) {
         const swatch = document.createElement('div');
         swatch.className = 'color-swatch';
         swatch.style.backgroundColor = color.hex;
-        swatch.title = `Click to copy ${color.hex}`;
+        swatch.title = `Click to edit ${color.hex}`;
+        swatch.style.cursor = 'pointer';
         swatch.addEventListener('click', () => {
-            navigator.clipboard.writeText(color.hex);
-            swatch.style.transform = 'scale(0.95)';
-            setTimeout(() => {
-                swatch.style.transform = '';
-            }, 200);
+            openColorPicker(index, color.hex);
         });
 
         const info = document.createElement('div');
@@ -612,6 +662,11 @@ function displayColorPalette(colors) {
         const hex = document.createElement('div');
         hex.className = 'color-hex';
         hex.textContent = color.hex.toUpperCase();
+        hex.style.cursor = 'pointer';
+        hex.title = 'Click to edit';
+        hex.addEventListener('click', () => {
+            openColorPicker(index, color.hex);
+        });
         
         const name = document.createElement('div');
         name.className = 'color-name';
@@ -625,6 +680,114 @@ function displayColorPalette(colors) {
     });
 }
 
+// Open color picker modal
+function openColorPicker(index, currentHex) {
+    editingColorIndex = index;
+    const rgb = hexToRgb(currentHex);
+    
+    // Set initial values
+    colorPicker.value = currentHex;
+    colorHexInput.value = currentHex.toUpperCase();
+    if (rgb) {
+        colorRInput.value = rgb.r;
+        colorGInput.value = rgb.g;
+        colorBInput.value = rgb.b;
+    }
+    updateColorPreview(currentHex);
+    
+    colorPickerModal.classList.remove('hidden');
+    if (typeof feather !== 'undefined') {
+        feather.replace();
+    }
+}
+
+// Hide color picker modal
+function hideColorPickerModal() {
+    colorPickerModal.classList.add('hidden');
+    editingColorIndex = -1;
+}
+
+// Update color preview
+function updateColorPreview(hex) {
+    colorPreviewSwatch.style.backgroundColor = hex;
+}
+
+// Update color from picker
+function updateColorFromPicker() {
+    const hex = colorPicker.value;
+    colorHexInput.value = hex.toUpperCase();
+    const rgb = hexToRgb(hex);
+    if (rgb) {
+        colorRInput.value = rgb.r;
+        colorGInput.value = rgb.g;
+        colorBInput.value = rgb.b;
+    }
+    updateColorPreview(hex);
+}
+
+// Update color from hex input
+function updateColorFromHex() {
+    let hex = colorHexInput.value.trim();
+    if (!hex.startsWith('#')) {
+        hex = '#' + hex;
+    }
+    if (/^#[0-9A-Fa-f]{6}$/.test(hex)) {
+        colorPicker.value = hex;
+        const rgb = hexToRgb(hex);
+        if (rgb) {
+            colorRInput.value = rgb.r;
+            colorGInput.value = rgb.g;
+            colorBInput.value = rgb.b;
+        }
+        updateColorPreview(hex);
+    }
+}
+
+// Update color from RGB inputs
+function updateColorFromRGB() {
+    const r = parseInt(colorRInput.value) || 0;
+    const g = parseInt(colorGInput.value) || 0;
+    const b = parseInt(colorBInput.value) || 0;
+    
+    // Clamp values
+    const clampedR = Math.max(0, Math.min(255, r));
+    const clampedG = Math.max(0, Math.min(255, g));
+    const clampedB = Math.max(0, Math.min(255, b));
+    
+    if (r !== clampedR) colorRInput.value = clampedR;
+    if (g !== clampedG) colorGInput.value = clampedG;
+    if (b !== clampedB) colorBInput.value = clampedB;
+    
+    const hex = rgbToHex(clampedR, clampedG, clampedB);
+    colorPicker.value = hex;
+    colorHexInput.value = hex.toUpperCase();
+    updateColorPreview(hex);
+}
+
+// Save color change
+function saveColorChange() {
+    if (editingColorIndex === -1) return;
+    
+    const newHex = colorHexInput.value.trim();
+    if (!/^#[0-9A-Fa-f]{6}$/i.test(newHex)) {
+        alert('Please enter a valid hex color (e.g., #FF0000)');
+        return;
+    }
+    
+    // Update the color in currentColors array
+    currentColors[editingColorIndex].hex = newHex.toLowerCase();
+    currentColors[editingColorIndex].name = getColorName(newHex);
+    
+    // Redisplay the palette
+    displayColorPalette(currentColors);
+    
+    // Hide modal
+    hideColorPickerModal();
+    
+    // Note: Logo and mood board will use updated colors when regenerated
+    // The user can manually regenerate them using the regenerate buttons
+}
+
 // Display mood board
 function displayMoodBoard(urls) {
     moodBoardContainer.innerHTML = '';
@@ -636,9 +799,12 @@ function displayMoodBoard(urls) {
         const img = document.createElement('img');
         img.src = url;
         img.alt = `Mood board image ${index + 1}`;
+        img.style.cursor = 'pointer';
         img.onerror = () => {
             img.src = 'data:image/svg+xml,%3Csvg xmlns="http://www.w3.org/2000/svg" width="200" height="200"%3E%3Crect fill="%23161616" width="200" height="200"/%3E%3Ctext x="50%25" y="50%25" text-anchor="middle" dy=".3em" fill="%23ffffff" font-family="Arial" font-size="12"%3EImage Error%3C/text%3E%3C/svg%3E';
         };
+        // Make mood board images clickable to show in lightbox
+        img.addEventListener('click', () => showImageLightbox(url));
         
         item.appendChild(img);
         moodBoardContainer.appendChild(item);
@@ -646,18 +812,36 @@ function displayMoodBoard(urls) {
 }
 
 // Download logo
-function downloadLogo() {
+async function downloadLogo() {
     if (!currentLogoUrl) return;
 
-    const link = document.createElement('a');
-    link.href = currentLogoUrl;
-    const filename = currentBrandName 
-        ? `${currentBrandName.replace(/[^a-z0-9]/gi, '-').toLowerCase()}-logo.png`
-        : 'brandwise-logo.png';
-    link.download = filename;
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
+    try {
+        // Fetch the image as a blob to avoid CORS issues
+        const response = await fetch(currentLogoUrl);
+        const blob = await response.blob();
+        
+        // Create an object URL from the blob
+        const blobUrl = URL.createObjectURL(blob);
+        
+        // Create download link
+        const link = document.createElement('a');
+        link.href = blobUrl;
+        const filename = currentBrandName 
+            ? `${currentBrandName.replace(/[^a-z0-9]/gi, '-').toLowerCase()}-logo.png`
+            : 'brandwise-logo.png';
+        link.download = filename;
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        
+        // Clean up the object URL after a short delay
+        setTimeout(() => {
+            URL.revokeObjectURL(blobUrl);
+        }, 100);
+    } catch (error) {
+        console.error('Error downloading logo:', error);
+        alert('Error downloading logo. Please try again.');
+    }
 }
 
 // Go back to input
@@ -671,6 +855,12 @@ function goBackToInput() {
 // API Keys Modal
 function showApiKeysModal() {
     apiKeysModal.classList.remove('hidden');
+    // Reset visibility to password (hidden) when modal opens
+    openaiApiKeyInput.type = 'password';
+    const icon = toggleApiKeyVisibilityBtn.querySelector('i');
+    if (icon) {
+        icon.setAttribute('data-feather', 'eye');
+    }
     if (typeof feather !== 'undefined') {
         feather.replace();
     }
@@ -678,6 +868,24 @@ function showApiKeysModal() {
 
 function hideApiKeysModal() {
     apiKeysModal.classList.add('hidden');
+}
+
+function toggleApiKeyVisibility() {
+    const input = openaiApiKeyInput;
+    const icon = toggleApiKeyVisibilityBtn.querySelector('i');
+    
+    if (input.type === 'password') {
+        input.type = 'text';
+        icon.setAttribute('data-feather', 'eye-off');
+    } else {
+        input.type = 'password';
+        icon.setAttribute('data-feather', 'eye');
+    }
+    
+    // Re-initialize feather icons
+    if (typeof feather !== 'undefined') {
+        feather.replace();
+    }
 }
 
 function saveApiKeys() {
@@ -691,6 +899,23 @@ function saveApiKeys() {
     openaiApiKey = key;
     localStorage.setItem('openai_api_key', key);
     hideApiKeysModal();
+}
+
+// Image Lightbox functions
+function showImageLightbox(imageUrl) {
+    lightboxImage.src = imageUrl;
+    imageLightboxModal.classList.remove('hidden');
+    if (typeof feather !== 'undefined') {
+        feather.replace();
+    }
+    // Prevent body scroll when lightbox is open
+    document.body.style.overflow = 'hidden';
+}
+
+function hideImageLightbox() {
+    imageLightboxModal.classList.add('hidden');
+    // Restore body scroll
+    document.body.style.overflow = '';
 }
 
 // Re-initialize Feather Icons when needed

@@ -166,12 +166,17 @@
                 </p>
                 <div class="form-group">
                     <label for="openai-api-key">OpenAI API Key:</label>
-                    <input 
-                        type="password" 
-                        id="openai-api-key" 
-                        placeholder="sk-..."
-                        autocomplete="off"
-                    >
+                    <div class="api-key-input-wrapper">
+                        <input 
+                            type="password" 
+                            id="openai-api-key" 
+                            placeholder="sk-..."
+                            autocomplete="off"
+                        >
+                        <button type="button" id="toggle-api-key-visibility" class="toggle-visibility-btn" aria-label="Toggle API key visibility">
+                            <i data-feather="eye"></i>
+                        </button>
+                    </div>
                     <a href="https://platform.openai.com/api-keys" target="_blank" class="api-link">
                         Get an OpenAI API Key <i data-feather="external-link"></i>
                     </a>
@@ -189,6 +194,84 @@
             <div class="modal-footer">
                 <button id="save-api-keys-btn" class="primary-btn">Save API Keys</button>
             </div>
+        </div>
+    </div>
+
+    <!-- Color Picker Modal -->
+    <div class="modal-overlay hidden" id="color-picker-modal">
+        <div class="modal-content color-picker-modal">
+            <div class="modal-header">
+                <h2>Edit Color</h2>
+                <button class="modal-close" id="close-color-picker-btn">
+                    <i data-feather="x"></i>
+                </button>
+            </div>
+            <div class="modal-body">
+                <div class="form-group">
+                    <label for="color-picker">Color Picker:</label>
+                    <input 
+                        type="color" 
+                        id="color-picker" 
+                        value="#000000"
+                    >
+                </div>
+                <div class="form-group">
+                    <label for="color-hex-input">Hex Value:</label>
+                    <input 
+                        type="text" 
+                        id="color-hex-input" 
+                        placeholder="#000000"
+                        pattern="^#[0-9A-Fa-f]{6}$"
+                    >
+                </div>
+                <div class="form-group">
+                    <label>RGB Value:</label>
+                    <div class="rgb-inputs">
+                        <input 
+                            type="number" 
+                            id="color-r-input" 
+                            placeholder="R" 
+                            min="0" 
+                            max="255"
+                            class="rgb-input"
+                        >
+                        <input 
+                            type="number" 
+                            id="color-g-input" 
+                            placeholder="G" 
+                            min="0" 
+                            max="255"
+                            class="rgb-input"
+                        >
+                        <input 
+                            type="number" 
+                            id="color-b-input" 
+                            placeholder="B" 
+                            min="0" 
+                            max="255"
+                            class="rgb-input"
+                        >
+                    </div>
+                </div>
+                <div class="color-preview">
+                    <div class="color-preview-label">Preview:</div>
+                    <div id="color-preview-swatch" class="color-preview-swatch"></div>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button id="cancel-color-btn" class="secondary-btn">Cancel</button>
+                <button id="save-color-btn" class="primary-btn">Save Color</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Image Lightbox Modal -->
+    <div class="modal-overlay hidden" id="image-lightbox-modal">
+        <div class="lightbox-content">
+            <button class="lightbox-close" id="close-lightbox-btn">
+                <i data-feather="x"></i>
+            </button>
+            <img id="lightbox-image" class="lightbox-image" alt="Enlarged view">
         </div>
     </div>
 
