@@ -7,6 +7,18 @@ export default defineConfig({
       '/openai': {
         target: 'http://localhost:3002',
         changeOrigin: true
+      },
+      '/proxy-image': {
+        target: 'http://localhost:3002',
+        changeOrigin: true
+      },
+      '/api': {
+        target: 'http://localhost:3002',
+        changeOrigin: true
+      },
+      '/webhook': {
+        target: 'http://localhost:3002',
+        changeOrigin: true
       }
     }
   },

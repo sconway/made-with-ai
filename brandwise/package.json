@@ -12,10 +12,12 @@
     "start": "node server.js"
   },
   "dependencies": {
+    "@supabase/supabase-js": "^2.39.0",
     "cors": "^2.8.5",
     "dotenv": "^16.0.3",
     "express": "^4.18.2",
-    "node-fetch": "^3.3.0"
+    "node-fetch": "^3.3.0",
+    "stripe": "^14.10.0"
   },
   "devDependencies": {
     "concurrently": "^8.0.1",

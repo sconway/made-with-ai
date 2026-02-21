@@ -1,7 +1,25 @@
+// Import Supabase
+import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
+
 // Initialize Feather Icons
 if (typeof feather !== 'undefined') {
     feather.replace();
 }
+
+// Server/API configuration
+const PROXY_SERVER_URL = window.location.hostname === 'localhost'
+    ? 'http://localhost:3002'  // Local development
+    : '';  // Production - use relative URL (same origin)
+const OPENAI_API_BASE = `${PROXY_SERVER_URL}/openai`;
+
+// Supabase client (initialized after fetching config)
+let supabase = null;
+let appConfig = null;
+
+// Auth state
+let currentUser = null;
+let currentSession = null;
+let userCredits = 0;
 
 // DOM Elements
 const brandForm = document.getElementById('brand-form');
@@ -51,24 +69,493 @@ const imageLightboxModal = document.getElementById('image-lightbox-modal');
 const closeLightboxBtn = document.getElementById('close-lightbox-btn');
 const lightboxImage = document.getElementById('lightbox-image');
 
+// Download Modal elements
+const downloadModal = document.getElementById('download-modal');
+const closeDownloadModalBtn = document.getElementById('close-download-modal-btn');
+
+// Auth Modal elements
+const authModal = document.getElementById('auth-modal');
+const closeAuthModalBtn = document.getElementById('close-auth-modal-btn');
+const authModalTitle = document.getElementById('auth-modal-title');
+const loginForm = document.getElementById('login-form');
+const signupForm = document.getElementById('signup-form');
+const loginError = document.getElementById('login-error');
+const signupError = document.getElementById('signup-error');
+const authSwitchBtn = document.getElementById('auth-switch-btn');
+const authSwitchText = document.getElementById('auth-switch-text');
+const authFormsSection = document.getElementById('auth-forms-section');
+const signupSuccess = document.getElementById('signup-success');
+const signupSuccessEmail = document.getElementById('signup-success-email');
+const successCloseBtn = document.getElementById('success-close-btn');
+
+// Auth buttons
+const loginBtn = document.getElementById('login-btn');
+const signupBtn = document.getElementById('signup-btn');
+const logoutBtn = document.getElementById('logout-btn');
+
+// User menu elements
+const authButtons = document.getElementById('auth-buttons');
+const userMenu = document.getElementById('user-menu');
+const userMenuBtn = document.getElementById('user-menu-btn');
+const userDropdown = document.getElementById('user-dropdown');
+const userEmailDisplay = document.getElementById('user-email-display');
+
+// Credits elements
+const creditsDisplay = document.getElementById('credits-display');
+const creditsCount = document.getElementById('credits-count');
+const buyCreditsBtn = document.getElementById('buy-credits-btn');
+
+// Buy Credits Modal elements
+const buyCreditsModal = document.getElementById('buy-credits-modal');
+const closeBuyCreditsModalBtn = document.getElementById('close-buy-credits-modal-btn');
+const modalCreditsCount = document.getElementById('modal-credits-count');
+const checkoutBtn = document.getElementById('checkout-btn');
+
 // State
 let openaiApiKey = localStorage.getItem('openai_api_key') || '';
 let currentBrandName = '';
 let currentBrandDescription = '';
 let currentBrandUse = '';
 let currentLogoUrl = '';
+let currentLogoBlob = null; // Store the logo as a blob for downloads
 let currentColors = [];
 let currentMoodBoardUrls = [];
 let editingColorIndex = -1; // Track which color is being edited
 
-// OpenAI API configuration
-const PROXY_SERVER_URL = window.location.hostname === 'localhost'
-    ? 'http://localhost:3002'  // Local development
-    : '';  // Production - use relative URL (same origin)
-const OPENAI_API_BASE = `${PROXY_SERVER_URL}/openai`;
+// Initialize app configuration and Supabase
+async function initializeApp() {
+    try {
+        // Fetch config from server
+        const response = await fetch(`${PROXY_SERVER_URL}/api/config`);
+        appConfig = await response.json();
+        
+        // Initialize Supabase
+        supabase = createClient(appConfig.supabaseUrl, appConfig.supabaseAnonKey);
+        
+        // Check for existing session
+        const { data: { session } } = await supabase.auth.getSession();
+        if (session) {
+            currentUser = session.user;
+            currentSession = session;
+            await fetchUserCredits();
+            updateAuthUI();
+        }
+        
+        // Listen for auth state changes
+        supabase.auth.onAuthStateChange(async (event, session) => {
+            console.log('Auth state changed:', event, !!session);
+            if (session) {
+                currentUser = session.user;
+                currentSession = session;
+                await fetchUserCredits();
+            } else {
+                currentUser = null;
+                currentSession = null;
+                userCredits = 0;
+            }
+            updateAuthUI();
+        });
+        
+        // Check for payment success/cancel in URL
+        const urlParams = new URLSearchParams(window.location.search);
+        const paymentStatus = urlParams.get('payment');
+        if (paymentStatus === 'success') {
+            // Show processing state immediately
+            showToast('Processing payment...', 'loading');
+            
+            // Refresh credits after successful payment - try multiple times as webhook may take a moment
+            console.log('Payment success detected, waiting for webhook to process...');
+            let attempts = 0;
+            const maxAttempts = 5;
+            const previousCredits = userCredits;
+            
+            const checkCredits = async () => {
+                attempts++;
+                await fetchUserCredits();
+                console.log(`Credit check attempt ${attempts}: previous=${previousCredits}, current=${userCredits}`);
+                
+                if (userCredits > previousCredits) {
+                    showToast(`Payment successful! ${userCredits} credits now available.`, 'success');
+                } else if (attempts < maxAttempts) {
+                    // Webhook might not have processed yet, try again
+                    setTimeout(checkCredits, 1500);
+                } else {
+                    showToast('Payment received! Credits may take a moment to appear.', 'info');
+                }
+            };
+            setTimeout(checkCredits, 500);
+            // Clean up URL
+            window.history.replaceState({}, document.title, window.location.pathname);
+        } else if (paymentStatus === 'cancelled') {
+            showToast('Payment cancelled.', 'error');
+            window.history.replaceState({}, document.title, window.location.pathname);
+        }
+        
+    } catch (error) {
+        console.error('Error initializing app:', error);
+    }
+}
+
+// Fetch user credits from server
+async function fetchUserCredits() {
+    if (!currentUser || !currentSession) {
+        console.log('fetchUserCredits: No current user or session');
+        return;
+    }
+    
+    try {
+        console.log('fetchUserCredits: Fetching credits from server...');
+        const response = await fetch(`${PROXY_SERVER_URL}/api/credits`, {
+            headers: {
+                'Authorization': `Bearer ${currentSession.access_token}`
+            }
+        });
+        
+        if (response.ok) {
+            const data = await response.json();
+            userCredits = data.credits;
+            console.log('fetchUserCredits: Got credits:', userCredits);
+            updateCreditsDisplay();
+        } else {
+            const errorData = await response.json().catch(() => ({}));
+            console.error('fetchUserCredits: Server error', response.status, errorData);
+        }
+    } catch (error) {
+        console.error('fetchUserCredits: Error:', error);
+    }
+}
+
+// Use a credit (called before generation)
+async function useCredit() {
+    try {
+        console.log('useCredit: Starting, currentUser:', !!currentUser, 'currentSession:', !!currentSession, 'userCredits:', userCredits);
+        
+        if (!currentUser || !currentSession) {
+            console.log('useCredit: No current user or session, showing auth modal');
+            showAuthModal('login');
+            return false;
+        }
+        console.log('useCredit: Passed auth check');
+        
+        if (userCredits <= 0) {
+            console.log('useCredit: No credits, showing buy credits modal');
+            showBuyCreditsModal();
+            return false;
+        }
+        console.log('useCredit: Passed credits check');
+        
+        console.log('useCredit: Making API call to use credit...');
+        const response = await fetch(`${PROXY_SERVER_URL}/api/credits/use`, {
+            method: 'POST',
+            headers: {
+                'Authorization': `Bearer ${currentSession.access_token}`,
+                'Content-Type': 'application/json'
+            }
+        });
+        
+        console.log('useCredit: API response status:', response.status);
+        
+        if (response.ok) {
+            const data = await response.json();
+            userCredits = data.credits;
+            console.log('useCredit: Success, remaining credits:', userCredits);
+            updateCreditsDisplay();
+            return true;
+        } else {
+            const error = await response.json();
+            console.log('useCredit: Server error:', error);
+            if (error.error === 'No credits remaining') {
+                showBuyCreditsModal();
+            }
+            return false;
+        }
+    } catch (error) {
+        console.error('useCredit: Caught error:', error);
+        return false;
+    }
+}
+
+// Update credits display
+function updateCreditsDisplay() {
+    if (creditsCount) {
+        creditsCount.textContent = userCredits;
+    }
+    if (modalCreditsCount) {
+        modalCreditsCount.textContent = userCredits;
+    }
+}
+
+// Toast notification system
+let currentToast = null;
+
+function showToast(message, type = 'info') {
+    // Remove existing toast if any
+    if (currentToast) {
+        currentToast.remove();
+    }
+    
+    const toast = document.createElement('div');
+    toast.className = `toast toast-${type}`;
+    
+    const icons = {
+        success: 'check-circle',
+        error: 'x-circle',
+        info: 'info',
+        loading: 'loader'
+    };
+    
+    toast.innerHTML = `
+        <i data-feather="${icons[type] || 'info'}" class="${type === 'loading' ? 'spin' : ''}"></i>
+        <span>${message}</span>
+    `;
+    
+    document.body.appendChild(toast);
+    currentToast = toast;
+    
+    if (typeof feather !== 'undefined') {
+        feather.replace();
+    }
+    
+    // Trigger animation
+    requestAnimationFrame(() => {
+        toast.classList.add('show');
+    });
+    
+    // Auto-dismiss (except for loading)
+    if (type !== 'loading') {
+        setTimeout(() => {
+            toast.classList.remove('show');
+            setTimeout(() => {
+                if (toast.parentNode) {
+                    toast.remove();
+                }
+                if (currentToast === toast) {
+                    currentToast = null;
+                }
+            }, 300);
+        }, 4000);
+    }
+}
+
+// Update UI based on auth state
+function updateAuthUI() {
+    if (currentUser) {
+        // User is logged in
+        authButtons.classList.add('hidden');
+        userMenu.classList.remove('hidden');
+        creditsDisplay.classList.remove('hidden');
+        userEmailDisplay.textContent = currentUser.email.split('@')[0];
+        updateCreditsDisplay();
+    } else {
+        // User is logged out
+        authButtons.classList.remove('hidden');
+        userMenu.classList.add('hidden');
+        creditsDisplay.classList.add('hidden');
+    }
+    
+    if (typeof feather !== 'undefined') {
+        feather.replace();
+    }
+}
+
+// Auth Modal functions
+function showAuthModal(mode = 'login') {
+    authModal.classList.remove('hidden');
+    loginError.classList.add('hidden');
+    signupError.classList.add('hidden');
+    
+    if (mode === 'login') {
+        authModalTitle.textContent = 'Sign In';
+        loginForm.classList.remove('hidden');
+        signupForm.classList.add('hidden');
+        authSwitchText.textContent = "Don't have an account?";
+        authSwitchBtn.textContent = 'Sign Up';
+    } else {
+        authModalTitle.textContent = 'Create Account';
+        loginForm.classList.add('hidden');
+        signupForm.classList.remove('hidden');
+        authSwitchText.textContent = 'Already have an account?';
+        authSwitchBtn.textContent = 'Sign In';
+    }
+    
+    if (typeof feather !== 'undefined') {
+        feather.replace();
+    }
+}
+
+function hideAuthModal() {
+    authModal.classList.add('hidden');
+    loginForm.reset();
+    signupForm.reset();
+    loginError.classList.add('hidden');
+    signupError.classList.add('hidden');
+    
+    // Reset success message state
+    signupSuccess.classList.add('hidden');
+    authFormsSection.classList.remove('hidden');
+}
+
+// Login function
+async function handleLogin(e) {
+    e.preventDefault();
+    
+    const email = document.getElementById('login-email').value;
+    const password = document.getElementById('login-password').value;
+    
+    loginError.classList.add('hidden');
+    
+    try {
+        const { data, error } = await supabase.auth.signInWithPassword({
+            email,
+            password
+        });
+        
+        if (error) throw error;
+        
+        hideAuthModal();
+    } catch (error) {
+        loginError.textContent = error.message;
+        loginError.classList.remove('hidden');
+    }
+}
+
+// Signup function
+async function handleSignup(e) {
+    e.preventDefault();
+    
+    const email = document.getElementById('signup-email').value;
+    const password = document.getElementById('signup-password').value;
+    const confirmPassword = document.getElementById('signup-confirm-password').value;
+    
+    signupError.classList.add('hidden');
+    
+    if (password !== confirmPassword) {
+        signupError.textContent = 'Passwords do not match';
+        signupError.classList.remove('hidden');
+        return;
+    }
+    
+    try {
+        const { data, error } = await supabase.auth.signUp({
+            email,
+            password
+        });
+        
+        if (error) throw error;
+        
+        if (data.user && !data.session) {
+            // Email confirmation required - show success message
+            showSignupSuccess(email);
+        } else {
+            // User signed up and logged in immediately (email confirmation disabled)
+            hideAuthModal();
+        }
+    } catch (error) {
+        signupError.textContent = error.message;
+        signupError.classList.remove('hidden');
+    }
+}
+
+// Show signup success message
+function showSignupSuccess(email) {
+    // Hide forms and show success
+    loginForm.classList.add('hidden');
+    signupForm.classList.add('hidden');
+    authFormsSection.classList.add('hidden');
+    authModalTitle.textContent = 'Account Created';
+    
+    signupSuccessEmail.textContent = email;
+    signupSuccess.classList.remove('hidden');
+    
+    if (typeof feather !== 'undefined') {
+        feather.replace();
+    }
+}
+
+// Logout function
+async function handleLogout() {
+    try {
+        await supabase.auth.signOut();
+        userDropdown.classList.add('hidden');
+    } catch (error) {
+        console.error('Error signing out:', error);
+    }
+}
+
+// Buy Credits Modal functions
+function showBuyCreditsModal() {
+    console.log('showBuyCreditsModal: Called, currentUser:', !!currentUser);
+    if (!currentUser) {
+        showAuthModal('login');
+        return;
+    }
+    updateCreditsDisplay();
+    
+    // Reset checkout button state in case it was left disabled
+    checkoutBtn.disabled = false;
+    checkoutBtn.innerHTML = '<i data-feather="credit-card"></i><span>Purchase Credits</span>';
+    
+    buyCreditsModal.classList.remove('hidden');
+    console.log('showBuyCreditsModal: Modal shown');
+    if (typeof feather !== 'undefined') {
+        feather.replace();
+    }
+}
+
+function hideBuyCreditsModal() {
+    buyCreditsModal.classList.add('hidden');
+}
+
+// Checkout function
+async function handleCheckout() {
+    console.log('handleCheckout: Starting...');
+    
+    if (!currentUser || !currentSession) {
+        console.log('handleCheckout: No current user or session');
+        showAuthModal('login');
+        return;
+    }
+    
+    try {
+        checkoutBtn.disabled = true;
+        checkoutBtn.innerHTML = '<span>Processing...</span>';
+        
+        console.log('handleCheckout: Creating checkout session...');
+        const response = await fetch(`${PROXY_SERVER_URL}/api/checkout`, {
+            method: 'POST',
+            headers: {
+                'Authorization': `Bearer ${currentSession.access_token}`,
+                'Content-Type': 'application/json'
+            }
+        });
+        
+        console.log('handleCheckout: Response status:', response.status);
+        
+        if (response.ok) {
+            const { url } = await response.json();
+            console.log('handleCheckout: Redirecting to Stripe...');
+            window.location.href = url;
+        } else {
+            const errorData = await response.json().catch(() => ({}));
+            console.error('handleCheckout: Server error:', errorData);
+            throw new Error('Failed to create checkout session');
+        }
+    } catch (error) {
+        console.error('handleCheckout: Error:', error);
+        showToast('Error starting checkout. Please try again.', 'error');
+        checkoutBtn.disabled = false;
+        checkoutBtn.innerHTML = '<i data-feather="credit-card"></i><span>Purchase Credits</span>';
+        if (typeof feather !== 'undefined') {
+            feather.replace();
+        }
+    }
+}
 
 // Initialize
-document.addEventListener('DOMContentLoaded', () => {
+document.addEventListener('DOMContentLoaded', async () => {
+    // Initialize app (Supabase, auth state)
+    await initializeApp();
+    
     // Load saved API key
     if (openaiApiKey) {
         openaiApiKeyInput.value = openaiApiKey;
@@ -81,31 +568,52 @@ document.addEventListener('DOMContentLoaded', () => {
     closeModalBtn.addEventListener('click', hideApiKeysModal);
     saveApiKeysBtn.addEventListener('click', saveApiKeys);
     toggleApiKeyVisibilityBtn.addEventListener('click', toggleApiKeyVisibility);
-    downloadLogoBtn.addEventListener('click', downloadLogo);
-    regenerateLogoBtn.addEventListener('click', () => generateLogo(true));
-    regenerateColorsBtn.addEventListener('click', async () => {
-        // Show loading state (same as initial generation)
-        resultsDisplay.classList.add('hidden');
-        loadingState.classList.remove('hidden');
-        
-        try {
-            await generateColorPalette(true);
-            // After regenerating colors, regenerate logo and mood board with new colors
-            // Logo must be generated after colors are ready
-            await generateLogo(true);
-            await generateMoodBoard(true);
-            
-            // Hide loading and show results
-            loadingState.classList.add('hidden');
-            resultsDisplay.classList.remove('hidden');
-        } catch (error) {
-            console.error('Error regenerating brand identity:', error);
-            alert('Error regenerating brand identity. Please try again.');
-            loadingState.classList.add('hidden');
-            resultsDisplay.classList.remove('hidden');
+    downloadLogoBtn.addEventListener('click', showDownloadModal);
+    regenerateLogoBtn.addEventListener('click', () => handleRegenerate('logo'));
+    regenerateColorsBtn.addEventListener('click', () => handleRegenerate('colors'));
+    regenerateMoodBoardBtn.addEventListener('click', () => handleRegenerate('moodboard'));
+
+    // Auth event listeners
+    loginBtn.addEventListener('click', () => showAuthModal('login'));
+    signupBtn.addEventListener('click', () => showAuthModal('signup'));
+    closeAuthModalBtn.addEventListener('click', hideAuthModal);
+    authModal.addEventListener('click', (e) => {
+        if (e.target === authModal) hideAuthModal();
+    });
+    loginForm.addEventListener('submit', handleLogin);
+    signupForm.addEventListener('submit', handleSignup);
+    authSwitchBtn.addEventListener('click', () => {
+        const isLogin = !loginForm.classList.contains('hidden');
+        showAuthModal(isLogin ? 'signup' : 'login');
+    });
+    successCloseBtn.addEventListener('click', hideAuthModal);
+    logoutBtn.addEventListener('click', handleLogout);
+    
+    // User menu dropdown
+    userMenuBtn.addEventListener('click', () => {
+        userDropdown.classList.toggle('hidden');
+    });
+    document.addEventListener('click', (e) => {
+        if (!userMenu.contains(e.target)) {
+            userDropdown.classList.add('hidden');
         }
     });
-    regenerateMoodBoardBtn.addEventListener('click', () => generateMoodBoard(true));
+    
+    // Credits event listeners
+    buyCreditsBtn.addEventListener('click', showBuyCreditsModal);
+    creditsCount.addEventListener('click', async () => {
+        console.log('Manually refreshing credits...');
+        creditsCount.style.opacity = '0.5';
+        await fetchUserCredits();
+        creditsCount.style.opacity = '1';
+    });
+    creditsCount.style.cursor = 'pointer';
+    creditsCount.title = 'Click to refresh';
+    closeBuyCreditsModalBtn.addEventListener('click', hideBuyCreditsModal);
+    buyCreditsModal.addEventListener('click', (e) => {
+        if (e.target === buyCreditsModal) hideBuyCreditsModal();
+    });
+    checkoutBtn.addEventListener('click', handleCheckout);
 
     // Color picker modal event listeners
     closeColorPickerBtn.addEventListener('click', hideColorPickerModal);
@@ -138,6 +646,31 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     });
 
+    // Download modal event listeners
+    closeDownloadModalBtn.addEventListener('click', hideDownloadModal);
+    downloadModal.addEventListener('click', (e) => {
+        if (e.target === downloadModal) {
+            hideDownloadModal();
+        }
+    });
+
+    // Download option buttons
+    document.querySelectorAll('.download-option-btn').forEach(btn => {
+        btn.addEventListener('click', () => {
+            const size = btn.dataset.size;
+            const category = btn.dataset.category || 'original';
+            downloadLogoAtSize(size, category);
+        });
+    });
+
+    // Download all buttons
+    document.querySelectorAll('.download-all-btn').forEach(btn => {
+        btn.addEventListener('click', () => {
+            const category = btn.dataset.category;
+            downloadAllInCategory(category);
+        });
+    });
+
     // Check if API key exists
     if (!openaiApiKey) {
         showApiKeysModal();
@@ -145,8 +678,41 @@ document.addEventListener('DOMContentLoaded', () => {
 });
 
 // Form submission
+// Handle regeneration with credit check
+async function handleRegenerate(type) {
+    // Check for credits before regenerating
+    const hasCredit = await useCredit();
+    if (!hasCredit) return;
+    
+    if (type === 'logo') {
+        await generateLogo(true);
+    } else if (type === 'colors') {
+        // Show loading state
+        resultsDisplay.classList.add('hidden');
+        loadingState.classList.remove('hidden');
+        
+        try {
+            await generateColorPalette(true);
+            await generateLogo(true);
+            await generateMoodBoard(true);
+            
+            loadingState.classList.add('hidden');
+            resultsDisplay.classList.remove('hidden');
+        } catch (error) {
+            console.error('Error regenerating brand identity:', error);
+            alert('Error regenerating brand identity. Please try again.');
+            loadingState.classList.add('hidden');
+            resultsDisplay.classList.remove('hidden');
+        }
+    } else if (type === 'moodboard') {
+        await generateMoodBoard(true);
+    }
+}
+
+// Form submission
 async function handleFormSubmit(e) {
     e.preventDefault();
+    console.log('handleFormSubmit: Starting...');
     
     const brandName = brandNameInput.value.trim();
     const description = brandDescriptionInput.value.trim();
@@ -158,10 +724,25 @@ async function handleFormSubmit(e) {
     }
 
     if (!openaiApiKey) {
+        console.log('handleFormSubmit: No API key');
         alert('Please enter your OpenAI API key first');
         showApiKeysModal();
         return;
     }
+
+    // Check for authentication and credits
+    if (!currentUser) {
+        console.log('handleFormSubmit: No current user, showing auth modal');
+        showAuthModal('login');
+        return;
+    }
+    
+    console.log('handleFormSubmit: User authenticated, credits:', userCredits);
+    
+    // Use a credit for the initial generation
+    const hasCredit = await useCredit();
+    console.log('handleFormSubmit: useCredit result:', hasCredit);
+    if (!hasCredit) return;
 
     currentBrandName = brandName;
     currentBrandDescription = description;
@@ -221,14 +802,27 @@ async function generateLogo(regenerate = false) {
         // Build explicit color instructions - ALWAYS use current colors from palette
         const colorHexes = currentColors.map(c => c.hex).join(', ');
         
-        // Simplified and clearer prompt - focus on the logo only, not on displaying colors
-        // Keep it concise to stay under DALL-E 3's 4000 character limit
-        const prompt = `Professional logo for "${currentBrandName}": ${currentBrandDescription}. Use case: ${currentBrandUse}. 
+        // Build color description from names instead of hex codes to avoid DALL-E showing swatches
+        const colorNames = currentColors.map(c => c.name).filter(n => n && n !== 'Unknown' && n !== 'Color').join(', ');
+        const colorDescription = colorNames ? `using ${colorNames} tones` : '';
+        
+        // Simplified prompt - explicitly forbid any color palette display
+        const prompt = `Create a single professional logo mark for "${currentBrandName}". Brand: ${currentBrandDescription}. 
 
-Use ONLY these colors: ${colorHexes}. Show ONLY the logo design - no color palettes, swatches, hex codes, or text. Just the logo on transparent or white background. Clean, modern, minimalist style.`;
+CRITICAL REQUIREMENTS:
+- Output ONLY the logo symbol/icon itself
+- Plain white or transparent background
+- NO color palette, NO color swatches, NO hex codes, NO text labels
+- NO additional design elements below or around the logo
+- Clean, modern, minimalist corporate logo ${colorDescription}
+- Just the logo, nothing else`;
 
         const logoUrl = await generateImage(prompt, 'logo');
         currentLogoUrl = logoUrl;
+        
+        // Store the logo as a blob for downloads (avoids CORS issues)
+        currentLogoBlob = await fetchImageAsBlob(logoUrl);
+        
         generatedLogo.src = logoUrl;
         generatedLogo.style.cursor = 'pointer';
         generatedLogo.title = 'Click to view larger';
@@ -811,36 +1405,199 @@ function displayMoodBoard(urls) {
     });
 }
 
-// Download logo
-async function downloadLogo() {
-    if (!currentLogoUrl) return;
+// Download Modal Functions
+function showDownloadModal() {
+    if (!currentLogoBlob) {
+        alert('No logo available to download. Please generate a logo first.');
+        return;
+    }
+    downloadModal.classList.remove('hidden');
+    if (typeof feather !== 'undefined') {
+        feather.replace();
+    }
+}
+
+function hideDownloadModal() {
+    downloadModal.classList.add('hidden');
+}
+
+// Fetch image as blob using proxy to bypass CORS
+async function fetchImageAsBlob(url) {
+    try {
+        // Use the proxy endpoint to fetch the image (same pattern as OPENAI_API_BASE)
+        const proxyUrl = `${PROXY_SERVER_URL}/proxy-image?url=${encodeURIComponent(url)}`;
+        console.log('Fetching image via proxy:', proxyUrl);
+        const response = await fetch(proxyUrl);
+        
+        if (!response.ok) {
+            const errorText = await response.text().catch(() => 'Unknown error');
+            console.error('Proxy response error:', response.status, errorText);
+            throw new Error(`Failed to fetch image: ${response.status}`);
+        }
+        
+        const blob = await response.blob();
+        console.log('Image fetched successfully, blob size:', blob.size);
+        return blob;
+    } catch (error) {
+        console.error('Error fetching image via proxy:', error);
+        throw error;
+    }
+}
+
+// Resize logo to specific size and return as blob
+async function resizeLogoToSize(size) {
+    return new Promise((resolve, reject) => {
+        // Use the stored blob if available
+        if (!currentLogoBlob) {
+            reject(new Error('No logo blob available'));
+            return;
+        }
+        
+        // Create image element from the stored blob
+        const img = new Image();
+        
+        img.onload = () => {
+            // Create canvas at target size
+            const canvas = document.createElement('canvas');
+            const ctx = canvas.getContext('2d');
+            canvas.width = size;
+            canvas.height = size;
+            
+            // Enable high quality image rendering
+            ctx.imageSmoothingEnabled = true;
+            ctx.imageSmoothingQuality = 'high';
+            
+            // Draw image scaled to target size
+            ctx.drawImage(img, 0, 0, size, size);
+            
+            // Convert to blob
+            canvas.toBlob((resizedBlob) => {
+                URL.revokeObjectURL(img.src); // Clean up
+                resolve(resizedBlob);
+            }, 'image/png');
+        };
+        
+        img.onerror = () => {
+            URL.revokeObjectURL(img.src); // Clean up
+            reject(new Error('Failed to load image'));
+        };
+        
+        img.src = URL.createObjectURL(currentLogoBlob);
+    });
+}
+
+// Generate filename for download
+function generateFilename(size, category) {
+    const brandSlug = currentBrandName 
+        ? currentBrandName.replace(/[^a-z0-9]/gi, '-').toLowerCase()
+        : 'brandwise';
+    
+    if (size === 'original') {
+        return `${brandSlug}-logo-original.png`;
+    }
+    
+    const categoryPrefix = {
+        'favicon': 'favicon',
+        'ios': 'ios-icon',
+        'android': 'android-icon'
+    };
+    
+    const prefix = categoryPrefix[category] || 'icon';
+    return `${brandSlug}-${prefix}-${size}x${size}.png`;
+}
+
+// Download logo at specific size
+async function downloadLogoAtSize(size, category) {
+    if (!currentLogoBlob) {
+        alert('No logo available to download.');
+        return;
+    }
+
+    const btn = document.querySelector(`.download-option-btn[data-size="${size}"]${category !== 'original' ? `[data-category="${category}"]` : ''}`);
+    if (btn) {
+        btn.disabled = true;
+        btn.style.opacity = '0.6';
+    }
 
     try {
-        // Fetch the image as a blob to avoid CORS issues
-        const response = await fetch(currentLogoUrl);
-        const blob = await response.blob();
+        let blob;
+        if (size === 'original') {
+            // Use the stored original blob
+            blob = currentLogoBlob;
+        } else {
+            // Resize to specific size
+            blob = await resizeLogoToSize(parseInt(size));
+        }
         
-        // Create an object URL from the blob
         const blobUrl = URL.createObjectURL(blob);
-        
-        // Create download link
         const link = document.createElement('a');
         link.href = blobUrl;
-        const filename = currentBrandName 
-            ? `${currentBrandName.replace(/[^a-z0-9]/gi, '-').toLowerCase()}-logo.png`
-            : 'brandwise-logo.png';
-        link.download = filename;
+        link.download = generateFilename(size, category);
         document.body.appendChild(link);
         link.click();
         document.body.removeChild(link);
         
-        // Clean up the object URL after a short delay
         setTimeout(() => {
             URL.revokeObjectURL(blobUrl);
         }, 100);
     } catch (error) {
         console.error('Error downloading logo:', error);
         alert('Error downloading logo. Please try again.');
+    } finally {
+        if (btn) {
+            btn.disabled = false;
+            btn.style.opacity = '1';
+        }
+    }
+}
+
+// Icon size configurations
+const iconSizes = {
+    favicon: [16, 32, 48, 64],
+    ios: [1024, 180, 167, 152, 120, 87, 80, 76, 60, 40, 29, 20],
+    android: [512, 192, 144, 96, 72, 48, 36]
+};
+
+// Download all icons in a category
+async function downloadAllInCategory(category) {
+    if (!currentLogoBlob) {
+        alert('No logo available to download.');
+        return;
+    }
+
+    const sizes = iconSizes[category];
+    if (!sizes) {
+        alert('Invalid category');
+        return;
+    }
+
+    const downloadAllBtn = document.querySelector(`.download-all-btn[data-category="${category}"]`);
+    if (downloadAllBtn) {
+        downloadAllBtn.disabled = true;
+        downloadAllBtn.innerHTML = '<span class="spinner" style="width:14px;height:14px;border:2px solid var(--border-color);border-top-color:var(--primary-color);border-radius:50%;animation:spin 1s linear infinite;"></span> Downloading...';
+    }
+
+    try {
+        // Download each size with a small delay to prevent browser blocking
+        for (let i = 0; i < sizes.length; i++) {
+            const size = sizes[i];
+            await downloadLogoAtSize(size.toString(), category);
+            // Small delay between downloads
+            if (i < sizes.length - 1) {
+                await new Promise(resolve => setTimeout(resolve, 300));
+            }
+        }
+    } catch (error) {
+        console.error('Error downloading icons:', error);
+        alert('Error downloading some icons. Please try again.');
+    } finally {
+        if (downloadAllBtn) {
+            downloadAllBtn.disabled = false;
+            downloadAllBtn.innerHTML = '<i data-feather="download"></i> Download All';
+            if (typeof feather !== 'undefined') {
+                feather.replace();
+            }
+        }
     }
 }
 
