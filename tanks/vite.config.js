@@ -7,7 +7,8 @@ export default defineConfig({
     outDir: 'dist'
   },
   server: {
-    port: 5173, // Default Vite port
+    host: true, // Listen on all network interfaces (allows access from other devices)
+    port: 5173,
     proxy: {
       '/socket': {
         target: 'ws://localhost:3000',

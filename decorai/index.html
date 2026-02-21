@@ -1,5 +1,6 @@
 <!DOCTYPE html>
 <html lang="en">
+
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -8,8 +9,10 @@
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="icon" type="image/png" href="/favicon.png" />
     <script src="https://unpkg.com/feather-icons"></script>
 </head>
+
 <body>
     <div class="app-container">
         <header>
@@ -87,20 +90,22 @@
                             </div>
                         </div>
                     </div>
-                    
+
                     <!-- Dynamic room items selection (shown for empty rooms and some furnished room options) -->
                     <div class="room-items-selection hidden" id="room-items-selection">
                         <h3 id="items-selection-title">What would you like to add?</h3>
-                        <p class="selection-hint" id="items-selection-hint">Select items you'd like to include in your room design</p>
+                        <p class="selection-hint" id="items-selection-hint">Select items you'd like to include in your
+                            room design</p>
                         <div class="items-grid" id="items-grid">
                             <!-- Items will be populated by JavaScript -->
                         </div>
                         <div class="error-message hidden" id="items-selection-error">
                             <i data-feather="alert-circle"></i>
-                            <span>Please select at least one item to add to your empty room before generating a design.</span>
+                            <span>Please select at least one item to add to your empty room before generating a
+                                design.</span>
                         </div>
                     </div>
-                    
+
                     <!-- Furnished room options (shown only for furnished rooms) -->
                     <div class="furnished-options hidden" id="furnished-options">
                         <h3>How would you like to redesign your room?</h3>
@@ -199,22 +204,25 @@
                 <!-- Dynamic room items selection (shown for empty rooms and some furnished room options) -->
                 <div class="room-items-selection" id="mobile-room-items-selection">
                     <h3 id="mobile-items-selection-title">What would you like to add?</h3>
-                    <p class="selection-hint" id="mobile-items-selection-hint">Select items you'd like to include in your room design</p>
+                    <p class="selection-hint" id="mobile-items-selection-hint">Select items you'd like to include in
+                        your room design</p>
                     <div class="items-grid" id="mobile-items-grid">
                         <!-- Items will be populated by JavaScript -->
                     </div>
                     <div class="error-message hidden" id="mobile-items-selection-error">
                         <i data-feather="alert-circle"></i>
-                        <span>Please select at least one item to add to your empty room before generating a design.</span>
+                        <span>Please select at least one item to add to your empty room before generating a
+                            design.</span>
                     </div>
                 </div>
-                
+
                 <!-- Furnished room options (shown only for furnished rooms) -->
                 <div class="furnished-options" id="mobile-furnished-options">
                     <h3>How would you like to redesign your room?</h3>
                     <div class="furnished-options-grid">
                         <div class="furnished-option">
-                            <input type="radio" id="mobile-keep-existing" name="mobile-furnished-option" value="keep-existing">
+                            <input type="radio" id="mobile-keep-existing" name="mobile-furnished-option"
+                                value="keep-existing">
                             <label for="mobile-keep-existing">
                                 <div class="option-icon">
                                     <i data-feather="move"></i>
@@ -238,7 +246,8 @@
                             </label>
                         </div>
                         <div class="furnished-option">
-                            <input type="radio" id="mobile-start-fresh" name="mobile-furnished-option" value="start-fresh">
+                            <input type="radio" id="mobile-start-fresh" name="mobile-furnished-option"
+                                value="start-fresh">
                             <label for="mobile-start-fresh">
                                 <div class="option-icon">
                                     <i data-feather="refresh-cw"></i>
@@ -276,12 +285,14 @@
             </div>
             <div class="modal-body">
                 <div id="api-key-form" class="auth-form">
-                    <p>DecorAI uses Replicate (Stable Diffusion) to generate room designs. Please provide your Replicate API token below.</p>
+                    <p>DecorAI uses Replicate (Stable Diffusion) to generate room designs. Please provide your Replicate
+                        API token below.</p>
                     <div class="input-group">
                         <label for="replicate-api-key">Replicate API Key:</label>
                         <div class="password-input">
                             <input type="password" id="replicate-api-key" placeholder="Enter your Replicate token">
-                            <button id="toggle-replicate-key-visibility-btn" type="button" class="toggle-visibility-btn">
+                            <button id="toggle-replicate-key-visibility-btn" type="button"
+                                class="toggle-visibility-btn">
                                 <i data-feather="eye"></i>
                             </button>
                         </div>
@@ -289,16 +300,20 @@
                 </div>
 
                 <div class="auth-info">
-                    <p><i data-feather="info" class="info-icon"></i> Your API keys are stored locally and are never sent to our servers. They are used only for direct API calls to the respective services.</p>
-                    <p><a href="https://replicate.com/account/api-tokens" target="_blank">Get a Replicate API Token <i data-feather="external-link" class="small-icon"></i></a></p>
-                    <p><a href="https://platform.openai.com/api-keys" target="_blank">Get an OpenAI API key <i data-feather="external-link" class="small-icon"></i></a></p>
+                    <p><i data-feather="info" class="info-icon"></i> Your API keys are stored locally and are never sent
+                        to our servers. They are used only for direct API calls to the respective services.</p>
+                    <p><a href="https://replicate.com/account/api-tokens" target="_blank">Get a Replicate API Token <i
+                                data-feather="external-link" class="small-icon"></i></a></p>
+                    <p><a href="https://platform.openai.com/api-keys" target="_blank">Get an OpenAI API key <i
+                                data-feather="external-link" class="small-icon"></i></a></p>
                 </div>
-                
+
                 <div class="credits-info">
                     <h3>API Credits</h3>
-                    <p>Each design generation uses Replicate Stable Diffusion. Costs vary based on generation time. Check Replicate pricing for details.</p>
+                    <p>Each design generation uses Replicate Stable Diffusion. Costs vary based on generation time.
+                        Check Replicate pricing for details.</p>
                 </div>
-                
+
                 <div id="auth-error" class="auth-error hidden">
                     <p><i data-feather="alert-circle"></i> <span id="auth-error-message"></span></p>
                 </div>
@@ -313,4 +328,5 @@
 
     <script type="module" src="/src/main.js"></script>
 </body>
-</html> 
+
+</html>
