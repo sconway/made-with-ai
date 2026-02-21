@@ -4,6 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>BrandWise - AI-Powered Logo & Brand Generator</title>
+    <link rel="icon" type="image/png" href="/favicon.png" />
     <link rel="stylesheet" href="/src/styles.css">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -36,10 +37,6 @@
                         <i data-feather="chevron-down"></i>
                     </button>
                     <div id="user-dropdown" class="user-dropdown hidden">
-                        <button id="api-keys-btn" class="dropdown-item">
-                            <i data-feather="key"></i>
-                            <span>API Keys</span>
-                        </button>
                         <button id="logout-btn" class="dropdown-item">
                             <i data-feather="log-out"></i>
                             <span>Sign Out</span>
@@ -314,53 +311,6 @@
                     <span>Purchase Credits</span>
                 </button>
                 <p class="checkout-note">Secure payment powered by Stripe</p>
-            </div>
-        </div>
-    </div>
-
-    <!-- API Keys Modal -->
-    <div class="modal-overlay hidden" id="api-keys-modal">
-        <div class="modal-content">
-            <div class="modal-header">
-                <h2>Enter API Keys</h2>
-                <button class="modal-close" id="close-modal-btn">
-                    <i data-feather="x"></i>
-                </button>
-            </div>
-            <div class="modal-body">
-                <p class="modal-description">
-                    BrandWise uses OpenAI's DALL-E 3 to generate logos and mood boards. 
-                    Please provide your OpenAI API key below.
-                </p>
-                <div class="form-group">
-                    <label for="openai-api-key">OpenAI API Key:</label>
-                    <div class="api-key-input-wrapper">
-                        <input 
-                            type="password" 
-                            id="openai-api-key" 
-                            placeholder="sk-..."
-                            autocomplete="off"
-                        >
-                        <button type="button" id="toggle-api-key-visibility" class="toggle-visibility-btn" aria-label="Toggle API key visibility">
-                            <i data-feather="eye"></i>
-                        </button>
-                    </div>
-                    <a href="https://platform.openai.com/api-keys" target="_blank" class="api-link">
-                        Get an OpenAI API Key <i data-feather="external-link"></i>
-                    </a>
-                </div>
-                <p class="api-note">
-                    Your API keys are stored locally and are never sent to our servers. 
-                    They are used only for direct API calls to the respective services.
-                </p>
-                <div class="api-credits">
-                    <h3>API Credits</h3>
-                    <p>Each brand generation uses DALL-E 3. Standard quality images cost $0.040 per image, HD quality costs $0.080 per image. 
-                    Check <a href="https://openai.com/pricing" target="_blank">OpenAI pricing</a> for details.</p>
-                </div>
-            </div>
-            <div class="modal-footer">
-                <button id="save-api-keys-btn" class="primary-btn">Save API Keys</button>
             </div>
         </div>
     </div>

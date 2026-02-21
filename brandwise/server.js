@@ -289,10 +289,10 @@ app.post('/api/checkout', async (req, res) => {
 // OpenAI API Routes
 app.post('/openai/images/generations', async (req, res) => {
   try {
-    const apiKey = req.headers.authorization?.split(' ')[1];
+    const apiKey = process.env.OPENAI_API_KEY;
     if (!apiKey) {
-      console.error('No API key provided in request');
-      return res.status(401).json({ error: 'API key is required' });
+      console.error('OPENAI_API_KEY not configured on server');
+      return res.status(500).json({ error: 'Server API key not configured' });
     }
 
     const { prompt, size = '1024x1024', quality = 'standard', n = 1 } = req.body;

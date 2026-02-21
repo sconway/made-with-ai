@@ -35,13 +35,6 @@ const backBtn = document.getElementById('back-btn');
 const resultsBrandName = document.getElementById('results-brand-name');
 const brandNameSubtitle = document.getElementById('brand-name-subtitle');
 
-// API Keys Modal
-const apiKeysBtn = document.getElementById('api-keys-btn');
-const apiKeysModal = document.getElementById('api-keys-modal');
-const closeModalBtn = document.getElementById('close-modal-btn');
-const openaiApiKeyInput = document.getElementById('openai-api-key');
-const toggleApiKeyVisibilityBtn = document.getElementById('toggle-api-key-visibility');
-const saveApiKeysBtn = document.getElementById('save-api-keys-btn');
 
 // Results elements
 let generatedLogo = document.getElementById('generated-logo');
@@ -112,7 +105,6 @@ const modalCreditsCount = document.getElementById('modal-credits-count');
 const checkoutBtn = document.getElementById('checkout-btn');
 
 // State
-let openaiApiKey = localStorage.getItem('openai_api_key') || '';
 let currentBrandName = '';
 let currentBrandDescription = '';
 let currentBrandUse = '';
@@ -556,18 +548,10 @@ document.addEventListener('DOMContentLoaded', async () => {
     // Initialize app (Supabase, auth state)
     await initializeApp();
     
-    // Load saved API key
-    if (openaiApiKey) {
-        openaiApiKeyInput.value = openaiApiKey;
-    }
 
     // Event listeners
     brandForm.addEventListener('submit', handleFormSubmit);
     backBtn.addEventListener('click', goBackToInput);
-    apiKeysBtn.addEventListener('click', showApiKeysModal);
-    closeModalBtn.addEventListener('click', hideApiKeysModal);
-    saveApiKeysBtn.addEventListener('click', saveApiKeys);
-    toggleApiKeyVisibilityBtn.addEventListener('click', toggleApiKeyVisibility);
     downloadLogoBtn.addEventListener('click', showDownloadModal);
     regenerateLogoBtn.addEventListener('click', () => handleRegenerate('logo'));
     regenerateColorsBtn.addEventListener('click', () => handleRegenerate('colors'));
@@ -626,12 +610,6 @@ document.addEventListener('DOMContentLoaded', async () => {
     colorBInput.addEventListener('input', updateColorFromRGB);
 
     // Close modal on overlay click
-    apiKeysModal.addEventListener('click', (e) => {
-        if (e.target === apiKeysModal) {
-            hideApiKeysModal();
-        }
-    });
-
     colorPickerModal.addEventListener('click', (e) => {
         if (e.target === colorPickerModal) {
             hideColorPickerModal();
@@ -671,10 +649,6 @@ document.addEventListener('DOMContentLoaded', async () => {
         });
     });
 
-    // Check if API key exists
-    if (!openaiApiKey) {
-        showApiKeysModal();
-    }
 });
 
 // Form submission
@@ -720,13 +694,6 @@ async function handleFormSubmit(e) {
 
     if (!brandName || !description || !useCase) {
         alert('Please fill in all fields');
-        return;
-    }
-
-    if (!openaiApiKey) {
-        console.log('handleFormSubmit: No API key');
-        alert('Please enter your OpenAI API key first');
-        showApiKeysModal();
         return;
     }
 
@@ -992,8 +959,7 @@ async function generateImage(prompt, type = 'image') {
         const response = await fetch(`${OPENAI_API_BASE}/images/generations`, {
             method: 'POST',
             headers: {
-                'Content-Type': 'application/json',
-                'Authorization': `Bearer ${openaiApiKey}`
+                'Content-Type': 'application/json'
             },
             body: JSON.stringify(requestBody)
         });
@@ -1607,55 +1573,6 @@ function goBackToInput() {
     inputSection.classList.remove('hidden');
     loadingState.classList.add('hidden');
     resultsDisplay.classList.add('hidden');
-}
-
-// API Keys Modal
-function showApiKeysModal() {
-    apiKeysModal.classList.remove('hidden');
-    // Reset visibility to password (hidden) when modal opens
-    openaiApiKeyInput.type = 'password';
-    const icon = toggleApiKeyVisibilityBtn.querySelector('i');
-    if (icon) {
-        icon.setAttribute('data-feather', 'eye');
-    }
-    if (typeof feather !== 'undefined') {
-        feather.replace();
-    }
-}
-
-function hideApiKeysModal() {
-    apiKeysModal.classList.add('hidden');
-}
-
-function toggleApiKeyVisibility() {
-    const input = openaiApiKeyInput;
-    const icon = toggleApiKeyVisibilityBtn.querySelector('i');
-    
-    if (input.type === 'password') {
-        input.type = 'text';
-        icon.setAttribute('data-feather', 'eye-off');
-    } else {
-        input.type = 'password';
-        icon.setAttribute('data-feather', 'eye');
-    }
-    
-    // Re-initialize feather icons
-    if (typeof feather !== 'undefined') {
-        feather.replace();
-    }
-}
-
-function saveApiKeys() {
-    const key = openaiApiKeyInput.value.trim();
-    
-    if (!key) {
-        alert('Please enter your OpenAI API key');
-        return;
-    }
-
-    openaiApiKey = key;
-    localStorage.setItem('openai_api_key', key);
-    hideApiKeysModal();
 }
 
 // Image Lightbox functions
