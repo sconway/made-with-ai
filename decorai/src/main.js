@@ -1,4 +1,5 @@
 import feather from 'feather-icons';
+import './floorPlanEditor.js';
 
 // DOM Elements
 const uploadContainer = document.getElementById('upload-container');
@@ -63,9 +64,7 @@ let furnishedOption = null; // Track furnished room option - no default selectio
 let isRoomActuallyEmpty = true; // Track if the uploaded room is actually empty
 let isMobile = window.innerWidth <= 768; // Track if we're on mobile
 
-// Auth state
-let openaiApiKey = localStorage.getItem('openai_api_key') || '';
-let replicateApiKey = localStorage.getItem('replicate_api_key') || '';
+// API is now handled server-side - no client keys needed
 
 // Example design - in a real implementation, this would be an AI-generated version of the user's uploaded room
 // NOTE: In an actual implementation, this would be the same room with a new furniture layout
@@ -567,82 +566,32 @@ function hideMobileItemsSelectionError() {
 }
 
 function updateLoginButton() {
-    if (!loginBtn) return;
-
-    if (replicateApiKey) {
-        loginBtn.innerHTML = `<i data-feather="check-circle"></i><span>API Key Set</span>`;
-        loginBtn.classList.add('authenticated');
-        feather.replace();
-    } else {
-        loginBtn.innerHTML = `<i data-feather="key"></i><span>API Key</span>`;
-        loginBtn.classList.remove('authenticated');
-        feather.replace();
+    // API keys are now handled server-side, hide the login button
+    if (loginBtn) {
+        loginBtn.style.display = 'none';
     }
 }
 
 function showAuthModal() {
-    authModal.classList.add('show');
-    if (apiKeyInput) apiKeyInput.value = openaiApiKey;
-    if (replicateApiKeyInput) replicateApiKeyInput.value = replicateApiKey;
+    // No longer needed - API handled server-side
 }
 
 function hideAuthModal() {
-    authModal.classList.remove('show');
+    if (authModal) {
+        authModal.classList.remove('show');
+    }
 }
 
-function toggleKeyVisibility(event) {
-    const button = event.currentTarget;
-    let input;
-    if (button === toggleKeyVisibilityBtn && apiKeyInput) {
-        input = apiKeyInput;
-    } else if (button === toggleReplicateKeyVisibilityBtn && replicateApiKeyInput) {
-        input = replicateApiKeyInput;
-    } else {
-        return;
-    }
-
-    if (input.type === 'password') {
-        input.type = 'text';
-        button.innerHTML = '<i data-feather="eye-off"></i>';
-    } else {
-        input.type = 'password';
-        button.innerHTML = '<i data-feather="eye"></i>';
-    }
-    feather.replace();
+function toggleKeyVisibility() {
+    // No longer needed - API handled server-side
 }
 
 function toggleReplicateKeyVisibility() {
-    // Implementation needed
+    // No longer needed - API handled server-side
 }
 
 function saveApiKeys() {
-    if (apiKeyInput) {
-        const oaiKey = apiKeyInput.value.trim();
-        openaiApiKey = oaiKey;
-        localStorage.setItem('openai_api_key', oaiKey);
-    }
-
-    if (replicateApiKeyInput) {
-        const repKey = replicateApiKeyInput.value.trim();
-        if (repKey) {
-            replicateApiKey = repKey;
-            localStorage.setItem('replicate_api_key', repKey);
-        } else {
-            replicateApiKey = '';
-            localStorage.removeItem('replicate_api_key');
-        }
-    } else {
-        replicateApiKey = '';
-        localStorage.removeItem('replicate_api_key');
-        console.warn('Replicate API Key input not found in the HTML.');
-    }
-
-    updateLoginButton();
-    hideAuthModal();
-
-    if (!replicateApiKey) {
-        alert('Replicate API key is recommended for image generation.');
-    }
+    // No longer needed - API handled server-side
 }
 
 async function handleImageUpload(e) {
@@ -1097,7 +1046,7 @@ function generatePromptsWithItems(basePrompt, style) {
 
 
 // Helper: Generate a depth map using Replicate
-async function getDepthMapWithReplicate(imageBase64, replicateApiKey) {
+async function getDepthMapWithReplicate(imageBase64) {
     const DEPTH_MODEL_VERSION = "lllyasviel/sd-controlnet-depth";
     if (!imageBase64 || !imageBase64.startsWith('data:image')) {
         console.error('Invalid image format for depth map:', imageBase64);
@@ -1107,8 +1056,7 @@ async function getDepthMapWithReplicate(imageBase64, replicateApiKey) {
     const response = await fetch(REPLICATE_API_URL, {
         method: 'POST',
         headers: {
-            'Content-Type': 'application/json',
-            'Authorization': `Token ${replicateApiKey}`
+            'Content-Type': 'application/json'
         },
         body: JSON.stringify({
             version: DEPTH_MODEL_VERSION,
@@ -1126,7 +1074,7 @@ async function getDepthMapWithReplicate(imageBase64, replicateApiKey) {
         throw new Error('Replicate did not return a polling URL for depth map.');
     }
     // Poll for completion
-    const result = await pollReplicatePrediction(prediction.urls.get, replicateApiKey);
+    const result = await pollReplicatePrediction(prediction.urls.get);
     return result.imageUrl; // URL to depth map
 }
 
@@ -1184,7 +1132,7 @@ async function fetchWithRetry(url, options = {}, maxRetries = 3, retryDelay = 20
 }
 
 // Helper function for polling Replicate API with improved error handling and adaptive timing
-async function pollReplicatePrediction(predictionUrl, apiKey) {
+async function pollReplicatePrediction(predictionUrl) {
     let prediction;
     let attempts = 0;
     const maxAttempts = 90; // Increased to 3 minutes (90 attempts * 2 seconds)
@@ -1198,8 +1146,7 @@ async function pollReplicatePrediction(predictionUrl, apiKey) {
             const response = await fetchWithRetry(REPLICATE_POLL_URL, {
                 method: 'POST',
                 headers: {
-                    'Content-Type': 'application/json',
-                    'Authorization': `Token ${apiKey}`
+                    'Content-Type': 'application/json'
                 },
                 body: JSON.stringify({ predictionUrl })
             }, 2, 1000); // Reduced retries and delay for polling
@@ -1274,7 +1221,7 @@ async function pollReplicatePrediction(predictionUrl, apiKey) {
 }
 
 // Helper: Generate empty room using text-to-image (for start fresh scenarios)
-async function generateEmptyRoomWithTextToImage(prompt, negativePrompt, replicateApiKey) {
+async function generateEmptyRoomWithTextToImage(prompt, negativePrompt) {
     const modelOptions = [
         {
             version: "stability-ai/stable-diffusion-3.5-large",
@@ -1309,8 +1256,7 @@ async function generateEmptyRoomWithTextToImage(prompt, negativePrompt, replicat
             const response = await fetchWithRetry(REPLICATE_API_URL, {
                 method: 'POST',
                 headers: {
-                    'Content-Type': 'application/json',
-                    'Authorization': `Token ${replicateApiKey}`
+                    'Content-Type': 'application/json'
                 },
                 body: JSON.stringify({
                     version: model.version,
@@ -1335,7 +1281,7 @@ async function generateEmptyRoomWithTextToImage(prompt, negativePrompt, replicat
             }
 
             console.log(`Polling for results from ${model.name}...`);
-            const result = await pollReplicatePrediction(prediction.urls.get, replicateApiKey);
+            const result = await pollReplicatePrediction(prediction.urls.get);
             console.log(`Successfully generated empty room with ${model.name}`);
             return result.imageUrls;
 
@@ -1354,7 +1300,7 @@ async function generateEmptyRoomWithTextToImage(prompt, negativePrompt, replicat
 }
 
 // Helper: Generate image with SDXL+ControlNet using Replicate with fallback models
-async function generateImageWithControlNet(imageBase64, prompt, negativePrompt, replicateApiKey) {
+async function generateImageWithControlNet(imageBase64, prompt, negativePrompt) {
     // Check if this is a "start fresh" scenario (empty room generation)
     const isStartFresh = prompt.includes("completely empty space") || prompt.includes("Remove all furniture") || prompt.includes("empty room") || prompt.includes("COMPLETELY EMPTY ROOM") || prompt.includes("REMOVE ALL EXISTING FURNITURE") || prompt.includes("EMPTY ROOM ONLY");
 
@@ -1451,8 +1397,7 @@ async function generateImageWithControlNet(imageBase64, prompt, negativePrompt, 
             const response = await fetchWithRetry(REPLICATE_API_URL, {
                 method: 'POST',
                 headers: {
-                    'Content-Type': 'application/json',
-                    'Authorization': `Token ${replicateApiKey}`
+                    'Content-Type': 'application/json'
                 },
                 body: JSON.stringify({
                     version: model.version,
@@ -1478,7 +1423,7 @@ async function generateImageWithControlNet(imageBase64, prompt, negativePrompt, 
 
             // Poll for completion
             console.log(`Polling for results from ${model.name}...`);
-            const result = await pollReplicatePrediction(prediction.urls.get, replicateApiKey);
+            const result = await pollReplicatePrediction(prediction.urls.get);
             console.log(`Successfully generated with ${model.name}`);
             return result.imageUrls; // Return the array of image URLs
 
@@ -1501,13 +1446,12 @@ async function generateImageWithControlNet(imageBase64, prompt, negativePrompt, 
 }
 
 // Helper: Upscale image using Replicate (optional)
-async function upscaleImageWithReplicate(imageUrl, replicateApiKey) {
+async function upscaleImageWithReplicate(imageUrl) {
     const UPSCALE_MODEL_VERSION = "nightmareai/real-esrgan";
     const response = await fetch(REPLICATE_API_URL, {
         method: 'POST',
         headers: {
-            'Content-Type': 'application/json',
-            'Authorization': `Token ${replicateApiKey}`
+            'Content-Type': 'application/json'
         },
         body: JSON.stringify({
             version: UPSCALE_MODEL_VERSION,
@@ -1525,17 +1469,12 @@ async function upscaleImageWithReplicate(imageUrl, replicateApiKey) {
         throw new Error('Replicate did not return a polling URL for upscaling.');
     }
     // Poll for completion
-    const result = await pollReplicatePrediction(prediction.urls.get, replicateApiKey);
+    const result = await pollReplicatePrediction(prediction.urls.get);
     return result.imageUrl; // URL to upscaled image
 }
 
 // New function using Replicate API
 async function generateImageWithReplicate(imageBase64, prompt) {
-    if (!replicateApiKey) {
-        // This check remains important client-side to guide the user
-        throw new Error('Replicate API key is not set client-side. Please use the auth modal.');
-    }
-
     console.log(`Sending request to Replicate img2img via proxy`);
     console.log(`Prompt: ${prompt}`);
     // Ensure base64 string has the data URI prefix
@@ -1546,8 +1485,7 @@ async function generateImageWithReplicate(imageBase64, prompt) {
         const startResponse = await fetchWithRetry(REPLICATE_API_URL, {
             method: 'POST',
             headers: {
-                'Content-Type': 'application/json',
-                'Authorization': `Token ${replicateApiKey}` // Add API key to headers
+                'Content-Type': 'application/json'
             },
             body: JSON.stringify({
                 version: REPLICATE_MODEL_VERSION,
@@ -1572,9 +1510,7 @@ async function generateImageWithReplicate(imageBase64, prompt) {
         }
 
         // 2. Poll for the result using our proxy
-        // The actual polling URL (prediction.urls.get) is now sent to our backend proxy
-        // The apiKey is not needed for the call to pollReplicatePrediction if it only forwards to the proxy
-        const result = await pollReplicatePrediction(prediction.urls.get, replicateApiKey); // replicateApiKey here is for potential other uses or can be removed if solely for proxy
+        const result = await pollReplicatePrediction(prediction.urls.get);
         console.log('Replicate prediction finished via proxy:', result);
         return result; // Should be { imageUrl: '...' }
 
@@ -1592,11 +1528,6 @@ async function generateDesigns() {
         return;
     }
 
-    if (!replicateApiKey) {
-        alert('Please set your Replicate API key first');
-        showAuthModal();
-        return;
-    }
 
     // Check if we're regenerating (already on results screen)
     const isCurrentlyOnResults = resultsSection && !resultsSection.classList.contains('hidden');
@@ -1681,7 +1612,7 @@ async function generateDesigns() {
         console.log('Starting image generation with prompt:', fullPrompt);
         console.log('Negative prompt:', negativePrompt);
 
-        let imageUrls = await generateImageWithControlNet(currentUploadedImage, fullPrompt, negativePrompt, replicateApiKey);
+        let imageUrls = await generateImageWithControlNet(currentUploadedImage, fullPrompt, negativePrompt);
         let imageUrl;
         if (Array.isArray(imageUrls)) {
             imageUrl = imageUrls[0];
@@ -1876,7 +1807,7 @@ async function retryImageGeneration() {
             return;
         }
 
-        let imageUrls = await generateImageWithControlNet(currentUploadedImage, prompts.positivePrompt, prompts.negativePrompt, replicateApiKey);
+        let imageUrls = await generateImageWithControlNet(currentUploadedImage, prompts.positivePrompt, prompts.negativePrompt);
         let imageUrl;
         if (Array.isArray(imageUrls)) {
             imageUrl = imageUrls[0];
@@ -2370,4 +2301,6 @@ function saveCurrentDesign() {
     }
 }
 
-// CSS styles have been moved to styles.css file 
+// CSS styles have been moved to styles.css file
+
+// Floor Plan Editor is in a separate file: floorPlanEditor.js

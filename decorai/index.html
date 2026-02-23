@@ -20,7 +20,11 @@
                 <h1>DecorAI</h1>
                 <span class="tagline">Reimagine Your Space</span>
             </div>
-            <div class="auth-section">
+            <div class="header-actions">
+                <button id="layout-editor-btn" class="layout-editor-btn">
+                    <i data-feather="layout"></i>
+                    <span>Layout Editor</span>
+                </button>
                 <button id="login-btn" class="login-btn">
                     <i data-feather="user"></i>
                     <span>Login</span>
@@ -272,6 +276,210 @@
         <footer>
             <p>Created with AI • <a href="../index.html">Back to Projects</a></p>
         </footer>
+    </div>
+
+    <!-- Layout Editor Screen -->
+    <div class="layout-editor-screen hidden" id="layout-editor-screen">
+        <div class="layout-editor-header">
+            <div class="layout-editor-title">
+                <button id="layout-editor-back-btn" class="back-btn">
+                    <i data-feather="arrow-left"></i>
+                </button>
+                <h2>Floor Plan Editor</h2>
+            </div>
+            <div class="layout-editor-controls">
+                <div class="scale-control">
+                    <label>Scale:</label>
+                    <select id="scale-select">
+                        <option value="10">1" = 1'</option>
+                        <option value="20" selected>1" = 2'</option>
+                        <option value="40">1" = 4'</option>
+                        <option value="5">1cm = 0.5m</option>
+                    </select>
+                </div>
+                <div class="unit-control">
+                    <label>Units:</label>
+                    <select id="unit-select">
+                        <option value="ft" selected>Feet</option>
+                        <option value="m">Meters</option>
+                    </select>
+                </div>
+            </div>
+            <div class="layout-editor-actions">
+                <button id="layout-undo-btn" class="tool-btn" title="Undo (Ctrl+Z)">
+                    <i data-feather="rotate-ccw"></i>
+                </button>
+                <button id="layout-redo-btn" class="tool-btn" title="Redo (Ctrl+Y)">
+                    <i data-feather="rotate-cw"></i>
+                </button>
+                <button id="layout-clear-btn" class="tool-btn" title="Clear All">
+                    <i data-feather="trash-2"></i>
+                </button>
+                <div class="export-dropdown">
+                    <button id="layout-export-btn" class="primary-btn">
+                        <i data-feather="download"></i>
+                        <span>Export</span>
+                        <i data-feather="chevron-down" class="dropdown-arrow"></i>
+                    </button>
+                    <div class="export-menu" id="export-menu">
+                        <button id="export-png-btn">Export as PNG</button>
+                        <button id="export-svg-btn">Export as SVG</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+        
+        <div class="layout-editor-content">
+            <!-- Left Toolbar -->
+            <div class="layout-toolbar">
+                <div class="tool-section">
+                    <h4>Tools</h4>
+                    <div class="tool-list">
+                        <button class="floor-tool active" data-tool="select" title="Select & Move (V)">
+                            <i data-feather="mouse-pointer"></i>
+                            <span>Select</span>
+                        </button>
+                        <button class="floor-tool" data-tool="wall" title="Draw Walls (W)">
+                            <i data-feather="edit-3"></i>
+                            <span>Draw Walls</span>
+                        </button>
+                        <button class="floor-tool" data-tool="room" title="Draw Room (R)">
+                            <i data-feather="square"></i>
+                            <span>Draw Room</span>
+                        </button>
+                        <button class="floor-tool" data-tool="door" title="Add Door (D)">
+                            <i data-feather="log-in"></i>
+                            <span>Door</span>
+                        </button>
+                        <button class="floor-tool" data-tool="window" title="Add Window">
+                            <i data-feather="columns"></i>
+                            <span>Window</span>
+                        </button>
+                        <button class="floor-tool" data-tool="label" title="Add Label (L)">
+                            <i data-feather="type"></i>
+                            <span>Label</span>
+                        </button>
+                    </div>
+                </div>
+                
+                <div class="tool-section">
+                    <h4>Options</h4>
+                    <div class="option-group">
+                        <label class="checkbox-label">
+                            <input type="checkbox" id="show-grid" checked>
+                            <span>Show Grid</span>
+                        </label>
+                    </div>
+                    <div class="option-group">
+                        <label class="checkbox-label">
+                            <input type="checkbox" id="snap-to-grid" checked>
+                            <span>Snap to Grid</span>
+                        </label>
+                    </div>
+                    <div class="option-group">
+                        <label class="checkbox-label">
+                            <input type="checkbox" id="show-dimensions" checked>
+                            <span>Show Dimensions</span>
+                        </label>
+                    </div>
+                    <div class="option-group">
+                        <label>Wall Thickness</label>
+                        <input type="range" id="wall-thickness" min="4" max="16" value="8">
+                        <span id="wall-thickness-value">8px</span>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- Main Canvas Area -->
+            <div class="layout-canvas-container">
+                <div class="canvas-toolbar">
+                    <button id="zoom-in-btn" class="canvas-tool-btn" title="Zoom In">
+                        <i data-feather="zoom-in"></i>
+                    </button>
+                    <span id="zoom-level">100%</span>
+                    <button id="zoom-out-btn" class="canvas-tool-btn" title="Zoom Out">
+                        <i data-feather="zoom-out"></i>
+                    </button>
+                    <button id="zoom-fit-btn" class="canvas-tool-btn" title="Fit to Screen">
+                        <i data-feather="maximize"></i>
+                    </button>
+                </div>
+                <div class="layout-canvas-wrapper" id="layout-canvas-wrapper">
+                    <svg id="layout-svg" xmlns="http://www.w3.org/2000/svg">
+                        <defs>
+                            <pattern id="grid-small" width="10" height="10" patternUnits="userSpaceOnUse">
+                                <path d="M 10 0 L 0 0 0 10" fill="none" stroke="#e5e5e5" stroke-width="0.5"/>
+                            </pattern>
+                            <pattern id="grid-large" width="100" height="100" patternUnits="userSpaceOnUse">
+                                <rect width="100" height="100" fill="url(#grid-small)"/>
+                                <path d="M 100 0 L 0 0 0 100" fill="none" stroke="#ccc" stroke-width="1"/>
+                            </pattern>
+                        </defs>
+                        <rect id="grid-background" width="100%" height="100%" fill="url(#grid-large)"/>
+                        <g id="floor-plan-group" transform="translate(0,0) scale(1)">
+                            <g id="image-layer"></g>
+                            <g id="walls-layer"></g>
+                            <g id="rooms-layer"></g>
+                            <g id="furniture-layer"></g>
+                            <g id="labels-layer"></g>
+                            <g id="dimensions-layer"></g>
+                            <g id="corners-layer"></g>
+                        </g>
+                    </svg>
+                </div>
+                <div class="canvas-status">
+                    <span id="mouse-coords">0' 0" × 0' 0"</span>
+                    <span id="canvas-size">40' × 30'</span>
+                    <span id="selection-info"></span>
+                </div>
+            </div>
+            
+            <!-- Right Panel - Furniture Library -->
+            <div class="furniture-panel">
+                <div class="panel-header">
+                    <h4>Furniture</h4>
+                    <input type="text" id="furniture-search" placeholder="Search...">
+                </div>
+                <div class="furniture-categories">
+                    <button class="category-btn active" data-category="all">All</button>
+                    <button class="category-btn" data-category="living">Living</button>
+                    <button class="category-btn" data-category="bedroom">Bedroom</button>
+                    <button class="category-btn" data-category="dining">Dining</button>
+                    <button class="category-btn" data-category="kitchen">Kitchen</button>
+                    <button class="category-btn" data-category="bathroom">Bathroom</button>
+                    <button class="category-btn" data-category="office">Office</button>
+                </div>
+                <div class="furniture-grid" id="furniture-grid">
+                    <!-- Furniture items will be populated by JavaScript -->
+                </div>
+                
+                <!-- Properties Panel (shown when item selected) -->
+                <div class="properties-panel hidden" id="properties-panel">
+                    <h4>Properties</h4>
+                    <div class="property-row">
+                        <label>Width:</label>
+                        <input type="number" id="prop-width" step="0.5">
+                        <span class="unit-label">ft</span>
+                    </div>
+                    <div class="property-row">
+                        <label>Height:</label>
+                        <input type="number" id="prop-height" step="0.5">
+                        <span class="unit-label">ft</span>
+                    </div>
+                    <div class="property-row">
+                        <label>Rotation:</label>
+                        <input type="number" id="prop-rotation" step="15" min="0" max="360">
+                        <span class="unit-label">°</span>
+                    </div>
+                    <div class="property-row">
+                        <button id="delete-selected-btn" class="delete-btn">
+                            <i data-feather="trash-2"></i>
+                            Delete
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
     </div>
 
     <!-- Auth Modal -->
