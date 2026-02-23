@@ -2849,15 +2849,24 @@ footer {
 
 .furniture-item svg,
 .furniture-item .furniture-preview {
-  width: 40px;
-  height: 40px;
+  width: 44px;
+  height: 44px;
   margin-bottom: 6px;
   color: #666;
 }
 
 .furniture-item .furniture-preview {
-  background: #ddd;
-  border-radius: 4px;
+  background: #f5f5f5;
+  border-radius: 6px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid #e0e0e0;
+}
+
+.furniture-item .furniture-preview svg {
+  width: 44px;
+  height: 44px;
 }
 
 .furniture-item span {
@@ -3082,12 +3091,8 @@ footer {
 }
 
 @media (max-width: 768px) {
-  .layout-editor-btn span {
-    display: none;
-  }
-  
   .layout-editor-btn {
-    padding: 10px;
+    display: none;
   }
   
   .layout-editor-header {

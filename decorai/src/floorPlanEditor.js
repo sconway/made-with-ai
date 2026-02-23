@@ -46,6 +46,11 @@ const FloorPlanEditor = (() => {
     let snapDistance = 15; // pixels for corner snapping
     let zoom = 1;
     
+    // Panning state
+    let isPanning = false;
+    let panStart = { x: 0, y: 0 };
+    let panOffset = { x: 0, y: 0 };
+    
     // Helper to check if a fill color is white/near-white
     function isWhiteFill(color) {
         if (!color) return false;
@@ -198,6 +203,9 @@ const FloorPlanEditor = (() => {
         svg.addEventListener('mousedown', handleMouseDown);
         svg.addEventListener('mousemove', handleMouseMove);
         svg.addEventListener('mouseup', handleMouseUp);
+        
+        // Scroll wheel zoom on canvas
+        canvasWrapper?.addEventListener('wheel', handleWheelZoom, { passive: false });
         svg.addEventListener('mouseleave', handleMouseUp);
         
         // Touch support
@@ -208,19 +216,17 @@ const FloorPlanEditor = (() => {
         // Keyboard shortcuts
         document.addEventListener('keydown', handleKeyDown);
         
-        // Furniture categories
+        // Furniture categories - toggle on/off
         document.querySelectorAll('.category-btn').forEach(btn => {
             btn.addEventListener('click', () => {
-                document.querySelectorAll('.category-btn').forEach(b => b.classList.remove('active'));
-                btn.classList.add('active');
-                populateFurnitureGrid(btn.dataset.category);
+                btn.classList.toggle('active');
+                updateFurnitureGrid();
             });
         });
         
         // Search furniture
-        document.getElementById('furniture-search')?.addEventListener('input', (e) => {
-            const activeCategory = document.querySelector('.category-btn.active')?.dataset.category || 'all';
-            populateFurnitureGrid(activeCategory, e.target.value);
+        document.getElementById('furniture-search')?.addEventListener('input', () => {
+            updateFurnitureGrid();
         });
         
         // Properties panel
@@ -229,8 +235,8 @@ const FloorPlanEditor = (() => {
         document.getElementById('prop-rotation')?.addEventListener('change', updateSelectedProperties);
         document.getElementById('delete-selected-btn')?.addEventListener('click', deleteSelected);
         
-        // Initialize furniture grid
-        populateFurnitureGrid('all');
+        // Initialize furniture grid with all categories active
+        updateFurnitureGrid();
         
         // Update canvas info
         updateCanvasInfo();
@@ -273,8 +279,9 @@ const FloorPlanEditor = (() => {
     
     function getMousePos(e) {
         const rect = svg.getBoundingClientRect();
-        let x = (e.clientX - rect.left) / zoom;
-        let y = (e.clientY - rect.top) / zoom;
+        // Account for pan offset and zoom
+        let x = (e.clientX - rect.left - panOffset.x) / zoom;
+        let y = (e.clientY - rect.top - panOffset.y) / zoom;
         
         if (snapToGrid) {
             x = Math.round(x / gridSize) * gridSize;
@@ -285,6 +292,15 @@ const FloorPlanEditor = (() => {
     }
     
     function handleMouseDown(e) {
+        // Check for panning (Cmd/Ctrl + drag)
+        if (e.metaKey || e.ctrlKey) {
+            isPanning = true;
+            panStart = { x: e.clientX, y: e.clientY };
+            svg.style.cursor = 'grabbing';
+            e.preventDefault();
+            return;
+        }
+        
         const pos = getMousePos(e);
         const target = e.target;
         
@@ -406,11 +422,28 @@ const FloorPlanEditor = (() => {
                 // First click - set start point
                 openingStartPoint = { x: pos.x, y: pos.y };
                 
+                // Check if starting on a wall
+                const nearestWall = findNearestWall(pos);
+                if (nearestWall) {
+                    openingStartPoint.wall = nearestWall;
+                    openingStartPoint.projected = projectPointOnWall(nearestWall, pos);
+                }
+                
                 // Show start marker
                 showOpeningStartMarker(openingStartPoint);
             } else {
                 // Second click - create the door/window
-                createFreeformOpening(openingStartPoint, pos, currentTool);
+                const endWall = findNearestWall(pos);
+                
+                // Check if both points are on the same wall
+                if (openingStartPoint.wall && endWall && openingStartPoint.wall === endWall) {
+                    // Place as a wall-attached opening
+                    const endProjected = projectPointOnWall(endWall, pos);
+                    placeOpeningBetweenPoints(endWall, openingStartPoint.projected, endProjected, currentTool);
+                } else {
+                    // Create as freeform opening (not on a wall)
+                    createFreeformOpening(openingStartPoint, pos, currentTool);
+                }
                 
                 // Reset state
                 openingStartPoint = null;
@@ -427,6 +460,19 @@ const FloorPlanEditor = (() => {
     }
     
     function handleMouseMove(e) {
+        // Handle panning
+        if (isPanning) {
+            const dx = e.clientX - panStart.x;
+            const dy = e.clientY - panStart.y;
+            
+            panOffset.x += dx;
+            panOffset.y += dy;
+            panStart = { x: e.clientX, y: e.clientY };
+            
+            applyTransform();
+            return;
+        }
+        
         const pos = getMousePos(e);
         
         // Update mouse coordinates display
@@ -458,9 +504,18 @@ const FloorPlanEditor = (() => {
             }
         }
         
-        // Handle door/window placement preview (freeform)
+        // Handle door/window placement preview
         if ((currentTool === 'door' || currentTool === 'window') && openingStartPoint) {
-            showFreeformOpeningPreview(openingStartPoint, pos, currentTool);
+            const endWall = findNearestWall(pos);
+            
+            // If both start and end are on the same wall, show wall-attached preview
+            if (openingStartPoint.wall && endWall && openingStartPoint.wall === endWall) {
+                const endProjected = projectPointOnWall(endWall, pos);
+                showWallOpeningPreview(endWall, openingStartPoint.projected, endProjected, currentTool);
+            } else {
+                // Show freeform preview
+                showFreeformOpeningPreview(openingStartPoint, pos, currentTool);
+            }
         }
         
         // Highlight snap targets
@@ -470,6 +525,13 @@ const FloorPlanEditor = (() => {
     }
     
     function handleMouseUp(e) {
+        // Stop panning
+        if (isPanning) {
+            isPanning = false;
+            svg.style.cursor = '';
+            return;
+        }
+        
         if (currentTool === 'room' && isDrawing && drawingStartCorner) {
             const pos = getMousePos(e);
             createRoomFromRect(drawingStartCorner, pos);
@@ -548,10 +610,10 @@ const FloorPlanEditor = (() => {
         // Check if this is a furniture drop
         const furnitureType = e.dataTransfer.getData('furnitureType');
         if (furnitureType) {
-            // Get drop position relative to canvas
+            // Get drop position relative to canvas (account for pan and zoom)
             const rect = svg.getBoundingClientRect();
-            const x = (e.clientX - rect.left) / zoom;
-            const y = (e.clientY - rect.top) / zoom;
+            const x = (e.clientX - rect.left - panOffset.x) / zoom;
+            const y = (e.clientY - rect.top - panOffset.y) / zoom;
             addFurniture(furnitureType, x, y);
             return;
         }
@@ -1102,6 +1164,8 @@ const FloorPlanEditor = (() => {
     function drawWallPreview(start, end) {
         removePreview();
         
+        const floorPlanGroup = document.getElementById('floor-plan-group');
+        
         const line = document.createElementNS('http://www.w3.org/2000/svg', 'line');
         line.setAttribute('x1', start.x);
         line.setAttribute('y1', start.y);
@@ -1109,7 +1173,7 @@ const FloorPlanEditor = (() => {
         line.setAttribute('y2', end.y);
         line.classList.add('drawing-preview');
         line.id = 'drawing-preview';
-        svg.appendChild(line);
+        floorPlanGroup.appendChild(line);
         
         // Show dimension while drawing
         const length = Math.sqrt((end.x - start.x) ** 2 + (end.y - start.y) ** 2) / scale;
@@ -1123,11 +1187,13 @@ const FloorPlanEditor = (() => {
         text.classList.add('dimension-text');
         text.id = 'preview-dimension';
         text.textContent = formatDimension(length);
-        svg.appendChild(text);
+        floorPlanGroup.appendChild(text);
     }
     
     function drawRoomPreview(start, end) {
         removePreview();
+        
+        const floorPlanGroup = document.getElementById('floor-plan-group');
         
         const x = Math.min(start.x, end.x);
         const y = Math.min(start.y, end.y);
@@ -1141,7 +1207,7 @@ const FloorPlanEditor = (() => {
         rect.setAttribute('height', height);
         rect.classList.add('drawing-preview');
         rect.id = 'drawing-preview';
-        svg.appendChild(rect);
+        floorPlanGroup.appendChild(rect);
         
         // Show dimensions
         const widthFt = width / scale;
@@ -1365,6 +1431,138 @@ const FloorPlanEditor = (() => {
         }
         // Also remove any stray preview elements
         wallsLayer.querySelectorAll('.opening-preview').forEach(el => el.remove());
+    }
+    
+    // Show preview for wall-attached opening placement
+    function showWallOpeningPreview(wall, startPoint, endPoint, type) {
+        removeOpeningPreview();
+        
+        const group = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+        group.classList.add('opening-preview');
+        group.setAttribute('opacity', '0.7');
+        
+        // Calculate the positions along the wall
+        const startX = startPoint.x;
+        const startY = startPoint.y;
+        const endX = endPoint.x;
+        const endY = endPoint.y;
+        
+        const width = Math.sqrt((endX - startX) ** 2 + (endY - startY) ** 2);
+        const centerX = (startX + endX) / 2;
+        const centerY = (startY + endY) / 2;
+        
+        // Wall direction for perpendicular offset
+        const wallDx = wall.end.x - wall.start.x;
+        const wallDy = wall.end.y - wall.start.y;
+        const wallLen = Math.sqrt(wallDx * wallDx + wallDy * wallDy);
+        const perpX = -wallDy / wallLen;
+        const perpY = wallDx / wallLen;
+        
+        if (type === 'door') {
+            // Door preview - gap in wall with swing arc
+            const line = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+            line.setAttribute('x1', startX);
+            line.setAttribute('y1', startY);
+            line.setAttribute('x2', endX);
+            line.setAttribute('y2', endY);
+            line.setAttribute('stroke', '#8B4513');
+            line.setAttribute('stroke-width', wallThickness + 2);
+            line.setAttribute('stroke-linecap', 'round');
+            group.appendChild(line);
+            
+            // Door swing arc
+            const arcRadius = width * 0.9;
+            const arcEndX = startX + perpX * arcRadius;
+            const arcEndY = startY + perpY * arcRadius;
+            
+            const arc = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+            arc.setAttribute('d', `M ${startX} ${startY} A ${arcRadius} ${arcRadius} 0 0 1 ${arcEndX} ${arcEndY}`);
+            arc.setAttribute('stroke', '#8B4513');
+            arc.setAttribute('stroke-width', '1.5');
+            arc.setAttribute('fill', 'none');
+            arc.setAttribute('stroke-dasharray', '4,2');
+            group.appendChild(arc);
+            
+            // Door panel line
+            const doorLine = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+            doorLine.setAttribute('x1', startX);
+            doorLine.setAttribute('y1', startY);
+            doorLine.setAttribute('x2', arcEndX);
+            doorLine.setAttribute('y2', arcEndY);
+            doorLine.setAttribute('stroke', '#8B4513');
+            doorLine.setAttribute('stroke-width', '2');
+            group.appendChild(doorLine);
+        } else {
+            // Window preview
+            const rect = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+            rect.setAttribute('x1', startX);
+            rect.setAttribute('y1', startY);
+            rect.setAttribute('x2', endX);
+            rect.setAttribute('y2', endY);
+            rect.setAttribute('stroke', '#87CEEB');
+            rect.setAttribute('stroke-width', wallThickness + 2);
+            rect.setAttribute('stroke-linecap', 'round');
+            group.appendChild(rect);
+            
+            // Window frame lines
+            const frame1 = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+            frame1.setAttribute('x1', startX + perpX * wallThickness/2);
+            frame1.setAttribute('y1', startY + perpY * wallThickness/2);
+            frame1.setAttribute('x2', endX + perpX * wallThickness/2);
+            frame1.setAttribute('y2', endY + perpY * wallThickness/2);
+            frame1.setAttribute('stroke', '#4A90A4');
+            frame1.setAttribute('stroke-width', '2');
+            group.appendChild(frame1);
+            
+            const frame2 = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+            frame2.setAttribute('x1', startX - perpX * wallThickness/2);
+            frame2.setAttribute('y1', startY - perpY * wallThickness/2);
+            frame2.setAttribute('x2', endX - perpX * wallThickness/2);
+            frame2.setAttribute('y2', endY - perpY * wallThickness/2);
+            frame2.setAttribute('stroke', '#4A90A4');
+            frame2.setAttribute('stroke-width', '2');
+            group.appendChild(frame2);
+        }
+        
+        // Show dimension
+        const dimLabel = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+        dimLabel.setAttribute('x', centerX + perpX * 20);
+        dimLabel.setAttribute('y', centerY + perpY * 20);
+        dimLabel.setAttribute('text-anchor', 'middle');
+        dimLabel.setAttribute('font-size', '12');
+        dimLabel.setAttribute('fill', '#333');
+        dimLabel.textContent = formatDimension(width / scale);
+        group.appendChild(dimLabel);
+        
+        // Start and end markers
+        const startMarker = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+        startMarker.setAttribute('cx', startX);
+        startMarker.setAttribute('cy', startY);
+        startMarker.setAttribute('r', 4);
+        startMarker.setAttribute('fill', type === 'door' ? '#8B4513' : '#87CEEB');
+        startMarker.setAttribute('stroke', '#333');
+        group.appendChild(startMarker);
+        
+        const endMarker = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+        endMarker.setAttribute('cx', endX);
+        endMarker.setAttribute('cy', endY);
+        endMarker.setAttribute('r', 4);
+        endMarker.setAttribute('fill', type === 'door' ? '#8B4513' : '#87CEEB');
+        endMarker.setAttribute('stroke', '#333');
+        group.appendChild(endMarker);
+        
+        // "Attached to wall" indicator
+        const indicator = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+        indicator.setAttribute('x', centerX + perpX * 35);
+        indicator.setAttribute('y', centerY + perpY * 35);
+        indicator.setAttribute('text-anchor', 'middle');
+        indicator.setAttribute('font-size', '10');
+        indicator.setAttribute('fill', '#27ae60');
+        indicator.textContent = '⚓ On wall';
+        group.appendChild(indicator);
+        
+        wallsLayer.appendChild(group);
+        openingPreview = group;
     }
     
     // Show preview for freeform door/window placement
@@ -1622,6 +1820,10 @@ const FloorPlanEditor = (() => {
         const dx = (wall.end.x - wall.start.x) / wallLength;
         const dy = (wall.end.y - wall.start.y) / wallLength;
         
+        // Calculate wall angle in degrees
+        const wallAngle = Math.atan2(wall.end.y - wall.start.y, wall.end.x - wall.start.x) * 180 / Math.PI;
+        
+        // Center position of the opening
         const centerX = wall.start.x + opening.position * (wall.end.x - wall.start.x);
         const centerY = wall.start.y + opening.position * (wall.end.y - wall.start.y);
         
@@ -1631,24 +1833,33 @@ const FloorPlanEditor = (() => {
             // Draw door opening (gap in wall with swing arc)
             const group = document.createElementNS('http://www.w3.org/2000/svg', 'g');
             group.classList.add('door-element');
+            group.setAttribute('transform', `translate(${centerX}, ${centerY}) rotate(${wallAngle})`);
             
-            // Door frame (white rectangle to cover wall)
+            // Door frame (white rectangle to cover wall) - drawn in local coordinates
             const frame = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
-            frame.setAttribute('x', centerX - halfWidth * Math.abs(dx) - wallThickness / 2 * Math.abs(dy));
-            frame.setAttribute('y', centerY - halfWidth * Math.abs(dy) - wallThickness / 2 * Math.abs(dx));
-            frame.setAttribute('width', opening.width * Math.abs(dx) + wallThickness * Math.abs(dy));
-            frame.setAttribute('height', opening.width * Math.abs(dy) + wallThickness * Math.abs(dx));
+            frame.setAttribute('x', -halfWidth);
+            frame.setAttribute('y', -wallThickness / 2 - 1);
+            frame.setAttribute('width', opening.width);
+            frame.setAttribute('height', wallThickness + 2);
             frame.classList.add('door-frame');
             group.appendChild(frame);
             
-            // Door swing arc
+            // Door swing arc - starts from left side of opening
             const arc = document.createElementNS('http://www.w3.org/2000/svg', 'path');
-            const swingRadius = opening.width;
-            const startX = centerX - halfWidth * dx;
-            const startY = centerY - halfWidth * dy;
-            arc.setAttribute('d', `M ${startX} ${startY} A ${swingRadius} ${swingRadius} 0 0 1 ${startX + swingRadius * dy} ${startY - swingRadius * dx}`);
+            const swingRadius = opening.width * 0.9;
+            arc.setAttribute('d', `M ${-halfWidth} 0 A ${swingRadius} ${swingRadius} 0 0 0 ${-halfWidth} ${-swingRadius}`);
             arc.classList.add('door-swing');
             group.appendChild(arc);
+            
+            // Door panel line
+            const doorPanel = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+            doorPanel.setAttribute('x1', -halfWidth);
+            doorPanel.setAttribute('y1', 0);
+            doorPanel.setAttribute('x2', -halfWidth);
+            doorPanel.setAttribute('y2', -swingRadius);
+            doorPanel.setAttribute('stroke', '#8B4513');
+            doorPanel.setAttribute('stroke-width', '2');
+            group.appendChild(doorPanel);
             
             wallsLayer.appendChild(group);
             
@@ -1656,21 +1867,23 @@ const FloorPlanEditor = (() => {
             // Draw window (light blue rectangle)
             const group = document.createElementNS('http://www.w3.org/2000/svg', 'g');
             group.classList.add('window-element');
+            group.setAttribute('transform', `translate(${centerX}, ${centerY}) rotate(${wallAngle})`);
             
+            // Window frame - drawn in local coordinates
             const frame = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
-            frame.setAttribute('x', centerX - halfWidth * Math.abs(dx) - wallThickness / 2 * Math.abs(dy));
-            frame.setAttribute('y', centerY - halfWidth * Math.abs(dy) - wallThickness / 2 * Math.abs(dx));
-            frame.setAttribute('width', opening.width * Math.abs(dx) + wallThickness * Math.abs(dy));
-            frame.setAttribute('height', opening.width * Math.abs(dy) + wallThickness * Math.abs(dx));
+            frame.setAttribute('x', -halfWidth);
+            frame.setAttribute('y', -wallThickness / 2);
+            frame.setAttribute('width', opening.width);
+            frame.setAttribute('height', wallThickness);
             frame.classList.add('window-frame');
             group.appendChild(frame);
             
-            // Center mullion
+            // Center mullion (vertical line through center of window)
             const mullion = document.createElementNS('http://www.w3.org/2000/svg', 'line');
-            mullion.setAttribute('x1', centerX - wallThickness / 2 * dy);
-            mullion.setAttribute('y1', centerY - wallThickness / 2 * dx);
-            mullion.setAttribute('x2', centerX + wallThickness / 2 * dy);
-            mullion.setAttribute('y2', centerY + wallThickness / 2 * dx);
+            mullion.setAttribute('x1', 0);
+            mullion.setAttribute('y1', -wallThickness / 2);
+            mullion.setAttribute('x2', 0);
+            mullion.setAttribute('y2', wallThickness / 2);
             mullion.classList.add('window-mullion');
             group.appendChild(mullion);
             
@@ -1720,15 +1933,225 @@ const FloorPlanEditor = (() => {
         }
     }
     
+    // Generate SVG icon for furniture items in sidebar
+    function getFurnitureIcon(item) {
+        const size = 44;
+        const color = item.color;
+        const stroke = '#555';
+        
+        // Calculate aspect ratio to fit in the icon
+        const aspectRatio = item.width / item.height;
+        let w, h;
+        if (aspectRatio > 1) {
+            w = size - 4;
+            h = (size - 4) / aspectRatio;
+        } else {
+            h = size - 4;
+            w = (size - 4) * aspectRatio;
+        }
+        const x = (size - w) / 2;
+        const y = (size - h) / 2;
+        
+        const icons = {
+            // Living Room
+            'sofa': `<svg width="${size}" height="${size}" viewBox="0 0 ${size} ${size}">
+                <rect x="${x}" y="${y + h * 0.3}" width="${w}" height="${h * 0.7}" rx="3" fill="${color}" stroke="${stroke}"/>
+                <rect x="${x}" y="${y + h * 0.15}" width="${w * 0.15}" height="${h * 0.85}" rx="2" fill="${color}" stroke="${stroke}"/>
+                <rect x="${x + w * 0.85}" y="${y + h * 0.15}" width="${w * 0.15}" height="${h * 0.85}" rx="2" fill="${color}" stroke="${stroke}"/>
+                <rect x="${x + w * 0.15}" y="${y}" width="${w * 0.7}" height="${h * 0.35}" rx="2" fill="${color}" stroke="${stroke}"/>
+                <line x1="${x + w * 0.4}" y1="${y + h * 0.35}" x2="${x + w * 0.4}" y2="${y + h * 0.7}" stroke="${stroke}" stroke-width="1"/>
+                <line x1="${x + w * 0.6}" y1="${y + h * 0.35}" x2="${x + w * 0.6}" y2="${y + h * 0.7}" stroke="${stroke}" stroke-width="1"/>
+            </svg>`,
+            'armchair': `<svg width="${size}" height="${size}" viewBox="0 0 ${size} ${size}">
+                <rect x="${x + w * 0.15}" y="${y + h * 0.3}" width="${w * 0.7}" height="${h * 0.7}" rx="3" fill="${color}" stroke="${stroke}"/>
+                <rect x="${x}" y="${y + h * 0.2}" width="${w * 0.2}" height="${h * 0.7}" rx="3" fill="${color}" stroke="${stroke}"/>
+                <rect x="${x + w * 0.8}" y="${y + h * 0.2}" width="${w * 0.2}" height="${h * 0.7}" rx="3" fill="${color}" stroke="${stroke}"/>
+                <rect x="${x + w * 0.2}" y="${y}" width="${w * 0.6}" height="${h * 0.35}" rx="3" fill="${color}" stroke="${stroke}"/>
+            </svg>`,
+            'coffee-table': `<svg width="${size}" height="${size}" viewBox="0 0 ${size} ${size}">
+                <rect x="${x}" y="${y}" width="${w}" height="${h}" rx="2" fill="${color}" stroke="${stroke}"/>
+                <circle cx="${x + 4}" cy="${y + h - 2}" r="2" fill="${stroke}"/>
+                <circle cx="${x + w - 4}" cy="${y + h - 2}" r="2" fill="${stroke}"/>
+                <circle cx="${x + 4}" cy="${y + 2}" r="2" fill="${stroke}"/>
+                <circle cx="${x + w - 4}" cy="${y + 2}" r="2" fill="${stroke}"/>
+            </svg>`,
+            'tv-stand': `<svg width="${size}" height="${size}" viewBox="0 0 ${size} ${size}">
+                <rect x="${x}" y="${y}" width="${w}" height="${h}" rx="2" fill="${color}" stroke="${stroke}"/>
+                <rect x="${x + w * 0.1}" y="${y + h * 0.2}" width="${w * 0.35}" height="${h * 0.6}" rx="1" fill="#222" stroke="${stroke}"/>
+                <rect x="${x + w * 0.55}" y="${y + h * 0.2}" width="${w * 0.35}" height="${h * 0.6}" rx="1" fill="#222" stroke="${stroke}"/>
+            </svg>`,
+            'bookshelf': `<svg width="${size}" height="${size}" viewBox="0 0 ${size} ${size}">
+                <rect x="${x}" y="${y}" width="${w}" height="${h}" fill="${color}" stroke="${stroke}"/>
+                <line x1="${x}" y1="${y + h * 0.33}" x2="${x + w}" y2="${y + h * 0.33}" stroke="${stroke}"/>
+                <line x1="${x}" y1="${y + h * 0.66}" x2="${x + w}" y2="${y + h * 0.66}" stroke="${stroke}"/>
+                <rect x="${x + 2}" y="${y + 2}" width="4" height="${h * 0.28}" fill="#4a6fa5"/>
+                <rect x="${x + 7}" y="${y + 2}" width="3" height="${h * 0.28}" fill="#c0392b"/>
+                <rect x="${x + 11}" y="${y + 2}" width="5" height="${h * 0.28}" fill="#27ae60"/>
+            </svg>`,
+            
+            // Bedroom
+            'queen-bed': `<svg width="${size}" height="${size}" viewBox="0 0 ${size} ${size}">
+                <rect x="${x}" y="${y}" width="${w}" height="${h}" rx="2" fill="${color}" stroke="${stroke}"/>
+                <rect x="${x}" y="${y}" width="${w}" height="${h * 0.25}" rx="2" fill="#8B7355" stroke="${stroke}"/>
+                <rect x="${x + 2}" y="${y + h * 0.3}" width="${w * 0.45}" height="${h * 0.25}" rx="2" fill="#fff" stroke="#ccc"/>
+                <rect x="${x + w * 0.52}" y="${y + h * 0.3}" width="${w * 0.45}" height="${h * 0.25}" rx="2" fill="#fff" stroke="#ccc"/>
+            </svg>`,
+            'king-bed': `<svg width="${size}" height="${size}" viewBox="0 0 ${size} ${size}">
+                <rect x="${x}" y="${y}" width="${w}" height="${h}" rx="2" fill="${color}" stroke="${stroke}"/>
+                <rect x="${x}" y="${y}" width="${w}" height="${h * 0.2}" rx="2" fill="#8B7355" stroke="${stroke}"/>
+                <rect x="${x + 2}" y="${y + h * 0.25}" width="${w * 0.45}" height="${h * 0.2}" rx="2" fill="#fff" stroke="#ccc"/>
+                <rect x="${x + w * 0.52}" y="${y + h * 0.25}" width="${w * 0.45}" height="${h * 0.2}" rx="2" fill="#fff" stroke="#ccc"/>
+            </svg>`,
+            'twin-bed': `<svg width="${size}" height="${size}" viewBox="0 0 ${size} ${size}">
+                <rect x="${x}" y="${y}" width="${w}" height="${h}" rx="2" fill="${color}" stroke="${stroke}"/>
+                <rect x="${x}" y="${y}" width="${w}" height="${h * 0.15}" rx="2" fill="#8B7355" stroke="${stroke}"/>
+                <rect x="${x + w * 0.15}" y="${y + h * 0.2}" width="${w * 0.7}" height="${h * 0.2}" rx="2" fill="#fff" stroke="#ccc"/>
+            </svg>`,
+            'nightstand': `<svg width="${size}" height="${size}" viewBox="0 0 ${size} ${size}">
+                <rect x="${x}" y="${y}" width="${w}" height="${h}" rx="2" fill="${color}" stroke="${stroke}"/>
+                <rect x="${x + w * 0.1}" y="${y + h * 0.15}" width="${w * 0.8}" height="${h * 0.35}" rx="1" fill="#7B5544" stroke="${stroke}"/>
+                <circle cx="${x + w/2}" cy="${y + h * 0.32}" r="2" fill="#c9a86c"/>
+                <rect x="${x + w * 0.1}" y="${y + h * 0.55}" width="${w * 0.8}" height="${h * 0.35}" rx="1" fill="#7B5544" stroke="${stroke}"/>
+                <circle cx="${x + w/2}" cy="${y + h * 0.72}" r="2" fill="#c9a86c"/>
+            </svg>`,
+            'dresser': `<svg width="${size}" height="${size}" viewBox="0 0 ${size} ${size}">
+                <rect x="${x}" y="${y}" width="${w}" height="${h}" rx="2" fill="${color}" stroke="${stroke}"/>
+                <rect x="${x + 2}" y="${y + h * 0.1}" width="${w/2 - 3}" height="${h * 0.35}" rx="1" fill="#7B4513" stroke="${stroke}"/>
+                <rect x="${x + w/2 + 1}" y="${y + h * 0.1}" width="${w/2 - 3}" height="${h * 0.35}" rx="1" fill="#7B4513" stroke="${stroke}"/>
+                <rect x="${x + 2}" y="${y + h * 0.55}" width="${w/2 - 3}" height="${h * 0.35}" rx="1" fill="#7B4513" stroke="${stroke}"/>
+                <rect x="${x + w/2 + 1}" y="${y + h * 0.55}" width="${w/2 - 3}" height="${h * 0.35}" rx="1" fill="#7B4513" stroke="${stroke}"/>
+            </svg>`,
+            'wardrobe': `<svg width="${size}" height="${size}" viewBox="0 0 ${size} ${size}">
+                <rect x="${x}" y="${y}" width="${w}" height="${h}" rx="2" fill="${color}" stroke="${stroke}"/>
+                <line x1="${x + w/2}" y1="${y + 2}" x2="${x + w/2}" y2="${y + h - 2}" stroke="${stroke}"/>
+                <circle cx="${x + w * 0.35}" cy="${y + h/2}" r="2" fill="#c9a86c"/>
+                <circle cx="${x + w * 0.65}" cy="${y + h/2}" r="2" fill="#c9a86c"/>
+            </svg>`,
+            
+            // Dining
+            'dining-table': `<svg width="${size}" height="${size}" viewBox="0 0 ${size} ${size}">
+                <rect x="${x}" y="${y}" width="${w}" height="${h}" rx="3" fill="${color}" stroke="${stroke}"/>
+                <circle cx="${x + 4}" cy="${y + 4}" r="2" fill="${stroke}"/>
+                <circle cx="${x + w - 4}" cy="${y + 4}" r="2" fill="${stroke}"/>
+                <circle cx="${x + 4}" cy="${y + h - 4}" r="2" fill="${stroke}"/>
+                <circle cx="${x + w - 4}" cy="${y + h - 4}" r="2" fill="${stroke}"/>
+            </svg>`,
+            'dining-chair': `<svg width="${size}" height="${size}" viewBox="0 0 ${size} ${size}">
+                <rect x="${x + w * 0.1}" y="${y + h * 0.6}" width="${w * 0.8}" height="${h * 0.35}" rx="2" fill="${color}" stroke="${stroke}"/>
+                <rect x="${x + w * 0.15}" y="${y}" width="${w * 0.7}" height="${h * 0.65}" rx="2" fill="${color}" stroke="${stroke}"/>
+            </svg>`,
+            'buffet': `<svg width="${size}" height="${size}" viewBox="0 0 ${size} ${size}">
+                <rect x="${x}" y="${y}" width="${w}" height="${h}" rx="2" fill="${color}" stroke="${stroke}"/>
+                <rect x="${x + 2}" y="${y + h * 0.2}" width="${w * 0.28}" height="${h * 0.6}" rx="1" fill="#7B4513" stroke="${stroke}"/>
+                <rect x="${x + w * 0.36}" y="${y + h * 0.2}" width="${w * 0.28}" height="${h * 0.6}" rx="1" fill="#7B4513" stroke="${stroke}"/>
+                <rect x="${x + w * 0.7}" y="${y + h * 0.2}" width="${w * 0.28}" height="${h * 0.6}" rx="1" fill="#7B4513" stroke="${stroke}"/>
+            </svg>`,
+            
+            // Kitchen
+            'fridge': `<svg width="${size}" height="${size}" viewBox="0 0 ${size} ${size}">
+                <rect x="${x}" y="${y}" width="${w}" height="${h}" rx="2" fill="${color}" stroke="${stroke}"/>
+                <line x1="${x}" y1="${y + h * 0.35}" x2="${x + w}" y2="${y + h * 0.35}" stroke="${stroke}"/>
+                <rect x="${x + w - 5}" y="${y + h * 0.1}" width="2" height="${h * 0.15}" rx="1" fill="${stroke}"/>
+                <rect x="${x + w - 5}" y="${y + h * 0.45}" width="2" height="${h * 0.2}" rx="1" fill="${stroke}"/>
+            </svg>`,
+            'stove': `<svg width="${size}" height="${size}" viewBox="0 0 ${size} ${size}">
+                <rect x="${x}" y="${y}" width="${w}" height="${h}" rx="2" fill="${color}" stroke="${stroke}"/>
+                <circle cx="${x + w * 0.3}" cy="${y + h * 0.35}" r="${Math.min(w, h) * 0.18}" fill="none" stroke="#666" stroke-width="2"/>
+                <circle cx="${x + w * 0.7}" cy="${y + h * 0.35}" r="${Math.min(w, h) * 0.18}" fill="none" stroke="#666" stroke-width="2"/>
+                <circle cx="${x + w * 0.3}" cy="${y + h * 0.7}" r="${Math.min(w, h) * 0.15}" fill="none" stroke="#666" stroke-width="2"/>
+                <circle cx="${x + w * 0.7}" cy="${y + h * 0.7}" r="${Math.min(w, h) * 0.15}" fill="none" stroke="#666" stroke-width="2"/>
+            </svg>`,
+            'sink-kitchen': `<svg width="${size}" height="${size}" viewBox="0 0 ${size} ${size}">
+                <rect x="${x}" y="${y}" width="${w}" height="${h}" rx="2" fill="${color}" stroke="${stroke}"/>
+                <rect x="${x + 3}" y="${y + 3}" width="${w * 0.42}" height="${h - 6}" rx="3" fill="#bbb" stroke="${stroke}"/>
+                <rect x="${x + w * 0.52}" y="${y + 3}" width="${w * 0.42}" height="${h - 6}" rx="3" fill="#bbb" stroke="${stroke}"/>
+                <circle cx="${x + w/2}" cy="${y + 3}" r="2" fill="#888"/>
+            </svg>`,
+            'dishwasher': `<svg width="${size}" height="${size}" viewBox="0 0 ${size} ${size}">
+                <rect x="${x}" y="${y}" width="${w}" height="${h}" rx="2" fill="${color}" stroke="${stroke}"/>
+                <rect x="${x + 2}" y="${y + h * 0.15}" width="${w - 4}" height="${h * 0.7}" rx="1" fill="#ccc" stroke="${stroke}"/>
+                <rect x="${x + w/2 - 4}" y="${y + 3}" width="8" height="3" rx="1" fill="${stroke}"/>
+            </svg>`,
+            'counter': `<svg width="${size}" height="${size}" viewBox="0 0 ${size} ${size}">
+                <rect x="${x}" y="${y}" width="${w}" height="${h}" rx="1" fill="${color}" stroke="${stroke}"/>
+                <rect x="${x}" y="${y}" width="${w}" height="${h * 0.3}" fill="#888" stroke="${stroke}"/>
+            </svg>`,
+            
+            // Bathroom
+            'toilet': `<svg width="${size}" height="${size}" viewBox="0 0 ${size} ${size}">
+                <ellipse cx="${x + w/2}" cy="${y + h * 0.6}" rx="${w * 0.45}" ry="${h * 0.35}" fill="${color}" stroke="${stroke}"/>
+                <rect x="${x + w * 0.15}" y="${y}" width="${w * 0.7}" height="${h * 0.35}" rx="2" fill="${color}" stroke="${stroke}"/>
+                <ellipse cx="${x + w/2}" cy="${y + h * 0.6}" rx="${w * 0.3}" ry="${h * 0.22}" fill="#eee" stroke="#ccc"/>
+            </svg>`,
+            'bathtub': `<svg width="${size}" height="${size}" viewBox="0 0 ${size} ${size}">
+                <rect x="${x}" y="${y}" width="${w}" height="${h}" rx="4" fill="${color}" stroke="${stroke}"/>
+                <rect x="${x + 2}" y="${y + 2}" width="${w - 4}" height="${h - 4}" rx="3" fill="#e3f2fd" stroke="#90caf9"/>
+                <circle cx="${x + w/2}" cy="${y + h - 6}" r="3" fill="#90caf9"/>
+            </svg>`,
+            'shower': `<svg width="${size}" height="${size}" viewBox="0 0 ${size} ${size}">
+                <rect x="${x}" y="${y}" width="${w}" height="${h}" rx="2" fill="${color}" stroke="${stroke}"/>
+                <rect x="${x + 2}" y="${y + 2}" width="${w - 4}" height="${h - 4}" rx="1" fill="#bbdefb" stroke="#90caf9"/>
+                <circle cx="${x + w/2}" cy="${y + h * 0.3}" r="4" fill="none" stroke="#64b5f6" stroke-width="1.5"/>
+                <line x1="${x + w/2}" y1="${y + h * 0.35}" x2="${x + w/2}" y2="${y + h * 0.5}" stroke="#64b5f6" stroke-width="1.5" stroke-dasharray="2,2"/>
+            </svg>`,
+            'sink-bath': `<svg width="${size}" height="${size}" viewBox="0 0 ${size} ${size}">
+                <ellipse cx="${x + w/2}" cy="${y + h/2}" rx="${w * 0.45}" ry="${h * 0.4}" fill="${color}" stroke="${stroke}"/>
+                <ellipse cx="${x + w/2}" cy="${y + h/2}" rx="${w * 0.32}" ry="${h * 0.28}" fill="#eee" stroke="#ccc"/>
+                <circle cx="${x + w/2}" cy="${y + h * 0.65}" r="2" fill="#888"/>
+            </svg>`,
+            
+            // Office
+            'desk': `<svg width="${size}" height="${size}" viewBox="0 0 ${size} ${size}">
+                <rect x="${x}" y="${y}" width="${w}" height="${h}" rx="2" fill="${color}" stroke="${stroke}"/>
+                <rect x="${x + 2}" y="${y + h * 0.6}" width="${w * 0.35}" height="${h * 0.35}" rx="1" fill="#755647" stroke="${stroke}"/>
+                <circle cx="${x + w * 0.19}" cy="${y + h * 0.75}" r="2" fill="#c9a86c"/>
+            </svg>`,
+            'office-chair': `<svg width="${size}" height="${size}" viewBox="0 0 ${size} ${size}">
+                <ellipse cx="${x + w/2}" cy="${y + h * 0.85}" rx="${w * 0.35}" ry="${h * 0.1}" fill="#555" stroke="${stroke}"/>
+                <rect x="${x + w * 0.4}" y="${y + h * 0.55}" width="${w * 0.2}" height="${h * 0.3}" fill="#444" stroke="${stroke}"/>
+                <rect x="${x + w * 0.15}" y="${y + h * 0.4}" width="${w * 0.7}" height="${h * 0.2}" rx="3" fill="${color}" stroke="${stroke}"/>
+                <rect x="${x + w * 0.2}" y="${y}" width="${w * 0.6}" height="${h * 0.45}" rx="3" fill="${color}" stroke="${stroke}"/>
+            </svg>`,
+            'filing-cabinet': `<svg width="${size}" height="${size}" viewBox="0 0 ${size} ${size}">
+                <rect x="${x}" y="${y}" width="${w}" height="${h}" rx="1" fill="${color}" stroke="${stroke}"/>
+                <rect x="${x + 2}" y="${y + h * 0.05}" width="${w - 4}" height="${h * 0.28}" rx="1" fill="#666" stroke="${stroke}"/>
+                <rect x="${x + 2}" y="${y + h * 0.36}" width="${w - 4}" height="${h * 0.28}" rx="1" fill="#666" stroke="${stroke}"/>
+                <rect x="${x + 2}" y="${y + h * 0.67}" width="${w - 4}" height="${h * 0.28}" rx="1" fill="#666" stroke="${stroke}"/>
+                <rect x="${x + w/2 - 3}" y="${y + h * 0.15}" width="6" height="2" rx="1" fill="#aaa"/>
+                <rect x="${x + w/2 - 3}" y="${y + h * 0.46}" width="6" height="2" rx="1" fill="#aaa"/>
+                <rect x="${x + w/2 - 3}" y="${y + h * 0.77}" width="6" height="2" rx="1" fill="#aaa"/>
+            </svg>`,
+        };
+        
+        // Return the specific icon or a default rectangle
+        return icons[item.id] || `<svg width="${size}" height="${size}" viewBox="0 0 ${size} ${size}">
+            <rect x="${x}" y="${y}" width="${w}" height="${h}" rx="2" fill="${color}" stroke="${stroke}"/>
+        </svg>`;
+    }
+    
     // Furniture
-    function populateFurnitureGrid(category, searchTerm = '') {
+    function updateFurnitureGrid() {
+        // Get all active categories
+        const activeCategories = Array.from(document.querySelectorAll('.category-btn.active'))
+            .map(btn => btn.dataset.category);
+        
+        // Get search term
+        const searchTerm = document.getElementById('furniture-search')?.value || '';
+        
+        populateFurnitureGrid(activeCategories, searchTerm);
+    }
+    
+    function populateFurnitureGrid(categories, searchTerm = '') {
         const grid = document.getElementById('furniture-grid');
         if (!grid) return;
         
         grid.innerHTML = '';
         
+        // If no categories selected, show nothing (or could show all)
+        const showAll = !categories || categories.length === 0;
+        
         const filteredItems = furnitureLibrary.filter(item => {
-            const matchesCategory = category === 'all' || item.category === category;
+            const matchesCategory = showAll || categories.includes(item.category);
             const matchesSearch = !searchTerm || item.name.toLowerCase().includes(searchTerm.toLowerCase());
             return matchesCategory && matchesSearch;
         });
@@ -1740,7 +2163,7 @@ const FloorPlanEditor = (() => {
             div.dataset.furnitureType = item.id;
             
             div.innerHTML = `
-                <div class="furniture-preview" style="background-color: ${item.color}; width: 40px; height: ${40 * item.height / item.width}px; max-height: 40px;"></div>
+                <div class="furniture-preview">${getFurnitureIcon(item)}</div>
                 <span>${item.name}</span>
             `;
             
@@ -1749,11 +2172,14 @@ const FloorPlanEditor = (() => {
             });
             
             div.addEventListener('click', () => {
-                // Add furniture at center of canvas
+                // Add furniture at center of visible canvas area
                 const wrapper = document.getElementById('layout-canvas-wrapper');
-                const centerX = wrapper.clientWidth / 2 / zoom;
-                const centerY = wrapper.clientHeight / 2 / zoom;
+                const centerX = (wrapper.clientWidth / 2 - panOffset.x) / zoom;
+                const centerY = (wrapper.clientHeight / 2 - panOffset.y) / zoom;
                 addFurniture(item.id, centerX, centerY);
+                
+                // Switch to select tool so user can move/adjust the furniture
+                selectTool('select');
             });
             
             grid.appendChild(div);
@@ -2111,16 +2537,39 @@ const FloorPlanEditor = (() => {
     
     // Zoom
     function setZoom(newZoom) {
-        zoom = Math.max(0.25, Math.min(2, newZoom));
+        zoom = Math.max(0.25, Math.min(3, newZoom));
         document.getElementById('zoom-level').textContent = Math.round(zoom * 100) + '%';
-        
+        applyTransform();
+    }
+    
+    function applyTransform() {
         const group = document.getElementById('floor-plan-group');
         if (group) {
-            group.setAttribute('transform', `scale(${zoom})`);
+            group.setAttribute('transform', `translate(${panOffset.x}, ${panOffset.y}) scale(${zoom})`);
         }
     }
     
+    function resetPan() {
+        panOffset = { x: 0, y: 0 };
+        applyTransform();
+    }
+    
+    function handleWheelZoom(e) {
+        // Only zoom if cursor is over the canvas area
+        e.preventDefault();
+        
+        // Calculate zoom delta (normalize for different browsers/trackpads)
+        const delta = -e.deltaY * 0.001;
+        
+        // Apply zoom with sensitivity
+        const zoomFactor = 1 + delta * 2;
+        const newZoom = zoom * zoomFactor;
+        
+        setZoom(newZoom);
+    }
+    
     function fitToScreen() {
+        panOffset = { x: 0, y: 0 };
         setZoom(1);
     }
     
