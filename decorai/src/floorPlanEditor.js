@@ -51,6 +51,11 @@ const FloorPlanEditor = (() => {
     let panStart = { x: 0, y: 0 };
     let panOffset = { x: 0, y: 0 };
     
+    // Rotation state
+    let isRotating = false;
+    let rotationStart = 0;
+    let rotationTarget = null;
+    
     // Helper to check if a fill color is white/near-white
     function isWhiteFill(color) {
         if (!color) return false;
@@ -234,6 +239,8 @@ const FloorPlanEditor = (() => {
         document.getElementById('prop-height')?.addEventListener('change', updateSelectedProperties);
         document.getElementById('prop-rotation')?.addEventListener('change', updateSelectedProperties);
         document.getElementById('delete-selected-btn')?.addEventListener('click', deleteSelected);
+        document.getElementById('rotate-left-btn')?.addEventListener('click', () => rotateSelectedBy(-90));
+        document.getElementById('rotate-right-btn')?.addEventListener('click', () => rotateSelectedBy(90));
         
         // Initialize furniture grid with all categories active
         updateFurnitureGrid();
@@ -305,6 +312,23 @@ const FloorPlanEditor = (() => {
         const target = e.target;
         
         if (currentTool === 'select') {
+            // Check if clicking on rotation handle
+            if (target.closest('.rotation-handle')) {
+                const handleEl = target.closest('.rotation-handle');
+                const furnitureId = handleEl.dataset.furnitureId;
+                const item = furniture.find(f => f.id === furnitureId);
+                if (item) {
+                    isRotating = true;
+                    rotationTarget = item;
+                    // Calculate initial angle from furniture center to mouse
+                    const centerX = item.x + item.width / 2;
+                    const centerY = item.y + item.height / 2;
+                    rotationStart = Math.atan2(pos.y - centerY, pos.x - centerX) * 180 / Math.PI - item.rotation;
+                    svg.style.cursor = 'grabbing';
+                    return;
+                }
+            }
+            
             // Check if clicking on a corner
             if (target.classList.contains('corner-node')) {
                 const cornerId = target.dataset.cornerId;
@@ -475,6 +499,22 @@ const FloorPlanEditor = (() => {
         
         const pos = getMousePos(e);
         
+        // Handle rotation
+        if (isRotating && rotationTarget) {
+            const centerX = rotationTarget.x + rotationTarget.width / 2;
+            const centerY = rotationTarget.y + rotationTarget.height / 2;
+            let angle = Math.atan2(pos.y - centerY, pos.x - centerX) * 180 / Math.PI - rotationStart;
+            
+            // Normalize angle to 0-360
+            angle = ((angle % 360) + 360) % 360;
+            
+            // Snap to wall angles and cardinal directions
+            angle = snapToWallAngle(angle);
+            
+            rotateFurniture(rotationTarget, angle);
+            return;
+        }
+        
         // Update mouse coordinates display
         const coordsDisplay = document.getElementById('mouse-coords');
         if (coordsDisplay) {
@@ -529,6 +569,15 @@ const FloorPlanEditor = (() => {
         if (isPanning) {
             isPanning = false;
             svg.style.cursor = '';
+            return;
+        }
+        
+        // Stop rotation
+        if (isRotating) {
+            isRotating = false;
+            rotationTarget = null;
+            svg.style.cursor = '';
+            addToHistory();
             return;
         }
         
@@ -1898,26 +1947,64 @@ const FloorPlanEditor = (() => {
         if (!showDimensions) return;
         
         for (const wall of walls) {
-            const length = Math.sqrt((wall.end.x - wall.start.x) ** 2 + (wall.end.y - wall.start.y) ** 2) / scale;
-            const midX = (wall.start.x + wall.end.x) / 2;
-            const midY = (wall.start.y + wall.end.y) / 2;
-            
-            // Calculate perpendicular offset for text
-            const dx = wall.end.x - wall.start.x;
-            const dy = wall.end.y - wall.start.y;
-            const len = Math.sqrt(dx * dx + dy * dy);
-            const offsetX = -dy / len * 15;
-            const offsetY = dx / len * 15;
-            
-            const text = document.createElementNS('http://www.w3.org/2000/svg', 'text');
-            text.setAttribute('x', midX + offsetX);
-            text.setAttribute('y', midY + offsetY);
-            text.setAttribute('text-anchor', 'middle');
-            text.setAttribute('dominant-baseline', 'middle');
-            text.classList.add('dimension-text');
-            text.textContent = formatDimension(length);
-            dimensionsLayer.appendChild(text);
+            renderWallDimension(wall);
         }
+    }
+    
+    function renderWallDimension(wall) {
+        const length = Math.sqrt((wall.end.x - wall.start.x) ** 2 + (wall.end.y - wall.start.y) ** 2) / scale;
+        const midX = (wall.start.x + wall.end.x) / 2;
+        const midY = (wall.start.y + wall.end.y) / 2;
+        
+        // Calculate perpendicular direction (pointing "outside")
+        const dx = wall.end.x - wall.start.x;
+        const dy = wall.end.y - wall.start.y;
+        const len = Math.sqrt(dx * dx + dy * dy);
+        
+        // Perpendicular unit vector - determine which side is "outside"
+        let perpX = -dy / len;
+        let perpY = dx / len;
+        
+        // Calculate center of all walls to determine "inside" vs "outside"
+        const allWallsCenter = getWallsCenter();
+        const testPointX = midX + perpX * 10;
+        const testPointY = midY + perpY * 10;
+        const distToCenter = Math.sqrt((testPointX - allWallsCenter.x) ** 2 + (testPointY - allWallsCenter.y) ** 2);
+        const oppDistToCenter = Math.sqrt((midX - perpX * 10 - allWallsCenter.x) ** 2 + (midY - perpY * 10 - allWallsCenter.y) ** 2);
+        
+        // If the perpendicular direction points toward center, flip it
+        if (distToCenter < oppDistToCenter) {
+            perpX = -perpX;
+            perpY = -perpY;
+        }
+        
+        // Offset distance for text (outside the wall)
+        const dimensionOffset = 20;
+        
+        // Dimension text only (no lines)
+        const textX = midX + perpX * dimensionOffset;
+        const textY = midY + perpY * dimensionOffset;
+        
+        const text = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+        text.setAttribute('x', textX);
+        text.setAttribute('y', textY);
+        text.setAttribute('text-anchor', 'middle');
+        text.setAttribute('dominant-baseline', 'middle');
+        text.classList.add('dimension-text');
+        text.textContent = formatDimension(length);
+        dimensionsLayer.appendChild(text);
+    }
+    
+    function getWallsCenter() {
+        if (walls.length === 0) return { x: 0, y: 0 };
+        
+        let sumX = 0, sumY = 0, count = 0;
+        for (const wall of walls) {
+            sumX += wall.start.x + wall.end.x;
+            sumY += wall.start.y + wall.end.y;
+            count += 2;
+        }
+        return { x: sumX / count, y: sumY / count };
     }
     
     function formatDimension(value) {
@@ -2250,6 +2337,94 @@ const FloorPlanEditor = (() => {
         }
     }
     
+    function rotateFurniture(item, angle) {
+        item.rotation = angle;
+        
+        const el = furnitureLayer.querySelector(`[data-furniture-id="${item.id}"]`);
+        if (el) {
+            el.setAttribute('transform', `translate(${item.x}, ${item.y}) rotate(${item.rotation}, ${item.width / 2}, ${item.height / 2})`);
+        }
+        
+        // Update properties panel if visible
+        const rotationInput = document.getElementById('prop-rotation');
+        if (rotationInput) {
+            rotationInput.value = Math.round(angle);
+        }
+    }
+    
+    function snapToWallAngle(angle) {
+        const snapThreshold = 15; // degrees - more generous snapping
+        
+        // If we have a rotation target, find the nearest wall and prioritize its angle
+        if (rotationTarget) {
+            const centerX = rotationTarget.x + rotationTarget.width / 2;
+            const centerY = rotationTarget.y + rotationTarget.height / 2;
+            
+            // Find nearest wall
+            let nearestWall = null;
+            let minDist = Infinity;
+            
+            for (const wall of walls) {
+                const dist = pointToLineDistance({ x: centerX, y: centerY }, wall.start, wall.end);
+                if (dist < minDist) {
+                    minDist = dist;
+                    nearestWall = wall;
+                }
+            }
+            
+            // If there's a nearby wall (within 100 pixels), strongly snap to it
+            if (nearestWall && minDist < 100) {
+                const dx = nearestWall.end.x - nearestWall.start.x;
+                const dy = nearestWall.end.y - nearestWall.start.y;
+                let wallAngle = Math.atan2(dy, dx) * 180 / Math.PI;
+                wallAngle = ((wallAngle % 360) + 360) % 360;
+                
+                // The top of furniture (where handle is) should align with wall
+                // So furniture rotation should be perpendicular to wall + 90 (top facing wall)
+                const alignAngles = [
+                    wallAngle + 90,           // Top faces along wall direction
+                    wallAngle - 90,           // Top faces opposite wall direction  
+                    wallAngle,                // Top perpendicular to wall
+                    wallAngle + 180           // Top perpendicular other way
+                ].map(a => ((a % 360) + 360) % 360);
+                
+                // Check if current angle is close to any wall-aligned angle
+                for (const alignAngle of alignAngles) {
+                    let diff = Math.abs(angle - alignAngle);
+                    if (diff > 180) diff = 360 - diff;
+                    
+                    if (diff < snapThreshold) {
+                        return alignAngle;
+                    }
+                }
+            }
+        }
+        
+        // Fall back to cardinal directions
+        const cardinalAngles = [0, 90, 180, 270];
+        for (const snapAngle of cardinalAngles) {
+            let diff = Math.abs(angle - snapAngle);
+            if (diff > 180) diff = 360 - diff;
+            
+            if (diff < snapThreshold) {
+                return snapAngle;
+            }
+        }
+        
+        return angle;
+    }
+    
+    function rotateSelectedBy(degrees) {
+        if (selectedElement && selectedElement.type === 'furniture') {
+            const item = selectedElement.element;
+            let newAngle = (item.rotation + degrees) % 360;
+            if (newAngle < 0) newAngle += 360;
+            
+            addToHistory();
+            rotateFurniture(item, newAngle);
+        }
+    }
+    
     // Labels
     function createLabel(pos, text) {
         const label = {
@@ -2287,12 +2462,18 @@ const FloorPlanEditor = (() => {
     
     // Selection
     function selectElement(element, type) {
+        // Switch to select tool when selecting any element
+        selectTool('select');
+        
         deselectAll();
         selectedElement = { element, type };
         
         if (type === 'furniture') {
             const el = furnitureLayer.querySelector(`[data-furniture-id="${element.id}"]`);
-            if (el) el.classList.add('selected');
+            if (el) {
+                el.classList.add('selected');
+                addRotationHandle(element);
+            }
             showProperties(element);
         } else if (type === 'label') {
             const el = labelsLayer.querySelector(`[data-label-id="${element.id}"]`);
@@ -2305,12 +2486,61 @@ const FloorPlanEditor = (() => {
         }
     }
     
+    function addRotationHandle(item) {
+        removeRotationHandle();
+        
+        const group = furnitureLayer.querySelector(`[data-furniture-id="${item.id}"]`);
+        if (!group) return;
+        
+        // Create rotation handle at the top center of furniture
+        const handle = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+        handle.classList.add('rotation-handle');
+        handle.dataset.furnitureId = item.id;
+        
+        // Line connecting to furniture
+        const line = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+        line.setAttribute('x1', item.width / 2);
+        line.setAttribute('y1', 0);
+        line.setAttribute('x2', item.width / 2);
+        line.setAttribute('y2', -20);
+        line.setAttribute('stroke', '#6366f1');
+        line.setAttribute('stroke-width', '2');
+        handle.appendChild(line);
+        
+        // Circular handle
+        const circle = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+        circle.setAttribute('cx', item.width / 2);
+        circle.setAttribute('cy', -25);
+        circle.setAttribute('r', 8);
+        circle.setAttribute('fill', '#6366f1');
+        circle.setAttribute('stroke', '#fff');
+        circle.setAttribute('stroke-width', '2');
+        circle.setAttribute('cursor', 'grab');
+        handle.appendChild(circle);
+        
+        // Rotation icon inside circle
+        const icon = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+        icon.setAttribute('d', 'M' + (item.width / 2 - 4) + ',-27 A 4 4 0 1 1 ' + (item.width / 2 + 4) + ',-27');
+        icon.setAttribute('fill', 'none');
+        icon.setAttribute('stroke', '#fff');
+        icon.setAttribute('stroke-width', '1.5');
+        icon.setAttribute('stroke-linecap', 'round');
+        handle.appendChild(icon);
+        
+        group.appendChild(handle);
+    }
+    
+    function removeRotationHandle() {
+        furnitureLayer.querySelectorAll('.rotation-handle').forEach(h => h.remove());
+    }
+    
     function deselectAll() {
         selectedElement = null;
         furnitureLayer.querySelectorAll('.selected').forEach(el => el.classList.remove('selected'));
         labelsLayer.querySelectorAll('.room-label').forEach(el => el.style.fill = '');
         // Deselect imported elements
         wallsLayer.querySelectorAll('.imported-svg-element.selected, .imported-svg-group.selected').forEach(el => el.classList.remove('selected'));
+        removeRotationHandle();
         hideProperties();
     }
     
@@ -2591,7 +2821,8 @@ const FloorPlanEditor = (() => {
         }
     }
     
-    function exportSVG() {
+    function prepareExportSVG() {
+        const includeDimensions = document.getElementById('export-include-dimensions')?.checked || false;
         const svgClone = svg.cloneNode(true);
         
         // Remove grid for export
@@ -2599,6 +2830,125 @@ const FloorPlanEditor = (() => {
         
         // Remove corner nodes for cleaner export
         svgClone.querySelector('#corners-layer').innerHTML = '';
+        
+        // Remove furniture labels (text inside furniture)
+        svgClone.querySelectorAll('.furniture-element text').forEach(t => t.remove());
+        
+        // Remove rotation handles
+        svgClone.querySelectorAll('.rotation-handle').forEach(h => h.remove());
+        
+        // Remove selection highlights
+        svgClone.querySelectorAll('.selected').forEach(el => el.classList.remove('selected'));
+        
+        // Handle dimensions layer
+        if (!includeDimensions) {
+            svgClone.querySelector('#dimensions-layer').innerHTML = '';
+        }
+        
+        // Remove preview elements
+        svgClone.querySelectorAll('.drawing-preview, .opening-preview, #drawing-preview, #preview-dimension').forEach(el => el.remove());
+        
+        // Add embedded styles for proper rendering (inline attributes take precedence)
+        const styleElement = document.createElementNS('http://www.w3.org/2000/svg', 'style');
+        styleElement.textContent = `
+            .wall-line { stroke: #333; stroke-linecap: round; }
+            .door-element .door-frame { fill: white; stroke: none; }
+            .door-element .door-swing { stroke: #8B4513; stroke-width: 1.5; fill: none; stroke-dasharray: 4,2; }
+            .window-element .window-frame { fill: #87CEEB; stroke: #4A90A4; stroke-width: 2; }
+            .window-element .window-mullion { stroke: #4A90A4; stroke-width: 2; }
+            .furniture-element rect { stroke: #666; stroke-width: 1; }
+            .furniture-element circle { stroke: #666; stroke-width: 1; }
+            .furniture-element ellipse { stroke: #666; stroke-width: 1; }
+            .room-label { font-family: Arial, sans-serif; font-size: 14px; fill: #666; }
+            .dimension-text { font-family: Arial, sans-serif; font-size: 11px; fill: #666; }
+            .freeform-opening line { stroke-linecap: round; }
+            line[stroke-width] { stroke: #333; }
+            rect[fill] { stroke: #666; stroke-width: 1; }
+        `;
+        svgClone.insertBefore(styleElement, svgClone.firstChild);
+        
+        // Reset transform on floor-plan-group for export
+        const floorPlanGroup = svgClone.querySelector('#floor-plan-group');
+        if (floorPlanGroup) {
+            floorPlanGroup.setAttribute('transform', 'scale(1)');
+        }
+        
+        return svgClone;
+    }
+    
+    function applyInlineStylesToSVG(svgElement) {
+        // Apply inline styles to wall lines
+        svgElement.querySelectorAll('.wall-line').forEach(el => {
+            if (!el.getAttribute('stroke')) {
+                el.setAttribute('stroke', '#333');
+            }
+            el.setAttribute('stroke-linecap', 'round');
+        });
+        
+        // Apply inline styles to door elements
+        svgElement.querySelectorAll('.door-element .door-frame, .door-frame').forEach(el => {
+            el.setAttribute('fill', 'white');
+        });
+        svgElement.querySelectorAll('.door-element .door-swing, .door-swing').forEach(el => {
+            el.setAttribute('stroke', '#8B4513');
+            el.setAttribute('stroke-width', '1.5');
+            el.setAttribute('fill', 'none');
+            el.setAttribute('stroke-dasharray', '4,2');
+        });
+        
+        // Apply inline styles to window elements
+        svgElement.querySelectorAll('.window-element .window-frame, .window-frame').forEach(el => {
+            el.setAttribute('fill', '#87CEEB');
+            el.setAttribute('stroke', '#4A90A4');
+            el.setAttribute('stroke-width', '2');
+        });
+        svgElement.querySelectorAll('.window-element .window-mullion, .window-mullion').forEach(el => {
+            el.setAttribute('stroke', '#4A90A4');
+            el.setAttribute('stroke-width', '2');
+        });
+        
+        // Apply inline styles to furniture elements
+        svgElement.querySelectorAll('.furniture-element rect').forEach(el => {
+            if (!el.getAttribute('stroke')) {
+                el.setAttribute('stroke', '#666');
+                el.setAttribute('stroke-width', '1');
+            }
+        });
+        svgElement.querySelectorAll('.furniture-element circle').forEach(el => {
+            if (!el.getAttribute('stroke')) {
+                el.setAttribute('stroke', '#666');
+                el.setAttribute('stroke-width', '1');
+            }
+        });
+        svgElement.querySelectorAll('.furniture-element ellipse').forEach(el => {
+            if (!el.getAttribute('stroke')) {
+                el.setAttribute('stroke', '#666');
+                el.setAttribute('stroke-width', '1');
+            }
+        });
+        
+        // Apply inline styles to dimension text
+        svgElement.querySelectorAll('.dimension-text').forEach(el => {
+            el.setAttribute('font-family', 'Arial, sans-serif');
+            el.setAttribute('font-size', '11');
+            el.setAttribute('fill', '#666');
+        });
+        
+        // Apply inline styles to room labels
+        svgElement.querySelectorAll('.room-label').forEach(el => {
+            el.setAttribute('font-family', 'Arial, sans-serif');
+            el.setAttribute('font-size', '14');
+            el.setAttribute('fill', '#666');
+        });
+        
+        // Apply styles to freeform openings
+        svgElement.querySelectorAll('.freeform-opening line').forEach(el => {
+            el.setAttribute('stroke-linecap', 'round');
+        });
+    }
+    
+    function exportSVG() {
+        const svgClone = prepareExportSVG();
         
         // Set dimensions
         const wrapper = document.getElementById('layout-canvas-wrapper');
@@ -2627,12 +2977,15 @@ const FloorPlanEditor = (() => {
         ctx.fillStyle = 'white';
         ctx.fillRect(0, 0, width, height);
         
-        // Clone and prepare SVG
-        const svgClone = svg.cloneNode(true);
-        svgClone.querySelector('#grid-background')?.remove();
-        svgClone.querySelector('#corners-layer').innerHTML = '';
+        // Clone and prepare SVG with inline styles
+        const svgClone = prepareExportSVG();
         svgClone.setAttribute('width', width);
         svgClone.setAttribute('height', height);
+        svgClone.setAttribute('viewBox', `0 0 ${width} ${height}`);
+        svgClone.setAttribute('xmlns', 'http://www.w3.org/2000/svg');
+        
+        // Apply inline styles to all elements for PNG rendering
+        applyInlineStylesToSVG(svgClone);
         
         const svgString = new XMLSerializer().serializeToString(svgClone);
         const img = new Image();
@@ -2642,6 +2995,11 @@ const FloorPlanEditor = (() => {
             canvas.toBlob(blob => {
                 downloadBlob(blob, 'floor-plan.png');
             }, 'image/png');
+        };
+        
+        img.onerror = (err) => {
+            console.error('Error loading SVG for PNG export:', err);
+            alert('Error generating PNG. Please try again.');
         };
         
         img.src = 'data:image/svg+xml;base64,' + btoa(unescape(encodeURIComponent(svgString)));

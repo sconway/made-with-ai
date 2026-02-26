@@ -2552,6 +2552,27 @@ footer {
   background: #f5f5f5;
 }
 
+.export-option {
+  padding: 10px 16px;
+  border-bottom: 1px solid #e0e0e0;
+}
+
+.export-option label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.85rem;
+  color: #555;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.export-option input[type="checkbox"] {
+  width: 16px;
+  height: 16px;
+  cursor: pointer;
+}
+
 /* Editor Content Layout */
 .layout-editor-content {
   flex: 1;
@@ -2951,6 +2972,45 @@ footer {
   height: 14px;
 }
 
+/* Rotate Buttons */
+.rotate-buttons {
+  justify-content: center;
+  gap: 12px;
+}
+
+.rotate-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  height: 36px;
+  background: #f0f4ff;
+  border: 1px solid #c7d2fe;
+  border-radius: 6px;
+  color: #6366f1;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.rotate-btn:hover {
+  background: #e0e7ff;
+  border-color: #a5b4fc;
+}
+
+.rotate-btn svg {
+  width: 18px;
+  height: 18px;
+}
+
+/* Rotation Handle */
+.rotation-handle {
+  cursor: grab;
+}
+
+.rotation-handle:active {
+  cursor: grabbing;
+}
+
 /* SVG Floor Plan Elements */
 .wall-line {
   stroke: #333;
@@ -3000,6 +3060,7 @@ footer {
   font-size: 11px;
   fill: #666;
   font-family: 'Inter', sans-serif;
+  pointer-events: none;
 }
 
 .room-label {

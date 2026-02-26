@@ -322,8 +322,16 @@
                         <i data-feather="chevron-down" class="dropdown-arrow"></i>
                     </button>
                     <div class="export-menu" id="export-menu">
-                        <button id="export-png-btn">Export as PNG</button>
-                        <button id="export-svg-btn">Export as SVG</button>
+                        <div class="export-option">
+                            <label>
+                                <input type="checkbox" id="export-include-dimensions">
+                                Include dimensions
+                            </label>
+                        </div>
+                        <div class="export-buttons">
+                            <button id="export-png-btn">Export as PNG</button>
+                            <button id="export-svg-btn">Export as SVG</button>
+                        </div>
                     </div>
                 </div>
             </div>
@@ -469,6 +477,14 @@
                         <label>Rotation:</label>
                         <input type="number" id="prop-rotation" step="15" min="0" max="360">
                         <span class="unit-label">°</span>
+                    </div>
+                    <div class="property-row rotate-buttons">
+                        <button id="rotate-left-btn" class="rotate-btn" title="Rotate 90° left">
+                            <i data-feather="rotate-ccw"></i>
+                        </button>
+                        <button id="rotate-right-btn" class="rotate-btn" title="Rotate 90° right">
+                            <i data-feather="rotate-cw"></i>
+                        </button>
                     </div>
                     <div class="property-row">
                         <button id="delete-selected-btn" class="delete-btn">
