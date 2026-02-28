@@ -2536,6 +2536,58 @@ footer {
   display: block;
 }
 
+/* Export Message Toast */
+.export-message {
+  position: absolute;
+  bottom: 20px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 1000;
+  animation: slideUp 0.3s ease;
+}
+
+.export-message-content {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 20px;
+  background: #333;
+  color: white;
+  border-radius: 8px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
+  font-size: 0.9rem;
+}
+
+.export-message-content svg {
+  width: 18px;
+  height: 18px;
+  flex-shrink: 0;
+}
+
+.export-message.fade-out {
+  animation: fadeOut 0.3s ease forwards;
+}
+
+@keyframes slideUp {
+  from {
+    opacity: 0;
+    transform: translateX(-50%) translateY(20px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(-50%) translateY(0);
+  }
+}
+
+@keyframes fadeOut {
+  from {
+    opacity: 1;
+  }
+  to {
+    opacity: 0;
+  }
+}
+
 .export-menu button {
   display: block;
   width: 100%;
@@ -3045,6 +3097,19 @@ footer {
   r: 10;
 }
 
+.wall-snap-indicator {
+  fill: #10b981;
+  stroke: white;
+  stroke-width: 2;
+  pointer-events: none;
+  animation: pulse-snap 0.8s ease-in-out infinite;
+}
+
+@keyframes pulse-snap {
+  0%, 100% { opacity: 1; r: 8; }
+  50% { opacity: 0.7; r: 10; }
+}
+
 .room-fill {
   fill: rgba(99, 102, 241, 0.05);
   stroke: none;
@@ -3131,6 +3196,15 @@ footer {
   stroke-width: 2;
   stroke-dasharray: 6, 3;
   fill: none;
+  pointer-events: none;
+}
+
+/* Marquee Selection Box */
+.marquee-selection {
+  stroke: var(--primary-color);
+  stroke-width: 1;
+  stroke-dasharray: 4, 2;
+  fill: rgba(99, 102, 241, 0.1);
   pointer-events: none;
 }
 

@@ -27,9 +27,18 @@ const FloorPlanEditor = (() => {
     let drawingStartCorner = null;
     let previewLine = null;
     let selectedElement = null;
+    let selectedElements = []; // For multi-selection
     let isDragging = false;
     let dragOffset = { x: 0, y: 0 };
     let dragTarget = null;
+    
+    // Marquee selection state
+    let isMarqueeSelecting = false;
+    let marqueeStart = null;
+    let marqueeBox = null;
+    
+    // Clipboard for copy/paste
+    let clipboard = [];
     
     // Door/window placement state
     let openingStartPoint = null;
@@ -209,8 +218,8 @@ const FloorPlanEditor = (() => {
         svg.addEventListener('mousemove', handleMouseMove);
         svg.addEventListener('mouseup', handleMouseUp);
         
-        // Scroll wheel zoom on canvas
-        canvasWrapper?.addEventListener('wheel', handleWheelZoom, { passive: false });
+        // Scroll/trackpad for pan and zoom (Figma-style)
+        canvasWrapper?.addEventListener('wheel', handleWheel, { passive: false });
         svg.addEventListener('mouseleave', handleMouseUp);
         
         // Touch support
@@ -346,7 +355,12 @@ const FloorPlanEditor = (() => {
                 const furnitureId = furnitureEl.dataset.furnitureId;
                 const item = furniture.find(f => f.id === furnitureId);
                 if (item) {
-                    selectElement(item, 'furniture');
+                    // Check if this item is already part of a multi-selection
+                    if (!isElementSelected(item, 'furniture')) {
+                        // Not selected - select only this item
+                        selectElement(item, 'furniture');
+                    }
+                    // Start dragging (will move all selected if multi-selected)
                     isDragging = true;
                     dragTarget = { type: 'furniture', element: item };
                     dragOffset = { x: pos.x - item.x, y: pos.y - item.y };
@@ -359,7 +373,12 @@ const FloorPlanEditor = (() => {
                 const labelId = target.dataset.labelId;
                 const label = labels.find(l => l.id === labelId);
                 if (label) {
-                    selectElement(label, 'label');
+                    // Check if this label is already part of a multi-selection
+                    if (!isElementSelected(label, 'label')) {
+                        // Not selected - select only this label
+                        selectElement(label, 'label');
+                    }
+                    // Start dragging (will move all selected if multi-selected)
                     isDragging = true;
                     dragTarget = { type: 'label', element: label };
                     dragOffset = { x: pos.x - label.x, y: pos.y - label.y };
@@ -415,25 +434,51 @@ const FloorPlanEditor = (() => {
                 }
             }
             
-            // Clicked on empty space
+            // Check if clicking on a wall
+            if (target.classList.contains('wall-line')) {
+                const wallId = target.dataset.wallId;
+                const wall = walls.find(w => w.id === wallId);
+                if (wall) {
+                    if (!isElementSelected(wall, 'wall')) {
+                        selectElement(wall, 'wall');
+                    }
+                    return;
+                }
+            }
+            
+            // Clicked on empty space - start marquee selection
             deselectAll();
+            isMarqueeSelecting = true;
+            marqueeStart = pos;
+            createMarqueeBox(pos);
             
         } else if (currentTool === 'wall') {
             // Start or continue drawing walls
-            const existingCorner = findNearbyCorner(pos);
+            let targetCorner = findNearbyCorner(pos);
+            
+            // If no corner found, check for mid-wall snap
+            if (!targetCorner) {
+                const wallSnap = findSnapPointOnWall(pos, drawingStartCorner);
+                if (wallSnap) {
+                    // Split the wall and get the new corner at the snap point
+                    targetCorner = splitWallAtPoint(wallSnap.wall, wallSnap.point);
+                    redrawAll();
+                }
+            }
             
             if (drawingStartCorner) {
                 // Complete the wall segment
-                const endCorner = existingCorner || createCorner(pos);
+                const endCorner = targetCorner || createCorner(pos);
                 if (endCorner.id !== drawingStartCorner.id) {
                     createWall(drawingStartCorner, endCorner);
                     drawingStartCorner = endCorner; // Continue from this corner
                 }
             } else {
                 // Start new wall
-                drawingStartCorner = existingCorner || createCorner(pos);
+                drawingStartCorner = targetCorner || createCorner(pos);
             }
             isDrawing = true;
+            removeWallSnapIndicator();
             
         } else if (currentTool === 'room') {
             // Start drawing room rectangle
@@ -523,14 +568,29 @@ const FloorPlanEditor = (() => {
             coordsDisplay.textContent = formatDimension(realX) + ' × ' + formatDimension(realY);
         }
         
+        // Handle marquee selection
+        if (isMarqueeSelecting && marqueeStart) {
+            updateMarqueeBox(marqueeStart, pos);
+            return;
+        }
+        
         // Handle dragging
         if (isDragging && dragTarget) {
             if (dragTarget.type === 'corner') {
                 moveCorner(dragTarget.element, pos);
             } else if (dragTarget.type === 'furniture') {
-                moveFurniture(dragTarget.element, pos.x - dragOffset.x, pos.y - dragOffset.y);
+                // Move all selected items if dragging a selected item
+                if (selectedElements.length > 1) {
+                    moveSelectedElements(pos.x - dragOffset.x - dragTarget.element.x, pos.y - dragOffset.y - dragTarget.element.y);
+                } else {
+                    moveFurniture(dragTarget.element, pos.x - dragOffset.x, pos.y - dragOffset.y);
+                }
             } else if (dragTarget.type === 'label') {
-                moveLabel(dragTarget.element, pos.x - dragOffset.x, pos.y - dragOffset.y);
+                if (selectedElements.length > 1) {
+                    moveSelectedElements(pos.x - dragOffset.x - dragTarget.element.x, pos.y - dragOffset.y - dragTarget.element.y);
+                } else {
+                    moveLabel(dragTarget.element, pos.x - dragOffset.x, pos.y - dragOffset.y);
+                }
             }
             return;
         }
@@ -581,19 +641,74 @@ const FloorPlanEditor = (() => {
             return;
         }
         
+        // Complete marquee selection
+        if (isMarqueeSelecting && marqueeStart) {
+            const pos = getMousePos(e);
+            finishMarqueeSelection(marqueeStart, pos);
+            isMarqueeSelecting = false;
+            marqueeStart = null;
+            removeMarqueeBox();
+            return;
+        }
+        
         if (currentTool === 'room' && isDrawing && drawingStartCorner) {
             const pos = getMousePos(e);
             createRoomFromRect(drawingStartCorner, pos);
         }
         
+        // Finalize corner snap if we were dragging a corner
+        if (dragTarget && dragTarget.type === 'corner') {
+            finalizeCornerSnap(dragTarget.element);
+        }
+        
         isDragging = false;
         dragTarget = null;
+        
+        // Clean up snap indicators
+        removeWallSnapIndicator();
+        cornersLayer.querySelectorAll('.snap-target').forEach(el => el.classList.remove('snap-target'));
         
         if (currentTool === 'room') {
             isDrawing = false;
             drawingStartCorner = null;
             removePreview();
         }
+    }
+    
+    function finalizeCornerSnap(corner) {
+        // Check if this corner is at the same position as another corner (should merge)
+        for (const otherCorner of corners) {
+            if (otherCorner.id === corner.id) continue;
+            const dist = Math.sqrt((otherCorner.x - corner.x) ** 2 + (otherCorner.y - corner.y) ** 2);
+            if (dist < 1) { // Very close - they should be merged
+                mergeCorners(corner, otherCorner);
+                addToHistory();
+                return;
+            }
+        }
+        
+        // Check if this corner is on a wall (should split and connect)
+        for (const wall of walls) {
+            // Skip walls connected to this corner
+            if (wall.start === corner || wall.end === corner) continue;
+            
+            // Check if corner is on this wall line
+            const projection = projectPointOntoWallLine(wall, corner);
+            if (projection) {
+                const dist = Math.sqrt((projection.x - corner.x) ** 2 + (projection.y - corner.y) ** 2);
+                if (dist < 1) { // Corner is on the wall
+                    // Split the wall at this point
+                    const newCorner = splitWallAtPoint(wall, { x: corner.x, y: corner.y });
+                    // Merge our corner with the new corner
+                    mergeCorners(corner, newCorner);
+                    addToHistory();
+                    return;
+                }
+            }
+        }
+        
+        // No snap occurred, just save history for the move
+        addToHistory();
     }
     
     function handleTouchStart(e) {
@@ -1041,7 +1156,7 @@ const FloorPlanEditor = (() => {
             cancelDrawing();
             deselectAll();
         } else if (e.key === 'Delete' || e.key === 'Backspace') {
-            if (selectedElement) {
+            if (selectedElement || selectedElements.length > 0) {
                 deleteSelected();
             }
         } else if (e.ctrlKey || e.metaKey) {
@@ -1054,6 +1169,12 @@ const FloorPlanEditor = (() => {
             } else if (e.key.toLowerCase() === 'y') {
                 e.preventDefault();
                 redo();
+            } else if (e.key.toLowerCase() === 'c') {
+                e.preventDefault();
+                copySelected();
+            } else if (e.key.toLowerCase() === 'v') {
+                e.preventDefault();
+                pasteClipboard();
             }
         } else if (e.key === 'v') {
             selectTool('select');
@@ -1092,17 +1213,172 @@ const FloorPlanEditor = (() => {
         return null;
     }
     
-    function moveCorner(corner, newPos) {
-        // Check for snap to other corners
-        const snapTarget = findSnapTarget(newPos, corner);
-        if (snapTarget) {
-            // Merge corners
-            mergeCorners(corner, snapTarget);
-        } else {
-            corner.x = newPos.x;
-            corner.y = newPos.y;
-            redrawAll();
+    // Find snap point on any wall (mid-wall snapping)
+    function findSnapPointOnWall(pos, excludeCorner = null) {
+        let bestWall = null;
+        let bestPoint = null;
+        let minDist = snapDistance;
+        
+        for (const wall of walls) {
+            // Skip if position is near the wall's endpoints (those are handled by corner snapping)
+            const distToStart = Math.sqrt((wall.start.x - pos.x) ** 2 + (wall.start.y - pos.y) ** 2);
+            const distToEnd = Math.sqrt((wall.end.x - pos.x) ** 2 + (wall.end.y - pos.y) ** 2);
+            if (distToStart < snapDistance || distToEnd < snapDistance) continue;
+            
+            // Skip walls connected to the exclude corner (to avoid snapping to our own drawing start)
+            if (excludeCorner && (wall.start === excludeCorner || wall.end === excludeCorner)) continue;
+            
+            // Calculate the projection of pos onto the wall line
+            const projection = projectPointOntoWallLine(wall, pos);
+            if (!projection) continue;
+            
+            const dist = Math.sqrt((projection.x - pos.x) ** 2 + (projection.y - pos.y) ** 2);
+            if (dist < minDist) {
+                minDist = dist;
+                bestWall = wall;
+                bestPoint = projection;
+            }
         }
+        
+        return bestWall ? { wall: bestWall, point: bestPoint } : null;
+    }
+    
+    // Project a point onto a wall line segment, returning null if outside the segment
+    function projectPointOntoWallLine(wall, pos) {
+        const dx = wall.end.x - wall.start.x;
+        const dy = wall.end.y - wall.start.y;
+        const lenSq = dx * dx + dy * dy;
+        if (lenSq === 0) return null;
+        
+        // Calculate parameter t for the projection
+        const t = ((pos.x - wall.start.x) * dx + (pos.y - wall.start.y) * dy) / lenSq;
+        
+        // Clamp to segment, but exclude endpoints (those are corner snaps)
+        if (t <= 0.05 || t >= 0.95) return null;
+        
+        return {
+            x: wall.start.x + t * dx,
+            y: wall.start.y + t * dy,
+            t: t
+        };
+    }
+    
+    // Split a wall at a given point, creating a new corner
+    function splitWallAtPoint(wall, point) {
+        // Create new corner at the split point
+        const newCorner = createCorner(point);
+        
+        // Store original end corner
+        const originalEnd = wall.end;
+        
+        // Update the original wall to end at the new corner
+        wall.end.walls = wall.end.walls.filter(w => w !== wall);
+        wall.end = newCorner;
+        newCorner.walls.push(wall);
+        
+        // Create new wall from new corner to original end
+        const newWall = {
+            id: 'wall-' + Date.now() + '-' + Math.random().toString(36).substr(2, 9),
+            start: newCorner,
+            end: originalEnd,
+            openings: []
+        };
+        
+        walls.push(newWall);
+        newCorner.walls.push(newWall);
+        originalEnd.walls.push(newWall);
+        
+        // Transfer any openings that belong on the new wall segment
+        const originalLength = Math.sqrt((originalEnd.x - wall.start.x) ** 2 + (originalEnd.y - wall.start.y) ** 2);
+        const splitT = Math.sqrt((newCorner.x - wall.start.x) ** 2 + (newCorner.y - wall.start.y) ** 2) / originalLength;
+        
+        const openingsToMove = [];
+        for (const opening of wall.openings) {
+            if (opening.position > splitT) {
+                // Recalculate position relative to new wall
+                const newWallLength = Math.sqrt((originalEnd.x - newCorner.x) ** 2 + (originalEnd.y - newCorner.y) ** 2);
+                const oldAbsPosition = opening.position * originalLength;
+                const newAbsPosition = oldAbsPosition - splitT * originalLength;
+                opening.position = newAbsPosition / newWallLength;
+                openingsToMove.push(opening);
+            }
+        }
+        
+        // Move openings to the new wall
+        for (const opening of openingsToMove) {
+            wall.openings = wall.openings.filter(o => o !== opening);
+            newWall.openings.push(opening);
+        }
+        
+        return newCorner;
+    }
+    
+    function moveCorner(corner, newPos) {
+        // Clear any existing snap indicators
+        removeWallSnapIndicator();
+        cornersLayer.querySelectorAll('.snap-target').forEach(el => el.classList.remove('snap-target'));
+        
+        // First check for snap to other corners
+        const cornerSnapTarget = findSnapTarget(newPos, corner);
+        if (cornerSnapTarget) {
+            // Show visual indicator on the target corner
+            const node = cornersLayer.querySelector(`[data-corner-id="${cornerSnapTarget.id}"]`);
+            if (node) node.classList.add('snap-target');
+            
+            // Move corner to the snap position (visual feedback)
+            corner.x = cornerSnapTarget.x;
+            corner.y = cornerSnapTarget.y;
+            redrawAll();
+            return;
+        }
+        
+        // Then check for snap to mid-wall points
+        const wallSnap = findSnapPointOnWallForCorner(newPos, corner);
+        if (wallSnap) {
+            // Show visual indicator
+            showWallSnapIndicator(wallSnap.point);
+            
+            // Move corner to the snap position (visual feedback)
+            corner.x = wallSnap.point.x;
+            corner.y = wallSnap.point.y;
+            redrawAll();
+            return;
+        }
+        
+        // No snap - just move the corner
+        corner.x = newPos.x;
+        corner.y = newPos.y;
+        redrawAll();
+    }
+    
+    // Find snap point on wall, excluding walls connected to a specific corner
+    function findSnapPointOnWallForCorner(pos, excludeCorner) {
+        let bestWall = null;
+        let bestPoint = null;
+        let minDist = snapDistance;
+        
+        for (const wall of walls) {
+            // Skip walls connected to the corner we're moving
+            if (wall.start === excludeCorner || wall.end === excludeCorner) continue;
+            
+            // Skip if position is near the wall's endpoints (those are handled by corner snapping)
+            const distToStart = Math.sqrt((wall.start.x - pos.x) ** 2 + (wall.start.y - pos.y) ** 2);
+            const distToEnd = Math.sqrt((wall.end.x - pos.x) ** 2 + (wall.end.y - pos.y) ** 2);
+            if (distToStart < snapDistance || distToEnd < snapDistance) continue;
+            
+            // Calculate the projection of pos onto the wall line
+            const projection = projectPointOntoWallLine(wall, pos);
+            if (!projection) continue;
+            
+            const dist = Math.sqrt((projection.x - pos.x) ** 2 + (projection.y - pos.y) ** 2);
+            if (dist < minDist) {
+                minDist = dist;
+                bestWall = wall;
+                bestPoint = projection;
+            }
+        }
+        
+        return bestWall ? { wall: bestWall, point: bestPoint } : null;
     }
     
     function findSnapTarget(pos, excludeCorner) {
@@ -1151,14 +1427,39 @@ const FloorPlanEditor = (() => {
     function highlightSnapTarget(pos) {
         // Remove existing highlights
         cornersLayer.querySelectorAll('.snap-target').forEach(el => el.classList.remove('snap-target'));
+        removeWallSnapIndicator();
         
-        const target = findNearbyCorner(pos);
-        if (target && (!drawingStartCorner || target.id !== drawingStartCorner.id)) {
-            const node = cornersLayer.querySelector(`[data-corner-id="${target.id}"]`);
+        // First check for corner snap
+        const cornerTarget = findNearbyCorner(pos);
+        if (cornerTarget && (!drawingStartCorner || cornerTarget.id !== drawingStartCorner.id)) {
+            const node = cornersLayer.querySelector(`[data-corner-id="${cornerTarget.id}"]`);
             if (node) {
                 node.classList.add('snap-target');
             }
+            return;
         }
+        
+        // Then check for mid-wall snap
+        const wallSnap = findSnapPointOnWall(pos, drawingStartCorner);
+        if (wallSnap) {
+            showWallSnapIndicator(wallSnap.point);
+        }
+    }
+    
+    function showWallSnapIndicator(point) {
+        removeWallSnapIndicator();
+        
+        const indicator = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+        indicator.setAttribute('cx', point.x);
+        indicator.setAttribute('cy', point.y);
+        indicator.setAttribute('r', 8);
+        indicator.classList.add('wall-snap-indicator');
+        indicator.id = 'wall-snap-indicator';
+        cornersLayer.appendChild(indicator);
+    }
+    
+    function removeWallSnapIndicator() {
+        document.getElementById('wall-snap-indicator')?.remove();
     }
     
     // Wall management
@@ -1282,6 +1583,7 @@ const FloorPlanEditor = (() => {
         drawingStartCorner = null;
         removePreview();
         cornersLayer.querySelectorAll('.snap-target').forEach(el => el.classList.remove('snap-target'));
+        removeWallSnapIndicator();
         
         // Also cancel door/window placement
         openingStartPoint = null;
@@ -2467,6 +2769,7 @@ const FloorPlanEditor = (() => {
         
         deselectAll();
         selectedElement = { element, type };
+        selectedElements = [{ element, type }]; // Also populate multi-selection array
         
         if (type === 'furniture') {
             const el = furnitureLayer.querySelector(`[data-furniture-id="${element.id}"]`);
@@ -2483,6 +2786,9 @@ const FloorPlanEditor = (() => {
             if (element.element) {
                 element.element.classList.add('selected');
             }
+        } else if (type === 'wall') {
+            const el = wallsLayer.querySelector(`[data-wall-id="${element.id}"]`);
+            if (el) el.classList.add('selected');
         }
     }
     
@@ -2536,12 +2842,297 @@ const FloorPlanEditor = (() => {
     
     function deselectAll() {
         selectedElement = null;
+        selectedElements = [];
         furnitureLayer.querySelectorAll('.selected').forEach(el => el.classList.remove('selected'));
         labelsLayer.querySelectorAll('.room-label').forEach(el => el.style.fill = '');
+        // Deselect walls
+        wallsLayer.querySelectorAll('.wall-line.selected').forEach(el => el.classList.remove('selected'));
         // Deselect imported elements
         wallsLayer.querySelectorAll('.imported-svg-element.selected, .imported-svg-group.selected').forEach(el => el.classList.remove('selected'));
         removeRotationHandle();
         hideProperties();
+    }
+    
+    // Marquee selection functions
+    function createMarqueeBox(start) {
+        removeMarqueeBox();
+        
+        const rect = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
+        rect.setAttribute('x', start.x);
+        rect.setAttribute('y', start.y);
+        rect.setAttribute('width', 0);
+        rect.setAttribute('height', 0);
+        rect.classList.add('marquee-selection');
+        rect.id = 'marquee-selection';
+        
+        const floorPlanGroup = document.getElementById('floor-plan-group');
+        floorPlanGroup.appendChild(rect);
+        marqueeBox = rect;
+    }
+    
+    function updateMarqueeBox(start, end) {
+        if (!marqueeBox) return;
+        
+        const x = Math.min(start.x, end.x);
+        const y = Math.min(start.y, end.y);
+        const width = Math.abs(end.x - start.x);
+        const height = Math.abs(end.y - start.y);
+        
+        marqueeBox.setAttribute('x', x);
+        marqueeBox.setAttribute('y', y);
+        marqueeBox.setAttribute('width', width);
+        marqueeBox.setAttribute('height', height);
+    }
+    
+    function removeMarqueeBox() {
+        document.getElementById('marquee-selection')?.remove();
+        marqueeBox = null;
+    }
+    
+    function finishMarqueeSelection(start, end) {
+        const x1 = Math.min(start.x, end.x);
+        const y1 = Math.min(start.y, end.y);
+        const x2 = Math.max(start.x, end.x);
+        const y2 = Math.max(start.y, end.y);
+        
+        // If the box is too small, treat as a click (deselect)
+        if (Math.abs(x2 - x1) < 5 && Math.abs(y2 - y1) < 5) {
+            return;
+        }
+        
+        selectedElements = [];
+        
+        // Find walls within or intersecting the box
+        for (const wall of walls) {
+            // Check if wall intersects with selection box
+            if (lineIntersectsRect(wall.start, wall.end, x1, y1, x2, y2)) {
+                selectedElements.push({ element: wall, type: 'wall' });
+            }
+        }
+        
+        // Find furniture within the box
+        for (const item of furniture) {
+            const itemRight = item.x + item.width;
+            const itemBottom = item.y + item.height;
+            
+            // Check if furniture overlaps with selection box
+            if (item.x < x2 && itemRight > x1 && item.y < y2 && itemBottom > y1) {
+                selectedElements.push({ element: item, type: 'furniture' });
+            }
+        }
+        
+        // Find labels within the box
+        for (const label of labels) {
+            if (label.x >= x1 && label.x <= x2 && label.y >= y1 && label.y <= y2) {
+                selectedElements.push({ element: label, type: 'label' });
+            }
+        }
+        
+        // Highlight all selected elements
+        for (const sel of selectedElements) {
+            if (sel.type === 'furniture') {
+                const el = furnitureLayer.querySelector(`[data-furniture-id="${sel.element.id}"]`);
+                if (el) el.classList.add('selected');
+            } else if (sel.type === 'label') {
+                const el = labelsLayer.querySelector(`[data-label-id="${sel.element.id}"]`);
+                if (el) el.style.fill = 'var(--primary-color)';
+            } else if (sel.type === 'wall') {
+                const el = wallsLayer.querySelector(`[data-wall-id="${sel.element.id}"]`);
+                if (el) el.classList.add('selected');
+            }
+        }
+        
+        // Update selectedElement for single selection compatibility
+        if (selectedElements.length === 1) {
+            selectedElement = selectedElements[0];
+            if (selectedElement.type === 'furniture') {
+                addRotationHandle(selectedElement.element);
+                showProperties(selectedElement.element);
+            }
+        } else if (selectedElements.length > 1) {
+            // Hide properties panel for multi-select
+            hideProperties();
+        }
+    }
+    
+    function moveSelectedElements(dx, dy) {
+        for (const sel of selectedElements) {
+            if (sel.type === 'furniture') {
+                let newX = sel.element.x + dx;
+                let newY = sel.element.y + dy;
+                
+                if (snapToGrid) {
+                    newX = Math.round(newX / gridSize) * gridSize;
+                    newY = Math.round(newY / gridSize) * gridSize;
+                }
+                
+                sel.element.x = newX;
+                sel.element.y = newY;
+                
+                const el = furnitureLayer.querySelector(`[data-furniture-id="${sel.element.id}"]`);
+                if (el) {
+                    el.setAttribute('transform', `translate(${sel.element.x}, ${sel.element.y}) rotate(${sel.element.rotation}, ${sel.element.width / 2}, ${sel.element.height / 2})`);
+                }
+            } else if (sel.type === 'label') {
+                sel.element.x += dx;
+                sel.element.y += dy;
+                
+                const el = labelsLayer.querySelector(`[data-label-id="${sel.element.id}"]`);
+                if (el) {
+                    el.setAttribute('x', sel.element.x);
+                    el.setAttribute('y', sel.element.y);
+                }
+            }
+        }
+    }
+    
+    function isElementSelected(element, type) {
+        return selectedElements.some(sel => sel.element === element && sel.type === type);
+    }
+    
+    // Check if a line segment intersects with a rectangle
+    function lineIntersectsRect(p1, p2, x1, y1, x2, y2) {
+        // Check if either endpoint is inside the rectangle
+        if ((p1.x >= x1 && p1.x <= x2 && p1.y >= y1 && p1.y <= y2) ||
+            (p2.x >= x1 && p2.x <= x2 && p2.y >= y1 && p2.y <= y2)) {
+            return true;
+        }
+        
+        // Check if line intersects any edge of the rectangle
+        return lineIntersectsLine(p1, p2, {x: x1, y: y1}, {x: x2, y: y1}) || // top
+               lineIntersectsLine(p1, p2, {x: x2, y: y1}, {x: x2, y: y2}) || // right
+               lineIntersectsLine(p1, p2, {x: x1, y: y2}, {x: x2, y: y2}) || // bottom
+               lineIntersectsLine(p1, p2, {x: x1, y: y1}, {x: x1, y: y2});   // left
+    }
+    
+    // Check if two line segments intersect
+    function lineIntersectsLine(p1, p2, p3, p4) {
+        const d1 = direction(p3, p4, p1);
+        const d2 = direction(p3, p4, p2);
+        const d3 = direction(p1, p2, p3);
+        const d4 = direction(p1, p2, p4);
+        
+        if (((d1 > 0 && d2 < 0) || (d1 < 0 && d2 > 0)) &&
+            ((d3 > 0 && d4 < 0) || (d3 < 0 && d4 > 0))) {
+            return true;
+        }
+        
+        if (d1 === 0 && onSegment(p3, p4, p1)) return true;
+        if (d2 === 0 && onSegment(p3, p4, p2)) return true;
+        if (d3 === 0 && onSegment(p1, p2, p3)) return true;
+        if (d4 === 0 && onSegment(p1, p2, p4)) return true;
+        
+        return false;
+    }
+    
+    function direction(p1, p2, p3) {
+        return (p3.x - p1.x) * (p2.y - p1.y) - (p2.x - p1.x) * (p3.y - p1.y);
+    }
+    
+    function onSegment(p1, p2, p) {
+        return p.x >= Math.min(p1.x, p2.x) && p.x <= Math.max(p1.x, p2.x) &&
+               p.y >= Math.min(p1.y, p2.y) && p.y <= Math.max(p1.y, p2.y);
+    }
+    
+    // Copy/Paste functions
+    function copySelected() {
+        if (selectedElements.length === 0) return;
+        
+        // Deep copy the selected elements to clipboard
+        clipboard = selectedElements.map(sel => {
+            if (sel.type === 'furniture') {
+                return {
+                    type: 'furniture',
+                    data: {
+                        typeId: sel.element.typeId,
+                        name: sel.element.name,
+                        x: sel.element.x,
+                        y: sel.element.y,
+                        width: sel.element.width,
+                        height: sel.element.height,
+                        rotation: sel.element.rotation,
+                        color: sel.element.color
+                    }
+                };
+            } else if (sel.type === 'label') {
+                return {
+                    type: 'label',
+                    data: {
+                        x: sel.element.x,
+                        y: sel.element.y,
+                        text: sel.element.text
+                    }
+                };
+            }
+            return null;
+        }).filter(item => item !== null);
+    }
+    
+    function pasteClipboard() {
+        if (clipboard.length === 0) return;
+        
+        addToHistory();
+        deselectAll();
+        
+        const pasteOffset = 20; // Offset so pasted items don't overlap originals
+        const newElements = [];
+        
+        for (const item of clipboard) {
+            if (item.type === 'furniture') {
+                const newItem = {
+                    id: 'furniture-' + Date.now() + '-' + Math.random().toString(36).substr(2, 9),
+                    typeId: item.data.typeId,
+                    name: item.data.name,
+                    x: item.data.x + pasteOffset,
+                    y: item.data.y + pasteOffset,
+                    width: item.data.width,
+                    height: item.data.height,
+                    rotation: item.data.rotation,
+                    color: item.data.color
+                };
+                furniture.push(newItem);
+                renderFurniture(newItem);
+                newElements.push({ element: newItem, type: 'furniture' });
+                
+                // Highlight as selected
+                const el = furnitureLayer.querySelector(`[data-furniture-id="${newItem.id}"]`);
+                if (el) el.classList.add('selected');
+            } else if (item.type === 'label') {
+                const newLabel = {
+                    id: 'label-' + Date.now() + '-' + Math.random().toString(36).substr(2, 9),
+                    x: item.data.x + pasteOffset,
+                    y: item.data.y + pasteOffset,
+                    text: item.data.text
+                };
+                labels.push(newLabel);
+                renderLabel(newLabel);
+                newElements.push({ element: newLabel, type: 'label' });
+                
+                // Highlight as selected
+                const el = labelsLayer.querySelector(`[data-label-id="${newLabel.id}"]`);
+                if (el) el.style.fill = 'var(--primary-color)';
+            }
+        }
+        
+        // Select the pasted elements
+        selectedElements = newElements;
+        if (newElements.length === 1) {
+            selectedElement = newElements[0];
+            if (selectedElement.type === 'furniture') {
+                addRotationHandle(selectedElement.element);
+                showProperties(selectedElement.element);
+            }
+        }
+        
+        // Update clipboard positions for subsequent pastes
+        clipboard = clipboard.map(item => ({
+            ...item,
+            data: {
+                ...item.data,
+                x: item.data.x + pasteOffset,
+                y: item.data.y + pasteOffset
+            }
+        }));
     }
     
     function showProperties(item) {
@@ -2570,6 +3161,30 @@ const FloorPlanEditor = (() => {
     }
     
     function deleteSelected() {
+        // Handle multi-selection
+        if (selectedElements.length > 0) {
+            addToHistory();
+            
+            for (const sel of selectedElements) {
+                if (sel.type === 'furniture') {
+                    furniture = furniture.filter(f => f.id !== sel.element.id);
+                } else if (sel.type === 'label') {
+                    labels = labels.filter(l => l.id !== sel.element.id);
+                } else if (sel.type === 'imported') {
+                    const imported = sel.element;
+                    if (imported.element && imported.element.parentNode) {
+                        imported.element.parentNode.removeChild(imported.element);
+                    }
+                    importedElements = importedElements.filter(i => i.id !== imported.id);
+                }
+            }
+            
+            deselectAll();
+            redrawAll();
+            return;
+        }
+        
+        // Handle single selection (legacy)
         if (!selectedElement) return;
         
         addToHistory();
@@ -2767,7 +3382,26 @@ const FloorPlanEditor = (() => {
     
     // Zoom
     function setZoom(newZoom) {
-        zoom = Math.max(0.25, Math.min(3, newZoom));
+        const wrapper = document.getElementById('layout-canvas-wrapper');
+        if (!wrapper) return;
+        
+        const clampedZoom = Math.max(0.25, Math.min(3, newZoom));
+        
+        // Zoom toward center of viewport
+        const centerX = wrapper.clientWidth / 2;
+        const centerY = wrapper.clientHeight / 2;
+        
+        // Calculate the point at center in canvas coordinates
+        const canvasX = (centerX - panOffset.x) / zoom;
+        const canvasY = (centerY - panOffset.y) / zoom;
+        
+        // Update zoom
+        zoom = clampedZoom;
+        
+        // Adjust pan so center point stays in place
+        panOffset.x = centerX - canvasX * zoom;
+        panOffset.y = centerY - canvasY * zoom;
+        
         document.getElementById('zoom-level').textContent = Math.round(zoom * 100) + '%';
         applyTransform();
     }
@@ -2784,23 +3418,55 @@ const FloorPlanEditor = (() => {
         applyTransform();
     }
     
-    function handleWheelZoom(e) {
-        // Only zoom if cursor is over the canvas area
+    function handleWheel(e) {
         e.preventDefault();
         
-        // Calculate zoom delta (normalize for different browsers/trackpads)
-        const delta = -e.deltaY * 0.001;
-        
-        // Apply zoom with sensitivity
-        const zoomFactor = 1 + delta * 2;
-        const newZoom = zoom * zoomFactor;
-        
-        setZoom(newZoom);
+        // Cmd/Ctrl + scroll = zoom (like Figma)
+        if (e.metaKey || e.ctrlKey) {
+            // Get mouse position relative to canvas for zoom centering
+            const rect = svg.getBoundingClientRect();
+            const mouseX = e.clientX - rect.left;
+            const mouseY = e.clientY - rect.top;
+            
+            // Calculate zoom delta
+            const delta = -e.deltaY * 0.002;
+            const zoomFactor = 1 + delta;
+            const newZoom = Math.max(0.25, Math.min(3, zoom * zoomFactor));
+            
+            // Zoom toward mouse position
+            if (newZoom !== zoom) {
+                // Calculate the point under the mouse in canvas coordinates
+                const canvasX = (mouseX - panOffset.x) / zoom;
+                const canvasY = (mouseY - panOffset.y) / zoom;
+                
+                // Update zoom
+                const oldZoom = zoom;
+                zoom = newZoom;
+                
+                // Adjust pan so the point under mouse stays in place
+                panOffset.x = mouseX - canvasX * zoom;
+                panOffset.y = mouseY - canvasY * zoom;
+                
+                document.getElementById('zoom-level').textContent = Math.round(zoom * 100) + '%';
+                applyTransform();
+            }
+        } else {
+            // Regular scroll = pan (like Figma)
+            // Scroll direction: content stays fixed, viewport moves
+            // When you scroll down (deltaY > 0), you want to see content below,
+            // so we subtract from panOffset (move the canvas up)
+            panOffset.x -= e.deltaX;
+            panOffset.y -= e.deltaY;
+            applyTransform();
+        }
     }
     
     function fitToScreen() {
+        // Reset to default view
         panOffset = { x: 0, y: 0 };
-        setZoom(1);
+        zoom = 1;
+        document.getElementById('zoom-level').textContent = '100%';
+        applyTransform();
     }
     
     // Export
@@ -2814,6 +3480,12 @@ const FloorPlanEditor = (() => {
     function exportAs(format) {
         document.getElementById('export-menu')?.classList.remove('show');
         
+        // Check if there are selected elements
+        if (selectedElements.length === 0) {
+            showExportMessage('Please select items to export');
+            return;
+        }
+        
         if (format === 'svg') {
             exportSVG();
         } else if (format === 'png') {
@@ -2821,38 +3493,169 @@ const FloorPlanEditor = (() => {
         }
     }
     
-    function prepareExportSVG() {
-        const includeDimensions = document.getElementById('export-include-dimensions')?.checked || false;
-        const svgClone = svg.cloneNode(true);
+    function showExportMessage(message) {
+        // Remove existing message if any
+        document.getElementById('export-message')?.remove();
         
-        // Remove grid for export
-        svgClone.querySelector('#grid-background')?.remove();
+        const messageEl = document.createElement('div');
+        messageEl.id = 'export-message';
+        messageEl.className = 'export-message';
+        messageEl.innerHTML = `
+            <div class="export-message-content">
+                <i data-feather="info"></i>
+                <span>${message}</span>
+            </div>
+        `;
         
-        // Remove corner nodes for cleaner export
-        svgClone.querySelector('#corners-layer').innerHTML = '';
+        const canvasWrapper = document.getElementById('layout-canvas-wrapper');
+        canvasWrapper.appendChild(messageEl);
         
-        // Remove furniture labels (text inside furniture)
-        svgClone.querySelectorAll('.furniture-element text').forEach(t => t.remove());
-        
-        // Remove rotation handles
-        svgClone.querySelectorAll('.rotation-handle').forEach(h => h.remove());
-        
-        // Remove selection highlights
-        svgClone.querySelectorAll('.selected').forEach(el => el.classList.remove('selected'));
-        
-        // Handle dimensions layer
-        if (!includeDimensions) {
-            svgClone.querySelector('#dimensions-layer').innerHTML = '';
+        // Initialize feather icon
+        if (typeof feather !== 'undefined') {
+            feather.replace();
         }
         
-        // Remove preview elements
-        svgClone.querySelectorAll('.drawing-preview, .opening-preview, #drawing-preview, #preview-dimension').forEach(el => el.remove());
+        // Auto-remove after 3 seconds
+        setTimeout(() => {
+            messageEl.classList.add('fade-out');
+            setTimeout(() => messageEl.remove(), 300);
+        }, 3000);
+    }
+    
+    function getSelectedBounds() {
+        let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
         
-        // Add embedded styles for proper rendering (inline attributes take precedence)
+        for (const sel of selectedElements) {
+            if (sel.type === 'furniture') {
+                const item = sel.element;
+                minX = Math.min(minX, item.x);
+                minY = Math.min(minY, item.y);
+                maxX = Math.max(maxX, item.x + item.width);
+                maxY = Math.max(maxY, item.y + item.height);
+            } else if (sel.type === 'label') {
+                const label = sel.element;
+                // Labels are points, give them some padding
+                minX = Math.min(minX, label.x - 50);
+                minY = Math.min(minY, label.y - 20);
+                maxX = Math.max(maxX, label.x + 50);
+                maxY = Math.max(maxY, label.y + 20);
+            } else if (sel.type === 'wall') {
+                const wall = sel.element;
+                minX = Math.min(minX, wall.start.x, wall.end.x);
+                minY = Math.min(minY, wall.start.y, wall.end.y);
+                maxX = Math.max(maxX, wall.start.x, wall.end.x);
+                maxY = Math.max(maxY, wall.start.y, wall.end.y);
+            }
+        }
+        
+        // Add padding
+        const padding = 40;
+        return {
+            x: minX - padding,
+            y: minY - padding,
+            width: maxX - minX + padding * 2,
+            height: maxY - minY + padding * 2
+        };
+    }
+    
+    function prepareExportSVG() {
+        const includeDimensions = document.getElementById('export-include-dimensions')?.checked || false;
+        const bounds = getSelectedBounds();
+        
+        // Create a new SVG with only selected elements
+        const exportSvg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+        exportSvg.setAttribute('xmlns', 'http://www.w3.org/2000/svg');
+        
+        // Create a group for the content, translated to center the selection
+        const contentGroup = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+        contentGroup.setAttribute('transform', `translate(${-bounds.x}, ${-bounds.y})`);
+        
+        // Clone and add only selected elements
+        for (const sel of selectedElements) {
+            if (sel.type === 'wall') {
+                // Clone wall line
+                const originalEl = wallsLayer.querySelector(`[data-wall-id="${sel.element.id}"]`);
+                if (originalEl) {
+                    const clone = originalEl.cloneNode(true);
+                    clone.classList.remove('selected');
+                    // Set inline stroke color for export
+                    clone.setAttribute('stroke', '#333');
+                    contentGroup.appendChild(clone);
+                }
+                
+                // Clone any openings (doors/windows) on this wall
+                const wall = sel.element;
+                for (const opening of wall.openings) {
+                    // Find and clone door/window elements
+                    const doorEls = wallsLayer.querySelectorAll('.door-element, .window-element');
+                    doorEls.forEach(el => {
+                        // Check if this element is on the selected wall (based on transform position)
+                        const transform = el.getAttribute('transform');
+                        if (transform) {
+                            const clone = el.cloneNode(true);
+                            contentGroup.appendChild(clone);
+                        }
+                    });
+                }
+            } else if (sel.type === 'furniture') {
+                const originalEl = furnitureLayer.querySelector(`[data-furniture-id="${sel.element.id}"]`);
+                if (originalEl) {
+                    const clone = originalEl.cloneNode(true);
+                    // Remove text label from furniture
+                    clone.querySelectorAll('text').forEach(t => t.remove());
+                    // Remove selection class
+                    clone.classList.remove('selected');
+                    contentGroup.appendChild(clone);
+                }
+            } else if (sel.type === 'label') {
+                const originalEl = labelsLayer.querySelector(`[data-label-id="${sel.element.id}"]`);
+                if (originalEl) {
+                    const clone = originalEl.cloneNode(true);
+                    clone.style.fill = ''; // Reset selection color
+                    contentGroup.appendChild(clone);
+                }
+            }
+        }
+        
+        // Optionally include dimensions for selected furniture
+        if (includeDimensions) {
+            for (const sel of selectedElements) {
+                if (sel.type === 'furniture') {
+                    const item = sel.element;
+                    const widthText = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+                    widthText.setAttribute('x', item.x + item.width / 2);
+                    widthText.setAttribute('y', item.y - 8);
+                    widthText.setAttribute('text-anchor', 'middle');
+                    widthText.setAttribute('font-size', '11');
+                    widthText.setAttribute('fill', '#666');
+                    widthText.setAttribute('font-family', 'Arial, sans-serif');
+                    widthText.textContent = formatDimension(item.width / scale);
+                    contentGroup.appendChild(widthText);
+                    
+                    const heightText = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+                    heightText.setAttribute('x', item.x - 8);
+                    heightText.setAttribute('y', item.y + item.height / 2);
+                    heightText.setAttribute('text-anchor', 'end');
+                    heightText.setAttribute('dominant-baseline', 'middle');
+                    heightText.setAttribute('font-size', '11');
+                    heightText.setAttribute('fill', '#666');
+                    heightText.setAttribute('font-family', 'Arial, sans-serif');
+                    heightText.textContent = formatDimension(item.height / scale);
+                    contentGroup.appendChild(heightText);
+                }
+            }
+        }
+        
+        exportSvg.appendChild(contentGroup);
+        
+        // Remove rotation handles if any were cloned
+        exportSvg.querySelectorAll('.rotation-handle').forEach(h => h.remove());
+        
+        // Add embedded styles for proper rendering
         const styleElement = document.createElementNS('http://www.w3.org/2000/svg', 'style');
         styleElement.textContent = `
             .wall-line { stroke: #333; stroke-linecap: round; }
-            .door-element .door-frame { fill: white; stroke: none; }
+            .door-element .door-frame { fill: white; }
             .door-element .door-swing { stroke: #8B4513; stroke-width: 1.5; fill: none; stroke-dasharray: 4,2; }
             .window-element .window-frame { fill: #87CEEB; stroke: #4A90A4; stroke-width: 2; }
             .window-element .window-mullion { stroke: #4A90A4; stroke-width: 2; }
@@ -2860,20 +3663,10 @@ const FloorPlanEditor = (() => {
             .furniture-element circle { stroke: #666; stroke-width: 1; }
             .furniture-element ellipse { stroke: #666; stroke-width: 1; }
             .room-label { font-family: Arial, sans-serif; font-size: 14px; fill: #666; }
-            .dimension-text { font-family: Arial, sans-serif; font-size: 11px; fill: #666; }
-            .freeform-opening line { stroke-linecap: round; }
-            line[stroke-width] { stroke: #333; }
-            rect[fill] { stroke: #666; stroke-width: 1; }
         `;
-        svgClone.insertBefore(styleElement, svgClone.firstChild);
+        exportSvg.insertBefore(styleElement, exportSvg.firstChild);
         
-        // Reset transform on floor-plan-group for export
-        const floorPlanGroup = svgClone.querySelector('#floor-plan-group');
-        if (floorPlanGroup) {
-            floorPlanGroup.setAttribute('transform', 'scale(1)');
-        }
-        
-        return svgClone;
+        return { svg: exportSvg, bounds: bounds };
     }
     
     function applyInlineStylesToSVG(svgElement) {
@@ -2948,23 +3741,25 @@ const FloorPlanEditor = (() => {
     }
     
     function exportSVG() {
-        const svgClone = prepareExportSVG();
+        const { svg: exportSvg, bounds } = prepareExportSVG();
         
-        // Set dimensions
-        const wrapper = document.getElementById('layout-canvas-wrapper');
-        svgClone.setAttribute('width', wrapper.clientWidth);
-        svgClone.setAttribute('height', wrapper.clientHeight);
-        svgClone.setAttribute('viewBox', `0 0 ${wrapper.clientWidth} ${wrapper.clientHeight}`);
+        // Set dimensions based on selected elements bounds
+        exportSvg.setAttribute('width', bounds.width);
+        exportSvg.setAttribute('height', bounds.height);
+        exportSvg.setAttribute('viewBox', `0 0 ${bounds.width} ${bounds.height}`);
         
-        const svgString = new XMLSerializer().serializeToString(svgClone);
+        // Apply inline styles
+        applyInlineStylesToSVG(exportSvg);
+        
+        const svgString = new XMLSerializer().serializeToString(exportSvg);
         const blob = new Blob([svgString], { type: 'image/svg+xml' });
         downloadBlob(blob, 'floor-plan.svg');
     }
     
     function exportPNG() {
-        const wrapper = document.getElementById('layout-canvas-wrapper');
-        const width = wrapper.clientWidth;
-        const height = wrapper.clientHeight;
+        const { svg: exportSvg, bounds } = prepareExportSVG();
+        const width = bounds.width;
+        const height = bounds.height;
         
         // Create canvas
         const canvas = document.createElement('canvas');
@@ -2977,17 +3772,16 @@ const FloorPlanEditor = (() => {
         ctx.fillStyle = 'white';
         ctx.fillRect(0, 0, width, height);
         
-        // Clone and prepare SVG with inline styles
-        const svgClone = prepareExportSVG();
-        svgClone.setAttribute('width', width);
-        svgClone.setAttribute('height', height);
-        svgClone.setAttribute('viewBox', `0 0 ${width} ${height}`);
-        svgClone.setAttribute('xmlns', 'http://www.w3.org/2000/svg');
+        // Set SVG dimensions
+        exportSvg.setAttribute('width', width);
+        exportSvg.setAttribute('height', height);
+        exportSvg.setAttribute('viewBox', `0 0 ${width} ${height}`);
+        exportSvg.setAttribute('xmlns', 'http://www.w3.org/2000/svg');
         
         // Apply inline styles to all elements for PNG rendering
-        applyInlineStylesToSVG(svgClone);
+        applyInlineStylesToSVG(exportSvg);
         
-        const svgString = new XMLSerializer().serializeToString(svgClone);
+        const svgString = new XMLSerializer().serializeToString(exportSvg);
         const img = new Image();
         
         img.onload = () => {
@@ -2999,7 +3793,7 @@ const FloorPlanEditor = (() => {
         
         img.onerror = (err) => {
             console.error('Error loading SVG for PNG export:', err);
-            alert('Error generating PNG. Please try again.');
+            showExportMessage('Error generating PNG. Please try again.');
         };
         
         img.src = 'data:image/svg+xml;base64,' + btoa(unescape(encodeURIComponent(svgString)));
