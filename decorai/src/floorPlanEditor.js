@@ -20,6 +20,8 @@ const FloorPlanEditor = (() => {
     let undoStack = [];
     let redoStack = [];
     let isConvertingImage = false;
+    let detectedEdges = []; // Store detected edges from reference images
+    let showEdgeOverlay = true; // Toggle for edge detection overlay
     
     // Current tool and drawing state
     let currentTool = 'select';
@@ -45,13 +47,13 @@ const FloorPlanEditor = (() => {
     let openingPreview = null;
     
     // Settings
-    let scale = 20; // pixels per foot
+    let scale = 50; // pixels per foot (must match gridSize)
     let unit = 'ft';
     let wallThickness = 8;
-    let showGrid = true;
+    let showGrid = false; // Toggle for grid overlay (starts hidden until reference image added)
     let snapToGrid = true;
     let showDimensions = true;
-    let gridSize = 10; // pixels
+    let gridSize = 50; // pixels per grid unit (1 foot = 50 pixels)
     let snapDistance = 15; // pixels for corner snapping
     let zoom = 1;
     
@@ -263,6 +265,7 @@ const FloorPlanEditor = (() => {
         document.body.style.overflow = 'hidden';
         feather.replace();
         updateCanvasInfo();
+        initRulers();
     }
     
     function hide() {
@@ -466,16 +469,25 @@ const FloorPlanEditor = (() => {
                 }
             }
             
+            // If still no target, check for edge detection snap
+            let snapPos = pos;
+            if (!targetCorner) {
+                const edgeSnap = findNearestEdgePoint(pos);
+                if (edgeSnap) {
+                    snapPos = edgeSnap;
+                }
+            }
+            
             if (drawingStartCorner) {
                 // Complete the wall segment
-                const endCorner = targetCorner || createCorner(pos);
+                const endCorner = targetCorner || createCorner(snapPos);
                 if (endCorner.id !== drawingStartCorner.id) {
                     createWall(drawingStartCorner, endCorner);
                     drawingStartCorner = endCorner; // Continue from this corner
                 }
             } else {
                 // Start new wall
-                drawingStartCorner = targetCorner || createCorner(pos);
+                drawingStartCorner = targetCorner || createCorner(snapPos);
             }
             isDrawing = true;
             removeWallSnapIndicator();
@@ -806,16 +818,16 @@ const FloorPlanEditor = (() => {
                 <h3>Import Image</h3>
                 <p>How would you like to import this image?</p>
                 <div class="import-options">
-                    <button class="import-option recommended" id="import-as-reference">
-                        <div class="option-badge">For Tracing</div>
-                        <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect><circle cx="8.5" cy="8.5" r="1.5"></circle><polyline points="21 15 16 10 5 21"></polyline></svg>
-                        <span>As Reference Layer</span>
-                        <small>Add as a background layer to trace over manually. Adjustable opacity.</small>
+                    <button class="import-option recommended" id="import-with-edge-detection">
+                        <div class="option-badge">Recommended</div>
+                        <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"></path><polyline points="3.27 6.96 12 12.01 20.73 6.96"></polyline><line x1="12" y1="22.08" x2="12" y2="12"></line></svg>
+                        <span>Trace with Edge Detection</span>
+                        <small>Auto-snap to detected edges while drawing walls.</small>
                     </button>
-                    <button class="import-option" id="import-convert-svg">
-                        <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="12 2 2 7 12 12 22 7 12 2"></polygon><polyline points="2 17 12 22 22 17"></polyline><polyline points="2 12 12 17 22 12"></polyline></svg>
-                        <span>Vectorize (AI)</span>
-                        <small>Convert to editable vector paths. Each path is selectable and deletable.</small>
+                    <button class="import-option" id="import-basic-trace">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect><circle cx="8.5" cy="8.5" r="1.5"></circle><polyline points="21 15 16 10 5 21"></polyline></svg>
+                        <span>Trace</span>
+                        <small>Simple background layer for manual tracing.</small>
                     </button>
                 </div>
                 <div class="import-actions">
@@ -827,14 +839,14 @@ const FloorPlanEditor = (() => {
         document.body.appendChild(dialog);
         
         // Event handlers
-        document.getElementById('import-as-reference').addEventListener('click', () => {
+        document.getElementById('import-with-edge-detection').addEventListener('click', () => {
             dialog.remove();
-            addImageAsReference(file);
+            addImageAsReference(file, true); // with edge detection
         });
         
-        document.getElementById('import-convert-svg').addEventListener('click', () => {
+        document.getElementById('import-basic-trace').addEventListener('click', () => {
             dialog.remove();
-            convertImageToSVG(file);
+            addImageAsReference(file, false); // without edge detection
         });
         
         document.getElementById('import-cancel').addEventListener('click', () => {
@@ -849,8 +861,8 @@ const FloorPlanEditor = (() => {
         });
     }
     
-    
-    function addImageAsReference(file) {
+    // Vectorize floor plan to native walls using floor plan recognition API
+    function addImageAsReference(file, withEdgeDetection = true) {
         const reader = new FileReader();
         reader.onload = (e) => {
             const dataUrl = e.target.result;
@@ -886,12 +898,20 @@ const FloorPlanEditor = (() => {
                     y: y,
                     width: width,
                     height: height,
-                    opacity: 0.5
+                    originalWidth: img.width,
+                    originalHeight: img.height,
+                    opacity: 0.5,
+                    hasEdgeDetection: withEdgeDetection
                 };
                 
                 addToHistory();
                 referenceImages.push(refImage);
                 renderReferenceImage(refImage);
+                
+                // Run edge detection only if requested
+                if (withEdgeDetection) {
+                    detectEdges(img, refImage);
+                }
                 
                 // Show reference image controls
                 showReferenceImageControls(refImage);
@@ -899,6 +919,144 @@ const FloorPlanEditor = (() => {
             img.src = dataUrl;
         };
         reader.readAsDataURL(file);
+    }
+    
+    // Edge detection using Sobel operator on canvas
+    function detectEdges(img, refImage) {
+        const canvas = document.createElement('canvas');
+        const ctx = canvas.getContext('2d');
+        
+        // Use a reasonable resolution for edge detection
+        const maxDim = 800;
+        let w = img.width;
+        let h = img.height;
+        if (w > maxDim || h > maxDim) {
+            const scale = maxDim / Math.max(w, h);
+            w = Math.floor(w * scale);
+            h = Math.floor(h * scale);
+        }
+        
+        canvas.width = w;
+        canvas.height = h;
+        ctx.drawImage(img, 0, 0, w, h);
+        
+        const imageData = ctx.getImageData(0, 0, w, h);
+        const data = imageData.data;
+        
+        // Convert to grayscale
+        const gray = new Uint8Array(w * h);
+        for (let i = 0; i < w * h; i++) {
+            const idx = i * 4;
+            gray[i] = Math.round(0.299 * data[idx] + 0.587 * data[idx + 1] + 0.114 * data[idx + 2]);
+        }
+        
+        // Apply Sobel operator for edge detection
+        const edges = new Uint8Array(w * h);
+        const sobelX = [-1, 0, 1, -2, 0, 2, -1, 0, 1];
+        const sobelY = [-1, -2, -1, 0, 0, 0, 1, 2, 1];
+        
+        for (let y = 1; y < h - 1; y++) {
+            for (let x = 1; x < w - 1; x++) {
+                let gx = 0, gy = 0;
+                for (let ky = -1; ky <= 1; ky++) {
+                    for (let kx = -1; kx <= 1; kx++) {
+                        const idx = (y + ky) * w + (x + kx);
+                        const ki = (ky + 1) * 3 + (kx + 1);
+                        gx += gray[idx] * sobelX[ki];
+                        gy += gray[idx] * sobelY[ki];
+                    }
+                }
+                const magnitude = Math.sqrt(gx * gx + gy * gy);
+                edges[y * w + x] = magnitude > 50 ? 255 : 0; // Threshold
+            }
+        }
+        
+        // Extract line segments using a simple connected component approach
+        const scaleX = refImage.width / w;
+        const scaleY = refImage.height / h;
+        
+        // Find edge points and cluster them into lines
+        const edgePoints = [];
+        for (let y = 0; y < h; y++) {
+            for (let x = 0; x < w; x++) {
+                if (edges[y * w + x] === 255) {
+                    edgePoints.push({
+                        x: refImage.x + x * scaleX,
+                        y: refImage.y + y * scaleY
+                    });
+                }
+            }
+        }
+        
+        // Store edge points for snapping
+        detectedEdges = edgePoints;
+        refImage.edgePoints = edgePoints;
+        
+        // Render edge overlay
+        renderEdgeOverlay(refImage);
+        
+        console.log(`Detected ${edgePoints.length} edge points`);
+    }
+    
+    // Render detected edges as an overlay
+    function renderEdgeOverlay(refImage) {
+        // Remove existing overlay
+        const existingOverlay = document.getElementById('edge-overlay-' + refImage.id);
+        if (existingOverlay) existingOverlay.remove();
+        
+        if (!showEdgeOverlay || !refImage.edgePoints || refImage.edgePoints.length === 0) return;
+        
+        const g = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+        g.setAttribute('id', 'edge-overlay-' + refImage.id);
+        g.classList.add('edge-overlay');
+        
+        // Sample points to avoid performance issues (show every Nth point)
+        const sampleRate = Math.max(1, Math.floor(refImage.edgePoints.length / 5000));
+        
+        for (let i = 0; i < refImage.edgePoints.length; i += sampleRate) {
+            const p = refImage.edgePoints[i];
+            const circle = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+            circle.setAttribute('cx', p.x);
+            circle.setAttribute('cy', p.y);
+            circle.setAttribute('r', 1.5);
+            circle.setAttribute('fill', '#00ff88');
+            circle.setAttribute('opacity', '0.6');
+            g.appendChild(circle);
+        }
+        
+        // Insert after image layer but before wall layer
+        imageLayer.parentNode.insertBefore(g, imageLayer.nextSibling);
+    }
+    
+    // Toggle edge overlay visibility
+    function toggleEdgeOverlay() {
+        showEdgeOverlay = !showEdgeOverlay;
+        referenceImages.forEach(refImage => {
+            if (showEdgeOverlay) {
+                renderEdgeOverlay(refImage);
+            } else {
+                const overlay = document.getElementById('edge-overlay-' + refImage.id);
+                if (overlay) overlay.remove();
+            }
+        });
+    }
+    
+    // Find nearest edge point for snapping
+    function findNearestEdgePoint(pos, maxDistance = 15) {
+        if (!detectedEdges || detectedEdges.length === 0) return null;
+        
+        let nearestPoint = null;
+        let minDist = maxDistance;
+        
+        for (const edge of detectedEdges) {
+            const dist = Math.sqrt((edge.x - pos.x) ** 2 + (edge.y - pos.y) ** 2);
+            if (dist < minDist) {
+                minDist = dist;
+                nearestPoint = { x: edge.x, y: edge.y };
+            }
+        }
+        
+        return nearestPoint;
     }
     
     function renderReferenceImage(refImage) {
@@ -920,6 +1078,26 @@ const FloorPlanEditor = (() => {
         // Remove any existing controls
         document.querySelector('.ref-image-controls')?.remove();
         
+        // Store initial dimensions for scaling reference
+        if (!refImage.baseWidth) {
+            refImage.baseWidth = refImage.width;
+            refImage.baseHeight = refImage.height;
+        }
+        
+        const edgeDetectionHtml = refImage.hasEdgeDetection ? `
+                <div class="control-row edge-detection-row">
+                    <label class="checkbox-label">
+                        <input type="checkbox" id="ref-show-edges" ${showEdgeOverlay ? 'checked' : ''}>
+                        <span>Show Edge Detection</span>
+                    </label>
+                </div>
+                <div class="control-row snap-info">
+                    <small>
+                        <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="16" x2="12" y2="12"></line><line x1="12" y1="8" x2="12.01" y2="8"></line></svg>
+                        Wall corners will snap to detected edges
+                    </small>
+                </div>` : '';
+        
         const controls = document.createElement('div');
         controls.className = 'ref-image-controls';
         controls.innerHTML = `
@@ -929,6 +1107,19 @@ const FloorPlanEditor = (() => {
                     <label>Opacity:</label>
                     <input type="range" id="ref-opacity" min="0" max="100" value="${refImage.opacity * 100}">
                     <span id="ref-opacity-value">${Math.round(refImage.opacity * 100)}%</span>
+                </div>
+                ${edgeDetectionHtml}
+                <div class="control-row resize-info">
+                    <small>
+                        <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 3 21 3 21 9"></polyline><polyline points="9 21 3 21 3 15"></polyline><line x1="21" y1="3" x2="14" y2="10"></line><line x1="3" y1="21" x2="10" y2="14"></line></svg>
+                        Drag corners to resize • Zoom to see more area
+                    </small>
+                </div>
+                <div class="control-row">
+                    <button id="ref-center-btn" class="secondary-btn">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><line x1="22" y1="12" x2="18" y2="12"></line><line x1="6" y1="12" x2="2" y2="12"></line><line x1="12" y1="6" x2="12" y2="2"></line><line x1="12" y1="22" x2="12" y2="18"></line></svg>
+                        Center Image
+                    </button>
                 </div>
                 <div class="control-row">
                     <button id="ref-delete-btn" class="delete-btn">
@@ -952,18 +1143,410 @@ const FloorPlanEditor = (() => {
             }
         });
         
+        // Edge detection toggle (only if edge detection is enabled)
+        if (refImage.hasEdgeDetection) {
+            document.getElementById('ref-show-edges').addEventListener('change', (e) => {
+                toggleEdgeOverlay();
+            });
+        }
+        
+        // Center button
+        document.getElementById('ref-center-btn').addEventListener('click', () => {
+            centerReferenceImage(refImage);
+        });
+        
         // Delete button
         document.getElementById('ref-delete-btn').addEventListener('click', () => {
             removeReferenceImage(refImage.id);
             controls.remove();
         });
+        
+        // Make reference image draggable and resizable
+        makeReferenceImageDraggable(refImage);
+        addResizeHandles(refImage);
+    }
+    
+    // Ruler functions
+    function initRulers() {
+        const container = document.querySelector('.layout-canvas-container');
+        if (!container || document.getElementById('ruler-top')) return;
+        
+        // Top horizontal ruler
+        const hRuler = document.createElement('canvas');
+        hRuler.id = 'ruler-top';
+        hRuler.className = 'ruler ruler-top';
+        container.appendChild(hRuler);
+        
+        // Left vertical ruler
+        const vRuler = document.createElement('canvas');
+        vRuler.id = 'ruler-left';
+        vRuler.className = 'ruler ruler-left';
+        container.appendChild(vRuler);
+        
+        // Corner square showing unit
+        const corner = document.createElement('div');
+        corner.className = 'ruler-corner';
+        corner.textContent = unit;
+        container.appendChild(corner);
+        
+        // Resize observer to keep rulers sized to the wrapper
+        const wrapper = document.getElementById('layout-canvas-wrapper');
+        if (wrapper) {
+            const ro = new ResizeObserver(() => updateRulers());
+            ro.observe(wrapper);
+        }
+        
+        updateRulers();
+    }
+    
+    function updateRulers() {
+        const hCanvas = document.getElementById('ruler-top');
+        const vCanvas = document.getElementById('ruler-left');
+        if (!hCanvas || !vCanvas) return;
+        
+        const wrapper = document.getElementById('layout-canvas-wrapper');
+        if (!wrapper) return;
+        const wrapperRect = wrapper.getBoundingClientRect();
+        const containerRect = wrapper.parentElement.getBoundingClientRect();
+        
+        const offsetLeft = wrapperRect.left - containerRect.left;
+        const offsetTop = wrapperRect.top - containerRect.top;
+        
+        const RULER_SIZE = 25;
+        const MAX_FEET = 60;
+        const dpr = window.devicePixelRatio || 1;
+        const pxPerFoot = scale * zoom;
+        
+        // Determine label interval so ticks don't overlap
+        let interval = 1;
+        if (pxPerFoot < 12) interval = 20;
+        else if (pxPerFoot < 20) interval = 10;
+        else if (pxPerFoot < 40) interval = 5;
+        else if (pxPerFoot < 80) interval = 2;
+        
+        // --- Size and position canvases ---
+        hCanvas.style.left = offsetLeft + 'px';
+        hCanvas.style.top = (offsetTop - RULER_SIZE) + 'px';
+        hCanvas.style.width = wrapperRect.width + 'px';
+        hCanvas.style.height = RULER_SIZE + 'px';
+        hCanvas.width = wrapperRect.width * dpr;
+        hCanvas.height = RULER_SIZE * dpr;
+        
+        vCanvas.style.left = (offsetLeft - RULER_SIZE) + 'px';
+        vCanvas.style.top = offsetTop + 'px';
+        vCanvas.style.width = RULER_SIZE + 'px';
+        vCanvas.style.height = wrapperRect.height + 'px';
+        vCanvas.width = RULER_SIZE * dpr;
+        vCanvas.height = wrapperRect.height * dpr;
+        
+        const corner = document.querySelector('.ruler-corner');
+        if (corner) {
+            corner.style.left = (offsetLeft - RULER_SIZE) + 'px';
+            corner.style.top = (offsetTop - RULER_SIZE) + 'px';
+        }
+        
+        // --- Horizontal ruler (fixed 0–60) ---
+        const hCtx = hCanvas.getContext('2d');
+        hCtx.setTransform(dpr, 0, 0, dpr, 0, 0);
+        hCtx.clearRect(0, 0, wrapperRect.width, RULER_SIZE);
+        hCtx.fillStyle = '#f8f9fa';
+        hCtx.fillRect(0, 0, wrapperRect.width, RULER_SIZE);
+        
+        hCtx.strokeStyle = '#d1d5db';
+        hCtx.lineWidth = 1;
+        hCtx.beginPath();
+        hCtx.moveTo(0, RULER_SIZE - 0.5);
+        hCtx.lineTo(wrapperRect.width, RULER_SIZE - 0.5);
+        hCtx.stroke();
+        
+        hCtx.fillStyle = '#4b5563';
+        hCtx.font = '500 9px system-ui, -apple-system, sans-serif';
+        hCtx.textAlign = 'left';
+        
+        for (let foot = 0; foot <= MAX_FEET; foot += interval) {
+            const x = foot * pxPerFoot;
+            if (x > wrapperRect.width) break;
+            
+            hCtx.strokeStyle = '#9ca3af';
+            hCtx.lineWidth = 1;
+            hCtx.beginPath();
+            hCtx.moveTo(x + 0.5, RULER_SIZE);
+            hCtx.lineTo(x + 0.5, RULER_SIZE - 8);
+            hCtx.stroke();
+            
+            hCtx.fillText(foot, x + 3, RULER_SIZE - 11);
+        }
+        
+        // --- Vertical ruler (fixed 0–60) ---
+        const vCtx = vCanvas.getContext('2d');
+        vCtx.setTransform(dpr, 0, 0, dpr, 0, 0);
+        vCtx.clearRect(0, 0, RULER_SIZE, wrapperRect.height);
+        vCtx.fillStyle = '#f8f9fa';
+        vCtx.fillRect(0, 0, RULER_SIZE, wrapperRect.height);
+        
+        vCtx.strokeStyle = '#d1d5db';
+        vCtx.lineWidth = 1;
+        vCtx.beginPath();
+        vCtx.moveTo(RULER_SIZE - 0.5, 0);
+        vCtx.lineTo(RULER_SIZE - 0.5, wrapperRect.height);
+        vCtx.stroke();
+        
+        vCtx.fillStyle = '#4b5563';
+        vCtx.font = '500 9px system-ui, -apple-system, sans-serif';
+        
+        for (let foot = 0; foot <= MAX_FEET; foot += interval) {
+            const y = foot * pxPerFoot;
+            if (y > wrapperRect.height) break;
+            
+            vCtx.strokeStyle = '#9ca3af';
+            vCtx.lineWidth = 1;
+            vCtx.beginPath();
+            vCtx.moveTo(RULER_SIZE, y + 0.5);
+            vCtx.lineTo(RULER_SIZE - 8, y + 0.5);
+            vCtx.stroke();
+            
+            vCtx.save();
+            vCtx.translate(RULER_SIZE - 11, y + 3);
+            vCtx.rotate(-Math.PI / 2);
+            vCtx.textAlign = 'left';
+            vCtx.fillText(foot, 0, 0);
+            vCtx.restore();
+        }
+    }
+    
+    function renderGrid() {
+        // The grid is already in the SVG via the pattern defined in HTML
+        // This function just ensures rulers are initialized
+        initRulers();
+    }
+    
+    function removeGrid() {
+        // Don't remove the SVG grid pattern, just the custom scale-grid if it exists
+        document.getElementById('scale-grid')?.remove();
+    }
+    
+    // Add resize handles to reference image
+    function addResizeHandles(refImage) {
+        // Remove existing handles
+        document.querySelectorAll('.ref-image-handle').forEach(h => h.remove());
+        
+        const imgEl = imageLayer.querySelector(`[data-ref-image-id="${refImage.id}"]`);
+        if (!imgEl) return;
+        
+        const handles = ['nw', 'ne', 'se', 'sw'];
+        
+        handles.forEach(pos => {
+            const handle = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
+            handle.classList.add('ref-image-handle');
+            handle.dataset.handle = pos;
+            handle.dataset.refImageId = refImage.id;
+            handle.setAttribute('width', 12);
+            handle.setAttribute('height', 12);
+            
+            updateHandlePosition(handle, refImage, pos);
+            
+            cornersLayer.appendChild(handle);
+            
+            // Make handle draggable for resize
+            setupResizeHandle(handle, refImage, pos);
+        });
+    }
+    
+    function updateHandlePosition(handle, refImage, pos) {
+        const x = pos.includes('w') ? refImage.x - 6 : refImage.x + refImage.width - 6;
+        const y = pos.includes('n') ? refImage.y - 6 : refImage.y + refImage.height - 6;
+        handle.setAttribute('x', x);
+        handle.setAttribute('y', y);
+    }
+    
+    function updateAllHandlePositions(refImage) {
+        document.querySelectorAll(`.ref-image-handle[data-ref-image-id="${refImage.id}"]`).forEach(handle => {
+            updateHandlePosition(handle, refImage, handle.dataset.handle);
+        });
+    }
+    
+    function setupResizeHandle(handle, refImage, corner) {
+        let isResizing = false;
+        let startX, startY, startWidth, startHeight, startImgX, startImgY;
+        
+        handle.addEventListener('mousedown', (e) => {
+            isResizing = true;
+            startX = e.clientX;
+            startY = e.clientY;
+            startWidth = refImage.width;
+            startHeight = refImage.height;
+            startImgX = refImage.x;
+            startImgY = refImage.y;
+            e.stopPropagation();
+            e.preventDefault();
+        });
+        
+        const onMouseMove = (e) => {
+            if (!isResizing) return;
+            
+            const dx = e.clientX - startX;
+            const dy = e.clientY - startY;
+            
+            // Maintain aspect ratio
+            const aspectRatio = refImage.baseWidth / refImage.baseHeight;
+            let newWidth, newHeight, newX, newY;
+            
+            if (corner === 'se') {
+                newWidth = Math.max(50, startWidth + dx);
+                newHeight = newWidth / aspectRatio;
+                newX = startImgX;
+                newY = startImgY;
+            } else if (corner === 'sw') {
+                newWidth = Math.max(50, startWidth - dx);
+                newHeight = newWidth / aspectRatio;
+                newX = startImgX + startWidth - newWidth;
+                newY = startImgY;
+            } else if (corner === 'ne') {
+                newWidth = Math.max(50, startWidth + dx);
+                newHeight = newWidth / aspectRatio;
+                newX = startImgX;
+                newY = startImgY + startHeight - newHeight;
+            } else if (corner === 'nw') {
+                newWidth = Math.max(50, startWidth - dx);
+                newHeight = newWidth / aspectRatio;
+                newX = startImgX + startWidth - newWidth;
+                newY = startImgY + startHeight - newHeight;
+            }
+            
+            refImage.width = newWidth;
+            refImage.height = newHeight;
+            refImage.x = newX;
+            refImage.y = newY;
+            
+            // Update image element
+            const imgEl = imageLayer.querySelector(`[data-ref-image-id="${refImage.id}"]`);
+            if (imgEl) {
+                imgEl.setAttribute('x', newX);
+                imgEl.setAttribute('y', newY);
+                imgEl.setAttribute('width', newWidth);
+                imgEl.setAttribute('height', newHeight);
+            }
+            
+            // Update all handles
+            updateAllHandlePositions(refImage);
+        };
+        
+        const onMouseUp = () => {
+            if (isResizing) {
+                isResizing = false;
+                // Re-run edge detection if enabled
+                if (refImage.hasEdgeDetection) {
+                    const img = new Image();
+                    img.onload = () => {
+                        detectEdges(img, refImage);
+                    };
+                    img.src = refImage.dataUrl;
+                }
+            }
+        };
+        
+        document.addEventListener('mousemove', onMouseMove);
+        document.addEventListener('mouseup', onMouseUp);
+    }
+    
+    function centerReferenceImage(refImage) {
+        const wrapper = document.getElementById('layout-canvas-wrapper');
+        const canvasWidth = wrapper.clientWidth;
+        const canvasHeight = wrapper.clientHeight;
+        
+        refImage.x = (canvasWidth - refImage.width) / 2;
+        refImage.y = (canvasHeight - refImage.height) / 2;
+        
+        const imgEl = imageLayer.querySelector(`[data-ref-image-id="${refImage.id}"]`);
+        if (imgEl) {
+            imgEl.setAttribute('x', refImage.x);
+            imgEl.setAttribute('y', refImage.y);
+        }
+        
+        // Update edge detection overlay position
+        if (refImage.hasEdgeDetection) {
+            const img = new Image();
+            img.onload = () => {
+                detectEdges(img, refImage);
+            };
+            img.src = refImage.dataUrl;
+        }
+    }
+    
+    function makeReferenceImageDraggable(refImage) {
+        const imgEl = imageLayer.querySelector(`[data-ref-image-id="${refImage.id}"]`);
+        if (!imgEl) return;
+        
+        let isDragging = false;
+        let startX, startY, origX, origY;
+        
+        imgEl.style.cursor = 'move';
+        
+        imgEl.addEventListener('mousedown', (e) => {
+            if (currentTool !== 'select') return;
+            isDragging = true;
+            startX = e.clientX;
+            startY = e.clientY;
+            origX = refImage.x;
+            origY = refImage.y;
+            e.stopPropagation();
+        });
+        
+        document.addEventListener('mousemove', (e) => {
+            if (!isDragging) return;
+            
+            const dx = e.clientX - startX;
+            const dy = e.clientY - startY;
+            
+            refImage.x = origX + dx;
+            refImage.y = origY + dy;
+            
+            imgEl.setAttribute('x', refImage.x);
+            imgEl.setAttribute('y', refImage.y);
+            
+            // Update resize handles position
+            updateAllHandlePositions(refImage);
+            
+            // Update edge overlay position in real-time
+            const edgeOverlay = document.getElementById('edge-overlay-' + refImage.id);
+            if (edgeOverlay) {
+                edgeOverlay.setAttribute('transform', `translate(${dx}, ${dy})`);
+            }
+        });
+        
+        document.addEventListener('mouseup', () => {
+            if (isDragging) {
+                isDragging = false;
+                // Re-calculate edge positions after drag
+                if (refImage.hasEdgeDetection && showEdgeOverlay) {
+                    const img = new Image();
+                    img.onload = () => {
+                        detectEdges(img, refImage);
+                    };
+                    img.src = refImage.dataUrl;
+                }
+            }
+        });
     }
     
     function removeReferenceImage(id) {
+        const refImage = referenceImages.find(img => img.id === id);
+        if (refImage && refImage.edgePoints) {
+            // Remove edge points from global array
+            detectedEdges = detectedEdges.filter(p => !refImage.edgePoints.includes(p));
+        }
+        
         referenceImages = referenceImages.filter(img => img.id !== id);
+        
         const imgEl = imageLayer.querySelector(`[data-ref-image-id="${id}"]`);
         if (imgEl) {
             imgEl.remove();
+        }
+        
+        // Remove edge overlay
+        const edgeOverlay = document.getElementById('edge-overlay-' + id);
+        if (edgeOverlay) {
+            edgeOverlay.remove();
         }
     }
     
@@ -1428,6 +2011,7 @@ const FloorPlanEditor = (() => {
         // Remove existing highlights
         cornersLayer.querySelectorAll('.snap-target').forEach(el => el.classList.remove('snap-target'));
         removeWallSnapIndicator();
+        removeEdgeSnapIndicator();
         
         // First check for corner snap
         const cornerTarget = findNearbyCorner(pos);
@@ -1443,7 +2027,31 @@ const FloorPlanEditor = (() => {
         const wallSnap = findSnapPointOnWall(pos, drawingStartCorner);
         if (wallSnap) {
             showWallSnapIndicator(wallSnap.point);
+            return;
         }
+        
+        // Finally check for edge detection snap
+        const edgeSnap = findNearestEdgePoint(pos);
+        if (edgeSnap) {
+            showEdgeSnapIndicator(edgeSnap);
+        }
+    }
+    
+    function showEdgeSnapIndicator(point) {
+        removeEdgeSnapIndicator();
+        
+        const indicator = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+        indicator.setAttribute('cx', point.x);
+        indicator.setAttribute('cy', point.y);
+        indicator.setAttribute('r', 10);
+        indicator.classList.add('edge-snap-indicator');
+        indicator.id = 'edge-snap-indicator';
+        cornersLayer.appendChild(indicator);
+    }
+    
+    function removeEdgeSnapIndicator() {
+        const indicator = document.getElementById('edge-snap-indicator');
+        if (indicator) indicator.remove();
     }
     
     function showWallSnapIndicator(point) {
@@ -3385,7 +3993,7 @@ const FloorPlanEditor = (() => {
         const wrapper = document.getElementById('layout-canvas-wrapper');
         if (!wrapper) return;
         
-        const clampedZoom = Math.max(0.25, Math.min(3, newZoom));
+        const clampedZoom = Math.max(0.1, Math.min(5, newZoom));
         
         // Zoom toward center of viewport
         const centerX = wrapper.clientWidth / 2;
@@ -3402,8 +4010,9 @@ const FloorPlanEditor = (() => {
         panOffset.x = centerX - canvasX * zoom;
         panOffset.y = centerY - canvasY * zoom;
         
-        document.getElementById('zoom-level').textContent = Math.round(zoom * 100) + '%';
+        document.getElementById('zoom-level') && (document.getElementById('zoom-level').textContent = Math.round(zoom * 100) + '%');
         applyTransform();
+        updateRulers();
     }
     
     function applyTransform() {
@@ -3411,6 +4020,21 @@ const FloorPlanEditor = (() => {
         if (group) {
             group.setAttribute('transform', `translate(${panOffset.x}, ${panOffset.y}) scale(${zoom})`);
         }
+        // Keep grid sized to fill viewport regardless of pan/zoom
+        const gridBg = document.getElementById('grid-background');
+        const wrapper = document.getElementById('layout-canvas-wrapper');
+        if (gridBg && wrapper) {
+            const pad = 2000;
+            const x = -panOffset.x / zoom - pad;
+            const y = -panOffset.y / zoom - pad;
+            const w = wrapper.clientWidth / zoom + pad * 2;
+            const h = wrapper.clientHeight / zoom + pad * 2;
+            gridBg.setAttribute('x', x);
+            gridBg.setAttribute('y', y);
+            gridBg.setAttribute('width', w);
+            gridBg.setAttribute('height', h);
+        }
+        updateRulers();
     }
     
     function resetPan() {
@@ -3447,7 +4071,7 @@ const FloorPlanEditor = (() => {
                 panOffset.x = mouseX - canvasX * zoom;
                 panOffset.y = mouseY - canvasY * zoom;
                 
-                document.getElementById('zoom-level').textContent = Math.round(zoom * 100) + '%';
+                document.getElementById('zoom-level') && (document.getElementById('zoom-level').textContent = Math.round(zoom * 100) + '%');
                 applyTransform();
             }
         } else {
@@ -3465,7 +4089,7 @@ const FloorPlanEditor = (() => {
         // Reset to default view
         panOffset = { x: 0, y: 0 };
         zoom = 1;
-        document.getElementById('zoom-level').textContent = '100%';
+        document.getElementById('zoom-level') && (document.getElementById('zoom-level').textContent = '100%');
         applyTransform();
     }
     

@@ -2744,60 +2744,17 @@ footer {
   overflow: hidden;
 }
 
-.canvas-toolbar {
-  position: absolute;
-  top: 12px;
-  left: 50%;
-  transform: translateX(-50%);
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 6px 12px;
-  background: white;
-  border-radius: 8px;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
-  z-index: 10;
-}
-
-.canvas-tool-btn {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 28px;
-  height: 28px;
-  background: none;
-  border: none;
-  border-radius: 4px;
-  cursor: pointer;
-  color: #555;
-  transition: all 0.15s ease;
-}
-
-.canvas-tool-btn:hover {
-  background: #f0f0f0;
-  color: #333;
-}
-
-.canvas-tool-btn svg {
-  width: 16px;
-  height: 16px;
-}
-
-#zoom-level {
-  font-size: 0.8rem;
-  color: #666;
-  min-width: 45px;
-  text-align: center;
-}
-
 .layout-canvas-wrapper {
   flex: 1;
   margin: 12px;
+  margin-left: 37px;
+  margin-top: 37px;
   background: white;
   border-radius: 8px;
   box-shadow: 0 2px 12px rgba(0, 0, 0, 0.08);
   overflow: hidden;
   cursor: crosshair;
+  position: relative;
 }
 
 #layout-svg {
@@ -3108,6 +3065,208 @@ footer {
 @keyframes pulse-snap {
   0%, 100% { opacity: 1; r: 8; }
   50% { opacity: 0.7; r: 10; }
+}
+
+.edge-snap-indicator {
+  fill: none;
+  stroke: #00ff88;
+  stroke-width: 3;
+  pointer-events: none;
+  animation: pulse-edge-snap 0.6s ease-in-out infinite;
+}
+
+@keyframes pulse-edge-snap {
+  0%, 100% { opacity: 1; stroke-width: 3; }
+  50% { opacity: 0.6; stroke-width: 5; }
+}
+
+.edge-overlay {
+  pointer-events: none;
+}
+
+.edge-detection-row {
+  margin-top: 8px;
+}
+
+.checkbox-label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+  font-size: 13px;
+}
+
+.checkbox-label input[type="checkbox"] {
+  width: 16px;
+  height: 16px;
+  cursor: pointer;
+}
+
+.snap-info {
+  margin-top: 4px;
+  padding: 8px;
+  background: rgba(0, 255, 136, 0.1);
+  border-radius: 4px;
+  border-left: 3px solid #00ff88;
+}
+
+.snap-info small,
+.drag-info small {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: #666;
+  font-size: 11px;
+}
+
+.snap-info svg {
+  color: #00ff88;
+}
+
+.drag-info {
+  margin-top: 4px;
+  padding: 8px;
+  background: rgba(99, 102, 241, 0.1);
+  border-radius: 4px;
+  border-left: 3px solid #6366f1;
+}
+
+.drag-info svg {
+  color: #6366f1;
+}
+
+.secondary-btn {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 12px;
+  background: #f3f4f6;
+  border: 1px solid #d1d5db;
+  border-radius: 6px;
+  color: #374151;
+  font-size: 13px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  width: 100%;
+  justify-content: center;
+}
+
+.secondary-btn:hover {
+  background: #e5e7eb;
+  border-color: #9ca3af;
+}
+
+.reference-image {
+  cursor: move;
+}
+
+.control-section {
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid #e5e7eb;
+}
+
+.control-section h5 {
+  margin: 0 0 8px 0;
+  font-size: 12px;
+  font-weight: 600;
+  color: #6b7280;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.grid-scale-info {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+  background: #f0f9ff;
+  border: 1px solid #bae6fd;
+  border-radius: 6px;
+  font-size: 13px;
+  color: #0369a1;
+  margin-bottom: 8px;
+}
+
+.grid-scale-info svg {
+  flex-shrink: 0;
+}
+
+.resize-info {
+  margin-top: 4px;
+  padding: 8px;
+  background: rgba(99, 102, 241, 0.1);
+  border-radius: 4px;
+  border-left: 3px solid #6366f1;
+}
+
+.resize-info small {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: #666;
+  font-size: 11px;
+}
+
+.resize-info svg {
+  color: #6366f1;
+}
+
+/* Ruler styles */
+.ruler {
+  position: absolute;
+  pointer-events: none;
+  z-index: 50;
+}
+
+.ruler-top {
+  border-top-right-radius: 8px;
+}
+
+.ruler-left {
+  border-bottom-left-radius: 8px;
+}
+
+.ruler-corner {
+  position: absolute;
+  width: 25px;
+  height: 25px;
+  background: #f8f9fa;
+  border-right: 1px solid #d1d5db;
+  border-bottom: 1px solid #d1d5db;
+  border-top-left-radius: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 9px;
+  color: #6b7280;
+  font-weight: 600;
+  z-index: 51;
+  pointer-events: none;
+}
+
+/* Resize handles */
+.ref-image-handle {
+  fill: white;
+  stroke: #6366f1;
+  stroke-width: 2;
+  cursor: nwse-resize;
+  rx: 2;
+  ry: 2;
+}
+
+.ref-image-handle:hover {
+  fill: #6366f1;
+}
+
+.ref-image-handle[data-handle="ne"],
+.ref-image-handle[data-handle="sw"] {
+  cursor: nesw-resize;
+}
+
+.ref-image-handle[data-handle="nw"],
+.ref-image-handle[data-handle="se"] {
+  cursor: nwse-resize;
 }
 
 .room-fill {
