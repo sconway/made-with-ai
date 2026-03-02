@@ -3035,6 +3035,51 @@ footer {
   stroke: var(--primary-color);
 }
 
+.scale-handle {
+  pointer-events: all;
+  transition: fill 0.1s;
+}
+
+.scale-handle:hover {
+  fill: var(--primary-color, #4f46e5);
+}
+
+.selection-actions {
+  position: absolute;
+  transform: translate(-50%, -100%);
+  display: flex;
+  gap: 4px;
+  z-index: 60;
+  pointer-events: all;
+}
+
+.selection-action-btn {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 5px 10px;
+  background: white;
+  border: 1px solid #d1d5db;
+  border-radius: 6px;
+  font-size: 11px;
+  font-weight: 500;
+  color: #374151;
+  cursor: pointer;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+  white-space: nowrap;
+  transition: all 0.15s;
+}
+
+.selection-action-btn:hover {
+  background: var(--primary-color, #4f46e5);
+  color: white;
+  border-color: var(--primary-color, #4f46e5);
+}
+
+.selection-action-btn svg {
+  flex-shrink: 0;
+}
+
 .corner-node {
   fill: white;
   stroke: var(--primary-color);
@@ -3281,7 +3326,7 @@ footer {
 }
 
 .dimension-text {
-  font-size: 11px;
+  font-size: 33px;
   fill: #666;
   font-family: 'Inter', sans-serif;
   pointer-events: none;

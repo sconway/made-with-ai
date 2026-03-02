@@ -266,6 +266,18 @@ const FloorPlanEditor = (() => {
         feather.replace();
         updateCanvasInfo();
         initRulers();
+        setInitialZoom();
+    }
+    
+    function setInitialZoom() {
+        const wrapper = document.getElementById('layout-canvas-wrapper');
+        if (!wrapper) return;
+        // Fit 50 feet across the smaller dimension
+        const targetFeet = 50;
+        const dim = Math.min(wrapper.clientWidth, wrapper.clientHeight);
+        zoom = dim / (targetFeet * scale);
+        panOffset = { x: 0, y: 0 };
+        applyTransform();
     }
     
     function hide() {
@@ -296,13 +308,12 @@ const FloorPlanEditor = (() => {
         deselectAll();
     }
     
-    function getMousePos(e) {
+    function getMousePos(e, forceNoSnap) {
         const rect = svg.getBoundingClientRect();
-        // Account for pan offset and zoom
         let x = (e.clientX - rect.left - panOffset.x) / zoom;
         let y = (e.clientY - rect.top - panOffset.y) / zoom;
         
-        if (snapToGrid) {
+        if (snapToGrid && !forceNoSnap) {
             x = Math.round(x / gridSize) * gridSize;
             y = Math.round(y / gridSize) * gridSize;
         }
@@ -320,10 +331,33 @@ const FloorPlanEditor = (() => {
             return;
         }
         
-        const pos = getMousePos(e);
+        const pos = getMousePos(e, currentTool === 'select');
         const target = e.target;
         
         if (currentTool === 'select') {
+            // Check if clicking on a scale handle
+            if (target.classList.contains('scale-handle')) {
+                const corner = target.dataset.scaleCorner;
+                isScaling = true;
+                scaleHandle = corner;
+                scaleBBoxStart = getSelectionBBox();
+                scaleStartPositions = snapshotPositions();
+                addToHistory();
+                svg.style.cursor = target.style.cursor;
+                e.preventDefault();
+                return;
+            }
+            
+            // Check if clicking on the selection bounding box (drag to move)
+            if (target.classList.contains('scale-bbox')) {
+                isDragging = true;
+                dragTarget = { type: 'selection-bbox', element: null };
+                dragOffset = { x: pos.x, y: pos.y };
+                svg.style.cursor = 'move';
+                e.preventDefault();
+                return;
+            }
+            
             // Check if clicking on rotation handle
             if (target.closest('.rotation-handle')) {
                 const handleEl = target.closest('.rotation-handle');
@@ -358,12 +392,11 @@ const FloorPlanEditor = (() => {
                 const furnitureId = furnitureEl.dataset.furnitureId;
                 const item = furniture.find(f => f.id === furnitureId);
                 if (item) {
-                    // Check if this item is already part of a multi-selection
-                    if (!isElementSelected(item, 'furniture')) {
-                        // Not selected - select only this item
+                    if (e.shiftKey) {
+                        addToSelection(item, 'furniture');
+                    } else if (!isElementSelected(item, 'furniture')) {
                         selectElement(item, 'furniture');
                     }
-                    // Start dragging (will move all selected if multi-selected)
                     isDragging = true;
                     dragTarget = { type: 'furniture', element: item };
                     dragOffset = { x: pos.x - item.x, y: pos.y - item.y };
@@ -376,12 +409,11 @@ const FloorPlanEditor = (() => {
                 const labelId = target.dataset.labelId;
                 const label = labels.find(l => l.id === labelId);
                 if (label) {
-                    // Check if this label is already part of a multi-selection
-                    if (!isElementSelected(label, 'label')) {
-                        // Not selected - select only this label
+                    if (e.shiftKey) {
+                        addToSelection(label, 'label');
+                    } else if (!isElementSelected(label, 'label')) {
                         selectElement(label, 'label');
                     }
-                    // Start dragging (will move all selected if multi-selected)
                     isDragging = true;
                     dragTarget = { type: 'label', element: label };
                     dragOffset = { x: pos.x - label.x, y: pos.y - label.y };
@@ -390,27 +422,25 @@ const FloorPlanEditor = (() => {
             }
             
             // Check if clicking on an imported SVG element
-            // First check if the target itself is an imported element
             if (target.classList.contains('imported-svg-element')) {
                 const importedId = target.dataset.importedId;
                 const imported = importedElements.find(i => i.id === importedId);
                 if (imported) {
-                    selectElement(imported, 'imported');
+                    if (e.shiftKey) {
+                        addToSelection(imported, 'imported');
+                    } else {
+                        selectElement(imported, 'imported');
+                    }
                     return;
                 }
             }
             
-            // Check if clicking inside a group - find the specific child element
+            // Check if clicking inside a group
             const parentGroup = target.closest('.imported-svg-group');
             if (parentGroup) {
-                // The target is the actual element clicked, not the group
-                // We need to track and select this specific element
                 let clickedElement = target;
-                
-                // If it's a valid SVG element (path, rect, line, etc.)
                 const validTags = ['path', 'line', 'rect', 'polyline', 'polygon', 'circle', 'ellipse'];
                 if (validTags.includes(clickedElement.tagName.toLowerCase())) {
-                    // Check if this element is already tracked
                     let existingId = clickedElement.dataset.importedId;
                     let imported;
                     
@@ -419,7 +449,6 @@ const FloorPlanEditor = (() => {
                     }
                     
                     if (!imported) {
-                        // Track this element for future selection/deletion
                         const newId = 'imported-' + Date.now() + '-' + Math.random().toString(36).substr(2, 9);
                         clickedElement.dataset.importedId = newId;
                         clickedElement.classList.add('imported-svg-element');
@@ -432,7 +461,11 @@ const FloorPlanEditor = (() => {
                         importedElements.push(imported);
                     }
                     
-                    selectElement(imported, 'imported');
+                    if (e.shiftKey) {
+                        addToSelection(imported, 'imported');
+                    } else {
+                        selectElement(imported, 'imported');
+                    }
                     return;
                 }
             }
@@ -442,9 +475,14 @@ const FloorPlanEditor = (() => {
                 const wallId = target.dataset.wallId;
                 const wall = walls.find(w => w.id === wallId);
                 if (wall) {
-                    if (!isElementSelected(wall, 'wall')) {
+                    if (e.shiftKey) {
+                        addToSelection(wall, 'wall');
+                    } else if (!isElementSelected(wall, 'wall')) {
                         selectElement(wall, 'wall');
                     }
+                    isDragging = true;
+                    dragTarget = { type: 'wall', element: wall };
+                    dragOffset = { x: pos.x, y: pos.y };
                     return;
                 }
             }
@@ -456,23 +494,25 @@ const FloorPlanEditor = (() => {
             createMarqueeBox(pos);
             
         } else if (currentTool === 'wall') {
-            // Start or continue drawing walls
-            let targetCorner = findNearbyCorner(pos);
+            // Use raw (non-grid-snapped) position for wall placement
+            const rawPos = getMousePos(e, true);
+            
+            // Check for snap to existing corner
+            let targetCorner = findNearbyCorner(rawPos);
             
             // If no corner found, check for mid-wall snap
             if (!targetCorner) {
-                const wallSnap = findSnapPointOnWall(pos, drawingStartCorner);
+                const wallSnap = findSnapPointOnWall(rawPos, drawingStartCorner);
                 if (wallSnap) {
-                    // Split the wall and get the new corner at the snap point
                     targetCorner = splitWallAtPoint(wallSnap.wall, wallSnap.point);
                     redrawAll();
                 }
             }
             
             // If still no target, check for edge detection snap
-            let snapPos = pos;
+            let snapPos = rawPos;
             if (!targetCorner) {
-                const edgeSnap = findNearestEdgePoint(pos);
+                const edgeSnap = findNearestEdgePoint(rawPos);
                 if (edgeSnap) {
                     snapPos = edgeSnap;
                 }
@@ -483,19 +523,19 @@ const FloorPlanEditor = (() => {
                 const endCorner = targetCorner || createCorner(snapPos);
                 if (endCorner.id !== drawingStartCorner.id) {
                     createWall(drawingStartCorner, endCorner);
-                    drawingStartCorner = endCorner; // Continue from this corner
+                    drawingStartCorner = endCorner;
                 }
             } else {
-                // Start new wall
+                // Start new wall — place exactly where clicked unless snapping to a wall/corner
                 drawingStartCorner = targetCorner || createCorner(snapPos);
             }
             isDrawing = true;
             removeWallSnapIndicator();
             
         } else if (currentTool === 'room') {
-            // Start drawing room rectangle
+            const rawPos = getMousePos(e, true);
             isDrawing = true;
-            drawingStartCorner = { x: pos.x, y: pos.y };
+            drawingStartCorner = { x: rawPos.x, y: rawPos.y };
             
         } else if (currentTool === 'door' || currentTool === 'window') {
             // Door/window works like wall tool: click two points anywhere
@@ -554,7 +594,13 @@ const FloorPlanEditor = (() => {
             return;
         }
         
-        const pos = getMousePos(e);
+        const pos = getMousePos(e, currentTool === 'select');
+        
+        // Handle scaling
+        if (isScaling && scaleHandle) {
+            applyScale(scaleHandle, pos);
+            return;
+        }
         
         // Handle rotation
         if (isRotating && rotationTarget) {
@@ -591,18 +637,29 @@ const FloorPlanEditor = (() => {
             if (dragTarget.type === 'corner') {
                 moveCorner(dragTarget.element, pos);
             } else if (dragTarget.type === 'furniture') {
-                // Move all selected items if dragging a selected item
                 if (selectedElements.length > 1) {
-                    moveSelectedElements(pos.x - dragOffset.x - dragTarget.element.x, pos.y - dragOffset.y - dragTarget.element.y);
+                    const dx = pos.x - dragOffset.x;
+                    const dy = pos.y - dragOffset.y;
+                    moveSelectedElements(dx, dy);
+                    dragOffset = { x: pos.x, y: pos.y };
                 } else {
                     moveFurniture(dragTarget.element, pos.x - dragOffset.x, pos.y - dragOffset.y);
                 }
             } else if (dragTarget.type === 'label') {
                 if (selectedElements.length > 1) {
-                    moveSelectedElements(pos.x - dragOffset.x - dragTarget.element.x, pos.y - dragOffset.y - dragTarget.element.y);
+                    const dx = pos.x - dragOffset.x;
+                    const dy = pos.y - dragOffset.y;
+                    moveSelectedElements(dx, dy);
+                    dragOffset = { x: pos.x, y: pos.y };
                 } else {
                     moveLabel(dragTarget.element, pos.x - dragOffset.x, pos.y - dragOffset.y);
                 }
+            } else if (dragTarget.type === 'wall' || dragTarget.type === 'selection-bbox') {
+                const dx = pos.x - dragOffset.x;
+                const dy = pos.y - dragOffset.y;
+                moveSelectedElements(dx, dy);
+                dragOffset = { x: pos.x, y: pos.y };
+                showScaleHandles();
             }
             return;
         }
@@ -610,9 +667,12 @@ const FloorPlanEditor = (() => {
         // Handle drawing preview
         if (isDrawing) {
             if (currentTool === 'wall' && drawingStartCorner) {
-                drawWallPreview(drawingStartCorner, pos);
+                // Use raw cursor position for the preview line
+                const rawPos = getMousePos(e, true);
+                drawWallPreview(drawingStartCorner, rawPos);
             } else if (currentTool === 'room' && drawingStartCorner) {
-                drawRoomPreview(drawingStartCorner, pos);
+                const rawPos = getMousePos(e, true);
+                drawRoomPreview(drawingStartCorner, rawPos);
             }
         }
         
@@ -620,19 +680,18 @@ const FloorPlanEditor = (() => {
         if ((currentTool === 'door' || currentTool === 'window') && openingStartPoint) {
             const endWall = findNearestWall(pos);
             
-            // If both start and end are on the same wall, show wall-attached preview
             if (openingStartPoint.wall && endWall && openingStartPoint.wall === endWall) {
                 const endProjected = projectPointOnWall(endWall, pos);
                 showWallOpeningPreview(endWall, openingStartPoint.projected, endProjected, currentTool);
             } else {
-                // Show freeform preview
                 showFreeformOpeningPreview(openingStartPoint, pos, currentTool);
             }
         }
         
         // Highlight snap targets
         if (currentTool === 'wall' && isDrawing) {
-            highlightSnapTarget(pos);
+            const rawPos = getMousePos(e, true);
+            highlightSnapTarget(rawPos);
         }
     }
     
@@ -653,9 +712,20 @@ const FloorPlanEditor = (() => {
             return;
         }
         
+        // Stop scaling
+        if (isScaling) {
+            isScaling = false;
+            scaleHandle = null;
+            scaleBBoxStart = null;
+            scaleStartPositions = null;
+            svg.style.cursor = '';
+            showScaleHandles();
+            return;
+        }
+        
         // Complete marquee selection
         if (isMarqueeSelecting && marqueeStart) {
-            const pos = getMousePos(e);
+            const pos = getMousePos(e, true);
             finishMarqueeSelection(marqueeStart, pos);
             isMarqueeSelecting = false;
             marqueeStart = null;
@@ -664,13 +734,19 @@ const FloorPlanEditor = (() => {
         }
         
         if (currentTool === 'room' && isDrawing && drawingStartCorner) {
-            const pos = getMousePos(e);
+            const pos = getMousePos(e, true);
             createRoomFromRect(drawingStartCorner, pos);
         }
         
         // Finalize corner snap if we were dragging a corner
         if (dragTarget && dragTarget.type === 'corner') {
             finalizeCornerSnap(dragTarget.element);
+        }
+        
+        if (isDragging && dragTarget && dragTarget.type === 'selection-bbox') {
+            svg.style.cursor = '';
+            addToHistory();
+            showScaleHandles();
         }
         
         isDragging = false;
@@ -1213,7 +1289,7 @@ const FloorPlanEditor = (() => {
         const offsetTop = wrapperRect.top - containerRect.top;
         
         const RULER_SIZE = 25;
-        const MAX_FEET = 60;
+        const MAX_FEET = 200;
         const dpr = window.devicePixelRatio || 1;
         const pxPerFoot = scale * zoom;
         
@@ -2133,15 +2209,23 @@ const FloorPlanEditor = (() => {
         line.id = 'drawing-preview';
         floorPlanGroup.appendChild(line);
         
-        // Show dimension while drawing
+        // Show dimension near cursor end point
         const length = Math.sqrt((end.x - start.x) ** 2 + (end.y - start.y) ** 2) / scale;
-        const midX = (start.x + end.x) / 2;
-        const midY = (start.y + end.y) / 2;
+        const fontSize = 33 / zoom;
+        const pad = 8 / zoom;
+        
+        const goingRight = end.x >= start.x;
+        const goingDown = end.y >= start.y;
+        
+        const textX = end.x + (goingRight ? pad : -pad);
+        const textY = end.y + (goingDown ? pad + fontSize : -pad);
+        const anchor = goingRight ? 'start' : 'end';
         
         const text = document.createElementNS('http://www.w3.org/2000/svg', 'text');
-        text.setAttribute('x', midX);
-        text.setAttribute('y', midY - 10);
-        text.setAttribute('text-anchor', 'middle');
+        text.setAttribute('x', textX);
+        text.setAttribute('y', textY);
+        text.setAttribute('text-anchor', anchor);
+        text.setAttribute('font-size', fontSize);
         text.classList.add('dimension-text');
         text.id = 'preview-dimension';
         text.textContent = formatDimension(length);
@@ -2167,18 +2251,29 @@ const FloorPlanEditor = (() => {
         rect.id = 'drawing-preview';
         floorPlanGroup.appendChild(rect);
         
-        // Show dimensions
+        // Show dimensions near the cursor (end point)
         const widthFt = width / scale;
         const heightFt = height / scale;
+        const fontSize = 33 / zoom;
+        const pad = 8 / zoom;
+        
+        // Position relative to the end point (cursor)
+        const goingRight = end.x >= start.x;
+        const goingDown = end.y >= start.y;
+        
+        const textX = end.x + (goingRight ? pad : -pad);
+        const textY = end.y + (goingDown ? pad + fontSize : -pad);
+        const anchor = goingRight ? 'start' : 'end';
         
         const text = document.createElementNS('http://www.w3.org/2000/svg', 'text');
-        text.setAttribute('x', x + width / 2);
-        text.setAttribute('y', y + height / 2);
-        text.setAttribute('text-anchor', 'middle');
+        text.setAttribute('x', textX);
+        text.setAttribute('y', textY);
+        text.setAttribute('text-anchor', anchor);
+        text.setAttribute('font-size', fontSize);
         text.classList.add('dimension-text');
         text.id = 'preview-dimension';
         text.textContent = formatDimension(widthFt) + ' × ' + formatDimension(heightFt);
-        svg.appendChild(text);
+        floorPlanGroup.appendChild(text);
     }
     
     function removePreview() {
@@ -2866,32 +2961,28 @@ const FloorPlanEditor = (() => {
         const midX = (wall.start.x + wall.end.x) / 2;
         const midY = (wall.start.y + wall.end.y) / 2;
         
-        // Calculate perpendicular direction (pointing "outside")
         const dx = wall.end.x - wall.start.x;
         const dy = wall.end.y - wall.start.y;
         const len = Math.sqrt(dx * dx + dy * dy);
         
-        // Perpendicular unit vector - determine which side is "outside"
         let perpX = -dy / len;
         let perpY = dx / len;
         
-        // Calculate center of all walls to determine "inside" vs "outside"
         const allWallsCenter = getWallsCenter();
         const testPointX = midX + perpX * 10;
         const testPointY = midY + perpY * 10;
         const distToCenter = Math.sqrt((testPointX - allWallsCenter.x) ** 2 + (testPointY - allWallsCenter.y) ** 2);
         const oppDistToCenter = Math.sqrt((midX - perpX * 10 - allWallsCenter.x) ** 2 + (midY - perpY * 10 - allWallsCenter.y) ** 2);
         
-        // If the perpendicular direction points toward center, flip it
         if (distToCenter < oppDistToCenter) {
             perpX = -perpX;
             perpY = -perpY;
         }
         
-        // Offset distance for text (outside the wall)
-        const dimensionOffset = 20;
+        // Scale offset so it stays visually consistent regardless of zoom
+        const dimensionOffset = 20 / zoom;
+        const fontSize = 33 / zoom;
         
-        // Dimension text only (no lines)
         const textX = midX + perpX * dimensionOffset;
         const textY = midY + perpY * dimensionOffset;
         
@@ -2900,6 +2991,7 @@ const FloorPlanEditor = (() => {
         text.setAttribute('y', textY);
         text.setAttribute('text-anchor', 'middle');
         text.setAttribute('dominant-baseline', 'middle');
+        text.setAttribute('font-size', fontSize);
         text.classList.add('dimension-text');
         text.textContent = formatDimension(length);
         dimensionsLayer.appendChild(text);
@@ -3398,6 +3490,58 @@ const FloorPlanEditor = (() => {
             const el = wallsLayer.querySelector(`[data-wall-id="${element.id}"]`);
             if (el) el.classList.add('selected');
         }
+        
+        // Show scale handles for scalable elements
+        if (type === 'wall' || type === 'label' || type === 'imported') {
+            showScaleHandles();
+        }
+    }
+    
+    function addToSelection(element, type) {
+        if (isElementSelected(element, type)) {
+            // Shift-clicking an already-selected element removes it
+            selectedElements = selectedElements.filter(
+                sel => !(sel.element === element && sel.type === type)
+            );
+            // Remove highlight
+            highlightElement(element, type, false);
+        } else {
+            selectedElements.push({ element, type });
+            highlightElement(element, type, true);
+        }
+        
+        // Update single-selection compat
+        removeRotationHandle();
+        removeScaleHandles();
+        hideProperties();
+        if (selectedElements.length === 1) {
+            selectedElement = selectedElements[0];
+            if (selectedElement.type === 'furniture') {
+                addRotationHandle(selectedElement.element);
+                showProperties(selectedElement.element);
+            }
+        } else {
+            selectedElement = null;
+        }
+        
+        if (selectedElements.length > 0) {
+            showScaleHandles();
+        }
+    }
+    
+    function highlightElement(element, type, on) {
+        if (type === 'furniture') {
+            const el = furnitureLayer.querySelector(`[data-furniture-id="${element.id}"]`);
+            if (el) on ? el.classList.add('selected') : el.classList.remove('selected');
+        } else if (type === 'label') {
+            const el = labelsLayer.querySelector(`[data-label-id="${element.id}"]`);
+            if (el) el.style.fill = on ? 'var(--primary-color)' : '';
+        } else if (type === 'imported') {
+            if (element.element) on ? element.element.classList.add('selected') : element.element.classList.remove('selected');
+        } else if (type === 'wall') {
+            const el = wallsLayer.querySelector(`[data-wall-id="${element.id}"]`);
+            if (el) on ? el.classList.add('selected') : el.classList.remove('selected');
+        }
     }
     
     function addRotationHandle(item) {
@@ -3453,12 +3597,275 @@ const FloorPlanEditor = (() => {
         selectedElements = [];
         furnitureLayer.querySelectorAll('.selected').forEach(el => el.classList.remove('selected'));
         labelsLayer.querySelectorAll('.room-label').forEach(el => el.style.fill = '');
-        // Deselect walls
         wallsLayer.querySelectorAll('.wall-line.selected').forEach(el => el.classList.remove('selected'));
-        // Deselect imported elements
         wallsLayer.querySelectorAll('.imported-svg-element.selected, .imported-svg-group.selected').forEach(el => el.classList.remove('selected'));
         removeRotationHandle();
+        removeScaleHandles();
         hideProperties();
+    }
+    
+    // --- Scale handles for selected elements ---
+    let isScaling = false;
+    let scaleHandle = null;
+    let scaleOrigin = null; // The anchor corner (opposite of the handle being dragged)
+    let scaleBBoxStart = null; // Bounding box at drag start
+    let scaleStartPositions = null; // Snapshot of element positions at drag start
+    
+    function getSelectionBBox() {
+        let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+        let hasScalable = false;
+        
+        for (const sel of selectedElements) {
+            if (sel.type === 'wall') {
+                const w = sel.element;
+                minX = Math.min(minX, w.start.x, w.end.x);
+                minY = Math.min(minY, w.start.y, w.end.y);
+                maxX = Math.max(maxX, w.start.x, w.end.x);
+                maxY = Math.max(maxY, w.start.y, w.end.y);
+                hasScalable = true;
+            } else if (sel.type === 'label') {
+                minX = Math.min(minX, sel.element.x);
+                minY = Math.min(minY, sel.element.y);
+                maxX = Math.max(maxX, sel.element.x);
+                maxY = Math.max(maxY, sel.element.y);
+                hasScalable = true;
+            } else if (sel.type === 'furniture') {
+                // Include furniture in bbox for positioning but it won't scale
+                minX = Math.min(minX, sel.element.x);
+                minY = Math.min(minY, sel.element.y);
+                maxX = Math.max(maxX, sel.element.x + sel.element.width);
+                maxY = Math.max(maxY, sel.element.y + sel.element.height);
+            }
+        }
+        
+        if (minX === Infinity) return null;
+        return { x: minX, y: minY, width: maxX - minX, height: maxY - minY, hasScalable };
+    }
+    
+    function showScaleHandles() {
+        removeScaleHandles();
+        const bbox = getSelectionBBox();
+        if (!bbox || !bbox.hasScalable) return;
+        
+        const pad = 6;
+        const handleSize = 10;
+        const positions = {
+            nw: { x: bbox.x - pad, y: bbox.y - pad },
+            ne: { x: bbox.x + bbox.width + pad, y: bbox.y - pad },
+            se: { x: bbox.x + bbox.width + pad, y: bbox.y + bbox.height + pad },
+            sw: { x: bbox.x - pad, y: bbox.y + bbox.height + pad }
+        };
+        
+        const floorPlanGroup = document.getElementById('floor-plan-group');
+        
+        // Bounding box outline (draggable)
+        const outline = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
+        outline.setAttribute('x', bbox.x - pad);
+        outline.setAttribute('y', bbox.y - pad);
+        outline.setAttribute('width', bbox.width + pad * 2);
+        outline.setAttribute('height', bbox.height + pad * 2);
+        outline.setAttribute('fill', 'rgba(79, 70, 229, 0.03)');
+        outline.setAttribute('stroke', 'var(--primary-color, #4f46e5)');
+        outline.setAttribute('stroke-width', 1 / zoom);
+        outline.setAttribute('stroke-dasharray', `${4 / zoom}`);
+        outline.classList.add('scale-handle-group', 'scale-bbox');
+        outline.style.cursor = 'move';
+        floorPlanGroup.appendChild(outline);
+        
+        // Corner handles
+        for (const [corner, pos] of Object.entries(positions)) {
+            const handle = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
+            handle.setAttribute('x', pos.x - handleSize / 2);
+            handle.setAttribute('y', pos.y - handleSize / 2);
+            handle.setAttribute('width', handleSize);
+            handle.setAttribute('height', handleSize);
+            handle.setAttribute('fill', 'white');
+            handle.setAttribute('stroke', 'var(--primary-color, #4f46e5)');
+            handle.setAttribute('stroke-width', 1.5 / zoom);
+            handle.setAttribute('rx', 2);
+            handle.classList.add('scale-handle-group', 'scale-handle');
+            handle.dataset.scaleCorner = corner;
+            handle.style.cursor = corner === 'nw' || corner === 'se' ? 'nwse-resize' : 'nesw-resize';
+            floorPlanGroup.appendChild(handle);
+        }
+        
+        showSelectionActions(bbox);
+    }
+    
+    function removeScaleHandles() {
+        document.querySelectorAll('.scale-handle-group').forEach(el => el.remove());
+        document.getElementById('selection-actions')?.remove();
+    }
+    
+    function hasSharedCorners() {
+        const selectedWalls = selectedElements.filter(s => s.type === 'wall').map(s => s.element);
+        if (selectedWalls.length === 0) return false;
+        
+        const selectedWallIds = new Set(selectedWalls.map(w => w.id));
+        
+        for (const wall of selectedWalls) {
+            for (const c of [wall.start, wall.end]) {
+                const hasUnselectedWall = c.walls.some(w => !selectedWallIds.has(w.id));
+                if (hasUnselectedWall) return true;
+            }
+        }
+        return false;
+    }
+    
+    function showSelectionActions(bbox) {
+        document.getElementById('selection-actions')?.remove();
+        if (!hasSharedCorners()) return;
+        
+        const wrapper = document.getElementById('layout-canvas-wrapper');
+        if (!wrapper) return;
+        
+        const container = document.createElement('div');
+        container.id = 'selection-actions';
+        container.className = 'selection-actions';
+        
+        // Position above the bounding box top-center, in screen coords
+        const screenX = bbox.x * zoom + bbox.width * zoom / 2 + panOffset.x;
+        const screenY = bbox.y * zoom + panOffset.y - 10;
+        
+        container.style.left = screenX + 'px';
+        container.style.top = screenY + 'px';
+        
+        const btn = document.createElement('button');
+        btn.className = 'selection-action-btn';
+        btn.innerHTML = `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"></path><polyline points="15 3 21 3 21 9"></polyline><line x1="10" y1="14" x2="21" y2="3"></line></svg> Detach`;
+        btn.title = 'Detach selected walls from connected walls';
+        btn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            detachSelectedWalls();
+        });
+        
+        container.appendChild(btn);
+        wrapper.appendChild(container);
+    }
+    
+    function detachSelectedWalls() {
+        const selectedWalls = selectedElements.filter(s => s.type === 'wall').map(s => s.element);
+        if (selectedWalls.length === 0) return;
+        
+        addToHistory();
+        
+        const selectedWallIds = new Set(selectedWalls.map(w => w.id));
+        const processedCorners = new Map(); // old corner id -> new corner
+        
+        for (const wall of selectedWalls) {
+            for (const endpoint of ['start', 'end']) {
+                const corner = wall[endpoint];
+                const hasUnselectedWall = corner.walls.some(w => !selectedWallIds.has(w.id));
+                
+                if (hasUnselectedWall && !processedCorners.has(corner.id)) {
+                    // Create a duplicate corner at the same position
+                    const newCorner = {
+                        id: 'corner-' + Date.now() + '-' + Math.random().toString(36).substr(2, 9),
+                        x: corner.x,
+                        y: corner.y,
+                        walls: []
+                    };
+                    corners.push(newCorner);
+                    processedCorners.set(corner.id, newCorner);
+                }
+            }
+        }
+        
+        // Rewire selected walls to use the new corners
+        for (const wall of selectedWalls) {
+            for (const endpoint of ['start', 'end']) {
+                const oldCorner = wall[endpoint];
+                const newCorner = processedCorners.get(oldCorner.id);
+                if (newCorner) {
+                    // Remove this wall from the old corner
+                    oldCorner.walls = oldCorner.walls.filter(w => w.id !== wall.id);
+                    // Point wall to new corner
+                    wall[endpoint] = newCorner;
+                    newCorner.walls.push(wall);
+                }
+            }
+        }
+        
+        redrawAll();
+        showScaleHandles();
+    }
+    
+    function snapshotPositions() {
+        const snap = { corners: {}, furniture: {}, labels: {} };
+        const seenCorners = new Set();
+        
+        for (const sel of selectedElements) {
+            if (sel.type === 'wall') {
+                for (const c of [sel.element.start, sel.element.end]) {
+                    if (!seenCorners.has(c.id)) {
+                        snap.corners[c.id] = { x: c.x, y: c.y };
+                        seenCorners.add(c.id);
+                    }
+                }
+            } else if (sel.type === 'furniture') {
+                snap.furniture[sel.element.id] = { x: sel.element.x, y: sel.element.y };
+            } else if (sel.type === 'label') {
+                snap.labels[sel.element.id] = { x: sel.element.x, y: sel.element.y };
+            }
+        }
+        return snap;
+    }
+    
+    function applyScale(corner, mousePos) {
+        if (!scaleBBoxStart || !scaleStartPositions) return;
+        
+        const bbox = scaleBBoxStart;
+        
+        // Anchor is the opposite corner
+        const anchorX = corner.includes('e') ? bbox.x : bbox.x + bbox.width;
+        const anchorY = corner.includes('s') ? bbox.y : bbox.y + bbox.height;
+        
+        // Original far edge from anchor
+        const origFarX = corner.includes('e') ? bbox.x + bbox.width : bbox.x;
+        const origFarY = corner.includes('s') ? bbox.y + bbox.height : bbox.y;
+        
+        const origW = origFarX - anchorX;
+        const origH = origFarY - anchorY;
+        
+        if (Math.abs(origW) < 1 || Math.abs(origH) < 1) return;
+        
+        const newW = mousePos.x - anchorX;
+        const newH = mousePos.y - anchorY;
+        
+        // Uniform scale based on the larger axis change
+        const sx = newW / origW;
+        const sy = newH / origH;
+        const uniScale = Math.max(0.1, (Math.abs(sx) + Math.abs(sy)) / 2);
+        const finalSx = origW > 0 ? uniScale : -uniScale;
+        const finalSy = origH > 0 ? uniScale : -uniScale;
+        
+        const snap = scaleStartPositions;
+        
+        // Scale wall corners (not furniture size)
+        for (const sel of selectedElements) {
+            if (sel.type === 'wall') {
+                for (const c of [sel.element.start, sel.element.end]) {
+                    if (snap.corners[c.id]) {
+                        c.x = anchorX + (snap.corners[c.id].x - anchorX) * finalSx;
+                        c.y = anchorY + (snap.corners[c.id].y - anchorY) * finalSy;
+                    }
+                }
+            } else if (sel.type === 'furniture') {
+                // Move furniture position proportionally but don't change its size
+                if (snap.furniture[sel.element.id]) {
+                    sel.element.x = anchorX + (snap.furniture[sel.element.id].x - anchorX) * finalSx;
+                    sel.element.y = anchorY + (snap.furniture[sel.element.id].y - anchorY) * finalSy;
+                }
+            } else if (sel.type === 'label') {
+                if (snap.labels[sel.element.id]) {
+                    sel.element.x = anchorX + (snap.labels[sel.element.id].x - anchorX) * finalSx;
+                    sel.element.y = anchorY + (snap.labels[sel.element.id].y - anchorY) * finalSy;
+                }
+            }
+        }
+        
+        redrawAll();
+        showScaleHandles();
     }
     
     // Marquee selection functions
@@ -3558,24 +3965,37 @@ const FloorPlanEditor = (() => {
                 showProperties(selectedElement.element);
             }
         } else if (selectedElements.length > 1) {
-            // Hide properties panel for multi-select
             hideProperties();
+        }
+        
+        // Show scale handles if any scalable elements are selected
+        if (selectedElements.length > 0) {
+            showScaleHandles();
         }
     }
     
     function moveSelectedElements(dx, dy) {
+        // Track corners already moved so shared corners aren't moved twice
+        const movedCornerIds = new Set();
+        
         for (const sel of selectedElements) {
-            if (sel.type === 'furniture') {
-                let newX = sel.element.x + dx;
-                let newY = sel.element.y + dy;
-                
-                if (snapToGrid) {
-                    newX = Math.round(newX / gridSize) * gridSize;
-                    newY = Math.round(newY / gridSize) * gridSize;
+            if (sel.type === 'wall') {
+                const wall = sel.element;
+                // Move start corner if not already moved
+                if (!movedCornerIds.has(wall.start.id)) {
+                    wall.start.x += dx;
+                    wall.start.y += dy;
+                    movedCornerIds.add(wall.start.id);
                 }
-                
-                sel.element.x = newX;
-                sel.element.y = newY;
+                // Move end corner if not already moved
+                if (!movedCornerIds.has(wall.end.id)) {
+                    wall.end.x += dx;
+                    wall.end.y += dy;
+                    movedCornerIds.add(wall.end.id);
+                }
+            } else if (sel.type === 'furniture') {
+                sel.element.x += dx;
+                sel.element.y += dy;
                 
                 const el = furnitureLayer.querySelector(`[data-furniture-id="${sel.element.id}"]`);
                 if (el) {
@@ -3591,6 +4011,11 @@ const FloorPlanEditor = (() => {
                     el.setAttribute('y', sel.element.y);
                 }
             }
+        }
+        
+        // Redraw walls and corners if any were moved
+        if (movedCornerIds.size > 0) {
+            redrawAll();
         }
     }
     
@@ -3769,55 +4194,54 @@ const FloorPlanEditor = (() => {
     }
     
     function deleteSelected() {
-        // Handle multi-selection
-        if (selectedElements.length > 0) {
-            addToHistory();
-            
-            for (const sel of selectedElements) {
-                if (sel.type === 'furniture') {
-                    furniture = furniture.filter(f => f.id !== sel.element.id);
-                } else if (sel.type === 'label') {
-                    labels = labels.filter(l => l.id !== sel.element.id);
-                } else if (sel.type === 'imported') {
-                    const imported = sel.element;
-                    if (imported.element && imported.element.parentNode) {
-                        imported.element.parentNode.removeChild(imported.element);
-                    }
-                    importedElements = importedElements.filter(i => i.id !== imported.id);
-                }
-            }
-            
-            deselectAll();
-            redrawAll();
-            return;
-        }
-        
-        // Handle single selection (legacy)
-        if (!selectedElement) return;
+        if (selectedElements.length === 0 && !selectedElement) return;
         
         addToHistory();
         
-        const isImported = selectedElement.type === 'imported';
+        const toDelete = selectedElements.length > 0 ? selectedElements : (selectedElement ? [selectedElement] : []);
         
-        if (selectedElement.type === 'furniture') {
-            furniture = furniture.filter(f => f.id !== selectedElement.element.id);
-        } else if (selectedElement.type === 'label') {
-            labels = labels.filter(l => l.id !== selectedElement.element.id);
-        } else if (isImported) {
-            // Remove the imported element from the DOM and tracking array
-            const imported = selectedElement.element;
-            if (imported.element && imported.element.parentNode) {
-                imported.element.parentNode.removeChild(imported.element);
+        // Collect corners that should be removed (only if all their walls are being deleted)
+        const wallsToDelete = new Set();
+        const cornersToCheck = new Set();
+        
+        for (const sel of toDelete) {
+            if (sel.type === 'wall') {
+                wallsToDelete.add(sel.element.id);
+                cornersToCheck.add(sel.element.start.id);
+                cornersToCheck.add(sel.element.end.id);
+            } else if (sel.type === 'furniture') {
+                furniture = furniture.filter(f => f.id !== sel.element.id);
+            } else if (sel.type === 'label') {
+                labels = labels.filter(l => l.id !== sel.element.id);
+            } else if (sel.type === 'imported') {
+                const imported = sel.element;
+                if (imported.element && imported.element.parentNode) {
+                    imported.element.parentNode.removeChild(imported.element);
+                }
+                importedElements = importedElements.filter(i => i.id !== imported.id);
             }
-            importedElements = importedElements.filter(i => i.id !== imported.id);
+        }
+        
+        // Remove walls
+        if (wallsToDelete.size > 0) {
+            walls = walls.filter(w => !wallsToDelete.has(w.id));
+            
+            // Remove wall references from corners
+            for (const corner of corners) {
+                corner.walls = corner.walls.filter(w => !wallsToDelete.has(w.id));
+            }
+            
+            // Remove orphaned corners (no remaining walls)
+            for (const cornerId of cornersToCheck) {
+                const corner = corners.find(c => c.id === cornerId);
+                if (corner && corner.walls.length === 0) {
+                    corners = corners.filter(c => c.id !== cornerId);
+                }
+            }
         }
         
         deselectAll();
-        
-        // Don't redraw all for imported elements - we've already removed it from DOM
-        if (!isImported) {
-            redrawAll();
-        }
+        redrawAll();
     }
     
     // History (Undo/Redo) - State-based snapshots
@@ -3988,12 +4412,23 @@ const FloorPlanEditor = (() => {
         furniture.forEach(item => renderFurniture(item));
     }
     
+    function getZoomLimits() {
+        const wrapper = document.getElementById('layout-canvas-wrapper');
+        if (!wrapper) return { min: 0.05, max: 20 };
+        const dim = Math.min(wrapper.clientWidth, wrapper.clientHeight);
+        return {
+            min: dim / (200 * scale), // 200 feet visible
+            max: dim / (1 * scale)    // 1 foot visible
+        };
+    }
+    
     // Zoom
     function setZoom(newZoom) {
         const wrapper = document.getElementById('layout-canvas-wrapper');
         if (!wrapper) return;
         
-        const clampedZoom = Math.max(0.1, Math.min(5, newZoom));
+        const limits = getZoomLimits();
+        const clampedZoom = Math.max(limits.min, Math.min(limits.max, newZoom));
         
         // Zoom toward center of viewport
         const centerX = wrapper.clientWidth / 2;
@@ -4035,6 +4470,7 @@ const FloorPlanEditor = (() => {
             gridBg.setAttribute('height', h);
         }
         updateRulers();
+        redrawDimensions();
     }
     
     function resetPan() {
@@ -4055,7 +4491,8 @@ const FloorPlanEditor = (() => {
             // Calculate zoom delta
             const delta = -e.deltaY * 0.002;
             const zoomFactor = 1 + delta;
-            const newZoom = Math.max(0.25, Math.min(3, zoom * zoomFactor));
+            const limits = getZoomLimits();
+            const newZoom = Math.max(limits.min, Math.min(limits.max, zoom * zoomFactor));
             
             // Zoom toward mouse position
             if (newZoom !== zoom) {
@@ -4086,11 +4523,7 @@ const FloorPlanEditor = (() => {
     }
     
     function fitToScreen() {
-        // Reset to default view
-        panOffset = { x: 0, y: 0 };
-        zoom = 1;
-        document.getElementById('zoom-level') && (document.getElementById('zoom-level').textContent = '100%');
-        applyTransform();
+        setInitialZoom();
     }
     
     // Export
@@ -4347,7 +4780,7 @@ const FloorPlanEditor = (() => {
         // Apply inline styles to dimension text
         svgElement.querySelectorAll('.dimension-text').forEach(el => {
             el.setAttribute('font-family', 'Arial, sans-serif');
-            el.setAttribute('font-size', '11');
+            el.setAttribute('font-size', '33');
             el.setAttribute('fill', '#666');
         });
         
