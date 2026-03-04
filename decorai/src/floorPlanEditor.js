@@ -54,7 +54,9 @@ const FloorPlanEditor = (() => {
     let snapToGrid = true;
     let showDimensions = true;
     let gridSize = 50; // pixels per grid unit (1 foot = 50 pixels)
-    let snapDistance = 15; // pixels for corner snapping
+    let snapDistance = 30; // pixels for corner snapping
+    let snapRelease = 45; // pixels to break free once snapped (hysteresis)
+    let currentSnapTarget = null; // { x, y, type } — tracks the active magnetic snap
     let zoom = 1;
     
     // Panning state
@@ -163,6 +165,9 @@ const FloorPlanEditor = (() => {
         document.getElementById('layout-undo-btn')?.addEventListener('click', undo);
         document.getElementById('layout-redo-btn')?.addEventListener('click', redo);
         document.getElementById('layout-clear-btn')?.addEventListener('click', clearAll);
+        
+        // Feng Shui
+        document.getElementById('feng-shui-btn')?.addEventListener('click', startFengShuiAnalysis);
         
         // Export
         document.getElementById('layout-export-btn')?.addEventListener('click', toggleExportMenu);
@@ -295,12 +300,15 @@ const FloorPlanEditor = (() => {
             btn.classList.toggle('active', btn.dataset.tool === tool);
         });
         
-        // Update cursor
+        // Update cursor and reference image interactivity
         const wrapper = document.getElementById('layout-canvas-wrapper');
         if (tool === 'select') {
             wrapper.style.cursor = 'default';
+            imageLayer.querySelectorAll('.reference-image').forEach(img => img.classList.add('selectable'));
         } else {
             wrapper.style.cursor = 'crosshair';
+            imageLayer.querySelectorAll('.reference-image').forEach(img => img.classList.remove('selectable'));
+            removeRefImageHandles();
         }
         
         // Cancel any drawing in progress
@@ -530,7 +538,9 @@ const FloorPlanEditor = (() => {
                 drawingStartCorner = targetCorner || createCorner(snapPos);
             }
             isDrawing = true;
+            currentSnapTarget = null;
             removeWallSnapIndicator();
+            removeMagneticIndicator();
             
         } else if (currentTool === 'room') {
             const rawPos = getMousePos(e, true);
@@ -538,35 +548,31 @@ const FloorPlanEditor = (() => {
             drawingStartCorner = { x: rawPos.x, y: rawPos.y };
             
         } else if (currentTool === 'door' || currentTool === 'window') {
-            // Door/window works like wall tool: click two points anywhere
+            // Use raw position for wall detection so grid snapping doesn't push us away from walls
+            const rawPos = getMousePos(e, true);
+            
             if (!openingStartPoint) {
-                // First click - set start point
-                openingStartPoint = { x: pos.x, y: pos.y };
-                
-                // Check if starting on a wall
-                const nearestWall = findNearestWall(pos);
+                // First click - find the nearest wall using the raw cursor position
+                const nearestWall = findNearestWall(rawPos);
                 if (nearestWall) {
-                    openingStartPoint.wall = nearestWall;
-                    openingStartPoint.projected = projectPointOnWall(nearestWall, pos);
+                    const projected = projectPointOnWall(nearestWall, rawPos);
+                    openingStartPoint = { x: projected.x, y: projected.y, wall: nearestWall, projected };
+                } else {
+                    openingStartPoint = { x: rawPos.x, y: rawPos.y };
                 }
                 
-                // Show start marker
                 showOpeningStartMarker(openingStartPoint);
             } else {
                 // Second click - create the door/window
-                const endWall = findNearestWall(pos);
+                const endWall = findNearestWall(rawPos);
                 
-                // Check if both points are on the same wall
                 if (openingStartPoint.wall && endWall && openingStartPoint.wall === endWall) {
-                    // Place as a wall-attached opening
-                    const endProjected = projectPointOnWall(endWall, pos);
+                    const endProjected = projectPointOnWall(endWall, rawPos);
                     placeOpeningBetweenPoints(endWall, openingStartPoint.projected, endProjected, currentTool);
                 } else {
-                    // Create as freeform opening (not on a wall)
-                    createFreeformOpening(openingStartPoint, pos, currentTool);
+                    createFreeformOpening(openingStartPoint, rawPos, currentTool);
                 }
                 
-                // Reset state
                 openingStartPoint = null;
                 removeOpeningPreview();
             }
@@ -667,9 +673,11 @@ const FloorPlanEditor = (() => {
         // Handle drawing preview
         if (isDrawing) {
             if (currentTool === 'wall' && drawingStartCorner) {
-                // Use raw cursor position for the preview line
                 const rawPos = getMousePos(e, true);
-                drawWallPreview(drawingStartCorner, rawPos);
+                const snap = getMagneticSnapPos(rawPos);
+                const previewEnd = snap || rawPos;
+                drawWallPreview(drawingStartCorner, previewEnd);
+                highlightSnapTarget(rawPos);
             } else if (currentTool === 'room' && drawingStartCorner) {
                 const rawPos = getMousePos(e, true);
                 drawRoomPreview(drawingStartCorner, rawPos);
@@ -678,20 +686,15 @@ const FloorPlanEditor = (() => {
         
         // Handle door/window placement preview
         if ((currentTool === 'door' || currentTool === 'window') && openingStartPoint) {
-            const endWall = findNearestWall(pos);
+            const rawPos = getMousePos(e, true);
+            const endWall = findNearestWall(rawPos);
             
             if (openingStartPoint.wall && endWall && openingStartPoint.wall === endWall) {
-                const endProjected = projectPointOnWall(endWall, pos);
+                const endProjected = projectPointOnWall(endWall, rawPos);
                 showWallOpeningPreview(endWall, openingStartPoint.projected, endProjected, currentTool);
             } else {
-                showFreeformOpeningPreview(openingStartPoint, pos, currentTool);
+                showFreeformOpeningPreview(openingStartPoint, rawPos, currentTool);
             }
-        }
-        
-        // Highlight snap targets
-        if (currentTool === 'wall' && isDrawing) {
-            const rawPos = getMousePos(e, true);
-            highlightSnapTarget(rawPos);
         }
     }
     
@@ -752,8 +755,11 @@ const FloorPlanEditor = (() => {
         isDragging = false;
         dragTarget = null;
         
-        // Clean up snap indicators
+        // Clean up snap and angle indicators
         removeWallSnapIndicator();
+        removeAngleIndicators();
+        removeMagneticIndicator();
+        currentSnapTarget = null;
         cornersLayer.querySelectorAll('.snap-target').forEach(el => el.classList.remove('snap-target'));
         
         if (currentTool === 'room') {
@@ -1118,7 +1124,7 @@ const FloorPlanEditor = (() => {
     }
     
     // Find nearest edge point for snapping
-    function findNearestEdgePoint(pos, maxDistance = 15) {
+    function findNearestEdgePoint(pos, maxDistance = 30) {
         if (!detectedEdges || detectedEdges.length === 0) return null;
         
         let nearestPoint = null;
@@ -1145,6 +1151,9 @@ const FloorPlanEditor = (() => {
         image.setAttribute('height', refImage.height);
         image.setAttribute('opacity', refImage.opacity);
         image.classList.add('reference-image');
+        if (currentTool === 'select') {
+            image.classList.add('selectable');
+        }
         image.dataset.refImageId = refImage.id;
         
         imageLayer.appendChild(image);
@@ -1239,7 +1248,6 @@ const FloorPlanEditor = (() => {
         
         // Make reference image draggable and resizable
         makeReferenceImageDraggable(refImage);
-        addResizeHandles(refImage);
     }
     
     // Ruler functions
@@ -1441,6 +1449,10 @@ const FloorPlanEditor = (() => {
         });
     }
     
+    function removeRefImageHandles() {
+        document.querySelectorAll('.ref-image-handle').forEach(h => h.remove());
+    }
+    
     function setupResizeHandle(handle, refImage, corner) {
         let isResizing = false;
         let startX, startY, startWidth, startHeight, startImgX, startImgY;
@@ -1556,8 +1568,6 @@ const FloorPlanEditor = (() => {
         let isDragging = false;
         let startX, startY, origX, origY;
         
-        imgEl.style.cursor = 'move';
-        
         imgEl.addEventListener('mousedown', (e) => {
             if (currentTool !== 'select') return;
             isDragging = true;
@@ -1565,6 +1575,10 @@ const FloorPlanEditor = (() => {
             startY = e.clientY;
             origX = refImage.x;
             origY = refImage.y;
+            
+            // Show resize handles on click
+            addResizeHandles(refImage);
+            
             e.stopPropagation();
         });
         
@@ -1988,6 +2002,7 @@ const FloorPlanEditor = (() => {
             corner.x = cornerSnapTarget.x;
             corner.y = cornerSnapTarget.y;
             redrawAll();
+            showAngleIndicators(corner);
             return;
         }
         
@@ -2001,6 +2016,7 @@ const FloorPlanEditor = (() => {
             corner.x = wallSnap.point.x;
             corner.y = wallSnap.point.y;
             redrawAll();
+            showAngleIndicators(corner);
             return;
         }
         
@@ -2008,6 +2024,7 @@ const FloorPlanEditor = (() => {
         corner.x = newPos.x;
         corner.y = newPos.y;
         redrawAll();
+        showAngleIndicators(corner);
     }
     
     // Find snap point on wall, excluding walls connected to a specific corner
@@ -2083,34 +2100,204 @@ const FloorPlanEditor = (() => {
         cornersLayer.appendChild(circle);
     }
     
+    function showAngleIndicators(corner) {
+        removeAngleIndicators();
+        
+        if (!corner.walls || corner.walls.length < 2) return;
+        
+        // Collect the angle of each wall relative to this corner
+        const wallAngles = [];
+        for (const wall of corner.walls) {
+            const other = wall.start === corner ? wall.end : wall.start;
+            const angle = Math.atan2(other.y - corner.y, other.x - corner.x);
+            wallAngles.push(angle);
+        }
+        
+        // Sort angles so we draw arcs between adjacent walls
+        wallAngles.sort((a, b) => a - b);
+        
+        const arcRadius = 30 / zoom;
+        const textRadius = 42 / zoom;
+        const g = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+        g.classList.add('angle-indicator-group');
+        
+        for (let i = 0; i < wallAngles.length; i++) {
+            const a1 = wallAngles[i];
+            const a2 = wallAngles[(i + 1) % wallAngles.length];
+            
+            // Sweep from a1 to a2 going counter-clockwise
+            let sweep = a2 - a1;
+            if (sweep <= 0) sweep += Math.PI * 2;
+            
+            const degrees = Math.round(sweep * 180 / Math.PI);
+            if (degrees === 0 || degrees === 360) continue;
+            
+            // Arc start/end points
+            const x1 = corner.x + arcRadius * Math.cos(a1);
+            const y1 = corner.y + arcRadius * Math.sin(a1);
+            const x2 = corner.x + arcRadius * Math.cos(a2);
+            const y2 = corner.y + arcRadius * Math.sin(a2);
+            
+            const largeArc = sweep > Math.PI ? 1 : 0;
+            
+            const arc = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+            arc.setAttribute('d', `M ${x1} ${y1} A ${arcRadius} ${arcRadius} 0 ${largeArc} 1 ${x2} ${y2}`);
+            arc.setAttribute('fill', 'none');
+            arc.setAttribute('stroke', degrees === 90 ? '#22c55e' : '#6366f1');
+            arc.setAttribute('stroke-width', 1.5 / zoom);
+            arc.setAttribute('opacity', '0.8');
+            g.appendChild(arc);
+            
+            // Right-angle square indicator for 90 degrees
+            if (degrees === 90) {
+                const sq = 10 / zoom;
+                const sx = corner.x + sq * Math.cos(a1);
+                const sy = corner.y + sq * Math.sin(a1);
+                const mx = corner.x + sq * Math.cos(a1) + sq * Math.cos(a2);
+                const my = corner.y + sq * Math.sin(a1) + sq * Math.sin(a2);
+                const ex = corner.x + sq * Math.cos(a2);
+                const ey = corner.y + sq * Math.sin(a2);
+                
+                const square = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+                square.setAttribute('d', `M ${sx} ${sy} L ${mx} ${my} L ${ex} ${ey}`);
+                square.setAttribute('fill', 'none');
+                square.setAttribute('stroke', '#22c55e');
+                square.setAttribute('stroke-width', 1.5 / zoom);
+                square.setAttribute('opacity', '0.8');
+                g.appendChild(square);
+            }
+            
+            // Degree label at the midpoint angle
+            const midAngle = a1 + sweep / 2;
+            const tx = corner.x + textRadius * Math.cos(midAngle);
+            const ty = corner.y + textRadius * Math.sin(midAngle);
+            
+            const text = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+            text.setAttribute('x', tx);
+            text.setAttribute('y', ty);
+            text.setAttribute('text-anchor', 'middle');
+            text.setAttribute('dominant-baseline', 'central');
+            text.setAttribute('font-size', 11 / zoom);
+            text.setAttribute('font-weight', '600');
+            text.setAttribute('fill', degrees === 90 ? '#16a34a' : '#4f46e5');
+            text.textContent = degrees + '°';
+            g.appendChild(text);
+        }
+        
+        cornersLayer.appendChild(g);
+    }
+    
+    function removeAngleIndicators() {
+        document.querySelectorAll('.angle-indicator-group').forEach(g => g.remove());
+    }
+    
+    function getMagneticSnapPos(rawPos) {
+        // If already snapped, check whether cursor has moved far enough to break free
+        if (currentSnapTarget) {
+            const distFromSnap = Math.sqrt(
+                (rawPos.x - currentSnapTarget.x) ** 2 + (rawPos.y - currentSnapTarget.y) ** 2
+            );
+            if (distFromSnap < snapRelease) {
+                return currentSnapTarget; // still locked
+            }
+            // Broke free
+            currentSnapTarget = null;
+        }
+        
+        // Corner snap (highest priority)
+        const cornerTarget = findNearbyCorner(rawPos);
+        if (cornerTarget && (!drawingStartCorner || cornerTarget.id !== drawingStartCorner.id)) {
+            currentSnapTarget = { x: cornerTarget.x, y: cornerTarget.y, type: 'corner', id: cornerTarget.id };
+            return currentSnapTarget;
+        }
+        
+        // Mid-wall snap
+        const wallSnap = findSnapPointOnWall(rawPos, drawingStartCorner);
+        if (wallSnap) {
+            currentSnapTarget = { x: wallSnap.point.x, y: wallSnap.point.y, type: 'wall', wall: wallSnap.wall };
+            return currentSnapTarget;
+        }
+        
+        // Edge detection snap
+        const edgeSnap = findNearestEdgePoint(rawPos);
+        if (edgeSnap) {
+            currentSnapTarget = { x: edgeSnap.x, y: edgeSnap.y, type: 'edge' };
+            return currentSnapTarget;
+        }
+        
+        currentSnapTarget = null;
+        return null;
+    }
+    
     function highlightSnapTarget(pos) {
         // Remove existing highlights
         cornersLayer.querySelectorAll('.snap-target').forEach(el => el.classList.remove('snap-target'));
         removeWallSnapIndicator();
         removeEdgeSnapIndicator();
+        removeMagneticIndicator();
         
-        // First check for corner snap
-        const cornerTarget = findNearbyCorner(pos);
-        if (cornerTarget && (!drawingStartCorner || cornerTarget.id !== drawingStartCorner.id)) {
-            const node = cornersLayer.querySelector(`[data-corner-id="${cornerTarget.id}"]`);
-            if (node) {
-                node.classList.add('snap-target');
-            }
-            return;
+        const snap = currentSnapTarget;
+        if (!snap) return;
+        
+        if (snap.type === 'corner') {
+            const node = cornersLayer.querySelector(`[data-corner-id="${snap.id}"]`);
+            if (node) node.classList.add('snap-target');
+            showMagneticIndicator(snap);
+        } else if (snap.type === 'wall') {
+            showWallSnapIndicator(snap);
+            showMagneticIndicator(snap);
+        } else if (snap.type === 'edge') {
+            showEdgeSnapIndicator(snap);
+            showMagneticIndicator(snap);
+        }
+    }
+    
+    function showMagneticIndicator(point) {
+        removeMagneticIndicator();
+        
+        const g = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+        g.id = 'magnetic-snap-indicator';
+        
+        // Outer pulsing ring
+        const ring = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+        ring.setAttribute('cx', point.x);
+        ring.setAttribute('cy', point.y);
+        ring.setAttribute('r', 12 / zoom);
+        ring.setAttribute('fill', 'none');
+        ring.setAttribute('stroke', '#22c55e');
+        ring.setAttribute('stroke-width', 2 / zoom);
+        ring.setAttribute('opacity', '0.7');
+        ring.classList.add('magnetic-pulse');
+        g.appendChild(ring);
+        
+        // Inner filled dot
+        const dot = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+        dot.setAttribute('cx', point.x);
+        dot.setAttribute('cy', point.y);
+        dot.setAttribute('r', 4 / zoom);
+        dot.setAttribute('fill', '#22c55e');
+        dot.setAttribute('opacity', '0.9');
+        g.appendChild(dot);
+        
+        // Crosshair lines
+        const size = 8 / zoom;
+        for (const [dx, dy] of [[1,0],[-1,0],[0,1],[0,-1]]) {
+            const line = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+            line.setAttribute('x1', point.x + dx * (6 / zoom));
+            line.setAttribute('y1', point.y + dy * (6 / zoom));
+            line.setAttribute('x2', point.x + dx * (6 / zoom + size));
+            line.setAttribute('y2', point.y + dy * (6 / zoom + size));
+            line.setAttribute('stroke', '#22c55e');
+            line.setAttribute('stroke-width', 1.5 / zoom);
+            line.setAttribute('opacity', '0.6');
+            g.appendChild(line);
         }
         
-        // Then check for mid-wall snap
-        const wallSnap = findSnapPointOnWall(pos, drawingStartCorner);
-        if (wallSnap) {
-            showWallSnapIndicator(wallSnap.point);
-            return;
-        }
-        
-        // Finally check for edge detection snap
-        const edgeSnap = findNearestEdgePoint(pos);
-        if (edgeSnap) {
-            showEdgeSnapIndicator(edgeSnap);
-        }
+        cornersLayer.appendChild(g);
+    }
+    
+    function removeMagneticIndicator() {
+        document.getElementById('magnetic-snap-indicator')?.remove();
     }
     
     function showEdgeSnapIndicator(point) {
@@ -2284,9 +2471,11 @@ const FloorPlanEditor = (() => {
     function cancelDrawing() {
         isDrawing = false;
         drawingStartCorner = null;
+        currentSnapTarget = null;
         removePreview();
         cornersLayer.querySelectorAll('.snap-target').forEach(el => el.classList.remove('snap-target'));
         removeWallSnapIndicator();
+        removeMagneticIndicator();
         
         // Also cancel door/window placement
         openingStartPoint = null;
@@ -2323,7 +2512,7 @@ const FloorPlanEditor = (() => {
         
         for (const wall of walls) {
             const dist = pointToLineDistance(pos, wall.start, wall.end);
-            if (dist < minDist && dist < 20) {
+            if (dist < minDist && dist < snapDistance) {
                 minDist = dist;
                 nearestWall = wall;
             }
@@ -3601,6 +3790,7 @@ const FloorPlanEditor = (() => {
         wallsLayer.querySelectorAll('.imported-svg-element.selected, .imported-svg-group.selected').forEach(el => el.classList.remove('selected'));
         removeRotationHandle();
         removeScaleHandles();
+        removeRefImageHandles();
         hideProperties();
     }
     
@@ -4877,6 +5067,533 @@ const FloorPlanEditor = (() => {
         if (sizeDisplay) {
             sizeDisplay.textContent = formatDimension(widthFt) + ' × ' + formatDimension(heightFt);
         }
+    }
+    
+    // ==========================================
+    // FENG SHUI ANALYSIS
+    // ==========================================
+    
+    function extractFloorPlanData() {
+        const wallData = walls.map(w => ({
+            id: w.id,
+            start: { x: w.start.x, y: w.start.y },
+            end: { x: w.end.x, y: w.end.y },
+            lengthFeet: Math.sqrt((w.end.x - w.start.x) ** 2 + (w.end.y - w.start.y) ** 2) / scale,
+            openings: (w.openings || []).map(o => ({
+                type: o.type,
+                position: o.position,
+                width: o.width
+            }))
+        }));
+        
+        const furnitureData = furniture.map(f => ({
+            id: f.id,
+            typeId: f.typeId,
+            name: f.name,
+            category: f.category,
+            x: f.x,
+            y: f.y,
+            width: f.width,
+            height: f.height,
+            widthFeet: f.width / scale,
+            heightFeet: f.height / scale,
+            rotation: f.rotation || 0
+        }));
+        
+        const doorData = freeformOpenings.filter(o => o.type === 'door').map(d => ({
+            type: 'door',
+            x: d.x, y: d.y,
+            width: d.width, height: d.height
+        }));
+        
+        const windowData = freeformOpenings.filter(o => o.type === 'window').map(w => ({
+            type: 'window',
+            x: w.x, y: w.y,
+            width: w.width, height: w.height
+        }));
+        
+        // Calculate room bounds
+        let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+        for (const w of walls) {
+            minX = Math.min(minX, w.start.x, w.end.x);
+            minY = Math.min(minY, w.start.y, w.end.y);
+            maxX = Math.max(maxX, w.start.x, w.end.x);
+            maxY = Math.max(maxY, w.start.y, w.end.y);
+        }
+        
+        return {
+            scale,
+            unit,
+            roomBounds: walls.length > 0 ? {
+                x: minX, y: minY,
+                width: maxX - minX, height: maxY - minY,
+                widthFeet: (maxX - minX) / scale,
+                heightFeet: (maxY - minY) / scale
+            } : null,
+            walls: wallData,
+            doors: doorData,
+            windows: windowData,
+            furniture: furnitureData,
+            labels: labels.map(l => ({ text: l.text, x: l.x, y: l.y }))
+        };
+    }
+    
+    async function captureFloorPlanImage() {
+        const wrapper = document.getElementById('layout-canvas-wrapper');
+        if (!wrapper) return null;
+        
+        // Create a temporary canvas to render the SVG
+        const svgClone = svg.cloneNode(true);
+        const serializer = new XMLSerializer();
+        const svgStr = serializer.serializeToString(svgClone);
+        const blob = new Blob([svgStr], { type: 'image/svg+xml' });
+        const url = URL.createObjectURL(blob);
+        
+        return new Promise((resolve) => {
+            const img = new Image();
+            img.onload = () => {
+                const canvas = document.createElement('canvas');
+                canvas.width = Math.min(img.width, 1024);
+                canvas.height = Math.min(img.height, 1024);
+                const ctx = canvas.getContext('2d');
+                ctx.fillStyle = 'white';
+                ctx.fillRect(0, 0, canvas.width, canvas.height);
+                ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+                URL.revokeObjectURL(url);
+                resolve(canvas.toDataURL('image/jpeg', 0.8));
+            };
+            img.onerror = () => {
+                URL.revokeObjectURL(url);
+                resolve(null);
+            };
+            img.src = url;
+        });
+    }
+    
+    async function startFengShuiAnalysis() {
+        const hasImages = referenceImages.length > 0;
+        const hasDrawnContent = furniture.length > 0 || walls.length > 0;
+        
+        if (!hasImages && !hasDrawnContent) {
+            showFengShuiMessage('Add a floor plan image or draw some walls and furniture before running feng shui analysis.');
+            return;
+        }
+        
+        if (!hasImages && furniture.length === 0) {
+            showFengShuiMessage('Add furniture to your floor plan first. Feng shui analysis rearranges furniture — it won\'t modify walls, doors, or windows.');
+            return;
+        }
+        
+        showFengShuiPanel();
+        const panel = document.getElementById('feng-shui-panel');
+        if (panel) {
+            panel.querySelector('.feng-shui-body').innerHTML = `
+                <div class="feng-shui-loading">
+                    <div class="feng-shui-spinner"></div>
+                    <p>Analyzing your floor plan...</p>
+                    <small>${hasImages ? 'Analyzing image and generating improved layout — this may take a minute...' : 'Evaluating energy flow, furniture placement, and feng shui principles'}</small>
+                </div>
+            `;
+        }
+        
+        try {
+            if (hasImages) {
+                const refImage = referenceImages[0];
+                const imageBase64 = refImage.dataUrl;
+                
+                const response = await fetch('/api/feng-shui-image', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ imageBase64 })
+                });
+                
+                if (!response.ok) {
+                    const err = await response.json().catch(() => ({}));
+                    throw new Error(err.error || 'Image analysis failed');
+                }
+                
+                const result = await response.json();
+                displayImageFengShuiResults(result, imageBase64);
+            } else {
+                const floorPlanData = extractFloorPlanData();
+                
+                const response = await fetch('/api/feng-shui', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ floorPlanData })
+                });
+                
+                if (!response.ok) {
+                    const err = await response.json().catch(() => ({}));
+                    throw new Error(err.error || 'Analysis failed');
+                }
+                
+                const result = await response.json();
+                displayFengShuiResults(result);
+            }
+        } catch (err) {
+            console.error('Feng shui analysis error:', err);
+            const panel = document.getElementById('feng-shui-panel');
+            if (panel) {
+                panel.querySelector('.feng-shui-body').innerHTML = `
+                    <div class="feng-shui-error">
+                        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#ef4444" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg>
+                        <p>${err.message}</p>
+                        <button class="secondary-btn" onclick="this.closest('.feng-shui-body').innerHTML=''; document.getElementById('feng-shui-panel')?.remove();">Close</button>
+                    </div>
+                `;
+            }
+        }
+    }
+    
+    function showFengShuiPanel() {
+        document.getElementById('feng-shui-panel')?.remove();
+        removeFengShuiZones();
+        
+        const container = document.querySelector('.layout-canvas-container');
+        if (!container) return;
+        
+        const panel = document.createElement('div');
+        panel.id = 'feng-shui-panel';
+        panel.className = 'feng-shui-panel';
+        panel.innerHTML = `
+            <div class="feng-shui-header">
+                <div class="feng-shui-title">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M16.2 7.8l-2 6.3-6.4 2.1 2-6.3z"/></svg>
+                    <span>Feng Shui Analysis</span>
+                </div>
+                <button class="feng-shui-close" id="feng-shui-close-btn">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+                </button>
+            </div>
+            <div class="feng-shui-body"></div>
+        `;
+        
+        container.appendChild(panel);
+        
+        document.getElementById('feng-shui-close-btn').addEventListener('click', () => {
+            panel.remove();
+            removeFengShuiZones();
+        });
+    }
+    
+    function displayFengShuiResults(result) {
+        const panel = document.getElementById('feng-shui-panel');
+        if (!panel) return;
+        
+        const body = panel.querySelector('.feng-shui-body');
+        
+        // Score display
+        const scoreColor = result.overallScore >= 7 ? '#22c55e' : result.overallScore >= 4 ? '#f59e0b' : '#ef4444';
+        
+        let html = `
+            <div class="feng-shui-score">
+                <div class="score-circle" style="border-color: ${scoreColor}">
+                    <span class="score-number" style="color: ${scoreColor}">${result.overallScore}</span>
+                    <span class="score-label">/ 10</span>
+                </div>
+                <p class="score-summary">${result.summary}</p>
+            </div>
+        `;
+        
+        if (result.suggestions && result.suggestions.length > 0) {
+            html += `<div class="feng-shui-suggestions">`;
+            
+            // Apply All button
+            html += `
+                <button class="feng-shui-apply-all" id="feng-shui-apply-all">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20 6 9 17 4 12"/></svg>
+                    Apply All Suggestions
+                </button>
+            `;
+            
+            result.suggestions.forEach((suggestion, i) => {
+                const priorityColor = suggestion.priority === 'high' ? '#ef4444' : suggestion.priority === 'medium' ? '#f59e0b' : '#22c55e';
+                const matchedFurniture = furniture.find(f => f.id === suggestion.furnitureId);
+                
+                html += `
+                    <div class="feng-shui-suggestion" data-index="${i}">
+                        <div class="suggestion-header">
+                            <span class="suggestion-priority" style="background: ${priorityColor}">${suggestion.priority}</span>
+                            <span class="suggestion-name">${suggestion.furnitureName || (matchedFurniture?.name) || 'Furniture'}</span>
+                        </div>
+                        <p class="suggestion-principle">${suggestion.principle}</p>
+                        <p class="suggestion-desc">${suggestion.description}</p>
+                        <div class="suggestion-actions">
+                            <button class="feng-shui-show-btn" data-index="${i}">
+                                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/></svg>
+                                Show Zone
+                            </button>
+                            ${matchedFurniture ? `<button class="feng-shui-apply-btn" data-index="${i}">
+                                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20 6 9 17 4 12"/></svg>
+                                Apply
+                            </button>` : `<span class="suggestion-no-match">Furniture not found</span>`}
+                        </div>
+                    </div>
+                `;
+            });
+            
+            html += `</div>`;
+        } else {
+            html += `<p class="feng-shui-no-suggestions">Your floor plan has good feng shui! No major changes suggested.</p>`;
+        }
+        
+        body.innerHTML = html;
+        
+        // Store suggestions for later use
+        panel.dataset.suggestions = JSON.stringify(result.suggestions || []);
+        
+        // Hook up buttons
+        body.querySelectorAll('.feng-shui-show-btn').forEach(btn => {
+            btn.addEventListener('click', () => {
+                const idx = parseInt(btn.dataset.index);
+                const suggestions = JSON.parse(panel.dataset.suggestions);
+                showFengShuiZone(suggestions[idx], idx);
+            });
+        });
+        
+        body.querySelectorAll('.feng-shui-apply-btn').forEach(btn => {
+            btn.addEventListener('click', () => {
+                const idx = parseInt(btn.dataset.index);
+                const suggestions = JSON.parse(panel.dataset.suggestions);
+                applyFengShuiSuggestion(suggestions[idx]);
+                btn.textContent = 'Applied';
+                btn.disabled = true;
+                btn.classList.add('applied');
+            });
+        });
+        
+        document.getElementById('feng-shui-apply-all')?.addEventListener('click', () => {
+            const suggestions = JSON.parse(panel.dataset.suggestions);
+            addToHistory();
+            suggestions.forEach(s => applyFengShuiSuggestion(s, true));
+            redrawAll();
+            removeFengShuiZones();
+            body.querySelectorAll('.feng-shui-apply-btn').forEach(b => {
+                b.textContent = 'Applied';
+                b.disabled = true;
+                b.classList.add('applied');
+            });
+        });
+    }
+    
+    function displayImageFengShuiResults(result, originalImageBase64) {
+        const panel = document.getElementById('feng-shui-panel');
+        if (!panel) return;
+        
+        panel.classList.add('feng-shui-panel-wide');
+        const body = panel.querySelector('.feng-shui-body');
+        const scoreColor = result.overallScore >= 7 ? '#22c55e' : result.overallScore >= 4 ? '#f59e0b' : '#ef4444';
+        
+        let html = `
+            <div class="feng-shui-score">
+                <div class="score-circle" style="border-color: ${scoreColor}">
+                    <span class="score-number" style="color: ${scoreColor}">${result.overallScore}</span>
+                    <span class="score-label">/ 10</span>
+                </div>
+                <p class="score-summary">${result.summary}</p>
+            </div>
+        `;
+        
+        if (result.newImageBase64) {
+            html += `
+                <div class="feng-shui-image-comparison">
+                    <div class="comparison-tabs">
+                        <button class="comparison-tab active" data-view="after">Improved Layout</button>
+                        <button class="comparison-tab" data-view="before">Original</button>
+                        <button class="comparison-tab" data-view="side-by-side">Side by Side</button>
+                    </div>
+                    <div class="comparison-view comparison-after active" data-view="after">
+                        <img src="${result.newImageBase64}" alt="Improved feng shui layout" />
+                    </div>
+                    <div class="comparison-view comparison-before" data-view="before">
+                        <img src="${originalImageBase64}" alt="Original layout" />
+                    </div>
+                    <div class="comparison-view comparison-side-by-side" data-view="side-by-side">
+                        <div class="side-by-side-container">
+                            <div class="side-by-side-item">
+                                <span class="side-by-side-label">Before</span>
+                                <img src="${originalImageBase64}" alt="Original layout" />
+                            </div>
+                            <div class="side-by-side-item">
+                                <span class="side-by-side-label">After</span>
+                                <img src="${result.newImageBase64}" alt="Improved layout" />
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            `;
+        } else {
+            html += `<p class="feng-shui-image-note">Could not generate an improved layout image. See suggestions below.</p>`;
+        }
+        
+        if (result.suggestions && result.suggestions.length > 0) {
+            html += `<div class="feng-shui-suggestions feng-shui-image-suggestions">`;
+            html += `<h4 class="suggestions-heading">Suggestions</h4>`;
+            
+            result.suggestions.forEach((suggestion, i) => {
+                const priorityColor = suggestion.priority === 'high' ? '#ef4444' : suggestion.priority === 'medium' ? '#f59e0b' : '#22c55e';
+                
+                html += `
+                    <div class="feng-shui-suggestion">
+                        <div class="suggestion-header">
+                            <span class="suggestion-priority" style="background: ${priorityColor}">${suggestion.priority}</span>
+                            <span class="suggestion-name">${suggestion.furnitureName || 'Furniture'}</span>
+                        </div>
+                        <p class="suggestion-principle">${suggestion.principle}</p>
+                        <p class="suggestion-desc">${suggestion.description}</p>
+                        ${suggestion.currentPosition ? `<p class="suggestion-position"><strong>Current:</strong> ${suggestion.currentPosition}</p>` : ''}
+                        ${suggestion.suggestedPosition ? `<p class="suggestion-position"><strong>Move to:</strong> ${suggestion.suggestedPosition}</p>` : ''}
+                    </div>
+                `;
+            });
+            
+            html += `</div>`;
+        }
+        
+        body.innerHTML = html;
+        
+        // Hook up comparison tabs
+        body.querySelectorAll('.comparison-tab').forEach(tab => {
+            tab.addEventListener('click', () => {
+                const view = tab.dataset.view;
+                body.querySelectorAll('.comparison-tab').forEach(t => t.classList.remove('active'));
+                body.querySelectorAll('.comparison-view').forEach(v => v.classList.remove('active'));
+                tab.classList.add('active');
+                body.querySelector(`.comparison-view[data-view="${view}"]`)?.classList.add('active');
+            });
+        });
+    }
+    
+    function showFengShuiZone(suggestion, index) {
+        removeFengShuiZones();
+        
+        if (!suggestion.zoneX && !suggestion.newX) return;
+        
+        const floorPlanGroup = document.getElementById('floor-plan-group');
+        if (!floorPlanGroup) return;
+        
+        const zoneGroup = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+        zoneGroup.classList.add('feng-shui-zone');
+        
+        const cx = suggestion.zoneX || suggestion.newX;
+        const cy = suggestion.zoneY || suggestion.newY;
+        const zw = suggestion.zoneWidth || 150;
+        const zh = suggestion.zoneHeight || 150;
+        
+        // Highlighted zone
+        const zone = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
+        zone.setAttribute('x', cx - zw / 2);
+        zone.setAttribute('y', cy - zh / 2);
+        zone.setAttribute('width', zw);
+        zone.setAttribute('height', zh);
+        zone.setAttribute('rx', 8);
+        zone.setAttribute('fill', 'rgba(34, 197, 94, 0.15)');
+        zone.setAttribute('stroke', '#22c55e');
+        zone.setAttribute('stroke-width', 2 / zoom);
+        zone.setAttribute('stroke-dasharray', `${6 / zoom}`);
+        zoneGroup.appendChild(zone);
+        
+        // Ghost furniture at suggested position
+        const matchedFurniture = furniture.find(f => f.id === suggestion.furnitureId);
+        if (matchedFurniture && suggestion.newX !== undefined) {
+            const ghost = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
+            ghost.setAttribute('x', suggestion.newX);
+            ghost.setAttribute('y', suggestion.newY);
+            ghost.setAttribute('width', matchedFurniture.width);
+            ghost.setAttribute('height', matchedFurniture.height);
+            ghost.setAttribute('rx', 3);
+            ghost.setAttribute('fill', 'rgba(34, 197, 94, 0.25)');
+            ghost.setAttribute('stroke', '#22c55e');
+            ghost.setAttribute('stroke-width', 2 / zoom);
+            
+            if (suggestion.newRotation !== undefined && suggestion.newRotation !== (matchedFurniture.rotation || 0)) {
+                const rcx = suggestion.newX + matchedFurniture.width / 2;
+                const rcy = suggestion.newY + matchedFurniture.height / 2;
+                ghost.setAttribute('transform', `rotate(${suggestion.newRotation}, ${rcx}, ${rcy})`);
+            }
+            zoneGroup.appendChild(ghost);
+            
+            // Arrow from current to suggested position
+            const arrow = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+            arrow.setAttribute('x1', matchedFurniture.x + matchedFurniture.width / 2);
+            arrow.setAttribute('y1', matchedFurniture.y + matchedFurniture.height / 2);
+            arrow.setAttribute('x2', suggestion.newX + matchedFurniture.width / 2);
+            arrow.setAttribute('y2', suggestion.newY + matchedFurniture.height / 2);
+            arrow.setAttribute('stroke', '#22c55e');
+            arrow.setAttribute('stroke-width', 2 / zoom);
+            arrow.setAttribute('stroke-dasharray', `${4 / zoom}`);
+            arrow.setAttribute('marker-end', 'url(#feng-shui-arrow)');
+            zoneGroup.appendChild(arrow);
+        }
+        
+        // Label
+        const label = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+        label.setAttribute('x', cx);
+        label.setAttribute('y', cy - zh / 2 - 8 / zoom);
+        label.setAttribute('text-anchor', 'middle');
+        label.setAttribute('font-size', 12 / zoom);
+        label.setAttribute('fill', '#22c55e');
+        label.setAttribute('font-weight', '600');
+        label.textContent = suggestion.principle || 'Suggested zone';
+        zoneGroup.appendChild(label);
+        
+        // Add arrow marker if not present
+        let defs = svg.querySelector('defs');
+        if (!defs.querySelector('#feng-shui-arrow')) {
+            const marker = document.createElementNS('http://www.w3.org/2000/svg', 'marker');
+            marker.setAttribute('id', 'feng-shui-arrow');
+            marker.setAttribute('markerWidth', '10');
+            marker.setAttribute('markerHeight', '7');
+            marker.setAttribute('refX', '10');
+            marker.setAttribute('refY', '3.5');
+            marker.setAttribute('orient', 'auto');
+            const path = document.createElementNS('http://www.w3.org/2000/svg', 'polygon');
+            path.setAttribute('points', '0 0, 10 3.5, 0 7');
+            path.setAttribute('fill', '#22c55e');
+            marker.appendChild(path);
+            defs.appendChild(marker);
+        }
+        
+        floorPlanGroup.appendChild(zoneGroup);
+    }
+    
+    function removeFengShuiZones() {
+        document.querySelectorAll('.feng-shui-zone').forEach(el => el.remove());
+    }
+    
+    function applyFengShuiSuggestion(suggestion, skipHistory) {
+        const item = furniture.find(f => f.id === suggestion.furnitureId);
+        if (!item) return;
+        
+        if (!skipHistory) addToHistory();
+        
+        if (suggestion.newX !== undefined) item.x = suggestion.newX;
+        if (suggestion.newY !== undefined) item.y = suggestion.newY;
+        if (suggestion.newRotation !== undefined) item.rotation = suggestion.newRotation;
+        
+        if (!skipHistory) {
+            redrawAll();
+            removeFengShuiZones();
+        }
+    }
+    
+    function showFengShuiMessage(msg) {
+        const container = document.querySelector('.layout-canvas-container');
+        if (!container) return;
+        
+        const toast = document.createElement('div');
+        toast.className = 'feng-shui-toast';
+        toast.innerHTML = `
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>
+            <span>${msg}</span>
+        `;
+        container.appendChild(toast);
+        setTimeout(() => toast.classList.add('show'), 10);
+        setTimeout(() => {
+            toast.classList.remove('show');
+            setTimeout(() => toast.remove(), 300);
+        }, 4000);
     }
     
     // Public API

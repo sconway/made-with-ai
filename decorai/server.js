@@ -1,5 +1,6 @@
 import express from 'express';
 import fetch from 'node-fetch';
+import FormDataLib from 'form-data';
 import cors from 'cors';
 import path from 'path';
 import { fileURLToPath } from 'url';
@@ -379,6 +380,261 @@ function removeWhiteBackground(svgString) {
   
   return processed;
 }
+
+// Feng Shui Image Analysis endpoint — analyzes an imported floor plan image
+// and generates a new image with improved feng shui furniture layout
+app.post('/api/feng-shui-image', async (req, res) => {
+  try {
+    const apiKey = process.env.OPENAI_API_KEY;
+    if (!apiKey) {
+      return res.status(500).json({ error: 'OpenAI API key not configured' });
+    }
+
+    const { imageBase64 } = req.body;
+    if (!imageBase64) {
+      return res.status(400).json({ error: 'Image data is required' });
+    }
+
+    console.log('Starting feng shui image analysis...');
+
+    // Step 1: Analyze the floor plan with GPT-4o vision
+    const analysisResponse = await fetch('https://api.openai.com/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${apiKey}`,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        model: 'gpt-4o',
+        messages: [
+          {
+            role: 'system',
+            content: `You are an expert feng shui consultant analyzing floor plan images. Return ONLY valid JSON (no markdown, no code fences).
+
+Analyze the floor plan image and provide:
+1. A feng shui score (1-10)
+2. A summary of the current feng shui
+3. Text-based suggestions for furniture rearrangement
+4. A detailed image editing prompt that describes the improved floor plan
+
+CRITICAL RULES:
+- Walls, doors, and windows must NEVER be moved or changed
+- Only suggest rearranging furniture
+- The edit prompt must describe the EXACT same room layout (same walls, doors, windows, same style) but with furniture rearranged to better positions
+- Be specific about where furniture should move
+
+Return this JSON:
+{
+  "overallScore": <1-10>,
+  "summary": "<brief feng shui assessment>",
+  "suggestions": [
+    {
+      "furnitureName": "<name of item>",
+      "currentPosition": "<where it is now>",
+      "suggestedPosition": "<where it should go>",
+      "principle": "<feng shui principle>",
+      "description": "<what to change and why>",
+      "priority": "high" | "medium" | "low"
+    }
+  ],
+  "editPrompt": "<A detailed prompt for editing this exact floor plan image. Describe the same room with identical walls, doors, windows, floor, and art style, but with furniture rearranged per your suggestions. Mention each piece of furniture and its new position. Start with: 'Edit this floor plan to rearrange the furniture for better feng shui while keeping all walls, doors, and windows in place.'>"
+}`
+          },
+          {
+            role: 'user',
+            content: [
+              { type: 'image_url', image_url: { url: imageBase64, detail: 'high' } },
+              { type: 'text', text: 'Analyze this floor plan for feng shui. Provide improvement suggestions and an edit prompt.' }
+            ]
+          }
+        ],
+        max_tokens: 4096,
+        temperature: 0.3
+      })
+    });
+
+    if (!analysisResponse.ok) {
+      const err = await analysisResponse.json().catch(() => ({}));
+      console.error('GPT-4o analysis error:', err);
+      return res.status(analysisResponse.status).json({ error: err.error?.message || 'Analysis failed' });
+    }
+
+    const analysisData = await analysisResponse.json();
+    const analysisContent = analysisData.choices?.[0]?.message?.content;
+
+    let analysis;
+    try {
+      const jsonStr = analysisContent.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim();
+      analysis = JSON.parse(jsonStr);
+    } catch (e) {
+      console.error('Failed to parse feng shui analysis:', analysisContent);
+      return res.status(500).json({ error: 'Failed to parse analysis response', raw: analysisContent });
+    }
+
+    console.log('Feng shui analysis complete. Score:', analysis.overallScore);
+    console.log('Edit prompt:', analysis.editPrompt?.substring(0, 100) + '...');
+
+    // Step 2: Generate improved floor plan with gpt-image-1 edit endpoint
+    let rawBase64 = imageBase64;
+    if (rawBase64.includes(',')) {
+      rawBase64 = rawBase64.split(',')[1];
+    }
+
+    const imageBuffer = Buffer.from(rawBase64, 'base64');
+
+    const formData = new FormDataLib();
+    formData.append('image[]', imageBuffer, {
+      filename: 'floor-plan.png',
+      contentType: 'image/png'
+    });
+    formData.append('model', 'gpt-image-1');
+    formData.append('prompt', analysis.editPrompt || 'Rearrange the furniture in this floor plan for better feng shui. Keep all walls, doors, and windows in place.');
+    formData.append('size', '1024x1024');
+    formData.append('quality', 'high');
+
+    console.log('Generating improved floor plan image...');
+
+    const editResponse = await fetch('https://api.openai.com/v1/images/edits', {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${apiKey}`,
+        ...formData.getHeaders()
+      },
+      body: formData
+    });
+
+    let newImageBase64 = null;
+    if (editResponse.ok) {
+      const editData = await editResponse.json();
+      const b64 = editData.data?.[0]?.b64_json;
+      if (b64) {
+        newImageBase64 = `data:image/png;base64,${b64}`;
+      }
+      console.log('Image generation successful');
+    } else {
+      const editErr = await editResponse.json().catch(() => ({}));
+      console.error('Image edit error:', editErr);
+      // Continue without the generated image — still return analysis
+    }
+
+    res.json({
+      overallScore: analysis.overallScore,
+      summary: analysis.summary,
+      suggestions: analysis.suggestions,
+      newImageBase64
+    });
+  } catch (err) {
+    console.error('Feng shui image analysis error:', err);
+    res.status(500).json({ error: 'Server error during feng shui image analysis' });
+  }
+});
+
+// Feng Shui Analysis endpoint (structured data)
+app.post('/api/feng-shui', async (req, res) => {
+  try {
+    const apiKey = process.env.OPENAI_API_KEY;
+    if (!apiKey) {
+      return res.status(500).json({ error: 'OpenAI API key not configured' });
+    }
+
+    const { floorPlanData, imageBase64 } = req.body;
+
+    const messages = [
+      {
+        role: 'system',
+        content: `You are an expert feng shui consultant analyzing floor plans. You MUST return ONLY valid JSON (no markdown, no code fences, no explanation text outside the JSON).
+
+CRITICAL RULES:
+- NEVER suggest moving, adding, or removing walls, doors, or windows
+- ONLY suggest rearranging existing furniture items
+- Each suggestion must reference a specific furniture item by its exact id
+- Suggested positions (newX, newY) must be within room boundaries
+- Suggested positions must not overlap with walls or other furniture
+- Rotations must be in degrees (0, 90, 180, 270)
+
+Return this exact JSON structure:
+{
+  "overallScore": <number 1-10>,
+  "summary": "<brief feng shui assessment>",
+  "suggestions": [
+    {
+      "furnitureId": "<exact id of the furniture item>",
+      "furnitureName": "<name of the item>",
+      "principle": "<feng shui principle being applied>",
+      "description": "<what to do and why>",
+      "priority": "high" | "medium" | "low",
+      "newX": <suggested X coordinate>,
+      "newY": <suggested Y coordinate>,
+      "newRotation": <suggested rotation in degrees>,
+      "zoneX": <center X of the recommended zone>,
+      "zoneY": <center Y of the recommended zone>,
+      "zoneWidth": <width of zone>,
+      "zoneHeight": <height of zone>
+    }
+  ]
+}`
+      }
+    ];
+
+    const userContent = [];
+
+    if (imageBase64) {
+      userContent.push({
+        type: 'image_url',
+        image_url: { url: imageBase64, detail: 'high' }
+      });
+      userContent.push({
+        type: 'text',
+        text: `Analyze this floor plan image for feng shui. The structured data for the furniture and walls is provided below.\n\n${JSON.stringify(floorPlanData, null, 2)}\n\nProvide feng shui furniture rearrangement suggestions. Remember: walls, doors, and windows must NOT change. Only rearrange existing furniture. Use the exact furniture IDs from the data.`
+      });
+    } else {
+      userContent.push({
+        type: 'text',
+        text: `Analyze this floor plan for feng shui. Here is the structured layout data:\n\n${JSON.stringify(floorPlanData, null, 2)}\n\nProvide feng shui furniture rearrangement suggestions. Remember: walls, doors, and windows must NOT change. Only rearrange existing furniture. Use the exact furniture IDs from the data. Coordinates are in pixels where ${floorPlanData.scale || 50} pixels = 1 foot.`
+      });
+    }
+
+    messages.push({ role: 'user', content: userContent });
+
+    const response = await fetch('https://api.openai.com/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${apiKey}`,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        model: 'gpt-4o',
+        messages,
+        max_tokens: 4096,
+        temperature: 0.3
+      })
+    });
+
+    if (!response.ok) {
+      const err = await response.json().catch(() => ({}));
+      console.error('OpenAI API error:', err);
+      return res.status(response.status).json({ error: err.error?.message || 'OpenAI API error' });
+    }
+
+    const data = await response.json();
+    const content = data.choices?.[0]?.message?.content;
+
+    // Parse JSON from the response (handle possible markdown fences)
+    let parsed;
+    try {
+      const jsonStr = content.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim();
+      parsed = JSON.parse(jsonStr);
+    } catch (e) {
+      console.error('Failed to parse feng shui response:', content);
+      return res.status(500).json({ error: 'Invalid response from AI', raw: content });
+    }
+
+    res.json(parsed);
+  } catch (err) {
+    console.error('Feng shui analysis error:', err);
+    res.status(500).json({ error: 'Server error during feng shui analysis' });
+  }
+});
 
 // Serve index.html for all other routes in production
 if (process.env.NODE_ENV === 'production') {
