@@ -55,7 +55,10 @@ const FloorPlanEditor = (() => {
     let showDimensions = true;
     let gridSize = 50; // pixels per grid unit (1 foot = 50 pixels)
     let snapDistance = 30; // pixels for corner snapping
+    let cornerAngleSnapDistance = 25; // pixels: when moving a corner, snap to 90°/180° positions within this
     let snapRelease = 45; // pixels to break free once snapped (hysteresis)
+    let axisSnapThreshold = 14; // pixels: snap to horizontal/vertical when within this
+    let angleSnapDegrees = 2.5; // degrees: snap to 90°/180° only when very close (connecting lines)
     let currentSnapTarget = null; // { x, y, type } — tracks the active magnetic snap
     let zoom = 1;
     
@@ -478,8 +481,15 @@ const FloorPlanEditor = (() => {
                 }
             }
             
-            // Check if clicking on a wall
+            // Check if clicking on a wall — but if click is near a corner, select/drag the corner instead
             if (target.classList.contains('wall-line')) {
+                const nearbyCorner = findNearbyCorner(pos);
+                if (nearbyCorner) {
+                    deselectAll();
+                    isDragging = true;
+                    dragTarget = { type: 'corner', element: nearbyCorner };
+                    return;
+                }
                 const wallId = target.dataset.wallId;
                 const wall = walls.find(w => w.id === wallId);
                 if (wall) {
@@ -527,6 +537,10 @@ const FloorPlanEditor = (() => {
             }
             
             if (drawingStartCorner) {
+                // Apply axis/angle snap so placed point matches preview (only when creating new corner)
+                if (!targetCorner) {
+                    snapPos = applyDrawingSnaps(drawingStartCorner, snapPos);
+                }
                 // Complete the wall segment
                 const endCorner = targetCorner || createCorner(snapPos);
                 if (endCorner.id !== drawingStartCorner.id) {
@@ -675,7 +689,11 @@ const FloorPlanEditor = (() => {
             if (currentTool === 'wall' && drawingStartCorner) {
                 const rawPos = getMousePos(e, true);
                 const snap = getMagneticSnapPos(rawPos);
-                const previewEnd = snap || rawPos;
+                let previewEnd = snap || rawPos;
+                // Don't apply axis/angle snap when magnetically snapped to a point — keep line on the snap target
+                if (!currentSnapTarget) {
+                    previewEnd = applyDrawingSnaps(drawingStartCorner, previewEnd);
+                }
                 drawWallPreview(drawingStartCorner, previewEnd);
                 highlightSnapTarget(rawPos);
             } else if (currentTool === 'room' && drawingStartCorner) {
@@ -1986,6 +2004,54 @@ const FloorPlanEditor = (() => {
         return newCorner;
     }
     
+    function getAngleSnapPositionForCorner(corner, newPos) {
+        if (!corner.walls || corner.walls.length < 2) return null;
+        
+        const others = corner.walls.map(w => (w.start === corner ? w.end : w.start));
+        let best = null;
+        let bestDist = cornerAngleSnapDistance;
+        
+        for (let i = 0; i < others.length; i++) {
+            for (let j = i + 1; j < others.length; j++) {
+                const A = others[i];
+                const B = others[j];
+                
+                // 90°: locus is circle with diameter AB. Closest point on circle to newPos.
+                const midX = (A.x + B.x) / 2;
+                const midY = (A.y + B.y) / 2;
+                const dx = B.x - A.x;
+                const dy = B.y - A.y;
+                const r = Math.sqrt(dx * dx + dy * dy) / 2;
+                if (r >= 1) {
+                    const toPosX = newPos.x - midX;
+                    const toPosY = newPos.y - midY;
+                    const len = Math.sqrt(toPosX * toPosX + toPosY * toPosY) || 1;
+                    const snapX = midX + r * (toPosX / len);
+                    const snapY = midY + r * (toPosY / len);
+                    const d = Math.sqrt((newPos.x - snapX) ** 2 + (newPos.y - snapY) ** 2);
+                    if (d < bestDist) {
+                        bestDist = d;
+                        best = { x: snapX, y: snapY };
+                    }
+                }
+                
+                // 180°: locus is line through A and B. Closest point on line to newPos.
+                const lenSq = dx * dx + dy * dy;
+                if (lenSq >= 1) {
+                    const t = ((newPos.x - A.x) * dx + (newPos.y - A.y) * dy) / lenSq;
+                    const snapX = A.x + t * dx;
+                    const snapY = A.y + t * dy;
+                    const d = Math.sqrt((newPos.x - snapX) ** 2 + (newPos.y - snapY) ** 2);
+                    if (d < bestDist) {
+                        bestDist = d;
+                        best = { x: snapX, y: snapY };
+                    }
+                }
+            }
+        }
+        return best;
+    }
+    
     function moveCorner(corner, newPos) {
         // Clear any existing snap indicators
         removeWallSnapIndicator();
@@ -2020,9 +2086,13 @@ const FloorPlanEditor = (() => {
             return;
         }
         
-        // No snap - just move the corner
-        corner.x = newPos.x;
-        corner.y = newPos.y;
+        // No corner or wall snap — apply 90°/180° angle snap if this corner has multiple walls
+        let finalPos = newPos;
+        const angleSnapPos = getAngleSnapPositionForCorner(corner, newPos);
+        if (angleSnapPos) finalPos = angleSnapPos;
+        
+        corner.x = finalPos.x;
+        corner.y = finalPos.y;
         redrawAll();
         showAngleIndicators(corner);
     }
@@ -2194,14 +2264,32 @@ const FloorPlanEditor = (() => {
     function getMagneticSnapPos(rawPos) {
         // If already snapped, check whether cursor has moved far enough to break free
         if (currentSnapTarget) {
-            const distFromSnap = Math.sqrt(
-                (rawPos.x - currentSnapTarget.x) ** 2 + (rawPos.y - currentSnapTarget.y) ** 2
-            );
-            if (distFromSnap < snapRelease) {
-                return currentSnapTarget; // still locked
+            if (currentSnapTarget.type === 'wall' && currentSnapTarget.wall) {
+                // For walls, measure distance to the wall line so you can slide along it
+                const distToWall = pointToLineDistance(
+                    rawPos,
+                    currentSnapTarget.wall.start,
+                    currentSnapTarget.wall.end
+                );
+                if (distToWall < snapRelease) {
+                    // Still snapped: slide along the wall
+                    const projected = projectPointOnWall(currentSnapTarget.wall, rawPos);
+                    currentSnapTarget.x = projected.x;
+                    currentSnapTarget.y = projected.y;
+                    return currentSnapTarget;
+                }
+                // Too far from the wall – break snap
+                currentSnapTarget = null;
+            } else {
+                // Corner / edge: distance to the fixed snap point
+                const distFromSnap = Math.sqrt(
+                    (rawPos.x - currentSnapTarget.x) ** 2 + (rawPos.y - currentSnapTarget.y) ** 2
+                );
+                if (distFromSnap < snapRelease) {
+                    return currentSnapTarget; // still locked
+                }
+                currentSnapTarget = null;
             }
-            // Broke free
-            currentSnapTarget = null;
         }
         
         // Corner snap (highest priority)
@@ -2382,6 +2470,58 @@ const FloorPlanEditor = (() => {
         }
     }
     
+    function applyDrawingSnaps(start, end) {
+        let x = end.x;
+        let y = end.y;
+        const dx = x - start.x;
+        const dy = y - start.y;
+        
+        // Axis snap: snap to horizontal or vertical when close
+        const axisTh = axisSnapThreshold;
+        if (Math.abs(dy) <= axisTh && Math.abs(dx) > Math.abs(dy)) {
+            y = start.y;
+        } else if (Math.abs(dx) <= axisTh && Math.abs(dy) > Math.abs(dx)) {
+            x = start.x;
+        }
+        
+        // Angle snap: if this corner has a connecting wall, snap to 90° or 180° relative to it
+        if (start.walls && start.walls.length > 0) {
+            const wall = start.walls[0];
+            const other = wall.start === start ? wall.end : wall.start;
+            const baseAngle = Math.atan2(other.y - start.y, other.x - start.x);
+            
+            const curDx = x - start.x;
+            const curDy = y - start.y;
+            const length = Math.sqrt(curDx * curDx + curDy * curDy);
+            if (length < 2) return { x, y };
+            
+            let currentAngle = Math.atan2(curDy, curDx);
+            let relAngle = currentAngle - baseAngle;
+            while (relAngle > Math.PI) relAngle -= 2 * Math.PI;
+            while (relAngle < -Math.PI) relAngle += 2 * Math.PI;
+            
+            const angleTh = (angleSnapDegrees * Math.PI) / 180;
+            const steps = [0, Math.PI / 2, Math.PI, -Math.PI / 2];
+            let best = null;
+            let bestDiff = Infinity;
+            for (const step of steps) {
+                let d = Math.abs(relAngle - step);
+                if (d > Math.PI) d = 2 * Math.PI - d;
+                if (d < bestDiff && d <= angleTh) {
+                    bestDiff = d;
+                    best = step;
+                }
+            }
+            if (best !== null) {
+                const snapAngle = baseAngle + best;
+                x = start.x + length * Math.cos(snapAngle);
+                y = start.y + length * Math.sin(snapAngle);
+            }
+        }
+        
+        return { x, y };
+    }
+    
     function drawWallPreview(start, end) {
         removePreview();
         
@@ -2469,6 +2609,12 @@ const FloorPlanEditor = (() => {
     }
     
     function cancelDrawing() {
+        // If we were drawing a wall and only the first point was placed, remove that corner
+        if (drawingStartCorner && drawingStartCorner.walls && drawingStartCorner.walls.length === 0) {
+            corners = corners.filter(c => c.id !== drawingStartCorner.id);
+            redrawAll();
+        }
+        
         isDrawing = false;
         drawingStartCorner = null;
         currentSnapTarget = null;
@@ -4019,15 +4165,31 @@ const FloorPlanEditor = (() => {
         
         if (Math.abs(origW) < 1 || Math.abs(origH) < 1) return;
         
-        const newW = mousePos.x - anchorX;
-        const newH = mousePos.y - anchorY;
+        // Distance from anchor to current handle position
+        let newW = mousePos.x - anchorX;
+        let newH = mousePos.y - anchorY;
+        
+        // Prevent the handle from crossing over the anchor, which would flip the geometry.
+        // This keeps scaling on the side being dragged and avoids the line "jumping" to the opposite side.
+        const minSize = 5;
+        if (origW > 0) {
+            newW = Math.max(newW, minSize);
+        } else {
+            newW = Math.min(newW, -minSize);
+        }
+        if (origH > 0) {
+            newH = Math.max(newH, minSize);
+        } else {
+            newH = Math.min(newH, -minSize);
+        }
         
         // Uniform scale based on the larger axis change
         const sx = newW / origW;
         const sy = newH / origH;
         const uniScale = Math.max(0.1, (Math.abs(sx) + Math.abs(sy)) / 2);
-        const finalSx = origW > 0 ? uniScale : -uniScale;
-        const finalSy = origH > 0 ? uniScale : -uniScale;
+        // Always keep the scale factor positive so geometry stays on the same side
+        const finalSx = uniScale;
+        const finalSy = uniScale;
         
         const snap = scaleStartPositions;
         
