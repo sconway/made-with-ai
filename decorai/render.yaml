@@ -1,0 +1,12 @@
+# Render Blueprint for DecorAI
+# In Render dashboard: set Root Directory to "decorai" for this service
+# so npm install runs here and installs @supabase/supabase-js etc.
+services:
+  - type: web
+    name: decorai
+    env: node
+    buildCommand: npm install && npm run build
+    startCommand: npm start
+    envVars:
+      - key: NODE_ENV
+        value: production
