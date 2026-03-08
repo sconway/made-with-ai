@@ -1,6 +1,11 @@
 import feather from 'feather-icons';
-import { createClient } from '@supabase/supabase-js';
 import FloorPlanEditor from './floorPlanEditor.js';
+
+// Supabase loaded at runtime from CDN so the build does not depend on node_modules resolution (avoids Render CI issues)
+async function loadSupabase() {
+    const mod = await import('https://esm.sh/@supabase/supabase-js@2');
+    return mod.createClient;
+}
 
 // Server/API configuration (same pattern as Brandwise)
 const PROXY_SERVER_URL = window.location.hostname === 'localhost'
@@ -211,6 +216,7 @@ async function initializeApp() {
         const response = await fetch(`${PROXY_SERVER_URL}/api/config`);
         appConfig = await response.json();
         if (appConfig.supabaseUrl && appConfig.supabaseAnonKey) {
+            const createClient = await loadSupabase();
             supabase = createClient(appConfig.supabaseUrl, appConfig.supabaseAnonKey);
             const { data: { session } } = await supabase.auth.getSession();
             if (session) {
