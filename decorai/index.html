@@ -25,10 +25,30 @@
                     <i data-feather="layout"></i>
                     <span>Layout Editor</span>
                 </button>
-                <button id="login-btn" class="login-btn">
-                    <i data-feather="user"></i>
-                    <span>Login</span>
-                </button>
+                <!-- Auth Buttons (shown when logged out) -->
+                <div id="auth-buttons" class="auth-buttons">
+                    <button id="login-btn" class="secondary-btn" type="button">
+                        <i data-feather="log-in"></i>
+                        <span>Sign In</span>
+                    </button>
+                    <button id="signup-btn" class="primary-btn" type="button">
+                        <span>Sign Up</span>
+                    </button>
+                </div>
+                <!-- User Menu (shown when logged in) -->
+                <div id="user-menu" class="user-menu hidden">
+                    <button id="user-menu-btn" class="user-menu-btn" type="button">
+                        <i data-feather="user"></i>
+                        <span id="user-email-display">Account</span>
+                        <i data-feather="chevron-down"></i>
+                    </button>
+                    <div id="user-dropdown" class="user-dropdown hidden">
+                        <button id="logout-btn" class="dropdown-item" type="button">
+                            <i data-feather="log-out"></i>
+                            <span>Sign Out</span>
+                        </button>
+                    </div>
+                </div>
             </div>
         </header>
 
@@ -312,8 +332,15 @@
                 <button id="layout-redo-btn" class="tool-btn" title="Redo (Ctrl+Y)">
                     <i data-feather="rotate-cw"></i>
                 </button>
+                <button id="layout-select-all-btn" class="tool-btn" title="Select All (Ctrl+A)">
+                    <i data-feather="check-square"></i>
+                </button>
                 <button id="layout-clear-btn" class="tool-btn" title="Clear All">
                     <i data-feather="trash-2"></i>
+                </button>
+                <button id="layout-save-btn" class="tool-btn" title="Save layout to your account">
+                    <i data-feather="save"></i>
+                    <span>Save</span>
                 </button>
                 <button id="feng-shui-btn" class="tool-btn feng-shui-btn" title="Feng Shui Analysis">
                     <i data-feather="compass"></i>
@@ -334,6 +361,7 @@
                         <div class="export-buttons">
                             <button id="export-png-btn">Export as PNG</button>
                             <button id="export-svg-btn">Export as SVG</button>
+                            <button id="export-layout-file-btn">Save layout as file</button>
                         </div>
                     </div>
                 </div>
@@ -386,6 +414,11 @@
                             <input type="checkbox" id="snap-to-grid" checked>
                             <span>Snap to Grid</span>
                         </label>
+                    </div>
+                    <div class="option-group snap-threshold-row" id="snap-threshold-row">
+                        <label>Snap threshold</label>
+                        <input type="range" id="snap-threshold" min="8" max="50" value="30">
+                        <span id="snap-threshold-value">30px</span>
                     </div>
                     <div class="option-group">
                         <label class="checkbox-label">
@@ -495,54 +528,91 @@
         </div>
     </div>
 
-    <!-- Auth Modal -->
+    <!-- Auth Modal (Sign In / Sign Up) -->
     <div class="modal" id="auth-modal">
-        <div class="modal-content">
+        <div class="modal-content auth-modal">
             <div class="modal-header">
-                <h2 id="auth-modal-title">Enter API Keys</h2>
-                <button id="close-modal-btn" class="close-modal-btn">
+                <h2 id="auth-modal-title">Sign In</h2>
+                <button id="close-modal-btn" class="close-modal-btn" type="button">
                     <i data-feather="x"></i>
                 </button>
             </div>
             <div class="modal-body">
-                <div id="api-key-form" class="auth-form">
-                    <p>DecorAI uses Replicate (Stable Diffusion) to generate room designs. Please provide your Replicate
-                        API token below.</p>
-                    <div class="input-group">
-                        <label for="replicate-api-key">Replicate API Key:</label>
-                        <div class="password-input">
-                            <input type="password" id="replicate-api-key" placeholder="Enter your Replicate token">
-                            <button id="toggle-replicate-key-visibility-btn" type="button"
-                                class="toggle-visibility-btn">
-                                <i data-feather="eye"></i>
-                            </button>
-                        </div>
+                <form id="login-form" class="auth-form">
+                    <div class="form-group">
+                        <label for="login-email">Email</label>
+                        <input type="email" id="login-email" placeholder="you@example.com" required>
+                    </div>
+                    <div class="form-group">
+                        <label for="login-password">Password</label>
+                        <input type="password" id="login-password" placeholder="••••••••" required minlength="6">
+                    </div>
+                    <div id="login-error" class="auth-error hidden"></div>
+                    <div id="login-resend-block" class="login-resend-block hidden">
+                        <button type="button" id="login-resend-btn" class="secondary-btn">Resend verification email</button>
+                        <div id="login-resend-message" class="auth-email-exists-message hidden"></div>
+                    </div>
+                    <button type="submit" class="primary-btn auth-submit-btn">Sign In</button>
+                </form>
+                <form id="signup-form" class="auth-form hidden">
+                    <div class="form-group">
+                        <label for="signup-email">Email</label>
+                        <input type="email" id="signup-email" placeholder="you@example.com" required>
+                    </div>
+                    <div class="form-group">
+                        <label for="signup-password">Password</label>
+                        <input type="password" id="signup-password" placeholder="••••••••" required minlength="6">
+                    </div>
+                    <div class="form-group">
+                        <label for="signup-confirm-password">Confirm Password</label>
+                        <input type="password" id="signup-confirm-password" placeholder="••••••••" required minlength="6">
+                    </div>
+                    <div id="signup-error" class="auth-error hidden"></div>
+                    <button type="submit" class="primary-btn auth-submit-btn">Create Account</button>
+                </form>
+                <div id="signup-success" class="auth-success hidden">
+                    <div class="success-icon">
+                        <i data-feather="mail"></i>
+                    </div>
+                    <h3>Check your email</h3>
+                    <p>We've sent a confirmation link to <strong id="signup-success-email"></strong></p>
+                    <p class="success-note">Click the link to activate your account.</p>
+                    <button type="button" id="success-close-btn" class="primary-btn">Got it</button>
+                </div>
+                <div id="signup-email-exists" class="auth-email-exists hidden">
+                    <div class="auth-email-exists-icon">
+                        <i data-feather="user"></i>
+                    </div>
+                    <h3>Account already exists</h3>
+                    <p>An account with this email already exists. Sign in with your password, or we can email you a sign-in link.</p>
+                    <div id="signup-email-exists-message" class="auth-email-exists-message hidden"></div>
+                    <div class="auth-email-exists-actions">
+                        <button type="button" id="email-exists-signin-btn" class="primary-btn">Sign in</button>
+                        <button type="button" id="email-exists-magic-link-btn" class="secondary-btn">Email me a sign-in link</button>
+                        <button type="button" id="email-exists-resend-btn" class="secondary-btn text-btn-small">Resend verification email</button>
                     </div>
                 </div>
-
-                <div class="auth-info">
-                    <p><i data-feather="info" class="info-icon"></i> Your API keys are stored locally and are never sent
-                        to our servers. They are used only for direct API calls to the respective services.</p>
-                    <p><a href="https://replicate.com/account/api-tokens" target="_blank">Get a Replicate API Token <i
-                                data-feather="external-link" class="small-icon"></i></a></p>
-                    <p><a href="https://platform.openai.com/api-keys" target="_blank">Get an OpenAI API key <i
-                                data-feather="external-link" class="small-icon"></i></a></p>
+                <div id="confirm-email-required" class="auth-email-exists hidden">
+                    <div class="auth-email-exists-icon">
+                        <i data-feather="mail"></i>
+                    </div>
+                    <h3>Confirm your email</h3>
+                    <p>Please confirm your email to use <strong id="confirm-email-feature-name"></strong>. We sent a link to <strong id="confirm-email-address"></strong>.</p>
+                    <div id="confirm-email-message" class="auth-email-exists-message hidden"></div>
+                    <div class="auth-email-exists-actions">
+                        <button type="button" id="confirm-email-resend-btn" class="primary-btn">Resend verification email</button>
+                        <button type="button" id="confirm-email-close-btn" class="secondary-btn">Close</button>
+                    </div>
                 </div>
-
-                <div class="credits-info">
-                    <h3>API Credits</h3>
-                    <p>Each design generation uses Replicate Stable Diffusion. Costs vary based on generation time.
-                        Check Replicate pricing for details.</p>
+                <div id="auth-forms-section">
+                    <div class="auth-divider">
+                        <span>or</span>
+                    </div>
+                    <div class="auth-switch">
+                        <p id="auth-switch-text">Don't have an account?</p>
+                        <button type="button" id="auth-switch-btn" class="text-btn">Sign Up</button>
+                    </div>
                 </div>
-
-                <div id="auth-error" class="auth-error hidden">
-                    <p><i data-feather="alert-circle"></i> <span id="auth-error-message"></span></p>
-                </div>
-            </div>
-            <div class="modal-footer">
-                <button id="auth-action-btn" class="primary-btn">
-                    <span>Save API Keys</span>
-                </button>
             </div>
         </div>
     </div>

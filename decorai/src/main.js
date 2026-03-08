@@ -1,5 +1,19 @@
 import feather from 'feather-icons';
-import './floorPlanEditor.js';
+import { createClient } from '@supabase/supabase-js';
+import FloorPlanEditor from './floorPlanEditor.js';
+
+// Server/API configuration (same pattern as Brandwise)
+const PROXY_SERVER_URL = window.location.hostname === 'localhost'
+    ? 'http://localhost:3001'
+    : '';
+
+// Supabase client and auth state (initialized in initializeApp)
+let supabase = null;
+let appConfig = null;
+let currentUser = null;
+let currentSession = null;
+// Fetched layout state: restored once when user opens the layout editor after sign-in/load
+let savedLayoutState = null;
 
 // DOM Elements
 const uploadContainer = document.getElementById('upload-container');
@@ -34,8 +48,40 @@ const backToUploadBtn = document.getElementById('back-to-upload-btn');
 
 // Auth elements
 const loginBtn = document.getElementById('login-btn');
+const signupBtn = document.getElementById('signup-btn');
 const authModal = document.getElementById('auth-modal');
 const closeModalBtn = document.getElementById('close-modal-btn');
+const loginForm = document.getElementById('login-form');
+const signupForm = document.getElementById('signup-form');
+const loginError = document.getElementById('login-error');
+const loginResendBlock = document.getElementById('login-resend-block');
+const loginResendBtn = document.getElementById('login-resend-btn');
+const loginResendMessage = document.getElementById('login-resend-message');
+const signupError = document.getElementById('signup-error');
+const authModalTitle = document.getElementById('auth-modal-title');
+const authSwitchBtn = document.getElementById('auth-switch-btn');
+const authSwitchText = document.getElementById('auth-switch-text');
+const signupSuccess = document.getElementById('signup-success');
+const signupSuccessEmail = document.getElementById('signup-success-email');
+const successCloseBtn = document.getElementById('success-close-btn');
+const signupEmailExists = document.getElementById('signup-email-exists');
+const signupEmailExistsMessage = document.getElementById('signup-email-exists-message');
+const emailExistsSigninBtn = document.getElementById('email-exists-signin-btn');
+const emailExistsResendBtn = document.getElementById('email-exists-resend-btn');
+const emailExistsMagicLinkBtn = document.getElementById('email-exists-magic-link-btn');
+const authFormsSection = document.getElementById('auth-forms-section');
+const confirmEmailRequired = document.getElementById('confirm-email-required');
+const confirmEmailFeatureName = document.getElementById('confirm-email-feature-name');
+const confirmEmailAddress = document.getElementById('confirm-email-address');
+const confirmEmailMessage = document.getElementById('confirm-email-message');
+const confirmEmailResendBtn = document.getElementById('confirm-email-resend-btn');
+const confirmEmailCloseBtn = document.getElementById('confirm-email-close-btn');
+const authButtons = document.getElementById('auth-buttons');
+const userMenu = document.getElementById('user-menu');
+const userMenuBtn = document.getElementById('user-menu-btn');
+const userDropdown = document.getElementById('user-dropdown');
+const userEmailDisplay = document.getElementById('user-email-display');
+const logoutBtn = document.getElementById('logout-btn');
 
 // Error message management
 function showItemsSelectionError() {
@@ -154,16 +200,446 @@ const fallbackImages = {
     ]
 };
 
-// Replicate API constants
-const PROXY_SERVER_URL = window.location.hostname === 'localhost'
-    ? 'http://localhost:3001'  // Local development
-    : '';  // Production - use relative URL
+// Replicate API constants (PROXY_SERVER_URL defined at top)
 const REPLICATE_API_URL = `${PROXY_SERVER_URL}/replicate/predictions`;
 const REPLICATE_POLL_URL = `${PROXY_SERVER_URL}/replicate/poll`;
 const REPLICATE_MODEL_VERSION = 'stability-ai/stable-diffusion-3.5-large'; // Example version, check replicate for latest/best
 
+// Initialize app: fetch config, Supabase client, and auth state (same pattern as Brandwise)
+async function initializeApp() {
+    try {
+        const response = await fetch(`${PROXY_SERVER_URL}/api/config`);
+        appConfig = await response.json();
+        if (appConfig.supabaseUrl && appConfig.supabaseAnonKey) {
+            supabase = createClient(appConfig.supabaseUrl, appConfig.supabaseAnonKey);
+            const { data: { session } } = await supabase.auth.getSession();
+            if (session) {
+                currentUser = session.user;
+                currentSession = session;
+                await fetchSavedLayout();
+            }
+            supabase.auth.onAuthStateChange(async (_event, session) => {
+                currentUser = session?.user ?? null;
+                currentSession = session ?? null;
+                if (session) await fetchSavedLayout();
+                else savedLayoutState = null;
+                updateAuthUI();
+            });
+            window.__decoraiGetLayoutStateToRestore = function () {
+                const s = savedLayoutState;
+                savedLayoutState = null;
+                return s ?? null;
+            };
+        }
+        updateAuthUI();
+    } catch (err) {
+        console.error('Error initializing app:', err);
+        updateAuthUI();
+    }
+}
+
+async function fetchSavedLayout() {
+    if (!currentSession?.access_token) return;
+    try {
+        const res = await fetch(`${PROXY_SERVER_URL}/api/layout`, {
+            headers: { Authorization: `Bearer ${currentSession.access_token}` }
+        });
+        if (res.ok) {
+            const data = await res.json();
+            if (data.state != null) savedLayoutState = data.state;
+        }
+    } catch (e) {
+        console.error('Failed to fetch saved layout:', e);
+    }
+}
+
+async function handleSaveLayout() {
+    if (!currentUser?.email_confirmed_at || !currentSession?.access_token) return;
+    try {
+        const state = FloorPlanEditor.getState();
+        const res = await fetch(`${PROXY_SERVER_URL}/api/layout`, {
+            method: 'PUT',
+            headers: {
+                'Content-Type': 'application/json',
+                Authorization: `Bearer ${currentSession.access_token}`
+            },
+            body: JSON.stringify({ state })
+        });
+        if (!res.ok) {
+            const err = await res.json().catch(() => ({}));
+            throw new Error(err.error || 'Failed to save');
+        }
+        showLayoutSaveToast('Layout saved. You can return to it anytime by signing in.');
+    } catch (e) {
+        showLayoutSaveToast(e?.message || 'Failed to save layout', true);
+    }
+}
+
+function showLayoutSaveToast(message, isError = false) {
+    const existing = document.getElementById('layout-save-toast');
+    if (existing) existing.remove();
+    const toast = document.createElement('div');
+    toast.id = 'layout-save-toast';
+    toast.className = 'layout-save-toast' + (isError ? ' error' : '');
+    toast.textContent = message;
+    const screen = document.getElementById('layout-editor-screen');
+    if (screen) screen.appendChild(toast);
+    setTimeout(() => toast.classList.add('show'), 10);
+    setTimeout(() => {
+        toast.classList.remove('show');
+        setTimeout(() => toast.remove(), 300);
+    }, 3000);
+}
+
+function updateAuthUI() {
+    if (!authButtons || !userMenu) return;
+    if (currentUser) {
+        authButtons.classList.add('hidden');
+        userMenu.classList.remove('hidden');
+        if (userEmailDisplay) userEmailDisplay.textContent = currentUser.email?.split('@')[0] || 'Account';
+    } else {
+        authButtons.classList.remove('hidden');
+        userMenu.classList.add('hidden');
+    }
+    if (typeof feather !== 'undefined') feather.replace();
+}
+
+function showAuthModal(mode = 'login') {
+    if (!authModal) return;
+    authModal.classList.add('show');
+    if (loginError) loginError.classList.add('hidden');
+    if (signupError) signupError.classList.add('hidden');
+    hideLoginResendBlock();
+    if (mode === 'login') {
+        if (authModalTitle) authModalTitle.textContent = 'Sign In';
+        if (loginForm) loginForm.classList.remove('hidden');
+        if (signupForm) signupForm.classList.add('hidden');
+        if (authSwitchText) authSwitchText.textContent = "Don't have an account?";
+        if (authSwitchBtn) authSwitchBtn.textContent = 'Sign Up';
+    } else {
+        if (authModalTitle) authModalTitle.textContent = 'Create Account';
+        if (loginForm) loginForm.classList.add('hidden');
+        if (signupForm) signupForm.classList.remove('hidden');
+        if (authSwitchText) authSwitchText.textContent = 'Already have an account?';
+        if (authSwitchBtn) authSwitchBtn.textContent = 'Sign In';
+    }
+    if (signupSuccess) signupSuccess.classList.add('hidden');
+    if (signupEmailExists) signupEmailExists.classList.add('hidden');
+    if (confirmEmailRequired) confirmEmailRequired.classList.add('hidden');
+    if (authFormsSection) authFormsSection.classList.remove('hidden');
+    if (typeof feather !== 'undefined') feather.replace();
+}
+
+function hideAuthModal() {
+    if (authModal) authModal.classList.remove('show');
+    if (loginForm) loginForm.reset();
+    if (signupForm) signupForm.reset();
+    if (loginError) { loginError.classList.add('hidden'); loginError.textContent = ''; }
+    if (signupError) { signupError.classList.add('hidden'); signupError.textContent = ''; }
+    hideLoginResendBlock();
+    if (signupSuccess) signupSuccess.classList.add('hidden');
+    if (signupEmailExists) { signupEmailExists.classList.add('hidden'); clearEmailExistsMessage(); }
+    if (confirmEmailRequired) { confirmEmailRequired.classList.add('hidden'); clearConfirmEmailMessage(); }
+    if (authFormsSection) authFormsSection.classList.remove('hidden');
+}
+
+function isEmailNotConfirmedError(err) {
+    const msg = (err?.message || '').toLowerCase();
+    return msg.includes('email not confirmed') || msg.includes('email_not_confirmed');
+}
+
+function showLoginResendBlock() {
+    if (loginResendBlock) loginResendBlock.classList.remove('hidden');
+    if (loginResendMessage) { loginResendMessage.classList.add('hidden'); loginResendMessage.textContent = ''; loginResendMessage.classList.remove('success', 'error'); }
+}
+
+function hideLoginResendBlock() {
+    if (loginResendBlock) loginResendBlock.classList.add('hidden');
+    if (loginResendMessage) { loginResendMessage.classList.add('hidden'); loginResendMessage.textContent = ''; }
+}
+
+async function handleLogin(e) {
+    e.preventDefault();
+    if (!supabase) return;
+    const email = document.getElementById('login-email')?.value;
+    const password = document.getElementById('login-password')?.value;
+    if (!email || !password) return;
+    if (loginError) loginError.classList.add('hidden');
+    hideLoginResendBlock();
+    try {
+        const { error } = await supabase.auth.signInWithPassword({ email, password });
+        if (error) throw error;
+        hideAuthModal();
+    } catch (err) {
+        if (loginError) { loginError.textContent = err.message; loginError.classList.remove('hidden'); }
+        if (isEmailNotConfirmedError(err)) showLoginResendBlock();
+    }
+}
+
+async function handleLoginResendClick() {
+    if (!supabase) return;
+    const email = document.getElementById('login-email')?.value;
+    if (!email) return;
+    if (loginResendBtn) { loginResendBtn.disabled = true; loginResendBtn.textContent = 'Sending…'; }
+    if (loginResendMessage) { loginResendMessage.classList.add('hidden'); loginResendMessage.textContent = ''; loginResendMessage.classList.remove('success', 'error'); }
+    try {
+        const { error } = await supabase.auth.resend({
+            type: 'signup',
+            email,
+            options: { emailRedirectTo: window.location.origin }
+        });
+        if (error) throw error;
+        if (loginResendMessage) {
+            loginResendMessage.textContent = 'Verification email sent. Check your inbox and spam folder.';
+            loginResendMessage.classList.add('success');
+            loginResendMessage.classList.remove('hidden');
+        }
+    } catch (err) {
+        if (loginResendMessage) {
+            loginResendMessage.textContent = err?.message || 'Failed to resend email.';
+            loginResendMessage.classList.add('error');
+            loginResendMessage.classList.remove('hidden');
+        }
+    }
+    if (loginResendBtn) { loginResendBtn.disabled = false; loginResendBtn.textContent = 'Resend verification email'; }
+}
+
+let lastSignupEmailForResend = null;
+
+function showEmailExistsState(email) {
+    lastSignupEmailForResend = email;
+    if (loginForm) loginForm.classList.add('hidden');
+    if (signupForm) signupForm.classList.add('hidden');
+    if (authFormsSection) authFormsSection.classList.add('hidden');
+    if (signupSuccess) signupSuccess.classList.add('hidden');
+    if (signupError) signupError.classList.add('hidden');
+    clearEmailExistsMessage();
+    if (signupEmailExists) signupEmailExists.classList.remove('hidden');
+    if (authModalTitle) authModalTitle.textContent = 'Account already exists';
+    if (typeof feather !== 'undefined') feather.replace();
+}
+
+function hideEmailExistsState() {
+    lastSignupEmailForResend = null;
+    if (signupEmailExists) signupEmailExists.classList.add('hidden');
+    clearEmailExistsMessage();
+}
+
+function clearEmailExistsMessage() {
+    if (!signupEmailExistsMessage) return;
+    signupEmailExistsMessage.classList.add('hidden');
+    signupEmailExistsMessage.textContent = '';
+    signupEmailExistsMessage.classList.remove('success', 'error');
+}
+
+function setEmailExistsMessage(text, type) {
+    if (!signupEmailExistsMessage) return;
+    signupEmailExistsMessage.textContent = text;
+    signupEmailExistsMessage.classList.remove('success', 'error');
+    if (type) signupEmailExistsMessage.classList.add(type);
+    signupEmailExistsMessage.classList.remove('hidden');
+}
+
+function isEmailAlreadyRegisteredError(error, data) {
+    if (error) {
+        const msg = (error.message || '').toLowerCase();
+        return msg.includes('already registered') || msg.includes('already exists') || msg.includes('user already');
+    }
+    if (data?.user && Array.isArray(data.user.identities)) {
+        return data.user.identities.length === 0;
+    }
+    return false;
+}
+
+async function handleSignup(e) {
+    e.preventDefault();
+    if (!supabase) return;
+    const email = document.getElementById('signup-email')?.value;
+    const password = document.getElementById('signup-password')?.value;
+    const confirmPassword = document.getElementById('signup-confirm-password')?.value;
+    if (signupError) signupError.classList.add('hidden');
+    if (password !== confirmPassword) {
+        if (signupError) { signupError.textContent = 'Passwords do not match'; signupError.classList.remove('hidden'); }
+        return;
+    }
+    try {
+        const { data, error } = await supabase.auth.signUp({
+            email,
+            password,
+            options: {
+                emailRedirectTo: window.location.origin
+            }
+        });
+        if (isEmailAlreadyRegisteredError(error, data)) {
+            showEmailExistsState(email);
+            return;
+        }
+        if (error) throw error;
+        if (data?.user && !data?.session) {
+            showSignupSuccess(email);
+        } else {
+            hideAuthModal();
+        }
+    } catch (err) {
+        if (signupError) { signupError.textContent = err.message; signupError.classList.remove('hidden'); }
+    }
+}
+
+async function handleResendVerificationEmail() {
+    if (!supabase || !lastSignupEmailForResend) return;
+    if (emailExistsResendBtn) {
+        emailExistsResendBtn.disabled = true;
+        emailExistsResendBtn.textContent = 'Sending…';
+    }
+    clearEmailExistsMessage();
+    try {
+        const { error } = await supabase.auth.resend({
+            type: 'signup',
+            email: lastSignupEmailForResend,
+            options: {
+                emailRedirectTo: window.location.origin
+            }
+        });
+        if (error) throw error;
+        setEmailExistsMessage(
+            'If a verification email was sent, it may take a minute to arrive. Check your spam folder. Resend is rate-limited (about 4 per hour on free tiers).',
+            'success'
+        );
+    } catch (err) {
+        setEmailExistsMessage(err.message || 'Failed to resend email.', 'error');
+    }
+    if (emailExistsResendBtn) {
+        emailExistsResendBtn.disabled = false;
+        emailExistsResendBtn.textContent = 'Resend verification email';
+    }
+}
+
+async function handleEmailMagicLink() {
+    if (!supabase || !lastSignupEmailForResend) return;
+    if (emailExistsMagicLinkBtn) {
+        emailExistsMagicLinkBtn.disabled = true;
+        emailExistsMagicLinkBtn.textContent = 'Sending…';
+    }
+    clearEmailExistsMessage();
+    try {
+        const { error } = await supabase.auth.signInWithOtp({
+            email: lastSignupEmailForResend,
+            options: {
+                shouldCreateUser: false,
+                emailRedirectTo: window.location.origin
+            }
+        });
+        if (error) throw error;
+        setEmailExistsMessage('Check your email for a sign-in link. It may take a minute; check spam if you don’t see it.', 'success');
+    } catch (err) {
+        setEmailExistsMessage(err.message || 'Failed to send sign-in link.', 'error');
+    }
+    if (emailExistsMagicLinkBtn) {
+        emailExistsMagicLinkBtn.disabled = false;
+        emailExistsMagicLinkBtn.textContent = 'Email me a sign-in link';
+    }
+}
+
+function requireEmailConfirmedForFeature(featureName) {
+    if (!supabase) return true;
+    if (!currentUser) {
+        showAuthModal('login');
+        return false;
+    }
+    if (!currentUser.email_confirmed_at) {
+        showConfirmEmailRequired(featureName);
+        return false;
+    }
+    return true;
+}
+
+function showConfirmEmailRequired(featureName) {
+    if (!authModal) return;
+    authModal.classList.add('show');
+    if (authModalTitle) authModalTitle.textContent = 'Confirm your email';
+    if (loginForm) loginForm.classList.add('hidden');
+    if (signupForm) signupForm.classList.add('hidden');
+    if (signupSuccess) signupSuccess.classList.add('hidden');
+    if (signupEmailExists) signupEmailExists.classList.add('hidden');
+    if (authFormsSection) authFormsSection.classList.add('hidden');
+    if (confirmEmailFeatureName) confirmEmailFeatureName.textContent = featureName;
+    if (confirmEmailAddress && currentUser?.email) confirmEmailAddress.textContent = currentUser.email;
+    clearConfirmEmailMessage();
+    if (confirmEmailRequired) confirmEmailRequired.classList.remove('hidden');
+    if (typeof feather !== 'undefined') feather.replace();
+}
+
+function hideConfirmEmailRequired() {
+    if (confirmEmailRequired) confirmEmailRequired.classList.add('hidden');
+    clearConfirmEmailMessage();
+}
+
+function clearConfirmEmailMessage() {
+    if (!confirmEmailMessage) return;
+    confirmEmailMessage.classList.add('hidden');
+    confirmEmailMessage.textContent = '';
+    confirmEmailMessage.classList.remove('success', 'error');
+}
+
+function setConfirmEmailMessage(text, type) {
+    if (!confirmEmailMessage) return;
+    confirmEmailMessage.textContent = text;
+    confirmEmailMessage.classList.remove('success', 'error');
+    if (type) confirmEmailMessage.classList.add(type);
+    confirmEmailMessage.classList.remove('hidden');
+}
+
+async function handleConfirmEmailResend() {
+    if (!supabase || !currentUser?.email) return;
+    if (confirmEmailResendBtn) {
+        confirmEmailResendBtn.disabled = true;
+        confirmEmailResendBtn.textContent = 'Sending…';
+    }
+    clearConfirmEmailMessage();
+    try {
+        const { error } = await supabase.auth.resend({
+            type: 'signup',
+            email: currentUser.email,
+            options: { emailRedirectTo: window.location.origin }
+        });
+        if (error) throw error;
+        setConfirmEmailMessage('Verification email sent. Check your inbox and spam folder.', 'success');
+    } catch (err) {
+        setConfirmEmailMessage(err.message || 'Failed to resend email.', 'error');
+    }
+    if (confirmEmailResendBtn) {
+        confirmEmailResendBtn.disabled = false;
+        confirmEmailResendBtn.textContent = 'Resend verification email';
+    }
+}
+
+function handleEmailExistsSignIn() {
+    const email = lastSignupEmailForResend;
+    hideEmailExistsState();
+    showAuthModal('login');
+    const loginEmailInput = document.getElementById('login-email');
+    if (loginEmailInput && email) loginEmailInput.value = email;
+    if (typeof feather !== 'undefined') feather.replace();
+}
+
+function showSignupSuccess(email) {
+    if (loginForm) loginForm.classList.add('hidden');
+    if (signupForm) signupForm.classList.add('hidden');
+    if (authFormsSection) authFormsSection.classList.add('hidden');
+    if (authModalTitle) authModalTitle.textContent = 'Account Created';
+    if (signupSuccessEmail) signupSuccessEmail.textContent = email;
+    if (signupSuccess) signupSuccess.classList.remove('hidden');
+    if (typeof feather !== 'undefined') feather.replace();
+}
+
+async function handleLogout() {
+    if (supabase) await supabase.auth.signOut();
+    if (userDropdown) userDropdown.classList.add('hidden');
+}
+
 // Event Listeners
-document.addEventListener('DOMContentLoaded', () => {
+document.addEventListener('DOMContentLoaded', async () => {
+    await initializeApp();
 
     // Event Listeners (Add null checks for safety)
     if (roomUpload) roomUpload.addEventListener('change', handleImageUpload);
@@ -175,28 +651,49 @@ document.addEventListener('DOMContentLoaded', () => {
     if (saveDesignBtn) saveDesignBtn.addEventListener('click', saveCurrentDesign);
 
     // Auth event listeners
-    if (loginBtn) loginBtn.addEventListener('click', showAuthModal);
+    if (loginBtn) loginBtn.addEventListener('click', () => showAuthModal('login'));
+    if (signupBtn) signupBtn.addEventListener('click', () => showAuthModal('signup'));
     if (closeModalBtn) closeModalBtn.addEventListener('click', hideAuthModal);
-
-    // The original error source:
     if (authModal) {
-        authModal.addEventListener('click', event => {
-            if (event.target === authModal) {
-                hideAuthModal();
-            }
+        authModal.addEventListener('click', (event) => {
+            if (event.target === authModal) hideAuthModal();
         });
     }
-
-    // Check existence of elements before adding listeners
-    if (toggleKeyVisibilityBtn && apiKeyInput) {
-        toggleKeyVisibilityBtn.addEventListener('click', toggleKeyVisibility);
+    if (loginForm) loginForm.addEventListener('submit', handleLogin);
+    if (loginResendBtn) loginResendBtn.addEventListener('click', handleLoginResendClick);
+    if (signupForm) signupForm.addEventListener('submit', handleSignup);
+    if (authSwitchBtn) {
+        authSwitchBtn.addEventListener('click', () => {
+            const isLogin = loginForm && !loginForm.classList.contains('hidden');
+            showAuthModal(isLogin ? 'signup' : 'login');
+        });
     }
-    if (toggleReplicateKeyVisibilityBtn && replicateApiKeyInput) {
-        toggleReplicateKeyVisibilityBtn.addEventListener('click', toggleKeyVisibility);
+    if (successCloseBtn) successCloseBtn.addEventListener('click', hideAuthModal);
+    if (emailExistsSigninBtn) emailExistsSigninBtn.addEventListener('click', handleEmailExistsSignIn);
+    if (emailExistsMagicLinkBtn) emailExistsMagicLinkBtn.addEventListener('click', handleEmailMagicLink);
+    if (emailExistsResendBtn) emailExistsResendBtn.addEventListener('click', handleResendVerificationEmail);
+    if (confirmEmailResendBtn) confirmEmailResendBtn.addEventListener('click', handleConfirmEmailResend);
+    if (confirmEmailCloseBtn) confirmEmailCloseBtn.addEventListener('click', hideAuthModal);
+    if (logoutBtn) logoutBtn.addEventListener('click', handleLogout);
+    const layoutEditorBtn = document.getElementById('layout-editor-btn');
+    if (layoutEditorBtn) {
+        layoutEditorBtn.addEventListener('click', (e) => {
+            if (!requireEmailConfirmedForFeature('the layout editor')) {
+                e.preventDefault();
+                e.stopPropagation();
+            }
+        }, true);
     }
-    if (authActionBtn) {
-        authActionBtn.addEventListener('click', saveApiKeys);
+    const layoutSaveBtn = document.getElementById('layout-save-btn');
+    if (layoutSaveBtn) layoutSaveBtn.addEventListener('click', handleSaveLayout);
+    if (userMenuBtn && userDropdown) {
+        userMenuBtn.addEventListener('click', () => userDropdown.classList.toggle('hidden'));
     }
+    document.addEventListener('click', (e) => {
+        if (userMenu && !userMenu.contains(e.target)) {
+            if (userDropdown) userDropdown.classList.add('hidden');
+        }
+    });
 
     // Room type selection
     const roomTypeRadios = document.querySelectorAll('input[name="room-type"]');
@@ -295,13 +792,12 @@ document.addEventListener('DOMContentLoaded', () => {
 
 
 
-    // Initialize the app
-    initializeApp();
+    // Initialize the app UI (feather icons, resize, room type state)
+    initializeAppUI();
 });
 
 // Functions
-function initializeApp() {
-    updateLoginButton();
+function initializeAppUI() {
     feather.replace();
 
     // Update mobile detection on resize
@@ -565,22 +1061,6 @@ function hideMobileItemsSelectionError() {
     }
 }
 
-function updateLoginButton() {
-    // API keys are now handled server-side, hide the login button
-    if (loginBtn) {
-        loginBtn.style.display = 'none';
-    }
-}
-
-function showAuthModal() {
-    // No longer needed - API handled server-side
-}
-
-function hideAuthModal() {
-    if (authModal) {
-        authModal.classList.remove('show');
-    }
-}
 
 function toggleKeyVisibility() {
     // No longer needed - API handled server-side
@@ -1523,6 +2003,7 @@ async function generateImageWithReplicate(imageBase64, prompt) {
 
 // Generate a single design image
 async function generateDesigns() {
+    if (!requireEmailConfirmedForFeature('design generation')) return;
     if (!currentUploadedImage) {
         alert('Please upload an image first');
         return;

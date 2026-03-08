@@ -5,6 +5,7 @@ import cors from 'cors';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import dotenv from 'dotenv';
+import { createClient } from '@supabase/supabase-js';
 
 // Load environment variables
 dotenv.config();
@@ -15,12 +16,18 @@ const __dirname = path.dirname(__filename);
 const app = express();
 const port = process.env.PORT || 3001;
 
+// Initialize Supabase (set SUPABASE_URL, SUPABASE_ANON_KEY, SUPABASE_SERVICE_ROLE_KEY in .env for auth)
+const supabase = createClient(
+  process.env.SUPABASE_URL || '',
+  process.env.SUPABASE_SERVICE_ROLE_KEY || ''
+);
+
 // CORS configuration
 const corsOptions = {
   origin: process.env.NODE_ENV === 'production' 
     ? process.env.ALLOWED_ORIGIN || '*'
     : ['http://localhost:5173', 'http://localhost:4173', 'http://localhost:4174'],
-  methods: ['GET', 'POST'],
+  methods: ['GET', 'POST', 'PUT'],
   allowedHeaders: ['Content-Type', 'Authorization'],
   credentials: true
 };
@@ -633,6 +640,76 @@ Return this exact JSON structure:
   } catch (err) {
     console.error('Feng shui analysis error:', err);
     res.status(500).json({ error: 'Server error during feng shui analysis' });
+  }
+});
+
+// Config endpoint for client-side auth (Supabase URL and anon key)
+app.get('/api/config', (req, res) => {
+  res.json({
+    supabaseUrl: process.env.SUPABASE_URL || '',
+    supabaseAnonKey: process.env.SUPABASE_ANON_KEY || ''
+  });
+});
+
+// Helper: get authenticated user from Bearer token
+async function getAuthUser(req, res) {
+  const authHeader = req.headers.authorization;
+  if (!authHeader || !authHeader.startsWith('Bearer ')) {
+    res.status(401).json({ error: 'Unauthorized' });
+    return null;
+  }
+  const token = authHeader.split(' ')[1];
+  const { data: { user }, error } = await supabase.auth.getUser(token);
+  if (error || !user) {
+    res.status(401).json({ error: 'Invalid token' });
+    return null;
+  }
+  return user;
+}
+
+// Get saved layout for the current user
+app.get('/api/layout', async (req, res) => {
+  try {
+    const user = await getAuthUser(req, res);
+    if (!user) return;
+    const { data, error } = await supabase
+      .from('user_layouts')
+      .select('state')
+      .eq('user_id', user.id)
+      .maybeSingle();
+    if (error) {
+      console.error('Error fetching layout:', error);
+      return res.status(500).json({ error: 'Failed to fetch layout' });
+    }
+    if (!data) return res.json({ state: null });
+    res.json({ state: data.state });
+  } catch (err) {
+    console.error('Error in GET /api/layout:', err);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+// Save layout for the current user (upsert: one layout per user)
+app.put('/api/layout', async (req, res) => {
+  try {
+    const user = await getAuthUser(req, res);
+    if (!user) return;
+    const { state } = req.body;
+    if (state === undefined) return res.status(400).json({ error: 'state is required' });
+    const { error } = await supabase
+      .from('user_layouts')
+      .upsert(
+        { user_id: user.id, state, updated_at: new Date().toISOString() },
+        { onConflict: 'user_id' }
+      );
+    if (error) {
+      console.error('Error saving layout:', error);
+      return res.status(500).json({ error: 'Failed to save layout' });
+    }
+    res.json({ success: true });
+  } catch (err) {
+    console.error('Error in PUT /api/layout:', err);
+    res.status(500).json({ error: 'Server error' });
   }
 });
 

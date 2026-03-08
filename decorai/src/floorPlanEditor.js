@@ -19,6 +19,7 @@ const FloorPlanEditor = (() => {
     let importedElements = []; // Track imported SVG elements for selection/deletion
     let undoStack = [];
     let redoStack = [];
+    let hasUnsavedChanges = false;
     let isConvertingImage = false;
     let detectedEdges = []; // Store detected edges from reference images
     let showEdgeOverlay = true; // Toggle for edge detection overlay
@@ -156,8 +157,8 @@ const FloorPlanEditor = (() => {
         canvasWrapper.addEventListener('dragleave', handleImageDragLeave);
         canvasWrapper.addEventListener('drop', handleImageDrop);
         
-        // Back button
-        document.getElementById('layout-editor-back-btn')?.addEventListener('click', hide);
+        // Back button (warn if unsaved changes)
+        document.getElementById('layout-editor-back-btn')?.addEventListener('click', handleBackFromEditor);
         
         // Tool buttons
         document.querySelectorAll('.floor-tool').forEach(btn => {
@@ -167,6 +168,7 @@ const FloorPlanEditor = (() => {
         // Action buttons
         document.getElementById('layout-undo-btn')?.addEventListener('click', undo);
         document.getElementById('layout-redo-btn')?.addEventListener('click', redo);
+        document.getElementById('layout-select-all-btn')?.addEventListener('click', selectAll);
         document.getElementById('layout-clear-btn')?.addEventListener('click', clearAll);
         
         // Feng Shui
@@ -176,6 +178,7 @@ const FloorPlanEditor = (() => {
         document.getElementById('layout-export-btn')?.addEventListener('click', toggleExportMenu);
         document.getElementById('export-png-btn')?.addEventListener('click', () => exportAs('png'));
         document.getElementById('export-svg-btn')?.addEventListener('click', () => exportAs('svg'));
+        document.getElementById('export-layout-file-btn')?.addEventListener('click', () => { document.getElementById('export-menu')?.classList.remove('show'); downloadLayoutFile(); });
         
         // Close export menu when clicking outside
         document.addEventListener('click', (e) => {
@@ -205,7 +208,23 @@ const FloorPlanEditor = (() => {
         
         document.getElementById('snap-to-grid')?.addEventListener('change', (e) => {
             snapToGrid = e.target.checked;
+            const row = document.getElementById('snap-threshold-row');
+            if (row) row.style.display = snapToGrid ? '' : 'none';
         });
+        
+        const snapThresholdEl = document.getElementById('snap-threshold');
+        const snapThresholdValueEl = document.getElementById('snap-threshold-value');
+        if (snapThresholdEl) {
+            snapThresholdEl.addEventListener('input', (e) => {
+                const val = parseInt(e.target.value, 10);
+                snapDistance = val;
+                snapRelease = Math.min(60, Math.max(val + 15, 40));
+                axisSnapThreshold = Math.max(8, Math.round(val * 0.5));
+                if (snapThresholdValueEl) snapThresholdValueEl.textContent = val + 'px';
+            });
+        }
+        
+        document.getElementById('snap-threshold-row').style.display = snapToGrid ? '' : 'none';
         
         document.getElementById('show-dimensions')?.addEventListener('change', (e) => {
             showDimensions = e.target.checked;
@@ -240,6 +259,14 @@ const FloorPlanEditor = (() => {
         // Keyboard shortcuts
         document.addEventListener('keydown', handleKeyDown);
         
+        // Warn when leaving the page with unsaved changes (tab close, refresh, navigate away)
+        window.addEventListener('beforeunload', (e) => {
+            if (layoutEditorScreen && !layoutEditorScreen.classList.contains('hidden') && hasUnsavedChanges) {
+                e.preventDefault();
+                e.returnValue = '';
+            }
+        });
+        
         // Furniture categories - toggle on/off
         document.querySelectorAll('.category-btn').forEach(btn => {
             btn.addEventListener('click', () => {
@@ -271,6 +298,8 @@ const FloorPlanEditor = (() => {
     function show() {
         layoutEditorScreen.classList.remove('hidden');
         document.body.style.overflow = 'hidden';
+        const stateToRestore = typeof window.__decoraiGetLayoutStateToRestore === 'function' ? window.__decoraiGetLayoutStateToRestore() : null;
+        if (stateToRestore) restoreState(stateToRestore);
         feather.replace();
         updateCanvasInfo();
         initRulers();
@@ -291,6 +320,15 @@ const FloorPlanEditor = (() => {
     function hide() {
         layoutEditorScreen.classList.add('hidden');
         document.body.style.overflow = '';
+    }
+    
+    function handleBackFromEditor() {
+        if (hasUnsavedChanges && !layoutEditorScreen.classList.contains('hidden')) {
+            if (!confirm('You have unsaved changes. Leave without exporting?')) {
+                return;
+            }
+        }
+        hide();
     }
     
     function selectTool(tool) {
@@ -367,6 +405,18 @@ const FloorPlanEditor = (() => {
                 svg.style.cursor = 'move';
                 e.preventDefault();
                 return;
+            }
+            
+            // Check if clicking on selection (group) rotation handle
+            if (target.closest('.selection-rotation-handle')) {
+                const bbox = getSelectionBBox();
+                if (bbox && selectedElements.length > 0) {
+                    isRotatingSelection = true;
+                    selectionRotationCenter = { x: bbox.x + bbox.width / 2, y: bbox.y + bbox.height / 2 };
+                    selectionRotationStart = Math.atan2(pos.y - selectionRotationCenter.y, pos.x - selectionRotationCenter.x) * 180 / Math.PI;
+                    svg.style.cursor = 'grab';
+                    return;
+                }
             }
             
             // Check if clicking on rotation handle
@@ -512,43 +562,37 @@ const FloorPlanEditor = (() => {
             createMarqueeBox(pos);
             
         } else if (currentTool === 'wall') {
-            // Use raw (non-grid-snapped) position for wall placement
             const rawPos = getMousePos(e, true);
-            
-            // Check for snap to existing corner
-            let targetCorner = findNearbyCorner(rawPos);
-            
-            // If no corner found, check for mid-wall snap
-            if (!targetCorner) {
-                const wallSnap = findSnapPointOnWall(rawPos, drawingStartCorner);
-                if (wallSnap) {
-                    targetCorner = splitWallAtPoint(wallSnap.wall, wallSnap.point);
-                    redrawAll();
-                }
-            }
-            
-            // If still no target, check for edge detection snap
+            let targetCorner = null;
             let snapPos = rawPos;
-            if (!targetCorner) {
-                const edgeSnap = findNearestEdgePoint(rawPos);
-                if (edgeSnap) {
-                    snapPos = edgeSnap;
+            
+            if (snapToGrid) {
+                targetCorner = findNearbyCorner(rawPos);
+                if (!targetCorner) {
+                    const wallSnap = findSnapPointOnWall(rawPos, drawingStartCorner);
+                    if (wallSnap) {
+                        targetCorner = splitWallAtPoint(wallSnap.wall, wallSnap.point);
+                        redrawAll();
+                    }
+                }
+                if (!targetCorner) {
+                    const edgeSnap = findNearestEdgePoint(rawPos, snapDistance);
+                    if (edgeSnap) snapPos = edgeSnap;
+                } else {
+                    snapPos = rawPos;
                 }
             }
             
             if (drawingStartCorner) {
-                // Apply axis/angle snap so placed point matches preview (only when creating new corner)
-                if (!targetCorner) {
+                if (snapToGrid && !targetCorner) {
                     snapPos = applyDrawingSnaps(drawingStartCorner, snapPos);
                 }
-                // Complete the wall segment
                 const endCorner = targetCorner || createCorner(snapPos);
                 if (endCorner.id !== drawingStartCorner.id) {
                     createWall(drawingStartCorner, endCorner);
                     drawingStartCorner = endCorner;
                 }
             } else {
-                // Start new wall — place exactly where clicked unless snapping to a wall/corner
                 drawingStartCorner = targetCorner || createCorner(snapPos);
             }
             isDrawing = true;
@@ -622,6 +666,16 @@ const FloorPlanEditor = (() => {
             return;
         }
         
+        // Handle group selection rotation
+        if (isRotatingSelection && selectionRotationCenter) {
+            const currentAngle = Math.atan2(pos.y - selectionRotationCenter.y, pos.x - selectionRotationCenter.x) * 180 / Math.PI;
+            let delta = currentAngle - selectionRotationStart;
+            if (Math.abs(delta) > 180) delta -= 360 * Math.sign(delta);
+            selectionRotationStart = currentAngle;
+            rotateSelectionBy(delta, selectionRotationCenter, true);
+            return;
+        }
+        
         // Handle rotation
         if (isRotating && rotationTarget) {
             const centerX = rotationTarget.x + rotationTarget.width / 2;
@@ -688,14 +742,20 @@ const FloorPlanEditor = (() => {
         if (isDrawing) {
             if (currentTool === 'wall' && drawingStartCorner) {
                 const rawPos = getMousePos(e, true);
-                const snap = getMagneticSnapPos(rawPos);
-                let previewEnd = snap || rawPos;
-                // Don't apply axis/angle snap when magnetically snapped to a point — keep line on the snap target
-                if (!currentSnapTarget) {
-                    previewEnd = applyDrawingSnaps(drawingStartCorner, previewEnd);
+                let previewEnd = rawPos;
+                if (snapToGrid) {
+                    const snap = getMagneticSnapPos(rawPos);
+                    previewEnd = snap || rawPos;
+                    if (!currentSnapTarget) {
+                        previewEnd = applyDrawingSnaps(drawingStartCorner, previewEnd);
+                    }
+                    highlightSnapTarget(rawPos);
+                } else {
+                    removeWallSnapIndicator();
+                    removeMagneticIndicator();
+                    cornersLayer.querySelectorAll('.snap-target').forEach(el => el.classList.remove('snap-target'));
                 }
                 drawWallPreview(drawingStartCorner, previewEnd);
-                highlightSnapTarget(rawPos);
             } else if (currentTool === 'room' && drawingStartCorner) {
                 const rawPos = getMousePos(e, true);
                 drawRoomPreview(drawingStartCorner, rawPos);
@@ -721,6 +781,17 @@ const FloorPlanEditor = (() => {
         if (isPanning) {
             isPanning = false;
             svg.style.cursor = '';
+            return;
+        }
+        
+        // Stop group selection rotation
+        if (isRotatingSelection) {
+            isRotatingSelection = false;
+            selectionRotationCenter = null;
+            selectionRotationStart = 0;
+            svg.style.cursor = '';
+            addToHistory();
+            showScaleHandles();
             return;
         }
         
@@ -901,8 +972,12 @@ const FloorPlanEditor = (() => {
         }
         
         const file = files[0];
+        if (isLayoutFile(file)) {
+            loadLayoutFromFile(file);
+            return;
+        }
         if (!file.type.startsWith('image/')) {
-            alert('Please drop an image file (PNG, JPG, etc.)');
+            alert('Drop an image file (PNG, JPG) or a DecorAI layout file (.decorai-layout.json)');
             return;
         }
         
@@ -1866,6 +1941,9 @@ const FloorPlanEditor = (() => {
             } else if (e.key.toLowerCase() === 'v') {
                 e.preventDefault();
                 pasteClipboard();
+            } else if (e.key.toLowerCase() === 'a') {
+                e.preventDefault();
+                selectAll();
             }
         } else if (e.key === 'v') {
             selectTool('select');
@@ -3940,12 +4018,62 @@ const FloorPlanEditor = (() => {
         hideProperties();
     }
     
+    function selectAll() {
+        deselectAll();
+        selectedElements = [];
+        for (const wall of walls) {
+            selectedElements.push({ element: wall, type: 'wall' });
+        }
+        for (const item of furniture) {
+            selectedElements.push({ element: item, type: 'furniture' });
+        }
+        for (const label of labels) {
+            selectedElements.push({ element: label, type: 'label' });
+        }
+        for (const imported of importedElements) {
+            selectedElements.push({ element: imported, type: 'imported' });
+        }
+        if (selectedElements.length === 0) return;
+        // Highlight all selected elements
+        for (const sel of selectedElements) {
+            if (sel.type === 'furniture') {
+                const el = furnitureLayer.querySelector(`[data-furniture-id="${sel.element.id}"]`);
+                if (el) el.classList.add('selected');
+            } else if (sel.type === 'label') {
+                const el = labelsLayer.querySelector(`[data-label-id="${sel.element.id}"]`);
+                if (el) el.style.fill = 'var(--primary-color)';
+            } else if (sel.type === 'wall') {
+                const el = wallsLayer.querySelector(`[data-wall-id="${sel.element.id}"]`);
+                if (el) el.classList.add('selected');
+            } else if (sel.type === 'imported' && sel.element.element) {
+                sel.element.element.classList.add('selected');
+            }
+        }
+        if (selectedElements.length === 1) {
+            selectedElement = selectedElements[0];
+            if (selectedElement.type === 'furniture') {
+                addRotationHandle(selectedElement.element);
+                showProperties(selectedElement.element);
+            } else if (selectedElement.type === 'wall' || selectedElement.type === 'label' || selectedElement.type === 'imported') {
+                showScaleHandles();
+            }
+        } else {
+            hideProperties();
+            showScaleHandles();
+        }
+    }
+    
     // --- Scale handles for selected elements ---
     let isScaling = false;
     let scaleHandle = null;
     let scaleOrigin = null; // The anchor corner (opposite of the handle being dragged)
     let scaleBBoxStart = null; // Bounding box at drag start
     let scaleStartPositions = null; // Snapshot of element positions at drag start
+    
+    // --- Group rotation ---
+    let isRotatingSelection = false;
+    let selectionRotationStart = 0; // angle (deg) when drag started
+    let selectionRotationCenter = null; // { x, y }
     
     function getSelectionBBox() {
         let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
@@ -3981,8 +4109,8 @@ const FloorPlanEditor = (() => {
     function showScaleHandles() {
         removeScaleHandles();
         const bbox = getSelectionBBox();
-        if (!bbox || !bbox.hasScalable) return;
-        
+        if (!bbox) return;
+        // Show bbox + rotation for any selection; corner scale handles only when selection has scalable elements
         const pad = 6;
         const handleSize = 10;
         const positions = {
@@ -4008,22 +4136,49 @@ const FloorPlanEditor = (() => {
         outline.style.cursor = 'move';
         floorPlanGroup.appendChild(outline);
         
-        // Corner handles
-        for (const [corner, pos] of Object.entries(positions)) {
-            const handle = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
-            handle.setAttribute('x', pos.x - handleSize / 2);
-            handle.setAttribute('y', pos.y - handleSize / 2);
-            handle.setAttribute('width', handleSize);
-            handle.setAttribute('height', handleSize);
-            handle.setAttribute('fill', 'white');
-            handle.setAttribute('stroke', 'var(--primary-color, #4f46e5)');
-            handle.setAttribute('stroke-width', 1.5 / zoom);
-            handle.setAttribute('rx', 2);
-            handle.classList.add('scale-handle-group', 'scale-handle');
-            handle.dataset.scaleCorner = corner;
-            handle.style.cursor = corner === 'nw' || corner === 'se' ? 'nwse-resize' : 'nesw-resize';
-            floorPlanGroup.appendChild(handle);
+        // Corner scale handles (only when selection contains walls/labels/etc. that scale)
+        if (bbox.hasScalable) {
+            for (const [corner, pos] of Object.entries(positions)) {
+                const handle = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
+                handle.setAttribute('x', pos.x - handleSize / 2);
+                handle.setAttribute('y', pos.y - handleSize / 2);
+                handle.setAttribute('width', handleSize);
+                handle.setAttribute('height', handleSize);
+                handle.setAttribute('fill', 'white');
+                handle.setAttribute('stroke', 'var(--primary-color, #4f46e5)');
+                handle.setAttribute('stroke-width', 1.5 / zoom);
+                handle.setAttribute('rx', 2);
+                handle.classList.add('scale-handle-group', 'scale-handle');
+                handle.dataset.scaleCorner = corner;
+                handle.style.cursor = corner === 'nw' || corner === 'se' ? 'nwse-resize' : 'nesw-resize';
+                floorPlanGroup.appendChild(handle);
+            }
         }
+        
+        // Rotation handle above bbox center (for single or multi selection)
+        const cx = bbox.x + bbox.width / 2;
+        const cy = bbox.y;
+        const rotHandleY = cy - 28;
+        const rotGroup = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+        rotGroup.classList.add('scale-handle-group', 'selection-rotation-handle');
+        rotGroup.style.cursor = 'grab';
+        const line = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+        line.setAttribute('x1', cx);
+        line.setAttribute('y1', cy);
+        line.setAttribute('x2', cx);
+        line.setAttribute('y2', rotHandleY);
+        line.setAttribute('stroke', 'var(--primary-color, #4f46e5)');
+        line.setAttribute('stroke-width', 1.5 / zoom);
+        rotGroup.appendChild(line);
+        const circle = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+        circle.setAttribute('cx', cx);
+        circle.setAttribute('cy', rotHandleY);
+        circle.setAttribute('r', 8);
+        circle.setAttribute('fill', 'var(--primary-color, #4f46e5)');
+        circle.setAttribute('stroke', '#fff');
+        circle.setAttribute('stroke-width', 1.5 / zoom);
+        rotGroup.appendChild(circle);
+        floorPlanGroup.appendChild(rotGroup);
         
         showSelectionActions(bbox);
     }
@@ -4326,6 +4481,58 @@ const FloorPlanEditor = (() => {
         }
     }
     
+    function rotatePointAround(px, py, cx, cy, angleDeg) {
+        const rad = (angleDeg * Math.PI) / 180;
+        const cos = Math.cos(rad);
+        const sin = Math.sin(rad);
+        const dx = px - cx;
+        const dy = py - cy;
+        return {
+            x: cx + dx * cos - dy * sin,
+            y: cy + dx * sin + dy * cos
+        };
+    }
+    
+    function rotateSelectionBy(degrees, fixedCenter, skipHistory) {
+        const bbox = getSelectionBBox();
+        if (!bbox || selectedElements.length === 0) return;
+        const cx = fixedCenter ? fixedCenter.x : bbox.x + bbox.width / 2;
+        const cy = fixedCenter ? fixedCenter.y : bbox.y + bbox.height / 2;
+        
+        if (!skipHistory) addToHistory();
+        
+        const movedCornerIds = new Set();
+        for (const sel of selectedElements) {
+            if (sel.type === 'wall') {
+                const wall = sel.element;
+                for (const corner of [wall.start, wall.end]) {
+                    if (movedCornerIds.has(corner.id)) continue;
+                    movedCornerIds.add(corner.id);
+                    const p = rotatePointAround(corner.x, corner.y, cx, cy, degrees);
+                    corner.x = p.x;
+                    corner.y = p.y;
+                }
+            } else if (sel.type === 'label') {
+                const label = sel.element;
+                const p = rotatePointAround(label.x, label.y, cx, cy, degrees);
+                label.x = p.x;
+                label.y = p.y;
+            } else if (sel.type === 'furniture') {
+                const item = sel.element;
+                const centerX = item.x + item.width / 2;
+                const centerY = item.y + item.height / 2;
+                const p = rotatePointAround(centerX, centerY, cx, cy, degrees);
+                item.x = p.x - item.width / 2;
+                item.y = p.y - item.height / 2;
+                item.rotation = (item.rotation + degrees) % 360;
+                if (item.rotation < 0) item.rotation += 360;
+            }
+            // imported: rotation would require consistent position storage; skip for now
+        }
+        redrawAll();
+        showScaleHandles();
+    }
+    
     function moveSelectedElements(dx, dy) {
         // Track corners already moved so shared corners aren't moved twice
         const movedCornerIds = new Set();
@@ -4596,6 +4803,70 @@ const FloorPlanEditor = (() => {
         redrawAll();
     }
     
+    // Layout file format (for save-as-file and drop-to-load)
+    const LAYOUT_FILE_FORMAT = 'decorai-layout';
+    const LAYOUT_FILE_VERSION = 1;
+    
+    function downloadLayoutFile() {
+        const state = saveState();
+        const payload = { format: LAYOUT_FILE_FORMAT, version: LAYOUT_FILE_VERSION, state };
+        const json = JSON.stringify(payload, null, 2);
+        const blob = new Blob([json], { type: 'application/json' });
+        const name = `decorai-layout-${new Date().toISOString().slice(0, 10)}.decorai-layout.json`;
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = name;
+        a.click();
+        URL.revokeObjectURL(url);
+        showLayoutFileMessage('Layout saved as file.');
+    }
+    
+    function showLayoutFileMessage(msg) {
+        const canvasWrapper = document.getElementById('layout-canvas-wrapper');
+        if (!canvasWrapper) return;
+        const el = document.getElementById('layout-file-message');
+        if (el) el.remove();
+        const div = document.createElement('div');
+        div.id = 'layout-file-message';
+        div.className = 'export-message';
+        div.innerHTML = `<div class="export-message-content"><i data-feather="check"></i><span>${msg}</span></div>`;
+        canvasWrapper.appendChild(div);
+        if (typeof feather !== 'undefined') feather.replace();
+        setTimeout(() => {
+            div.classList.add('fade-out');
+            setTimeout(() => div.remove(), 300);
+        }, 2500);
+    }
+    
+    function isLayoutFile(file) {
+        const n = (file.name || '').toLowerCase();
+        return n.endsWith('.decorai-layout.json') || (n.endsWith('.json') && (file.type === 'application/json' || file.type === ''));
+    }
+    
+    function loadLayoutFromFile(file, onDone) {
+        const reader = new FileReader();
+        reader.onload = () => {
+            try {
+                const data = JSON.parse(reader.result);
+                if (data && data.format === LAYOUT_FILE_FORMAT && data.state && Array.isArray(data.state.corners) && Array.isArray(data.state.walls)) {
+                    restoreState(data.state);
+                    showLayoutFileMessage('Layout loaded from file.');
+                } else {
+                    showLayoutFileMessage('Not a valid DecorAI layout file.');
+                }
+            } catch (err) {
+                showLayoutFileMessage('Could not read layout file.');
+            }
+            if (onDone) onDone();
+        };
+        reader.onerror = () => {
+            showLayoutFileMessage('Could not read file.');
+            if (onDone) onDone();
+        };
+        reader.readAsText(file);
+    }
+    
     // History (Undo/Redo) - State-based snapshots
     function saveState() {
         // Create a deep copy of the current state
@@ -4627,16 +4898,16 @@ const FloorPlanEditor = (() => {
     }
     
     function restoreState(state) {
-        // Clear current state
+        if (!state || !state.corners || !state.walls) return;
         corners = [];
         walls = [];
         freeformOpenings = state.freeformOpenings ? state.freeformOpenings.map(o => ({ ...o })) : [];
-        furniture = state.furniture.map(f => ({ ...f }));
-        labels = state.labels.map(l => ({ ...l }));
-        referenceImages = state.referenceImages.map(r => ({ ...r }));
+        furniture = Array.isArray(state.furniture) ? state.furniture.map(f => ({ ...f })) : [];
+        labels = Array.isArray(state.labels) ? state.labels.map(l => ({ ...l })) : [];
+        referenceImages = Array.isArray(state.referenceImages) ? state.referenceImages.map(r => ({ ...r })) : [];
         
         // Restore corners first
-        state.corners.forEach(c => {
+        (state.corners || []).forEach(c => {
             corners.push({
                 id: c.id,
                 x: c.x,
@@ -4646,7 +4917,7 @@ const FloorPlanEditor = (() => {
         });
         
         // Restore walls and link to corners
-        state.walls.forEach(w => {
+        (state.walls || []).forEach(w => {
             const startCorner = corners.find(c => c.id === w.startId);
             const endCorner = corners.find(c => c.id === w.endId);
             if (startCorner && endCorner) {
@@ -4665,8 +4936,8 @@ const FloorPlanEditor = (() => {
         // Restore imported elements
         importedElements = [];
         wallsLayer.querySelectorAll('.imported-svg-element, .imported-svg-group').forEach(el => el.remove());
-        
-        state.importedElementsHTML.forEach(item => {
+        const importedHTML = state.importedElementsHTML || [];
+        importedHTML.forEach(item => {
             const parser = new DOMParser();
             const doc = parser.parseFromString(`<svg xmlns="http://www.w3.org/2000/svg">${item.html}</svg>`, 'image/svg+xml');
             const element = doc.querySelector('svg').firstChild;
@@ -4685,6 +4956,7 @@ const FloorPlanEditor = (() => {
     }
     
     function addToHistory() {
+        hasUnsavedChanges = true;
         // Save current state before making changes
         const state = saveState();
         undoStack.push(state);
@@ -5163,6 +5435,7 @@ const FloorPlanEditor = (() => {
         const svgString = new XMLSerializer().serializeToString(exportSvg);
         const blob = new Blob([svgString], { type: 'image/svg+xml' });
         downloadBlob(blob, 'floor-plan.svg');
+        hasUnsavedChanges = false;
     }
     
     function exportPNG() {
@@ -5197,6 +5470,7 @@ const FloorPlanEditor = (() => {
             ctx.drawImage(img, 0, 0);
             canvas.toBlob(blob => {
                 downloadBlob(blob, 'floor-plan.png');
+                hasUnsavedChanges = false;
             }, 'image/png');
         };
         
@@ -5758,11 +6032,21 @@ const FloorPlanEditor = (() => {
         }, 4000);
     }
     
+    function getState() {
+        return saveState();
+    }
+    
+    function loadState(state) {
+        if (state) restoreState(state);
+    }
+    
     // Public API
     return {
         init,
         show,
-        hide
+        hide,
+        getState,
+        loadState
     };
 })();
 
