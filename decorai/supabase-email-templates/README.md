@@ -4,18 +4,17 @@ Use these templates in your Supabase project so confirmation and other auth emai
 
 ## 1. Redirect URL (required for correct link)
 
-The confirmation link will redirect to the URL you pass when calling `signUp()`. The app already passes `window.location.origin` (e.g. `http://localhost:5173` in dev or `https://yourapp.com` in production).
-
-**You must allow that URL in Supabase:**
+The app passes `window.location.origin` when calling `signUp()` (e.g. `https://decorai.onrender.com` in production). **If the confirmation email link shows `localhost:3000` (or another wrong URL), Supabase is using its default Site URL** — fix it in the dashboard:
 
 1. Open [Supabase Dashboard](https://supabase.com/dashboard) → your project.
 2. Go to **Authentication** → **URL Configuration**.
-3. Set **Site URL** to your production URL (e.g. `https://yourapp.com`).
+3. Set **Site URL** to your **production** URL, e.g. `https://decorai.onrender.com` (not `http://localhost:3000`).
 4. Under **Redirect URLs**, add:
-   - `http://localhost:5173` (and `http://localhost:5173/` if needed) for local dev.
-   - Your production URL(s), e.g. `https://yourapp.com` and `https://yourapp.com/**`.
+   - Production: `https://decorai.onrender.com` and `https://decorai.onrender.com/**`
+   - Local dev (optional): `http://localhost:5173` and `http://localhost:5173/**`
+5. Save.
 
-Without these, the confirmation email may redirect to the default Site URL instead of where the user signed up.
+After this, new confirmation emails will use the correct redirect. Existing emails already sent will still contain the old link.
 
 ## 2. Confirm signup email template
 

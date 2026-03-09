@@ -19,6 +19,10 @@ let currentUser = null;
 let currentSession = null;
 // Fetched layout state: restored once when user opens the layout editor after sign-in/load
 let savedLayoutState = null;
+let savedLayoutId = null;
+let savedLayoutName = null;
+// Currently loaded layout in the editor (so Save updates this one)
+let currentLayoutId = null;
 
 // DOM Elements
 const uploadContainer = document.getElementById('upload-container');
@@ -228,13 +232,18 @@ async function initializeApp() {
                 currentUser = session?.user ?? null;
                 currentSession = session ?? null;
                 if (session) await fetchSavedLayout();
-                else savedLayoutState = null;
+                else { savedLayoutState = null; savedLayoutId = null; savedLayoutName = null; }
                 updateAuthUI();
             });
             window.__decoraiGetLayoutStateToRestore = function () {
                 const s = savedLayoutState;
+                const id = savedLayoutId;
+                const name = savedLayoutName;
                 savedLayoutState = null;
-                return s ?? null;
+                savedLayoutId = null;
+                savedLayoutName = null;
+                if (s == null) return null;
+                return { state: s, layoutId: id || undefined, name: name || 'Untitled layout' };
             };
         }
         updateAuthUI();
@@ -252,7 +261,11 @@ async function fetchSavedLayout() {
         });
         if (res.ok) {
             const data = await res.json();
-            if (data.state != null) savedLayoutState = data.state;
+            if (data.state != null) {
+                savedLayoutState = data.state;
+                savedLayoutId = data.id || null;
+                savedLayoutName = data.name || null;
+            }
         }
     } catch (e) {
         console.error('Failed to fetch saved layout:', e);
@@ -261,25 +274,90 @@ async function fetchSavedLayout() {
 
 async function handleSaveLayout() {
     if (!currentUser?.email_confirmed_at || !currentSession?.access_token) return;
+    const name = getLayoutNameDisplay();
+    const state = FloorPlanEditor.getState();
+    const headers = {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${currentSession.access_token}`
+    };
+
     try {
-        const state = FloorPlanEditor.getState();
-        const res = await fetch(`${PROXY_SERVER_URL}/api/layout`, {
-            method: 'PUT',
-            headers: {
-                'Content-Type': 'application/json',
-                Authorization: `Bearer ${currentSession.access_token}`
-            },
-            body: JSON.stringify({ state })
-        });
-        if (!res.ok) {
-            const err = await res.json().catch(() => ({}));
-            throw new Error(err.error || 'Failed to save');
+        const byNameRes = await fetch(
+            `${PROXY_SERVER_URL}/api/layouts/by-name?name=${encodeURIComponent(name)}`,
+            { headers }
+        );
+        let existingId = null;
+        if (byNameRes.ok) {
+            const existing = await byNameRes.json().catch(() => null);
+            existingId = existing?.id || null;
+            if (existingId) {
+                const proceed = confirm(`A layout named "${name}" already exists. Overwrite it? The current saved version will be replaced.`);
+                if (!proceed) return;
+            }
         }
-        showLayoutSaveToast('Layout saved. You can return to it anytime by signing in.');
+
+        let previewDataUrl = null;
+        if (typeof FloorPlanEditor.getPreviewDataURL === 'function') {
+            try {
+                previewDataUrl = await FloorPlanEditor.getPreviewDataURL(120);
+            } catch (_) {}
+        }
+
+        let targetId = null;
+        if (existingId) {
+            const res = await fetch(`${PROXY_SERVER_URL}/api/layouts/${existingId}`, {
+                method: 'PUT',
+                headers,
+                body: JSON.stringify({ name, state, preview_data_url: previewDataUrl })
+            });
+            if (!res.ok) {
+                const err = await res.json().catch(() => ({}));
+                throw new Error(err.error || 'Failed to save');
+            }
+            const data = await res.json().catch(() => ({}));
+            targetId = data?.id || existingId;
+        } else {
+            const res = await fetch(`${PROXY_SERVER_URL}/api/layouts`, {
+                method: 'POST',
+                headers,
+                body: JSON.stringify({ name, state, preview_data_url: previewDataUrl })
+            });
+            if (!res.ok) {
+                const err = await res.json().catch(() => ({}));
+                throw new Error(err.error || 'Failed to save');
+            }
+            const data = await res.json().catch(() => ({}));
+            targetId = data?.id || null;
+        }
+
+        if (targetId) {
+            currentLayoutId = targetId;
+            if (typeof window.__decoraiCurrentLayoutId !== 'undefined') window.__decoraiCurrentLayoutId = targetId;
+        }
+        showLayoutSaveToast('Layout saved.');
+        refreshLayoutsList(true);
     } catch (e) {
         showLayoutSaveToast(e?.message || 'Failed to save layout', true);
     }
 }
+
+const DEFAULT_LAYOUT_NAME = 'Untitled layout';
+
+function getLayoutNameDisplay() {
+    const el = document.getElementById('layout-name-display');
+    if (!el) return DEFAULT_LAYOUT_NAME;
+    const t = (el.textContent || '').trim();
+    return t || DEFAULT_LAYOUT_NAME;
+}
+
+function setLayoutNameDisplay(name) {
+    const el = document.getElementById('layout-name-display');
+    if (el) el.textContent = (name && String(name).trim()) || DEFAULT_LAYOUT_NAME;
+}
+
+window.__decoraiOnLayoutEditorShown = function (opts) {
+    setLayoutNameDisplay(opts?.name || DEFAULT_LAYOUT_NAME);
+};
 
 function showLayoutSaveToast(message, isError = false) {
     const existing = document.getElementById('layout-save-toast');
@@ -295,6 +373,149 @@ function showLayoutSaveToast(message, isError = false) {
         toast.classList.remove('show');
         setTimeout(() => toast.remove(), 300);
     }, 3000);
+}
+
+async function fetchLayouts(bustCache = false) {
+    if (!currentSession?.access_token) return [];
+    try {
+        const url = `${PROXY_SERVER_URL}/api/layouts` + (bustCache ? `?_=${Date.now()}` : '');
+        const res = await fetch(url, {
+            headers: { Authorization: `Bearer ${currentSession.access_token}` },
+            ...(bustCache && { cache: 'no-store' })
+        });
+        if (!res.ok) return [];
+        const data = await res.json();
+        const layouts = data.layouts;
+        return Array.isArray(layouts) ? layouts : (layouts ? [layouts] : []);
+    } catch (e) {
+        console.error('Failed to fetch layouts:', e);
+        return [];
+    }
+}
+
+/** Small gray placeholder image as data URL when layout has no preview. */
+function getLayoutPreviewPlaceholder() {
+    const w = 56;
+    const h = 42;
+    const canvas = document.createElement('canvas');
+    canvas.width = w;
+    canvas.height = h;
+    const ctx = canvas.getContext('2d');
+    ctx.fillStyle = '#e5e7eb';
+    ctx.fillRect(0, 0, w, h);
+    ctx.fillStyle = '#9ca3af';
+    ctx.font = '11px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText('Preview', w / 2, h / 2);
+    return canvas.toDataURL('image/jpeg', 0.8);
+}
+
+function formatLayoutDate(iso) {
+    if (!iso) return '';
+    const d = new Date(iso);
+    const now = new Date();
+    const sameDay = d.toDateString() === now.toDateString();
+    if (sameDay) return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    return d.toLocaleDateString([], { month: 'short', day: 'numeric', year: d.getFullYear() !== now.getFullYear() ? 'numeric' : undefined });
+}
+
+function refreshLayoutsList(bustCache = false) {
+    const listEl = document.getElementById('my-layouts-list');
+    if (!listEl) return;
+    listEl.innerHTML = '';
+    fetchLayouts(bustCache).then(layouts => {
+        if (layouts.length === 0) {
+            listEl.innerHTML = '<p class="my-layouts-empty">No saved layouts yet. Use Save to create one.</p>';
+            return;
+        }
+        layouts.forEach(layout => {
+            const row = document.createElement('div');
+            row.className = 'my-layouts-item';
+            row.dataset.layoutId = layout.id;
+            const topRow = document.createElement('div');
+            topRow.className = 'my-layouts-item-top';
+            const nameCell = document.createElement('div');
+            nameCell.className = 'my-layouts-item-name-cell';
+            const name = document.createElement('span');
+            name.className = 'my-layouts-item-name';
+            name.textContent = layout.name || 'Unnamed';
+            const meta = document.createElement('span');
+            meta.className = 'my-layouts-item-meta';
+            meta.textContent = formatLayoutDate(layout.updated_at);
+            nameCell.append(name, meta);
+            const previewCell = document.createElement('div');
+            previewCell.className = 'my-layouts-item-preview-cell';
+            const img = document.createElement('img');
+            img.className = 'my-layouts-item-preview';
+            img.alt = '';
+            img.loading = 'lazy';
+            if (layout.preview_data_url && layout.preview_data_url.startsWith('data:')) {
+                img.src = layout.preview_data_url;
+            } else {
+                img.src = getLayoutPreviewPlaceholder();
+            }
+            img.onerror = function () {
+                this.src = getLayoutPreviewPlaceholder();
+            };
+            previewCell.appendChild(img);
+            topRow.append(nameCell, previewCell);
+            const actions = document.createElement('div');
+            actions.className = 'my-layouts-item-actions';
+            const loadBtn = document.createElement('button');
+            loadBtn.type = 'button';
+            loadBtn.className = 'my-layouts-load-btn';
+            loadBtn.textContent = 'Load';
+            loadBtn.title = 'Load this layout';
+            loadBtn.addEventListener('click', () => loadLayoutById(layout.id));
+            const delBtn = document.createElement('button');
+            delBtn.type = 'button';
+            delBtn.className = 'my-layouts-delete-btn';
+            delBtn.textContent = 'Delete';
+            delBtn.title = 'Delete this layout';
+            delBtn.addEventListener('click', () => deleteLayoutById(layout.id));
+            actions.append(loadBtn, delBtn);
+            row.append(topRow, actions);
+            listEl.appendChild(row);
+        });
+        if (typeof feather !== 'undefined') feather.replace();
+    });
+}
+
+async function loadLayoutById(id) {
+    if (!currentSession?.access_token) return;
+    try {
+        const res = await fetch(`${PROXY_SERVER_URL}/api/layouts/${id}`, {
+            headers: { Authorization: `Bearer ${currentSession.access_token}` }
+        });
+        if (!res.ok) throw new Error('Failed to load layout');
+        const data = await res.json();
+        FloorPlanEditor.loadState(data.state);
+        currentLayoutId = id;
+        if (typeof window.__decoraiCurrentLayoutId !== 'undefined') window.__decoraiCurrentLayoutId = id;
+        setLayoutNameDisplay(data.name || DEFAULT_LAYOUT_NAME);
+        showLayoutSaveToast('Layout loaded.');
+    } catch (e) {
+        showLayoutSaveToast(e?.message || 'Failed to load layout', true);
+    }
+}
+
+async function deleteLayoutById(id) {
+    if (!currentSession?.access_token) return;
+    if (!confirm('Delete this saved layout? This cannot be undone.')) return;
+    try {
+        const res = await fetch(`${PROXY_SERVER_URL}/api/layouts/${id}`, {
+            method: 'DELETE',
+            headers: { Authorization: `Bearer ${currentSession.access_token}` }
+        });
+        if (!res.ok) throw new Error('Failed to delete');
+        if (currentLayoutId === id) currentLayoutId = null;
+        if (typeof window.__decoraiCurrentLayoutId !== 'undefined' && window.__decoraiCurrentLayoutId === id) window.__decoraiCurrentLayoutId = null;
+        refreshLayoutsList();
+        showLayoutSaveToast('Layout deleted.');
+    } catch (e) {
+        showLayoutSaveToast(e?.message || 'Failed to delete layout', true);
+    }
 }
 
 function updateAuthUI() {
@@ -692,6 +913,15 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
     const layoutSaveBtn = document.getElementById('layout-save-btn');
     if (layoutSaveBtn) layoutSaveBtn.addEventListener('click', handleSaveLayout);
+    const myLayoutsToggle = document.getElementById('my-layouts-toggle');
+    const myLayoutsPanel = document.getElementById('my-layouts-panel');
+    if (myLayoutsToggle && myLayoutsPanel) {
+        myLayoutsToggle.addEventListener('click', () => {
+            myLayoutsPanel.classList.toggle('hidden');
+            myLayoutsToggle.querySelector('.my-layouts-chevron')?.classList.toggle('rotated', !myLayoutsPanel.classList.contains('hidden'));
+            if (!myLayoutsPanel.classList.contains('hidden')) refreshLayoutsList();
+        });
+    }
     if (userMenuBtn && userDropdown) {
         userMenuBtn.addEventListener('click', () => userDropdown.classList.toggle('hidden'));
     }

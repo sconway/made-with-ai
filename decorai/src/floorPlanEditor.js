@@ -299,7 +299,13 @@ const FloorPlanEditor = (() => {
         layoutEditorScreen.classList.remove('hidden');
         document.body.style.overflow = 'hidden';
         const stateToRestore = typeof window.__decoraiGetLayoutStateToRestore === 'function' ? window.__decoraiGetLayoutStateToRestore() : null;
-        if (stateToRestore) restoreState(stateToRestore);
+        if (stateToRestore) {
+            const state = stateToRestore && (stateToRestore.state !== undefined ? stateToRestore.state : stateToRestore);
+            if (state) restoreState(state);
+            if (stateToRestore && stateToRestore.layoutId) window.__decoraiCurrentLayoutId = stateToRestore.layoutId;
+        }
+        const layoutName = (stateToRestore && stateToRestore.name) || 'Untitled layout';
+        if (typeof window.__decoraiOnLayoutEditorShown === 'function') window.__decoraiOnLayoutEditorShown({ name: layoutName });
         feather.replace();
         updateCanvasInfo();
         initRulers();
@@ -5238,6 +5244,99 @@ const FloorPlanEditor = (() => {
             height: maxY - minY + padding * 2
         };
     }
+
+    /** Bounds of all floor plan content (reference images, walls, furniture, labels) for preview/export. */
+    function getAllContentBounds() {
+        let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+        for (const ref of referenceImages) {
+            minX = Math.min(minX, ref.x);
+            minY = Math.min(minY, ref.y);
+            maxX = Math.max(maxX, ref.x + (ref.width || 0));
+            maxY = Math.max(maxY, ref.y + (ref.height || 0));
+        }
+        for (const wall of walls) {
+            minX = Math.min(minX, wall.start.x, wall.end.x);
+            minY = Math.min(minY, wall.start.y, wall.end.y);
+            maxX = Math.max(maxX, wall.start.x, wall.end.x);
+            maxY = Math.max(maxY, wall.start.y, wall.end.y);
+        }
+        for (const item of furniture) {
+            minX = Math.min(minX, item.x);
+            minY = Math.min(minY, item.y);
+            maxX = Math.max(maxX, item.x + item.width);
+            maxY = Math.max(maxY, item.y + item.height);
+        }
+        for (const label of labels) {
+            minX = Math.min(minX, label.x - 30);
+            minY = Math.min(minY, label.y - 15);
+            maxX = Math.max(maxX, label.x + 30);
+            maxY = Math.max(maxY, label.y + 15);
+        }
+        const padding = 40;
+        if (minX === Infinity) {
+            return { x: 0, y: 0, width: 400, height: 300 };
+        }
+        return {
+            x: minX - padding,
+            y: minY - padding,
+            width: Math.max(100, maxX - minX + padding * 2),
+            height: Math.max(100, maxY - minY + padding * 2)
+        };
+    }
+
+    /** Build a minimal SVG containing all floor plan content for preview thumbnail (matches what's visible in the editor). */
+    function buildPreviewSVG() {
+        const bounds = getAllContentBounds();
+        const exportSvg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+        exportSvg.setAttribute('xmlns', 'http://www.w3.org/2000/svg');
+        exportSvg.setAttribute('xmlns:xlink', 'http://www.w3.org/1999/xlink');
+        exportSvg.setAttribute('width', bounds.width);
+        exportSvg.setAttribute('height', bounds.height);
+        exportSvg.setAttribute('viewBox', `${bounds.x} ${bounds.y} ${bounds.width} ${bounds.height}`);
+        const contentGroup = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+        contentGroup.setAttribute('transform', `translate(${-bounds.x}, ${-bounds.y})`);
+        if (imageLayer && imageLayer.children.length > 0) {
+            const imageClone = imageLayer.cloneNode(true);
+            contentGroup.appendChild(imageClone);
+        }
+        if (wallsLayer) {
+            const wallsClone = wallsLayer.cloneNode(true);
+            wallsClone.querySelectorAll('.selection-handle, .rotation-handle, .opening-preview').forEach(el => el.remove());
+            wallsClone.querySelectorAll('[marker-end], [marker-start], [marker-mid]').forEach(el => {
+                el.removeAttribute('marker-end');
+                el.removeAttribute('marker-start');
+                el.removeAttribute('marker-mid');
+            });
+            contentGroup.appendChild(wallsClone);
+        }
+        if (furnitureLayer) {
+            const furnitureClone = furnitureLayer.cloneNode(true);
+            furnitureClone.querySelectorAll('.selection-handle, .rotation-handle').forEach(el => el.remove());
+            contentGroup.appendChild(furnitureClone);
+        }
+        if (labelsLayer) {
+            contentGroup.appendChild(labelsLayer.cloneNode(true));
+        }
+        exportSvg.appendChild(contentGroup);
+        applyInlineStylesToSVG(exportSvg);
+        return { svg: exportSvg, bounds };
+    }
+
+    /** Returns a small gray placeholder image as data URL (for failed preview or empty layout). */
+    function getPlaceholderPreviewDataURL(maxSize = 120) {
+        const canvas = document.createElement('canvas');
+        canvas.width = maxSize;
+        canvas.height = Math.round(maxSize * 0.75);
+        const ctx = canvas.getContext('2d');
+        ctx.fillStyle = '#e5e7eb';
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+        ctx.fillStyle = '#9ca3af';
+        ctx.font = '12px sans-serif';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText('Preview', maxSize / 2, canvas.height / 2);
+        return canvas.toDataURL('image/jpeg', 0.8);
+    }
     
     function prepareExportSVG() {
         const includeDimensions = document.getElementById('export-include-dimensions')?.checked || false;
@@ -5601,6 +5700,50 @@ const FloorPlanEditor = (() => {
             img.onerror = () => {
                 URL.revokeObjectURL(url);
                 resolve(null);
+            };
+            img.src = url;
+        });
+    }
+
+    /** Returns a small thumbnail data URL for the current floor plan (e.g. for layout list preview). Never returns null. */
+    async function getPreviewDataURL(maxSize = 120) {
+        const placeholder = getPlaceholderPreviewDataURL(maxSize);
+        if (!wallsLayer && !furnitureLayer && !labelsLayer) return placeholder;
+        let exportSvg, bounds;
+        try {
+            const built = buildPreviewSVG();
+            exportSvg = built.svg;
+            bounds = built.bounds;
+        } catch (e) {
+            return placeholder;
+        }
+        const w = bounds.width;
+        const h = bounds.height;
+        exportSvg.setAttribute('width', w);
+        exportSvg.setAttribute('height', h);
+        const serializer = new XMLSerializer();
+        const svgStr = serializer.serializeToString(exportSvg);
+        const blob = new Blob([svgStr], { type: 'image/svg+xml' });
+        const url = URL.createObjectURL(blob);
+        return new Promise((resolve) => {
+            const img = new Image();
+            img.onload = () => {
+                const scale = maxSize / Math.max(img.width, img.height, 1);
+                const cw = Math.round(img.width * scale);
+                const ch = Math.round(img.height * scale);
+                const canvas = document.createElement('canvas');
+                canvas.width = cw;
+                canvas.height = ch;
+                const ctx = canvas.getContext('2d');
+                ctx.fillStyle = 'white';
+                ctx.fillRect(0, 0, cw, ch);
+                ctx.drawImage(img, 0, 0, cw, ch);
+                URL.revokeObjectURL(url);
+                resolve(canvas.toDataURL('image/jpeg', 0.75));
+            };
+            img.onerror = () => {
+                URL.revokeObjectURL(url);
+                resolve(placeholder);
             };
             img.src = url;
         });
@@ -6046,7 +6189,8 @@ const FloorPlanEditor = (() => {
         show,
         hide,
         getState,
-        loadState
+        loadState,
+        getPreviewDataURL
     };
 })();
 

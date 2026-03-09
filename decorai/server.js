@@ -27,7 +27,7 @@ const corsOptions = {
   origin: process.env.NODE_ENV === 'production' 
     ? process.env.ALLOWED_ORIGIN || '*'
     : ['http://localhost:5173', 'http://localhost:4173', 'http://localhost:4174'],
-  methods: ['GET', 'POST', 'PUT'],
+  methods: ['GET', 'POST', 'PUT', 'DELETE'],
   allowedHeaders: ['Content-Type', 'Authorization'],
   credentials: true
 };
@@ -667,48 +667,234 @@ async function getAuthUser(req, res) {
   return user;
 }
 
-// Get saved layout for the current user
+// Get saved layout for the current user (returns latest from user_saved_layouts, or legacy user_layouts)
 app.get('/api/layout', async (req, res) => {
   try {
     const user = await getAuthUser(req, res);
     if (!user) return;
-    const { data, error } = await supabase
+    const { data: savedData, error: savedError } = await supabase
+      .from('user_saved_layouts')
+      .select('id, state, name')
+      .eq('user_id', user.id)
+      .order('updated_at', { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    if (savedError) {
+      console.error('Error fetching layout:', savedError);
+      return res.status(500).json({ error: 'Failed to fetch layout' });
+    }
+    if (savedData) return res.json({ state: savedData.state, id: savedData.id, name: savedData.name || 'Untitled layout' });
+    const { data: legacyData, error: legacyError } = await supabase
       .from('user_layouts')
       .select('state')
       .eq('user_id', user.id)
       .maybeSingle();
-    if (error) {
-      console.error('Error fetching layout:', error);
+    if (legacyError) {
+      console.error('Error fetching legacy layout:', legacyError);
       return res.status(500).json({ error: 'Failed to fetch layout' });
     }
-    if (!data) return res.json({ state: null });
-    res.json({ state: data.state });
+    if (!legacyData) return res.json({ state: null });
+    res.json({ state: legacyData.state });
   } catch (err) {
     console.error('Error in GET /api/layout:', err);
     res.status(500).json({ error: 'Server error' });
   }
 });
 
-// Save layout for the current user (upsert: one layout per user)
+// Save layout for the current user (updates latest in user_saved_layouts or creates one)
 app.put('/api/layout', async (req, res) => {
   try {
     const user = await getAuthUser(req, res);
     if (!user) return;
-    const { state } = req.body;
+    const { state, name } = req.body;
     if (state === undefined) return res.status(400).json({ error: 'state is required' });
-    const { error } = await supabase
-      .from('user_layouts')
-      .upsert(
-        { user_id: user.id, state, updated_at: new Date().toISOString() },
-        { onConflict: 'user_id' }
-      );
-    if (error) {
-      console.error('Error saving layout:', error);
+    const layoutName = (name && String(name).trim()) || 'Untitled layout';
+    const { data: existing } = await supabase
+      .from('user_saved_layouts')
+      .select('id')
+      .eq('user_id', user.id)
+      .order('updated_at', { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    const now = new Date().toISOString();
+    if (existing) {
+      const { error } = await supabase
+        .from('user_saved_layouts')
+        .update({ state, name: layoutName, updated_at: now })
+        .eq('id', existing.id);
+      if (error) {
+        console.error('Error saving layout:', error);
+        return res.status(500).json({ error: 'Failed to save layout' });
+      }
+      return res.json({ success: true, id: existing.id });
+    }
+    const { data: inserted, error: insertError } = await supabase
+      .from('user_saved_layouts')
+      .insert({ user_id: user.id, name: layoutName, state, updated_at: now })
+      .select('id')
+      .single();
+    if (insertError) {
+      console.error('Error saving layout:', insertError);
       return res.status(500).json({ error: 'Failed to save layout' });
     }
-    res.json({ success: true });
+    res.json({ success: true, id: inserted.id });
   } catch (err) {
     console.error('Error in PUT /api/layout:', err);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+// List all saved layouts for the current user (id, name, updated_at)
+app.get('/api/layouts', async (req, res) => {
+  try {
+    const user = await getAuthUser(req, res);
+    if (!user) return;
+    const { data, error } = await supabase
+      .from('user_saved_layouts')
+      .select('id, name, updated_at, preview_data_url')
+      .eq('user_id', user.id)
+      .order('updated_at', { ascending: false })
+      .limit(1000);
+    if (error) {
+      console.error('Error fetching layouts:', error);
+      return res.status(500).json({ error: 'Failed to fetch layouts' });
+    }
+    const list = Array.isArray(data) ? data : (data ? [data] : []);
+    res.json({ layouts: list });
+  } catch (err) {
+    console.error('Error in GET /api/layouts:', err);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+// Find a saved layout by name (for overwrite check). Returns first match by updated_at desc.
+app.get('/api/layouts/by-name', async (req, res) => {
+  try {
+    const user = await getAuthUser(req, res);
+    if (!user) return;
+    const name = req.query.name;
+    if (!name || typeof name !== 'string') return res.status(400).json({ error: 'name is required' });
+    const trimmed = name.trim();
+    if (!trimmed) return res.status(400).json({ error: 'name is required' });
+    const { data, error } = await supabase
+      .from('user_saved_layouts')
+      .select('id, name, updated_at')
+      .eq('user_id', user.id)
+      .eq('name', trimmed)
+      .order('updated_at', { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    if (error) {
+      console.error('Error fetching layout by name:', error);
+      return res.status(500).json({ error: 'Failed to fetch layout' });
+    }
+    if (!data) return res.status(404).json({ error: 'No layout with this name' });
+    res.json(data);
+  } catch (err) {
+    console.error('Error in GET /api/layouts/by-name:', err);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+// Get one saved layout by id (full state for loading)
+app.get('/api/layouts/:id', async (req, res) => {
+  try {
+    const user = await getAuthUser(req, res);
+    if (!user) return;
+    const { id } = req.params;
+    const { data, error } = await supabase
+      .from('user_saved_layouts')
+      .select('id, name, state, updated_at')
+      .eq('id', id)
+      .eq('user_id', user.id)
+      .maybeSingle();
+    if (error) {
+      console.error('Error fetching layout:', error);
+      return res.status(500).json({ error: 'Failed to fetch layout' });
+    }
+    if (!data) return res.status(404).json({ error: 'Layout not found' });
+    res.json(data);
+  } catch (err) {
+    console.error('Error in GET /api/layouts/:id:', err);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+// Create a new saved layout
+app.post('/api/layouts', async (req, res) => {
+  try {
+    const user = await getAuthUser(req, res);
+    if (!user) return;
+    const { name, state, preview_data_url } = req.body;
+    if (state === undefined) return res.status(400).json({ error: 'state is required' });
+    const layoutName = (name && String(name).trim()) || 'Untitled layout';
+    const now = new Date().toISOString();
+    const row = { user_id: user.id, name: layoutName, state, updated_at: now };
+    if (preview_data_url != null && typeof preview_data_url === 'string') row.preview_data_url = preview_data_url;
+    const { data, error } = await supabase
+      .from('user_saved_layouts')
+      .insert(row)
+      .select('id, name, updated_at')
+      .single();
+    if (error) {
+      console.error('Error creating layout:', error);
+      return res.status(500).json({ error: 'Failed to save layout' });
+    }
+    res.status(201).json(data);
+  } catch (err) {
+    console.error('Error in POST /api/layouts:', err);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+// Update a saved layout
+app.put('/api/layouts/:id', async (req, res) => {
+  try {
+    const user = await getAuthUser(req, res);
+    if (!user) return;
+    const { id } = req.params;
+    const { name, state, preview_data_url } = req.body;
+    const updates = { updated_at: new Date().toISOString() };
+    if (name !== undefined) updates.name = name;
+    if (state !== undefined) updates.state = state;
+    if (preview_data_url !== undefined && typeof preview_data_url === 'string') updates.preview_data_url = preview_data_url;
+    const { data, error } = await supabase
+      .from('user_saved_layouts')
+      .update(updates)
+      .eq('id', id)
+      .eq('user_id', user.id)
+      .select('id, name, updated_at')
+      .maybeSingle();
+    if (error) {
+      console.error('Error updating layout:', error);
+      return res.status(500).json({ error: 'Failed to save layout' });
+    }
+    if (!data) return res.status(404).json({ error: 'Layout not found' });
+    res.json(data);
+  } catch (err) {
+    console.error('Error in PUT /api/layouts/:id:', err);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+// Delete a saved layout
+app.delete('/api/layouts/:id', async (req, res) => {
+  try {
+    const user = await getAuthUser(req, res);
+    if (!user) return;
+    const { id } = req.params;
+    const { error } = await supabase
+      .from('user_saved_layouts')
+      .delete()
+      .eq('id', id)
+      .eq('user_id', user.id);
+    if (error) {
+      console.error('Error deleting layout:', error);
+      return res.status(500).json({ error: 'Failed to delete layout' });
+    }
+    res.status(204).send();
+  } catch (err) {
+    console.error('Error in DELETE /api/layouts/:id:', err);
     res.status(500).json({ error: 'Server error' });
   }
 });

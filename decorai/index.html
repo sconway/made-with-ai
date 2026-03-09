@@ -305,7 +305,10 @@
                 <button id="layout-editor-back-btn" class="back-btn">
                     <i data-feather="arrow-left"></i>
                 </button>
-                <h2>Floor Plan Editor</h2>
+                <div class="layout-editor-title-text">
+                    <h2>Floor Plan Editor</h2>
+                    <span id="layout-name-display" class="layout-name-display" contenteditable="true" title="Click to edit layout name">Untitled layout</span>
+                </div>
             </div>
             <div class="layout-editor-controls">
                 <div class="scale-control">
@@ -338,10 +341,6 @@
                 <button id="layout-clear-btn" class="tool-btn" title="Clear All">
                     <i data-feather="trash-2"></i>
                 </button>
-                <button id="layout-save-btn" class="tool-btn" title="Save layout to your account">
-                    <i data-feather="save"></i>
-                    <span>Save</span>
-                </button>
                 <button id="feng-shui-btn" class="tool-btn feng-shui-btn" title="Feng Shui Analysis">
                     <i data-feather="compass"></i>
                 </button>
@@ -365,6 +364,9 @@
                         </div>
                     </div>
                 </div>
+                <button id="layout-save-btn" class="layout-save-primary-btn" title="Save layout to your account">
+                    <i data-feather="save"></i>
+                </button>
             </div>
         </div>
         
@@ -430,6 +432,16 @@
                         <label>Wall Thickness</label>
                         <input type="range" id="wall-thickness" min="4" max="16" value="8">
                         <span id="wall-thickness-value">8px</span>
+                    </div>
+                </div>
+                <div class="tool-section my-layouts-section">
+                    <button type="button" id="my-layouts-toggle" class="my-layouts-toggle" title="Saved layouts">
+                        <i data-feather="folder"></i>
+                        <span>My layouts</span>
+                        <i data-feather="chevron-down" class="my-layouts-chevron"></i>
+                    </button>
+                    <div id="my-layouts-panel" class="my-layouts-panel hidden">
+                        <div id="my-layouts-list" class="my-layouts-list"></div>
                     </div>
                 </div>
             </div>

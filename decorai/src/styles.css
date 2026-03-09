@@ -2404,11 +2404,40 @@ footer {
   height: 18px;
 }
 
+.layout-editor-title-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
 .layout-editor-title h2 {
   margin: 0;
-  font-size: 1.25rem;
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: #888;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.layout-name-display {
+  margin: 0;
+  font-size: 1.1rem;
   font-weight: 600;
   color: #1a1a1a;
+  outline: none;
+  padding: 2px 4px;
+  margin: -2px -4px;
+  border-radius: 4px;
+  min-width: 2em;
+}
+
+.layout-name-display:hover {
+  background: #f0f0f0;
+}
+
+.layout-name-display:focus {
+  background: #fff;
+  box-shadow: 0 0 0 1px var(--primary-color);
 }
 
 /* Header Controls */
@@ -2516,6 +2545,31 @@ footer {
   width: 14px !important;
   height: 14px !important;
   margin-left: 2px;
+}
+
+/* Save button (same style as Export, icon-only, tooltip via title) */
+.layout-save-primary-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  padding: 0;
+  background: var(--primary-color);
+  color: white;
+  border: none;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.layout-save-primary-btn:hover {
+  background: var(--primary-dark);
+}
+
+.layout-save-primary-btn svg {
+  width: 16px;
+  height: 16px;
 }
 
 .export-menu {
@@ -2654,6 +2708,158 @@ footer {
   text-transform: uppercase;
   letter-spacing: 0.5px;
   color: #999;
+}
+
+/* My Layouts panel */
+.my-layouts-section {
+  margin-top: auto;
+}
+
+.my-layouts-toggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 10px 12px;
+  background: #f5f5f5;
+  border: 1px solid #e0e0e0;
+  border-radius: 8px;
+  cursor: pointer;
+  font-size: 0.9rem;
+  color: #555;
+  text-align: left;
+}
+
+.my-layouts-toggle:hover {
+  background: #eee;
+  color: #333;
+}
+
+.my-layouts-toggle svg:first-of-type {
+  width: 18px;
+  height: 18px;
+  flex-shrink: 0;
+}
+
+.my-layouts-toggle .my-layouts-chevron {
+  width: 14px;
+  height: 14px;
+  margin-left: auto;
+  transition: transform 0.2s ease;
+}
+
+.my-layouts-toggle .my-layouts-chevron.rotated {
+  transform: rotate(-180deg);
+}
+
+.my-layouts-panel {
+  margin-top: 8px;
+  padding: 12px;
+  background: #fafafa;
+  border: 1px solid #e8e8e8;
+  border-radius: 8px;
+}
+
+.my-layouts-panel.hidden {
+  display: none !important;
+}
+
+.my-layouts-list {
+  max-height: 320px;
+  overflow-y: auto;
+  margin-bottom: 10px;
+}
+
+.my-layouts-empty {
+  margin: 0;
+  font-size: 0.85rem;
+  color: #888;
+  padding: 8px 0;
+}
+
+.my-layouts-item {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 8px 0;
+  border-bottom: 1px solid #eee;
+  font-size: 0.85rem;
+}
+
+.my-layouts-item:last-child {
+  border-bottom: none;
+}
+
+.my-layouts-item-top {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 8px;
+  min-height: 0;
+}
+
+.my-layouts-item-name-cell {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.my-layouts-item-name {
+  font-weight: 500;
+  color: #333;
+}
+
+.my-layouts-item-meta {
+  font-size: 0.75rem;
+  color: #888;
+}
+
+.my-layouts-item-preview-cell {
+  flex-shrink: 0;
+  width: 56px;
+  height: 42px;
+  border-radius: 4px;
+  overflow: hidden;
+  background: #eee;
+  border: 1px solid #e0e0e0;
+}
+
+.my-layouts-item-preview {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  display: block;
+}
+
+.my-layouts-item-actions {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.my-layouts-load-btn,
+.my-layouts-delete-btn {
+  padding: 4px 10px;
+  border-radius: 6px;
+  font-size: 0.75rem;
+  cursor: pointer;
+  border: 1px solid #ddd;
+  background: white;
+  color: #555;
+}
+
+.my-layouts-load-btn:hover {
+  background: var(--primary-color);
+  color: white;
+  border-color: var(--primary-color);
+}
+
+.my-layouts-delete-btn:hover {
+  background: #ef4444;
+  color: white;
+  border-color: #ef4444;
 }
 
 .tool-list {
