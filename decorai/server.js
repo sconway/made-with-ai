@@ -551,13 +551,24 @@ app.post('/api/feng-shui', async (req, res) => {
         role: 'system',
         content: `You are an expert feng shui consultant analyzing floor plans. You MUST return ONLY valid JSON (no markdown, no code fences, no explanation text outside the JSON).
 
+LAYOUT DATA:
+- Each furniture item includes its current "position" description (e.g. "top-left corner", "bottom side"), distance to the nearest wall, and distances/directions to the nearest doors and windows.
+- Doors and windows include their absolute positions and facing angles.
+- If an image is provided, use it as the PRIMARY reference for understanding the spatial layout.
+
+PLACEMENT INSTRUCTIONS:
+- Do NOT return raw pixel coordinates. Instead, describe WHERE to place each item using a "placement" object.
+- "placement.wall" specifies which wall to place against: "top", "bottom", "left", "right", or "none" (for center/floating placement).
+- "placement.alignX" specifies horizontal alignment along the wall: "left", "center", "right", or a number 0.0–1.0 for a specific position along the wall (0=left/top end, 1=right/bottom end).
+- "placement.alignY" specifies vertical alignment: "top", "center", "bottom", or a number 0.0–1.0.
+- "placement.offsetFeet" is an optional inward offset from the wall in feet (default 0). Use this to push furniture slightly away from the wall.
+- For "none" wall placement (floating/centered), alignX and alignY position the item relative to the full room (0.0–1.0 where 0.5 is center).
+
 CRITICAL RULES:
 - NEVER suggest moving, adding, or removing walls, doors, or windows
-- ONLY suggest rearranging existing furniture items
-- Each suggestion must reference a specific furniture item by its exact id
-- Suggested positions (newX, newY) must be within room boundaries
-- Suggested positions must not overlap with walls or other furniture
-- Rotations must be in degrees (0, 90, 180, 270)
+- ONLY suggest rearranging existing furniture items that already exist in the layout
+- Each suggestion must reference a specific furniture item by its exact "id" field
+- Rotations must be 0, 90, 180, or 270
 
 Return this exact JSON structure:
 {
@@ -570,13 +581,13 @@ Return this exact JSON structure:
       "principle": "<feng shui principle being applied>",
       "description": "<what to do and why>",
       "priority": "high" | "medium" | "low",
-      "newX": <suggested X coordinate>,
-      "newY": <suggested Y coordinate>,
-      "newRotation": <suggested rotation in degrees>,
-      "zoneX": <center X of the recommended zone>,
-      "zoneY": <center Y of the recommended zone>,
-      "zoneWidth": <width of zone>,
-      "zoneHeight": <height of zone>
+      "placement": {
+        "wall": "top" | "bottom" | "left" | "right" | "none",
+        "alignX": "left" | "center" | "right" | <0.0-1.0>,
+        "alignY": "top" | "center" | "bottom" | <0.0-1.0>,
+        "offsetFeet": <number, optional>
+      },
+      "newRotation": <0 | 90 | 180 | 270>
     }
   ]
 }`
@@ -590,16 +601,12 @@ Return this exact JSON structure:
         type: 'image_url',
         image_url: { url: imageBase64, detail: 'high' }
       });
-      userContent.push({
-        type: 'text',
-        text: `Analyze this floor plan image for feng shui. The structured data for the furniture and walls is provided below.\n\n${JSON.stringify(floorPlanData, null, 2)}\n\nProvide feng shui furniture rearrangement suggestions. Remember: walls, doors, and windows must NOT change. Only rearrange existing furniture. Use the exact furniture IDs from the data.`
-      });
-    } else {
-      userContent.push({
-        type: 'text',
-        text: `Analyze this floor plan for feng shui. Here is the structured layout data:\n\n${JSON.stringify(floorPlanData, null, 2)}\n\nProvide feng shui furniture rearrangement suggestions. Remember: walls, doors, and windows must NOT change. Only rearrange existing furniture. Use the exact furniture IDs from the data. Coordinates are in pixels where ${floorPlanData.scale || 50} pixels = 1 foot.`
-      });
     }
+
+    userContent.push({
+      type: 'text',
+      text: `Analyze this floor plan for feng shui.${imageBase64 ? ' The image above shows the current layout.' : ''} Here is the structured layout data with pre-computed spatial relationships:\n\n${JSON.stringify(floorPlanData, null, 2)}\n\nProvide feng shui furniture rearrangement suggestions using placement descriptions (wall, alignX, alignY, offsetFeet) — NOT pixel coordinates. Only rearrange existing furniture. Use the exact furniture IDs from the data.`
+    });
 
     messages.push({ role: 'user', content: userContent });
 

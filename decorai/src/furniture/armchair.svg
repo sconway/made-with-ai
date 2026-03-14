@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 30 30" fill="none" stroke="#333" stroke-width="1">
+  <!-- Back rest -->
+  <rect x="0" y="0" width="30" height="6.6" rx="2.2"/>
+  <!-- Left arm -->
+  <rect x="0" y="5.6" width="4.2" height="24.4" rx="2"/>
+  <!-- Right arm -->
+  <rect x="25.8" y="5.6" width="4.2" height="24.4" rx="2"/>
+  <!-- Seat cushion -->
+  <rect x="6.6" y="9" width="16.8" height="16.2" rx="2"/>
+</svg>

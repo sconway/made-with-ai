@@ -2428,7 +2428,18 @@ footer {
   padding: 2px 4px;
   margin: -2px -4px;
   border-radius: 4px;
-  min-width: 2em;
+  width: 240px;
+  max-width: 240px;
+  display: block;
+  overflow: hidden;
+  white-space: nowrap;
+}
+
+.layout-name-display:empty::before {
+  content: 'Untitled layout';
+  color: #999;
+  font-weight: 400;
+  pointer-events: none;
 }
 
 .layout-name-display:hover {
@@ -3108,9 +3119,11 @@ footer {
   border: 1px solid #e0e0e0;
 }
 
-.furniture-item .furniture-preview svg {
+.furniture-item .furniture-preview svg,
+.furniture-item .furniture-preview img {
   width: 44px;
   height: 44px;
+  object-fit: contain;
 }
 
 .furniture-item span {
@@ -3135,6 +3148,13 @@ footer {
   font-size: 0.85rem;
   font-weight: 600;
   color: #333;
+}
+
+.property-item-name {
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: #1a1a1a;
+  margin-bottom: 10px;
 }
 
 .property-row {
@@ -3247,6 +3267,12 @@ footer {
 
 .wall-line.selected {
   stroke: var(--primary-color);
+}
+
+.door-element.selected .door-frame,
+.window-element.selected .window-frame {
+  stroke: var(--primary-color);
+  stroke-width: 3;
 }
 
 .scale-handle {
@@ -3446,27 +3472,6 @@ footer {
   gap: 10px;
 }
 
-.feng-shui-apply-all {
-  width: 100%;
-  padding: 8px 12px;
-  background: #22c55e;
-  color: white;
-  border: none;
-  border-radius: 8px;
-  font-size: 12px;
-  font-weight: 600;
-  cursor: pointer;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 6px;
-  transition: background 0.15s;
-}
-
-.feng-shui-apply-all:hover {
-  background: #16a34a;
-}
-
 .feng-shui-suggestion {
   background: #f9fafb;
   border: 1px solid #e5e7eb;
@@ -3507,55 +3512,7 @@ footer {
   font-size: 11px;
   color: #6b7280;
   line-height: 1.4;
-  margin: 0 0 8px;
-}
-
-.suggestion-actions {
-  display: flex;
-  gap: 6px;
-}
-
-.feng-shui-show-btn,
-.feng-shui-apply-btn {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  padding: 4px 8px;
-  border-radius: 5px;
-  font-size: 11px;
-  font-weight: 500;
-  cursor: pointer;
-  border: 1px solid #d1d5db;
-  background: white;
-  color: #374151;
-  transition: all 0.15s;
-}
-
-.feng-shui-show-btn:hover {
-  background: #f3f4f6;
-}
-
-.feng-shui-apply-btn {
-  background: #ecfdf5;
-  border-color: #86efac;
-  color: #166534;
-}
-
-.feng-shui-apply-btn:hover {
-  background: #dcfce7;
-}
-
-.feng-shui-apply-btn.applied {
-  background: #d1d5db;
-  border-color: #d1d5db;
-  color: #9ca3af;
-  cursor: default;
-}
-
-.suggestion-no-match {
-  font-size: 10px;
-  color: #9ca3af;
-  font-style: italic;
+  margin: 0;
 }
 
 .feng-shui-no-suggestions {

@@ -342,17 +342,29 @@ async function handleSaveLayout() {
 }
 
 const DEFAULT_LAYOUT_NAME = 'Untitled layout';
+const MAX_LAYOUT_NAME_LENGTH = 80;
 
 function getLayoutNameDisplay() {
     const el = document.getElementById('layout-name-display');
     if (!el) return DEFAULT_LAYOUT_NAME;
-    const t = (el.textContent || '').trim();
-    return t || DEFAULT_LAYOUT_NAME;
+    let t = (el.textContent || '').trim();
+    if (!t) return DEFAULT_LAYOUT_NAME;
+    if (t.length > MAX_LAYOUT_NAME_LENGTH) {
+        t = t.slice(0, MAX_LAYOUT_NAME_LENGTH);
+        el.textContent = t;
+    }
+    return t;
 }
 
 function setLayoutNameDisplay(name) {
     const el = document.getElementById('layout-name-display');
-    if (el) el.textContent = (name && String(name).trim()) || DEFAULT_LAYOUT_NAME;
+    if (!el) return;
+    let value = (name && String(name).trim()) || '';
+    if (value === DEFAULT_LAYOUT_NAME) value = '';
+    if (value.length > MAX_LAYOUT_NAME_LENGTH) {
+        value = value.slice(0, MAX_LAYOUT_NAME_LENGTH);
+    }
+    el.textContent = value;
 }
 
 window.__decoraiOnLayoutEditorShown = function (opts) {
@@ -910,6 +922,28 @@ document.addEventListener('DOMContentLoaded', async () => {
                 e.stopPropagation();
             }
         }, true);
+    }
+    // Enforce max length for layout name editable field
+    const layoutNameDisplayEl = document.getElementById('layout-name-display');
+    if (layoutNameDisplayEl) {
+        layoutNameDisplayEl.addEventListener('input', () => {
+            let text = (layoutNameDisplayEl.textContent || '').replace(/\n/g, ' ').trimStart();
+            if (text.length > MAX_LAYOUT_NAME_LENGTH) {
+                text = text.slice(0, MAX_LAYOUT_NAME_LENGTH);
+                layoutNameDisplayEl.textContent = text;
+                const range = document.createRange();
+                const sel = window.getSelection();
+                range.selectNodeContents(layoutNameDisplayEl);
+                range.collapse(false);
+                sel.removeAllRanges();
+                sel.addRange(range);
+            }
+        });
+        layoutNameDisplayEl.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') {
+                e.preventDefault();
+            }
+        });
     }
     const layoutSaveBtn = document.getElementById('layout-save-btn');
     if (layoutSaveBtn) layoutSaveBtn.addEventListener('click', handleSaveLayout);

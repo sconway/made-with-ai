@@ -132,6 +132,23 @@ const FloorPlanEditor = (() => {
         { id: 'filing-cabinet', name: 'Filing Cabinet', category: 'office', width: 1.5, height: 2, color: '#757575' },
     ];
     
+    const furnitureSvgCache = {};
+
+    async function loadFurnitureSvgs() {
+        const ids = furnitureLibrary.map(f => f.id);
+        await Promise.all(ids.map(async (id) => {
+            try {
+                const res = await fetch(`/src/furniture/${id}.svg`);
+                if (!res.ok) return;
+                const text = await res.text();
+                const parser = new DOMParser();
+                const doc = parser.parseFromString(text, 'image/svg+xml');
+                const svgEl = doc.querySelector('svg');
+                if (svgEl) furnitureSvgCache[id] = svgEl;
+            } catch (e) { /* ignore missing files */ }
+        }));
+    }
+
     // Initialize the editor
     function init() {
         layoutEditorBtn = document.getElementById('layout-editor-btn');
@@ -288,8 +305,8 @@ const FloorPlanEditor = (() => {
         document.getElementById('rotate-left-btn')?.addEventListener('click', () => rotateSelectedBy(-90));
         document.getElementById('rotate-right-btn')?.addEventListener('click', () => rotateSelectedBy(90));
         
-        // Initialize furniture grid with all categories active
-        updateFurnitureGrid();
+        // Load furniture SVGs then populate the grid
+        loadFurnitureSvgs().then(() => updateFurnitureGrid());
         
         // Update canvas info
         updateCanvasInfo();
@@ -532,6 +549,23 @@ const FloorPlanEditor = (() => {
                         addToSelection(imported, 'imported');
                     } else {
                         selectElement(imported, 'imported');
+                    }
+                    return;
+                }
+            }
+            
+            // Check if clicking on a door or window (opening)
+            const openingEl = target.closest('.door-element') || target.closest('.window-element');
+            if (openingEl) {
+                const wallId = openingEl.dataset.wallId;
+                const openingId = openingEl.dataset.openingId;
+                const wall = walls.find(w => w.id === wallId);
+                const opening = wall?.openings?.find(o => o.id === openingId);
+                if (wall && opening) {
+                    if (e.shiftKey) {
+                        addToSelection({ wall, opening }, 'opening');
+                    } else if (!isElementSelected({ wall, opening }, 'opening')) {
+                        selectElement({ wall, opening }, 'opening');
                     }
                     return;
                 }
@@ -1924,10 +1958,12 @@ const FloorPlanEditor = (() => {
     function handleKeyDown(e) {
         if (!layoutEditorScreen || layoutEditorScreen.classList.contains('hidden')) return;
         
+        const isTyping = e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' || e.target.isContentEditable;
+        
         if (e.key === 'Escape') {
             cancelDrawing();
             deselectAll();
-        } else if (e.key === 'Delete' || e.key === 'Backspace') {
+        } else if ((e.key === 'Delete' || e.key === 'Backspace') && !isTyping) {
             if (selectedElement || selectedElements.length > 0) {
                 deleteSelected();
             }
@@ -1951,16 +1987,18 @@ const FloorPlanEditor = (() => {
                 e.preventDefault();
                 selectAll();
             }
-        } else if (e.key === 'v') {
-            selectTool('select');
-        } else if (e.key === 'w') {
-            selectTool('wall');
-        } else if (e.key === 'r') {
-            selectTool('room');
-        } else if (e.key === 'd') {
-            selectTool('door');
-        } else if (e.key === 'l') {
-            selectTool('label');
+        } else if (!isTyping) {
+            if (e.key === 'v') {
+                selectTool('select');
+            } else if (e.key === 'w') {
+                selectTool('wall');
+            } else if (e.key === 'r') {
+                selectTool('room');
+            } else if (e.key === 'd') {
+                selectTool('door');
+            } else if (e.key === 'l') {
+                selectTool('label');
+            }
         }
     }
     
@@ -3301,12 +3339,25 @@ const FloorPlanEditor = (() => {
         const centerY = wall.start.y + opening.position * (wall.end.y - wall.start.y);
         
         const halfWidth = opening.width / 2;
+        const hitPadding = Math.max(8, wallThickness);
         
         if (opening.type === 'door') {
             // Draw door opening (gap in wall with swing arc)
             const group = document.createElementNS('http://www.w3.org/2000/svg', 'g');
             group.classList.add('door-element');
+            group.dataset.wallId = wall.id;
+            group.dataset.openingId = opening.id;
             group.setAttribute('transform', `translate(${centerX}, ${centerY}) rotate(${wallAngle})`);
+            
+            // Hit area for selection
+            const hitRect = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
+            hitRect.setAttribute('x', -halfWidth - hitPadding);
+            hitRect.setAttribute('y', -wallThickness / 2 - hitPadding);
+            hitRect.setAttribute('width', opening.width + hitPadding * 2);
+            hitRect.setAttribute('height', wallThickness + hitPadding * 2);
+            hitRect.setAttribute('fill', 'transparent');
+            hitRect.setAttribute('pointer-events', 'all');
+            group.appendChild(hitRect);
             
             // Door frame (white rectangle to cover wall) - drawn in local coordinates
             const frame = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
@@ -3340,7 +3391,19 @@ const FloorPlanEditor = (() => {
             // Draw window (light blue rectangle)
             const group = document.createElementNS('http://www.w3.org/2000/svg', 'g');
             group.classList.add('window-element');
+            group.dataset.wallId = wall.id;
+            group.dataset.openingId = opening.id;
             group.setAttribute('transform', `translate(${centerX}, ${centerY}) rotate(${wallAngle})`);
+            
+            // Hit area for selection
+            const hitRect = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
+            hitRect.setAttribute('x', -halfWidth - hitPadding);
+            hitRect.setAttribute('y', -wallThickness / 2 - hitPadding);
+            hitRect.setAttribute('width', opening.width + hitPadding * 2);
+            hitRect.setAttribute('height', wallThickness + hitPadding * 2);
+            hitRect.setAttribute('fill', 'transparent');
+            hitRect.setAttribute('pointer-events', 'all');
+            group.appendChild(hitRect);
             
             // Window frame - drawn in local coordinates
             const frame = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
@@ -3441,200 +3504,8 @@ const FloorPlanEditor = (() => {
         }
     }
     
-    // Generate SVG icon for furniture items in sidebar
     function getFurnitureIcon(item) {
-        const size = 44;
-        const color = item.color;
-        const stroke = '#555';
-        
-        // Calculate aspect ratio to fit in the icon
-        const aspectRatio = item.width / item.height;
-        let w, h;
-        if (aspectRatio > 1) {
-            w = size - 4;
-            h = (size - 4) / aspectRatio;
-        } else {
-            h = size - 4;
-            w = (size - 4) * aspectRatio;
-        }
-        const x = (size - w) / 2;
-        const y = (size - h) / 2;
-        
-        const icons = {
-            // Living Room
-            'sofa': `<svg width="${size}" height="${size}" viewBox="0 0 ${size} ${size}">
-                <rect x="${x}" y="${y + h * 0.3}" width="${w}" height="${h * 0.7}" rx="3" fill="${color}" stroke="${stroke}"/>
-                <rect x="${x}" y="${y + h * 0.15}" width="${w * 0.15}" height="${h * 0.85}" rx="2" fill="${color}" stroke="${stroke}"/>
-                <rect x="${x + w * 0.85}" y="${y + h * 0.15}" width="${w * 0.15}" height="${h * 0.85}" rx="2" fill="${color}" stroke="${stroke}"/>
-                <rect x="${x + w * 0.15}" y="${y}" width="${w * 0.7}" height="${h * 0.35}" rx="2" fill="${color}" stroke="${stroke}"/>
-                <line x1="${x + w * 0.4}" y1="${y + h * 0.35}" x2="${x + w * 0.4}" y2="${y + h * 0.7}" stroke="${stroke}" stroke-width="1"/>
-                <line x1="${x + w * 0.6}" y1="${y + h * 0.35}" x2="${x + w * 0.6}" y2="${y + h * 0.7}" stroke="${stroke}" stroke-width="1"/>
-            </svg>`,
-            'armchair': `<svg width="${size}" height="${size}" viewBox="0 0 ${size} ${size}">
-                <rect x="${x + w * 0.15}" y="${y + h * 0.3}" width="${w * 0.7}" height="${h * 0.7}" rx="3" fill="${color}" stroke="${stroke}"/>
-                <rect x="${x}" y="${y + h * 0.2}" width="${w * 0.2}" height="${h * 0.7}" rx="3" fill="${color}" stroke="${stroke}"/>
-                <rect x="${x + w * 0.8}" y="${y + h * 0.2}" width="${w * 0.2}" height="${h * 0.7}" rx="3" fill="${color}" stroke="${stroke}"/>
-                <rect x="${x + w * 0.2}" y="${y}" width="${w * 0.6}" height="${h * 0.35}" rx="3" fill="${color}" stroke="${stroke}"/>
-            </svg>`,
-            'coffee-table': `<svg width="${size}" height="${size}" viewBox="0 0 ${size} ${size}">
-                <rect x="${x}" y="${y}" width="${w}" height="${h}" rx="2" fill="${color}" stroke="${stroke}"/>
-                <circle cx="${x + 4}" cy="${y + h - 2}" r="2" fill="${stroke}"/>
-                <circle cx="${x + w - 4}" cy="${y + h - 2}" r="2" fill="${stroke}"/>
-                <circle cx="${x + 4}" cy="${y + 2}" r="2" fill="${stroke}"/>
-                <circle cx="${x + w - 4}" cy="${y + 2}" r="2" fill="${stroke}"/>
-            </svg>`,
-            'tv-stand': `<svg width="${size}" height="${size}" viewBox="0 0 ${size} ${size}">
-                <rect x="${x}" y="${y}" width="${w}" height="${h}" rx="2" fill="${color}" stroke="${stroke}"/>
-                <rect x="${x + w * 0.1}" y="${y + h * 0.2}" width="${w * 0.35}" height="${h * 0.6}" rx="1" fill="#222" stroke="${stroke}"/>
-                <rect x="${x + w * 0.55}" y="${y + h * 0.2}" width="${w * 0.35}" height="${h * 0.6}" rx="1" fill="#222" stroke="${stroke}"/>
-            </svg>`,
-            'bookshelf': `<svg width="${size}" height="${size}" viewBox="0 0 ${size} ${size}">
-                <rect x="${x}" y="${y}" width="${w}" height="${h}" fill="${color}" stroke="${stroke}"/>
-                <line x1="${x}" y1="${y + h * 0.33}" x2="${x + w}" y2="${y + h * 0.33}" stroke="${stroke}"/>
-                <line x1="${x}" y1="${y + h * 0.66}" x2="${x + w}" y2="${y + h * 0.66}" stroke="${stroke}"/>
-                <rect x="${x + 2}" y="${y + 2}" width="4" height="${h * 0.28}" fill="#4a6fa5"/>
-                <rect x="${x + 7}" y="${y + 2}" width="3" height="${h * 0.28}" fill="#c0392b"/>
-                <rect x="${x + 11}" y="${y + 2}" width="5" height="${h * 0.28}" fill="#27ae60"/>
-            </svg>`,
-            
-            // Bedroom
-            'queen-bed': `<svg width="${size}" height="${size}" viewBox="0 0 ${size} ${size}">
-                <rect x="${x}" y="${y}" width="${w}" height="${h}" rx="2" fill="${color}" stroke="${stroke}"/>
-                <rect x="${x}" y="${y}" width="${w}" height="${h * 0.25}" rx="2" fill="#8B7355" stroke="${stroke}"/>
-                <rect x="${x + 2}" y="${y + h * 0.3}" width="${w * 0.45}" height="${h * 0.25}" rx="2" fill="#fff" stroke="#ccc"/>
-                <rect x="${x + w * 0.52}" y="${y + h * 0.3}" width="${w * 0.45}" height="${h * 0.25}" rx="2" fill="#fff" stroke="#ccc"/>
-            </svg>`,
-            'king-bed': `<svg width="${size}" height="${size}" viewBox="0 0 ${size} ${size}">
-                <rect x="${x}" y="${y}" width="${w}" height="${h}" rx="2" fill="${color}" stroke="${stroke}"/>
-                <rect x="${x}" y="${y}" width="${w}" height="${h * 0.2}" rx="2" fill="#8B7355" stroke="${stroke}"/>
-                <rect x="${x + 2}" y="${y + h * 0.25}" width="${w * 0.45}" height="${h * 0.2}" rx="2" fill="#fff" stroke="#ccc"/>
-                <rect x="${x + w * 0.52}" y="${y + h * 0.25}" width="${w * 0.45}" height="${h * 0.2}" rx="2" fill="#fff" stroke="#ccc"/>
-            </svg>`,
-            'twin-bed': `<svg width="${size}" height="${size}" viewBox="0 0 ${size} ${size}">
-                <rect x="${x}" y="${y}" width="${w}" height="${h}" rx="2" fill="${color}" stroke="${stroke}"/>
-                <rect x="${x}" y="${y}" width="${w}" height="${h * 0.15}" rx="2" fill="#8B7355" stroke="${stroke}"/>
-                <rect x="${x + w * 0.15}" y="${y + h * 0.2}" width="${w * 0.7}" height="${h * 0.2}" rx="2" fill="#fff" stroke="#ccc"/>
-            </svg>`,
-            'nightstand': `<svg width="${size}" height="${size}" viewBox="0 0 ${size} ${size}">
-                <rect x="${x}" y="${y}" width="${w}" height="${h}" rx="2" fill="${color}" stroke="${stroke}"/>
-                <rect x="${x + w * 0.1}" y="${y + h * 0.15}" width="${w * 0.8}" height="${h * 0.35}" rx="1" fill="#7B5544" stroke="${stroke}"/>
-                <circle cx="${x + w/2}" cy="${y + h * 0.32}" r="2" fill="#c9a86c"/>
-                <rect x="${x + w * 0.1}" y="${y + h * 0.55}" width="${w * 0.8}" height="${h * 0.35}" rx="1" fill="#7B5544" stroke="${stroke}"/>
-                <circle cx="${x + w/2}" cy="${y + h * 0.72}" r="2" fill="#c9a86c"/>
-            </svg>`,
-            'dresser': `<svg width="${size}" height="${size}" viewBox="0 0 ${size} ${size}">
-                <rect x="${x}" y="${y}" width="${w}" height="${h}" rx="2" fill="${color}" stroke="${stroke}"/>
-                <rect x="${x + 2}" y="${y + h * 0.1}" width="${w/2 - 3}" height="${h * 0.35}" rx="1" fill="#7B4513" stroke="${stroke}"/>
-                <rect x="${x + w/2 + 1}" y="${y + h * 0.1}" width="${w/2 - 3}" height="${h * 0.35}" rx="1" fill="#7B4513" stroke="${stroke}"/>
-                <rect x="${x + 2}" y="${y + h * 0.55}" width="${w/2 - 3}" height="${h * 0.35}" rx="1" fill="#7B4513" stroke="${stroke}"/>
-                <rect x="${x + w/2 + 1}" y="${y + h * 0.55}" width="${w/2 - 3}" height="${h * 0.35}" rx="1" fill="#7B4513" stroke="${stroke}"/>
-            </svg>`,
-            'wardrobe': `<svg width="${size}" height="${size}" viewBox="0 0 ${size} ${size}">
-                <rect x="${x}" y="${y}" width="${w}" height="${h}" rx="2" fill="${color}" stroke="${stroke}"/>
-                <line x1="${x + w/2}" y1="${y + 2}" x2="${x + w/2}" y2="${y + h - 2}" stroke="${stroke}"/>
-                <circle cx="${x + w * 0.35}" cy="${y + h/2}" r="2" fill="#c9a86c"/>
-                <circle cx="${x + w * 0.65}" cy="${y + h/2}" r="2" fill="#c9a86c"/>
-            </svg>`,
-            
-            // Dining
-            'dining-table': `<svg width="${size}" height="${size}" viewBox="0 0 ${size} ${size}">
-                <rect x="${x}" y="${y}" width="${w}" height="${h}" rx="3" fill="${color}" stroke="${stroke}"/>
-                <circle cx="${x + 4}" cy="${y + 4}" r="2" fill="${stroke}"/>
-                <circle cx="${x + w - 4}" cy="${y + 4}" r="2" fill="${stroke}"/>
-                <circle cx="${x + 4}" cy="${y + h - 4}" r="2" fill="${stroke}"/>
-                <circle cx="${x + w - 4}" cy="${y + h - 4}" r="2" fill="${stroke}"/>
-            </svg>`,
-            'dining-chair': `<svg width="${size}" height="${size}" viewBox="0 0 ${size} ${size}">
-                <rect x="${x + w * 0.1}" y="${y + h * 0.6}" width="${w * 0.8}" height="${h * 0.35}" rx="2" fill="${color}" stroke="${stroke}"/>
-                <rect x="${x + w * 0.15}" y="${y}" width="${w * 0.7}" height="${h * 0.65}" rx="2" fill="${color}" stroke="${stroke}"/>
-            </svg>`,
-            'buffet': `<svg width="${size}" height="${size}" viewBox="0 0 ${size} ${size}">
-                <rect x="${x}" y="${y}" width="${w}" height="${h}" rx="2" fill="${color}" stroke="${stroke}"/>
-                <rect x="${x + 2}" y="${y + h * 0.2}" width="${w * 0.28}" height="${h * 0.6}" rx="1" fill="#7B4513" stroke="${stroke}"/>
-                <rect x="${x + w * 0.36}" y="${y + h * 0.2}" width="${w * 0.28}" height="${h * 0.6}" rx="1" fill="#7B4513" stroke="${stroke}"/>
-                <rect x="${x + w * 0.7}" y="${y + h * 0.2}" width="${w * 0.28}" height="${h * 0.6}" rx="1" fill="#7B4513" stroke="${stroke}"/>
-            </svg>`,
-            
-            // Kitchen
-            'fridge': `<svg width="${size}" height="${size}" viewBox="0 0 ${size} ${size}">
-                <rect x="${x}" y="${y}" width="${w}" height="${h}" rx="2" fill="${color}" stroke="${stroke}"/>
-                <line x1="${x}" y1="${y + h * 0.35}" x2="${x + w}" y2="${y + h * 0.35}" stroke="${stroke}"/>
-                <rect x="${x + w - 5}" y="${y + h * 0.1}" width="2" height="${h * 0.15}" rx="1" fill="${stroke}"/>
-                <rect x="${x + w - 5}" y="${y + h * 0.45}" width="2" height="${h * 0.2}" rx="1" fill="${stroke}"/>
-            </svg>`,
-            'stove': `<svg width="${size}" height="${size}" viewBox="0 0 ${size} ${size}">
-                <rect x="${x}" y="${y}" width="${w}" height="${h}" rx="2" fill="${color}" stroke="${stroke}"/>
-                <circle cx="${x + w * 0.3}" cy="${y + h * 0.35}" r="${Math.min(w, h) * 0.18}" fill="none" stroke="#666" stroke-width="2"/>
-                <circle cx="${x + w * 0.7}" cy="${y + h * 0.35}" r="${Math.min(w, h) * 0.18}" fill="none" stroke="#666" stroke-width="2"/>
-                <circle cx="${x + w * 0.3}" cy="${y + h * 0.7}" r="${Math.min(w, h) * 0.15}" fill="none" stroke="#666" stroke-width="2"/>
-                <circle cx="${x + w * 0.7}" cy="${y + h * 0.7}" r="${Math.min(w, h) * 0.15}" fill="none" stroke="#666" stroke-width="2"/>
-            </svg>`,
-            'sink-kitchen': `<svg width="${size}" height="${size}" viewBox="0 0 ${size} ${size}">
-                <rect x="${x}" y="${y}" width="${w}" height="${h}" rx="2" fill="${color}" stroke="${stroke}"/>
-                <rect x="${x + 3}" y="${y + 3}" width="${w * 0.42}" height="${h - 6}" rx="3" fill="#bbb" stroke="${stroke}"/>
-                <rect x="${x + w * 0.52}" y="${y + 3}" width="${w * 0.42}" height="${h - 6}" rx="3" fill="#bbb" stroke="${stroke}"/>
-                <circle cx="${x + w/2}" cy="${y + 3}" r="2" fill="#888"/>
-            </svg>`,
-            'dishwasher': `<svg width="${size}" height="${size}" viewBox="0 0 ${size} ${size}">
-                <rect x="${x}" y="${y}" width="${w}" height="${h}" rx="2" fill="${color}" stroke="${stroke}"/>
-                <rect x="${x + 2}" y="${y + h * 0.15}" width="${w - 4}" height="${h * 0.7}" rx="1" fill="#ccc" stroke="${stroke}"/>
-                <rect x="${x + w/2 - 4}" y="${y + 3}" width="8" height="3" rx="1" fill="${stroke}"/>
-            </svg>`,
-            'counter': `<svg width="${size}" height="${size}" viewBox="0 0 ${size} ${size}">
-                <rect x="${x}" y="${y}" width="${w}" height="${h}" rx="1" fill="${color}" stroke="${stroke}"/>
-                <rect x="${x}" y="${y}" width="${w}" height="${h * 0.3}" fill="#888" stroke="${stroke}"/>
-            </svg>`,
-            
-            // Bathroom
-            'toilet': `<svg width="${size}" height="${size}" viewBox="0 0 ${size} ${size}">
-                <ellipse cx="${x + w/2}" cy="${y + h * 0.6}" rx="${w * 0.45}" ry="${h * 0.35}" fill="${color}" stroke="${stroke}"/>
-                <rect x="${x + w * 0.15}" y="${y}" width="${w * 0.7}" height="${h * 0.35}" rx="2" fill="${color}" stroke="${stroke}"/>
-                <ellipse cx="${x + w/2}" cy="${y + h * 0.6}" rx="${w * 0.3}" ry="${h * 0.22}" fill="#eee" stroke="#ccc"/>
-            </svg>`,
-            'bathtub': `<svg width="${size}" height="${size}" viewBox="0 0 ${size} ${size}">
-                <rect x="${x}" y="${y}" width="${w}" height="${h}" rx="4" fill="${color}" stroke="${stroke}"/>
-                <rect x="${x + 2}" y="${y + 2}" width="${w - 4}" height="${h - 4}" rx="3" fill="#e3f2fd" stroke="#90caf9"/>
-                <circle cx="${x + w/2}" cy="${y + h - 6}" r="3" fill="#90caf9"/>
-            </svg>`,
-            'shower': `<svg width="${size}" height="${size}" viewBox="0 0 ${size} ${size}">
-                <rect x="${x}" y="${y}" width="${w}" height="${h}" rx="2" fill="${color}" stroke="${stroke}"/>
-                <rect x="${x + 2}" y="${y + 2}" width="${w - 4}" height="${h - 4}" rx="1" fill="#bbdefb" stroke="#90caf9"/>
-                <circle cx="${x + w/2}" cy="${y + h * 0.3}" r="4" fill="none" stroke="#64b5f6" stroke-width="1.5"/>
-                <line x1="${x + w/2}" y1="${y + h * 0.35}" x2="${x + w/2}" y2="${y + h * 0.5}" stroke="#64b5f6" stroke-width="1.5" stroke-dasharray="2,2"/>
-            </svg>`,
-            'sink-bath': `<svg width="${size}" height="${size}" viewBox="0 0 ${size} ${size}">
-                <ellipse cx="${x + w/2}" cy="${y + h/2}" rx="${w * 0.45}" ry="${h * 0.4}" fill="${color}" stroke="${stroke}"/>
-                <ellipse cx="${x + w/2}" cy="${y + h/2}" rx="${w * 0.32}" ry="${h * 0.28}" fill="#eee" stroke="#ccc"/>
-                <circle cx="${x + w/2}" cy="${y + h * 0.65}" r="2" fill="#888"/>
-            </svg>`,
-            
-            // Office
-            'desk': `<svg width="${size}" height="${size}" viewBox="0 0 ${size} ${size}">
-                <rect x="${x}" y="${y}" width="${w}" height="${h}" rx="2" fill="${color}" stroke="${stroke}"/>
-                <rect x="${x + 2}" y="${y + h * 0.6}" width="${w * 0.35}" height="${h * 0.35}" rx="1" fill="#755647" stroke="${stroke}"/>
-                <circle cx="${x + w * 0.19}" cy="${y + h * 0.75}" r="2" fill="#c9a86c"/>
-            </svg>`,
-            'office-chair': `<svg width="${size}" height="${size}" viewBox="0 0 ${size} ${size}">
-                <ellipse cx="${x + w/2}" cy="${y + h * 0.85}" rx="${w * 0.35}" ry="${h * 0.1}" fill="#555" stroke="${stroke}"/>
-                <rect x="${x + w * 0.4}" y="${y + h * 0.55}" width="${w * 0.2}" height="${h * 0.3}" fill="#444" stroke="${stroke}"/>
-                <rect x="${x + w * 0.15}" y="${y + h * 0.4}" width="${w * 0.7}" height="${h * 0.2}" rx="3" fill="${color}" stroke="${stroke}"/>
-                <rect x="${x + w * 0.2}" y="${y}" width="${w * 0.6}" height="${h * 0.45}" rx="3" fill="${color}" stroke="${stroke}"/>
-            </svg>`,
-            'filing-cabinet': `<svg width="${size}" height="${size}" viewBox="0 0 ${size} ${size}">
-                <rect x="${x}" y="${y}" width="${w}" height="${h}" rx="1" fill="${color}" stroke="${stroke}"/>
-                <rect x="${x + 2}" y="${y + h * 0.05}" width="${w - 4}" height="${h * 0.28}" rx="1" fill="#666" stroke="${stroke}"/>
-                <rect x="${x + 2}" y="${y + h * 0.36}" width="${w - 4}" height="${h * 0.28}" rx="1" fill="#666" stroke="${stroke}"/>
-                <rect x="${x + 2}" y="${y + h * 0.67}" width="${w - 4}" height="${h * 0.28}" rx="1" fill="#666" stroke="${stroke}"/>
-                <rect x="${x + w/2 - 3}" y="${y + h * 0.15}" width="6" height="2" rx="1" fill="#aaa"/>
-                <rect x="${x + w/2 - 3}" y="${y + h * 0.46}" width="6" height="2" rx="1" fill="#aaa"/>
-                <rect x="${x + w/2 - 3}" y="${y + h * 0.77}" width="6" height="2" rx="1" fill="#aaa"/>
-            </svg>`,
-        };
-        
-        // Return the specific icon or a default rectangle
-        return icons[item.id] || `<svg width="${size}" height="${size}" viewBox="0 0 ${size} ${size}">
-            <rect x="${x}" y="${y}" width="${w}" height="${h}" rx="2" fill="${color}" stroke="${stroke}"/>
-        </svg>`;
+        return `<img src="/src/furniture/${item.id}.svg" alt="${item.name}" width="44" height="44" style="object-fit:contain">`;
     }
     
     // Furniture
@@ -3716,30 +3587,59 @@ const FloorPlanEditor = (() => {
         selectElement(item, 'furniture');
     }
     
+    /** Build SVG elements for furniture on the canvas using cached SVG files. */
+    function buildFurnitureBody(item) {
+        const w = item.width;
+        const h = item.height;
+        const els = [];
+        const ns = 'http://www.w3.org/2000/svg';
+
+        // Transparent hit rect for pointer events
+        const hitRect = document.createElementNS(ns, 'rect');
+        hitRect.setAttribute('x', 0);
+        hitRect.setAttribute('y', 0);
+        hitRect.setAttribute('width', w);
+        hitRect.setAttribute('height', h);
+        hitRect.setAttribute('fill', 'transparent');
+        hitRect.setAttribute('pointer-events', 'all');
+        els.push(hitRect);
+
+        const cached = furnitureSvgCache[item.typeId];
+        if (cached) {
+            const nested = document.createElementNS(ns, 'svg');
+            nested.setAttribute('width', w);
+            nested.setAttribute('height', h);
+            const vb = cached.getAttribute('viewBox');
+            if (vb) nested.setAttribute('viewBox', vb);
+            nested.setAttribute('preserveAspectRatio', 'none');
+            for (const attr of ['fill', 'stroke', 'stroke-width', 'stroke-linecap', 'stroke-linejoin']) {
+                const val = cached.getAttribute(attr);
+                if (val) nested.setAttribute(attr, val);
+            }
+            for (const child of cached.children) {
+                nested.appendChild(child.cloneNode(true));
+            }
+            els.push(nested);
+        } else {
+            const rect = document.createElementNS(ns, 'rect');
+            rect.setAttribute('width', w);
+            rect.setAttribute('height', h);
+            rect.setAttribute('fill', 'none');
+            rect.setAttribute('stroke', '#333');
+            rect.setAttribute('stroke-width', '1');
+            rect.setAttribute('rx', 2);
+            els.push(rect);
+        }
+        return els;
+    }
+
     function renderFurniture(item) {
         const group = document.createElementNS('http://www.w3.org/2000/svg', 'g');
         group.classList.add('furniture-element');
         group.dataset.furnitureId = item.id;
         group.setAttribute('transform', `translate(${item.x}, ${item.y}) rotate(${item.rotation}, ${item.width / 2}, ${item.height / 2})`);
-        
-        const rect = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
-        rect.setAttribute('width', item.width);
-        rect.setAttribute('height', item.height);
-        rect.setAttribute('fill', item.color);
-        rect.setAttribute('rx', 4);
-        rect.classList.add('furniture-body');
-        group.appendChild(rect);
-        
-        const label = document.createElementNS('http://www.w3.org/2000/svg', 'text');
-        label.setAttribute('x', item.width / 2);
-        label.setAttribute('y', item.height / 2);
-        label.setAttribute('text-anchor', 'middle');
-        label.setAttribute('dominant-baseline', 'middle');
-        label.setAttribute('font-size', '11');
-        label.setAttribute('fill', '#333');
-        label.textContent = item.name;
-        group.appendChild(label);
-        
+        const bodyEls = buildFurnitureBody(item);
+        bodyEls.forEach(el => group.appendChild(el));
         furnitureLayer.appendChild(group);
     }
     
@@ -3908,6 +3808,10 @@ const FloorPlanEditor = (() => {
         } else if (type === 'wall') {
             const el = wallsLayer.querySelector(`[data-wall-id="${element.id}"]`);
             if (el) el.classList.add('selected');
+        } else if (type === 'opening') {
+            const el = wallsLayer.querySelector(`[data-opening-id="${element.opening.id}"]`);
+            if (el) el.classList.add('selected');
+            showPropertiesForOpening(element);
         }
         
         // Show scale handles for scalable elements
@@ -3959,6 +3863,9 @@ const FloorPlanEditor = (() => {
             if (element.element) on ? element.element.classList.add('selected') : element.element.classList.remove('selected');
         } else if (type === 'wall') {
             const el = wallsLayer.querySelector(`[data-wall-id="${element.id}"]`);
+            if (el) on ? el.classList.add('selected') : el.classList.remove('selected');
+        } else if (type === 'opening') {
+            const el = wallsLayer.querySelector(`[data-opening-id="${element.opening.id}"]`);
             if (el) on ? el.classList.add('selected') : el.classList.remove('selected');
         }
     }
@@ -4017,6 +3924,7 @@ const FloorPlanEditor = (() => {
         furnitureLayer.querySelectorAll('.selected').forEach(el => el.classList.remove('selected'));
         labelsLayer.querySelectorAll('.room-label').forEach(el => el.style.fill = '');
         wallsLayer.querySelectorAll('.wall-line.selected').forEach(el => el.classList.remove('selected'));
+        wallsLayer.querySelectorAll('.door-element.selected, .window-element.selected').forEach(el => el.classList.remove('selected'));
         wallsLayer.querySelectorAll('.imported-svg-element.selected, .imported-svg-group.selected').forEach(el => el.classList.remove('selected'));
         removeRotationHandle();
         removeScaleHandles();
@@ -4585,6 +4493,9 @@ const FloorPlanEditor = (() => {
     }
     
     function isElementSelected(element, type) {
+        if (type === 'opening' && element && element.opening) {
+            return selectedElements.some(sel => sel.type === 'opening' && sel.element.opening.id === element.opening.id);
+        }
         return selectedElements.some(sel => sel.element === element && sel.type === type);
     }
     
@@ -4738,9 +4649,33 @@ const FloorPlanEditor = (() => {
         if (!panel) return;
         
         panel.classList.remove('hidden');
+        const nameEl = document.getElementById('property-item-name');
+        if (nameEl) nameEl.textContent = item.name || '';
+        ['property-row-height', 'property-row-rotation', 'property-row-rotate-buttons'].forEach(id => {
+            const row = document.getElementById(id);
+            if (row) row.style.display = '';
+        });
         document.getElementById('prop-width').value = (item.width / scale).toFixed(1);
         document.getElementById('prop-height').value = (item.height / scale).toFixed(1);
         document.getElementById('prop-rotation').value = item.rotation;
+    }
+    
+    function showPropertiesForOpening(element) {
+        const panel = document.getElementById('properties-panel');
+        if (!panel) return;
+        
+        panel.classList.remove('hidden');
+        const nameEl = document.getElementById('property-item-name');
+        if (nameEl) {
+            const type = element.opening?.type;
+            nameEl.textContent = type ? type.charAt(0).toUpperCase() + type.slice(1) : '';
+        }
+        document.getElementById('property-row-width').style.display = '';
+        document.getElementById('property-row-height').style.display = 'none';
+        document.getElementById('property-row-rotation').style.display = 'none';
+        const rotateRow = document.getElementById('property-row-rotate-buttons');
+        if (rotateRow) rotateRow.style.display = 'none';
+        document.getElementById('prop-width').value = (element.opening.width / scale).toFixed(1);
     }
     
     function hideProperties() {
@@ -4748,14 +4683,24 @@ const FloorPlanEditor = (() => {
     }
     
     function updateSelectedProperties() {
-        if (!selectedElement || selectedElement.type !== 'furniture') return;
+        if (!selectedElement) return;
         
-        const item = selectedElement.element;
-        item.width = parseFloat(document.getElementById('prop-width').value) * scale;
-        item.height = parseFloat(document.getElementById('prop-height').value) * scale;
-        item.rotation = parseInt(document.getElementById('prop-rotation').value);
-        
-        redrawFurniture();
+        if (selectedElement.type === 'furniture') {
+            const item = selectedElement.element;
+            item.width = parseFloat(document.getElementById('prop-width').value) * scale;
+            item.height = parseFloat(document.getElementById('prop-height').value) * scale;
+            item.rotation = parseInt(document.getElementById('prop-rotation').value);
+            redrawFurniture();
+        } else if (selectedElement.type === 'opening') {
+            const { wall, opening } = selectedElement.element;
+            const wallLength = Math.sqrt((wall.end.x - wall.start.x) ** 2 + (wall.end.y - wall.start.y) ** 2);
+            const minWidth = 1 * scale;
+            let newWidth = parseFloat(document.getElementById('prop-width').value) * scale;
+            newWidth = Math.max(minWidth, Math.min(wallLength, newWidth));
+            opening.width = newWidth;
+            document.getElementById('prop-width').value = (opening.width / scale).toFixed(1);
+            redrawWalls();
+        }
     }
     
     function deleteSelected() {
@@ -4778,6 +4723,9 @@ const FloorPlanEditor = (() => {
                 furniture = furniture.filter(f => f.id !== sel.element.id);
             } else if (sel.type === 'label') {
                 labels = labels.filter(l => l.id !== sel.element.id);
+            } else if (sel.type === 'opening') {
+                const { wall, opening } = sel.element;
+                wall.openings = wall.openings.filter(o => o.id !== opening.id);
             } else if (sel.type === 'imported') {
                 const imported = sel.element;
                 if (imported.element && imported.element.parentNode) {
@@ -5013,6 +4961,9 @@ const FloorPlanEditor = (() => {
         
         // Remove reference image controls
         document.querySelector('.ref-image-controls')?.remove();
+        
+        const nameEl = document.getElementById('layout-name-display');
+        if (nameEl) nameEl.textContent = '';
         
         redrawAll();
     }
@@ -5609,44 +5560,44 @@ const FloorPlanEditor = (() => {
     // ==========================================
     
     function extractFloorPlanData() {
-        const wallData = walls.map(w => ({
-            id: w.id,
-            start: { x: w.start.x, y: w.start.y },
-            end: { x: w.end.x, y: w.end.y },
-            lengthFeet: Math.sqrt((w.end.x - w.start.x) ** 2 + (w.end.y - w.start.y) ** 2) / scale,
-            openings: (w.openings || []).map(o => ({
-                type: o.type,
-                position: o.position,
-                width: o.width
-            }))
-        }));
-        
-        const furnitureData = furniture.map(f => ({
-            id: f.id,
-            typeId: f.typeId,
-            name: f.name,
-            category: f.category,
-            x: f.x,
-            y: f.y,
-            width: f.width,
-            height: f.height,
-            widthFeet: f.width / scale,
-            heightFeet: f.height / scale,
-            rotation: f.rotation || 0
-        }));
-        
-        const doorData = freeformOpenings.filter(o => o.type === 'door').map(d => ({
-            type: 'door',
-            x: d.x, y: d.y,
-            width: d.width, height: d.height
-        }));
-        
-        const windowData = freeformOpenings.filter(o => o.type === 'window').map(w => ({
-            type: 'window',
-            x: w.x, y: w.y,
-            width: w.width, height: w.height
-        }));
-        
+        // Collect all door/window openings with absolute positions
+        const allDoors = [];
+        const allWindows = [];
+
+        for (const w of walls) {
+            for (const o of (w.openings || [])) {
+                const cx = w.start.x + o.position * (w.end.x - w.start.x);
+                const cy = w.start.y + o.position * (w.end.y - w.start.y);
+                const wallDx = w.end.x - w.start.x;
+                const wallDy = w.end.y - w.start.y;
+                const wallAngle = Math.atan2(wallDy, wallDx) * 180 / Math.PI;
+                const normalAngle = wallAngle + 90;
+                const entry = {
+                    type: o.type,
+                    centerX: cx,
+                    centerY: cy,
+                    widthFeet: o.width / scale,
+                    wallAngleDeg: wallAngle,
+                    facingAngleDeg: normalAngle
+                };
+                if (o.type === 'door') allDoors.push(entry);
+                else allWindows.push(entry);
+            }
+        }
+
+        for (const fo of freeformOpenings) {
+            const cx = fo.x + fo.width / 2;
+            const cy = fo.y + fo.height / 2;
+            const entry = {
+                type: fo.type,
+                centerX: cx,
+                centerY: cy,
+                widthFeet: Math.max(fo.width, fo.height) / scale
+            };
+            if (fo.type === 'door') allDoors.push(entry);
+            else allWindows.push(entry);
+        }
+
         // Calculate room bounds
         let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
         for (const w of walls) {
@@ -5655,10 +5606,89 @@ const FloorPlanEditor = (() => {
             maxX = Math.max(maxX, w.start.x, w.end.x);
             maxY = Math.max(maxY, w.start.y, w.end.y);
         }
-        
+        const roomCx = (minX + maxX) / 2;
+        const roomCy = (minY + maxY) / 2;
+
+        function describePosition(x, y) {
+            if (walls.length === 0) return '';
+            const relX = (x - minX) / (maxX - minX || 1);
+            const relY = (y - minY) / (maxY - minY || 1);
+            const vertical = relY < 0.33 ? 'top' : relY > 0.66 ? 'bottom' : 'middle';
+            const horizontal = relX < 0.33 ? 'left' : relX > 0.66 ? 'right' : 'center';
+            if (vertical === 'middle' && horizontal === 'center') return 'center of room';
+            if (vertical === 'middle') return `${horizontal} side`;
+            if (horizontal === 'center') return `${vertical} side`;
+            return `${vertical}-${horizontal} corner`;
+        }
+
+        function distanceFeet(x1, y1, x2, y2) {
+            return Math.sqrt((x2 - x1) ** 2 + (y2 - y1) ** 2) / scale;
+        }
+
+        const furnitureData = furniture.map(f => {
+            const fcx = f.x + f.width / 2;
+            const fcy = f.y + f.height / 2;
+
+            const nearestDoors = allDoors.map((d, i) => ({
+                doorIndex: i,
+                distanceFeet: distanceFeet(fcx, fcy, d.centerX, d.centerY),
+                direction: describePosition(d.centerX, d.centerY)
+            })).sort((a, b) => a.distanceFeet - b.distanceFeet);
+
+            const nearestWindows = allWindows.map((w, i) => ({
+                windowIndex: i,
+                distanceFeet: distanceFeet(fcx, fcy, w.centerX, w.centerY),
+                direction: describePosition(w.centerX, w.centerY)
+            })).sort((a, b) => a.distanceFeet - b.distanceFeet);
+
+            let nearestWallDistPx = Infinity;
+            let nearestWallSide = '';
+            for (const w of walls) {
+                const wx = w.end.x - w.start.x;
+                const wy = w.end.y - w.start.y;
+                const wLen2 = wx * wx + wy * wy;
+                if (wLen2 === 0) continue;
+                const t = Math.max(0, Math.min(1, ((fcx - w.start.x) * wx + (fcy - w.start.y) * wy) / wLen2));
+                const projX = w.start.x + t * wx;
+                const projY = w.start.y + t * wy;
+                const dist = Math.sqrt((fcx - projX) ** 2 + (fcy - projY) ** 2);
+                if (dist < nearestWallDistPx) {
+                    nearestWallDistPx = dist;
+                    const wallMidX = (w.start.x + w.end.x) / 2;
+                    const wallMidY = (w.start.y + w.end.y) / 2;
+                    nearestWallSide = describePosition(wallMidX, wallMidY);
+                }
+            }
+
+            return {
+                id: f.id,
+                typeId: f.typeId,
+                name: f.name,
+                x: f.x,
+                y: f.y,
+                centerX: fcx,
+                centerY: fcy,
+                widthFeet: f.width / scale,
+                heightFeet: f.height / scale,
+                rotation: f.rotation || 0,
+                position: describePosition(fcx, fcy),
+                nearestWallDistFeet: nearestWallDistPx / scale,
+                nearestWallSide,
+                nearestDoors: nearestDoors.slice(0, 3),
+                nearestWindows: nearestWindows.slice(0, 3)
+            };
+        });
+
+        const wallData = walls.map(w => ({
+            start: { x: w.start.x, y: w.start.y },
+            end: { x: w.end.x, y: w.end.y },
+            lengthFeet: Math.sqrt((w.end.x - w.start.x) ** 2 + (w.end.y - w.start.y) ** 2) / scale
+        }));
+
         return {
             scale,
             unit,
+            coordinateSystem: 'x increases rightward, y increases downward; positions are in pixels',
             roomBounds: walls.length > 0 ? {
                 x: minX, y: minY,
                 width: maxX - minX, height: maxY - minY,
@@ -5666,8 +5696,8 @@ const FloorPlanEditor = (() => {
                 heightFeet: (maxY - minY) / scale
             } : null,
             walls: wallData,
-            doors: doorData,
-            windows: windowData,
+            doors: allDoors,
+            windows: allWindows,
             furniture: furnitureData,
             labels: labels.map(l => ({ text: l.text, x: l.x, y: l.y }))
         };
@@ -5749,6 +5779,450 @@ const FloorPlanEditor = (() => {
         });
     }
     
+    function getAllDoorPositions() {
+        const doors = [];
+        for (const w of walls) {
+            for (const o of (w.openings || [])) {
+                if (o.type !== 'door') continue;
+                const cx = w.start.x + o.position * (w.end.x - w.start.x);
+                const cy = w.start.y + o.position * (w.end.y - w.start.y);
+                const dx = w.end.x - w.start.x;
+                const dy = w.end.y - w.start.y;
+                const len = Math.sqrt(dx * dx + dy * dy);
+                doors.push({
+                    cx, cy,
+                    widthPx: o.width,
+                    normalX: len ? -dy / len : 0,
+                    normalY: len ? dx / len : 0,
+                    wallAngle: Math.atan2(dy, dx)
+                });
+            }
+        }
+        for (const fo of freeformOpenings) {
+            if (fo.type !== 'door') continue;
+            doors.push({
+                cx: fo.x + fo.width / 2,
+                cy: fo.y + fo.height / 2,
+                widthPx: Math.max(fo.width, fo.height),
+                normalX: 0, normalY: -1, wallAngle: 0
+            });
+        }
+        return doors;
+    }
+
+    function getAllWindowPositions() {
+        const wins = [];
+        for (const w of walls) {
+            for (const o of (w.openings || [])) {
+                if (o.type !== 'window') continue;
+                const cx = w.start.x + o.position * (w.end.x - w.start.x);
+                const cy = w.start.y + o.position * (w.end.y - w.start.y);
+                wins.push({ cx, cy, widthPx: o.width });
+            }
+        }
+        for (const fo of freeformOpenings) {
+            if (fo.type !== 'window') continue;
+            wins.push({ cx: fo.x + fo.width / 2, cy: fo.y + fo.height / 2, widthPx: Math.max(fo.width, fo.height) });
+        }
+        return wins;
+    }
+
+    function furnitureCenter(f) {
+        return { x: f.x + f.width / 2, y: f.y + f.height / 2 };
+    }
+
+    function dist(x1, y1, x2, y2) {
+        return Math.sqrt((x2 - x1) ** 2 + (y2 - y1) ** 2);
+    }
+
+    function nearestWallSide(fx, fy, bounds) {
+        const dTop = fy - bounds.minY;
+        const dBot = bounds.maxY - fy;
+        const dLeft = fx - bounds.minX;
+        const dRight = bounds.maxX - fx;
+        const min = Math.min(dTop, dBot, dLeft, dRight);
+        if (min === dTop) return 'top';
+        if (min === dBot) return 'bottom';
+        if (min === dLeft) return 'left';
+        return 'right';
+    }
+
+    function oppositeWall(side) {
+        return { top: 'bottom', bottom: 'top', left: 'right', right: 'left' }[side] || 'top';
+    }
+
+    function isDirectlyInLineWithDoor(f, door, bounds) {
+        const fc = furnitureCenter(f);
+        const roomW = bounds.maxX - bounds.minX;
+        const roomH = bounds.maxY - bounds.minY;
+        const threshold = Math.min(roomW, roomH) * 0.2;
+        const isHorizontalWall = Math.abs(Math.cos(door.wallAngle)) > 0.7;
+        if (isHorizontalWall) {
+            return Math.abs(fc.x - door.cx) < threshold;
+        } else {
+            return Math.abs(fc.y - door.cy) < threshold;
+        }
+    }
+
+    function distPointToSegment(px, py, ax, ay, bx, by) {
+        const dx = bx - ax, dy = by - ay;
+        const len2 = dx * dx + dy * dy;
+        if (len2 === 0) return dist(px, py, ax, ay);
+        const t = Math.max(0, Math.min(1, ((px - ax) * dx + (py - ay) * dy) / len2));
+        return dist(px, py, ax + t * dx, ay + t * dy);
+    }
+
+    function minWallDistance(px, py) {
+        let min = Infinity;
+        for (const w of walls) {
+            min = Math.min(min, distPointToSegment(px, py, w.start.x, w.start.y, w.end.x, w.end.y));
+        }
+        return min;
+    }
+
+    function rectsOverlap(a, b) {
+        return a.x < b.x + b.width && a.x + a.width > b.x &&
+               a.y < b.y + b.height && a.y + a.height > b.y;
+    }
+
+    function minEdgeToWallDistance(f) {
+        let min = Infinity;
+        const corners = [
+            { x: f.x, y: f.y }, { x: f.x + f.width, y: f.y },
+            { x: f.x, y: f.y + f.height }, { x: f.x + f.width, y: f.y + f.height },
+            { x: f.x + f.width / 2, y: f.y }, { x: f.x + f.width / 2, y: f.y + f.height },
+            { x: f.x, y: f.y + f.height / 2 }, { x: f.x + f.width, y: f.y + f.height / 2 }
+        ];
+        for (const pt of corners) {
+            for (const w of walls) {
+                min = Math.min(min, distPointToSegment(pt.x, pt.y, w.start.x, w.start.y, w.end.x, w.end.y));
+            }
+        }
+        return min;
+    }
+
+    function edgeGap(a, b) {
+        const gapX = Math.max(a.x - (b.x + b.width), b.x - (a.x + a.width));
+        const gapY = Math.max(a.y - (b.y + b.height), b.y - (a.y + a.height));
+        if (gapX > 0 && gapY > 0) return Math.sqrt(gapX * gapX + gapY * gapY);
+        return Math.max(gapX, gapY);
+    }
+
+    function analyzeFengShui() {
+        const bounds = getRoomBounds();
+        if (!bounds) return { overallScore: 5, summary: 'Unable to determine room bounds.', suggestions: [] };
+
+        const doors = getAllDoorPositions();
+        const windows = getAllWindowPositions();
+        const ft = scale;
+        const roomW = bounds.maxX - bounds.minX;
+        const roomH = bounds.maxY - bounds.minY;
+
+        const itemIssues = new Map();
+        function addIssue(f, weight, principle, description, priority) {
+            if (!itemIssues.has(f.id)) {
+                itemIssues.set(f.id, { weight: 0, suggestions: [] });
+            }
+            const entry = itemIssues.get(f.id);
+            entry.weight += weight;
+            entry.suggestions.push({ furnitureId: f.id, furnitureName: f.name, principle, description, priority });
+        }
+
+        // ---------- RULE: Furniture overlapping other furniture ----------
+        for (let i = 0; i < furniture.length; i++) {
+            for (let j = i + 1; j < furniture.length; j++) {
+                const a = furniture[i], b = furniture[j];
+                if (rectsOverlap(a, b)) {
+                    const smaller = (a.width * a.height <= b.width * b.height) ? a : b;
+                    const larger = smaller === a ? b : a;
+                    addIssue(smaller, 3, 'Overlapping furniture',
+                        `${smaller.name} overlaps with ${larger.name}. Overlapping items block energy flow.`, 'high');
+                }
+            }
+        }
+
+        // ---------- RULE: Furniture overlapping walls ----------
+        for (const f of furniture) {
+            if (rectOverlapsWall(f.x, f.y, f.width, f.height)) {
+                addIssue(f, 3, 'Wall obstruction',
+                    `${f.name} is clipping through a wall. Move it fully inside the room.`, 'high');
+            }
+        }
+
+        // ---------- RULE: Furniture outside room ----------
+        for (const f of furniture) {
+            const fc = furnitureCenter(f);
+            if (fc.x < bounds.minX || fc.x > bounds.maxX || fc.y < bounds.minY || fc.y > bounds.maxY) {
+                addIssue(f, 3, 'Outside room',
+                    `${f.name} is outside the room boundaries.`, 'high');
+            }
+        }
+
+        // ---------- RULE: Furniture blocking doors ----------
+        for (const f of furniture) {
+            const fc = furnitureCenter(f);
+            for (const door of doors) {
+                const d = dist(fc.x, fc.y, door.cx, door.cy);
+                if (d < 3 * ft) {
+                    addIssue(f, 2.5, 'Door clearance',
+                        `${f.name} is ${(d / ft).toFixed(1)} ft from a door. Keep at least 3 ft clear for chi to enter.`, 'high');
+                    break;
+                }
+            }
+        }
+
+        // ---------- RULE: Large furniture not anchored to wall ----------
+        const anchorTypes = new Set(['queen-bed', 'king-bed', 'twin-bed', 'sofa', 'desk', 'dresser', 'wardrobe', 'bookshelf', 'tv-stand', 'buffet', 'dining-table']);
+        for (const f of furniture) {
+            if (!anchorTypes.has(f.typeId)) continue;
+            const edgeDist = minEdgeToWallDistance(f);
+            if (edgeDist > 1.5 * ft) {
+                addIssue(f, 2, 'Wall anchoring',
+                    `${f.name} is floating ${(edgeDist / ft).toFixed(1)} ft from the nearest wall. Large furniture should be placed against a wall for grounding and stability.`, 'medium');
+            }
+        }
+
+        // ---------- RULE: Bed in "coffin position" (directly in line with door) ----------
+        const bedTypes = new Set(['queen-bed', 'king-bed', 'twin-bed']);
+        for (const f of furniture) {
+            if (!bedTypes.has(f.typeId)) continue;
+            for (const door of doors) {
+                if (isDirectlyInLineWithDoor(f, door, bounds)) {
+                    addIssue(f, 2.5, 'Coffin position',
+                        `${f.name} is directly in line with a door — the "coffin position" in feng shui. Move to a side wall where you can see the door diagonally.`, 'high');
+                    break;
+                }
+            }
+        }
+
+        // ---------- RULE: Bed headboard near window ----------
+        for (const f of furniture) {
+            if (!bedTypes.has(f.typeId)) continue;
+            const edges = [
+                { x: f.x + f.width / 2, y: f.y },
+                { x: f.x + f.width / 2, y: f.y + f.height },
+                { x: f.x, y: f.y + f.height / 2 },
+                { x: f.x + f.width, y: f.y + f.height / 2 }
+            ];
+            for (const win of windows) {
+                const nearestEdgeDist = Math.min(...edges.map(e => dist(e.x, e.y, win.cx, win.cy)));
+                if (nearestEdgeDist < 2 * ft) {
+                    addIssue(f, 1.5, 'Bed near window',
+                        `${f.name} is too close to a window. Place the headboard against a solid wall for restful sleep.`, 'medium');
+                    break;
+                }
+            }
+        }
+
+        // ---------- RULE: Sofa/desk command position (back to door) ----------
+        for (const f of furniture) {
+            if (f.typeId !== 'sofa' && f.typeId !== 'desk') continue;
+            if (doors.length === 0) continue;
+            const fc = furnitureCenter(f);
+            const fSide = nearestWallSide(fc.x, fc.y, bounds);
+            const nearestDoor = doors.reduce((best, d) => {
+                const dd = dist(fc.x, fc.y, d.cx, d.cy);
+                return dd < best.dist ? { door: d, dist: dd } : best;
+            }, { door: null, dist: Infinity });
+            if (!nearestDoor.door) continue;
+            const doorSide = nearestWallSide(nearestDoor.door.cx, nearestDoor.door.cy, bounds);
+            if (fSide === doorSide) {
+                addIssue(f, 1.5, 'Command position',
+                    `${f.name} has its back facing the door. In feng shui, you should be able to see the entrance — reposition to the opposite wall.`, 'medium');
+            }
+        }
+
+        // ---------- RULE: Furniture crowding ----------
+        const crowded = new Set();
+        for (let i = 0; i < furniture.length; i++) {
+            for (let j = i + 1; j < furniture.length; j++) {
+                const gap = edgeGap(furniture[i], furniture[j]);
+                if (gap >= 0 && gap < ft * 0.5) {
+                    const smaller = (furniture[i].width * furniture[i].height <= furniture[j].width * furniture[j].height) ? furniture[i] : furniture[j];
+                    if (!crowded.has(smaller.id)) {
+                        crowded.add(smaller.id);
+                        addIssue(smaller, 0.75, 'Crowding',
+                            `${smaller.name} is too close to adjacent furniture (${(gap / ft).toFixed(1)} ft gap). Allow at least 1.5–2 ft between pieces for chi to circulate.`, 'low');
+                    }
+                }
+            }
+        }
+
+        // ---------- RULE: Balance ----------
+        if (furniture.length >= 3) {
+            const roomCx = (bounds.minX + bounds.maxX) / 2;
+            const roomCy = (bounds.minY + bounds.maxY) / 2;
+            let leftW = 0, rightW = 0, topW = 0, bottomW = 0;
+            const leftItems = [], rightItems = [], topItems = [], bottomItems = [];
+            for (const f of furniture) {
+                const fc = furnitureCenter(f);
+                const w = f.width * f.height;
+                if (fc.x < roomCx) { leftW += w; leftItems.push(f); } else { rightW += w; rightItems.push(f); }
+                if (fc.y < roomCy) { topW += w; topItems.push(f); } else { bottomW += w; bottomItems.push(f); }
+            }
+            const hBal = Math.min(leftW, rightW) / Math.max(leftW, rightW, 1);
+            const vBal = Math.min(topW, bottomW) / Math.max(topW, bottomW, 1);
+            if (hBal < 0.25) {
+                const heavySide = leftW > rightW ? 'left' : 'right';
+                const lightSide = oppositeWall(heavySide);
+                const heavyItems = heavySide === 'left' ? leftItems : rightItems;
+                const candidate = heavyItems.reduce((best, f) => (!best || f.width * f.height > best.width * best.height) ? f : best, null);
+                if (candidate) {
+                    addIssue(candidate, hBal < 0.1 ? 2.5 : 1.5, 'Room balance',
+                        `Furniture is heavily concentrated on the ${heavySide} side. Move ${candidate.name} toward the ${lightSide} to create visual and energetic balance.`, 'medium');
+                }
+            }
+            if (vBal < 0.25) {
+                const heavySide = topW > bottomW ? 'top' : 'bottom';
+                const lightSide = oppositeWall(heavySide);
+                const heavyItems = heavySide === 'top' ? topItems : bottomItems;
+                const candidate = heavyItems.reduce((best, f) => (!best || f.width * f.height > best.width * best.height) ? f : best, null);
+                if (candidate && !itemIssues.has(candidate.id)) {
+                    addIssue(candidate, vBal < 0.1 ? 2.5 : 1.5, 'Room balance',
+                        `Furniture is concentrated toward the ${heavySide}. Move ${candidate.name} toward the ${lightSide} for better balance.`, 'medium');
+                }
+            }
+        }
+
+        // ---------- RULE: Center of room should be open (tai chi) ----------
+        const centerZone = {
+            x: bounds.minX + roomW * 0.3,
+            y: bounds.minY + roomH * 0.3,
+            width: roomW * 0.4,
+            height: roomH * 0.4
+        };
+        const centerBlockers = [];
+        for (const f of furniture) {
+            const ox = Math.max(0, Math.min(f.x + f.width, centerZone.x + centerZone.width) - Math.max(f.x, centerZone.x));
+            const oy = Math.max(0, Math.min(f.y + f.height, centerZone.y + centerZone.height) - Math.max(f.y, centerZone.y));
+            if (ox > 0 && oy > 0) {
+                centerBlockers.push({ f, overlap: ox * oy });
+            }
+        }
+        centerBlockers.sort((a, b) => b.overlap - a.overlap);
+        const centerTotalArea = centerBlockers.reduce((s, c) => s + c.overlap, 0);
+        const centerFillRatio = centerTotalArea / (centerZone.width * centerZone.height);
+        if (centerFillRatio > 0.1) {
+            const priority = centerFillRatio > 0.2 ? 'high' : 'medium';
+            const penalty = centerFillRatio > 0.4 ? 2 : centerFillRatio > 0.2 ? 1.5 : 0.75;
+            for (const { f } of centerBlockers.slice(0, 3)) {
+                addIssue(f, penalty, 'Open center (tai chi)',
+                    `${f.name} is in the center of the room. In feng shui, the center ("tai chi") should remain open to allow energy to gather and circulate.`, priority);
+            }
+        }
+
+        // ---------- RULE: Clear pathway from door ----------
+        for (const door of doors) {
+            const pathWidth = 2 * ft;
+            const pathLength = Math.max(roomW, roomH) * 0.6;
+            const isHWall = Math.abs(Math.cos(door.wallAngle)) > 0.7;
+            for (const f of furniture) {
+                let blocks = false;
+                if (isHWall) {
+                    const pathMinX = door.cx - pathWidth / 2;
+                    const pathMaxX = door.cx + pathWidth / 2;
+                    const pathMinY = Math.min(door.cy, door.cy + door.normalY * pathLength);
+                    const pathMaxY = Math.max(door.cy, door.cy + door.normalY * pathLength);
+                    blocks = f.x + f.width > pathMinX && f.x < pathMaxX && f.y + f.height > pathMinY && f.y < pathMaxY;
+                } else {
+                    const pathMinY = door.cy - pathWidth / 2;
+                    const pathMaxY = door.cy + pathWidth / 2;
+                    const pathMinX = Math.min(door.cx, door.cx + door.normalX * pathLength);
+                    const pathMaxX = Math.max(door.cx, door.cx + door.normalX * pathLength);
+                    blocks = f.x + f.width > pathMinX && f.x < pathMaxX && f.y + f.height > pathMinY && f.y < pathMaxY;
+                }
+                if (blocks) {
+                    addIssue(f, 1.5, 'Pathway blocked',
+                        `${f.name} is blocking the pathway from a door. Keep a clear 2 ft path from every entrance so chi can flow freely into the room.`, 'high');
+                }
+            }
+        }
+
+        // ---------- RULE: Desk/sofa facing wall (should face into room) ----------
+        for (const f of furniture) {
+            if (f.typeId !== 'desk' && f.typeId !== 'sofa') continue;
+            const fc = furnitureCenter(f);
+            const edgeDist = minEdgeToWallDistance(f);
+            if (edgeDist > 1.5 * ft) continue;
+            const side = nearestWallSide(fc.x, fc.y, bounds);
+            const isLandscape = f.width > f.height;
+            const facesWall = (side === 'top' || side === 'bottom') ? !isLandscape : isLandscape;
+            if (facesWall && doors.length > 0) {
+                addIssue(f, 1.5, 'Facing wall',
+                    `${f.name} faces the wall. Rotate so it faces into the room for better awareness and energy flow.`, 'medium');
+            }
+        }
+
+        // ---------- RULE: Nightstand without bed nearby ----------
+        for (const f of furniture) {
+            if (f.typeId !== 'nightstand') continue;
+            const fc = furnitureCenter(f);
+            const nearBed = furniture.some(b => bedTypes.has(b.typeId) && dist(fc.x, fc.y, furnitureCenter(b).x, furnitureCenter(b).y) < 4 * ft);
+            if (!nearBed) {
+                addIssue(f, 1, 'Nightstand placement',
+                    `${f.name} is far from any bed. Place nightstands adjacent to the bed for balanced energy on both sides.`, 'low');
+            }
+        }
+
+        // ---------- RULE: Bed should see the door (command position) ----------
+        for (const f of furniture) {
+            if (!bedTypes.has(f.typeId)) continue;
+            if (doors.length === 0) continue;
+            if (itemIssues.has(f.id)) continue;
+            const fc = furnitureCenter(f);
+            const fSide = nearestWallSide(fc.x, fc.y, bounds);
+            for (const door of doors) {
+                const doorSide = nearestWallSide(door.cx, door.cy, bounds);
+                if (fSide === doorSide) {
+                    addIssue(f, 1.5, 'Bed command position',
+                        `${f.name} is on the same wall as the door. Ideally place the bed on a wall diagonal to the door for the command position.`, 'medium');
+                    break;
+                }
+            }
+        }
+
+        // ---------- Compute score ----------
+        let totalWeight = 0;
+        const issueBreakdown = [];
+        for (const [id, entry] of itemIssues) {
+            totalWeight += entry.weight;
+            const f = furniture.find(fi => fi.id === id);
+            issueBreakdown.push({ item: f?.name || id, weight: entry.weight, rules: entry.suggestions.map(s => s.principle) });
+        }
+        const denom = Math.max(furniture.length * 1.5, 4);
+        const rawScore = 10 - (totalWeight / denom) * 9;
+        const score = Math.max(1, Math.min(10, Math.round(rawScore)));
+        console.log('[Feng Shui]', { totalWeight, denom, rawScore, score, issueBreakdown });
+
+        // Collect one suggestion per item (highest priority first)
+        const priorityOrder = { high: 0, medium: 1, low: 2 };
+        const allSuggestions = [];
+        for (const [, entry] of itemIssues) {
+            if (entry.suggestions.length === 0) continue;
+            entry.suggestions.sort((a, b) => (priorityOrder[a.priority] || 2) - (priorityOrder[b.priority] || 2));
+            allSuggestions.push(entry.suggestions[0]);
+        }
+        const seen = new Set();
+        const dedupedSuggestions = allSuggestions.filter(s => {
+            if (seen.has(s.furnitureId)) return false;
+            seen.add(s.furnitureId);
+            return true;
+        });
+
+        let summary;
+        if (score >= 8 && dedupedSuggestions.length === 0) {
+            summary = 'Excellent feng shui! Furniture is well-placed with balanced energy flow.';
+        } else if (score >= 7) {
+            summary = 'Good layout with minor feng shui improvements possible.';
+        } else if (score >= 4) {
+            summary = 'Several feng shui issues found — applying the suggestions will improve energy flow and harmony.';
+        } else {
+            summary = 'Major feng shui problems detected. The furniture arrangement significantly blocks energy flow.';
+        }
+
+        return { overallScore: score, summary, suggestions: dedupedSuggestions };
+    }
+
     async function startFengShuiAnalysis() {
         const hasImages = referenceImages.length > 0;
         const hasDrawnContent = furniture.length > 0 || walls.length > 0;
@@ -5765,69 +6239,51 @@ const FloorPlanEditor = (() => {
         
         showFengShuiPanel();
         const panel = document.getElementById('feng-shui-panel');
-        if (panel) {
-            panel.querySelector('.feng-shui-body').innerHTML = `
-                <div class="feng-shui-loading">
-                    <div class="feng-shui-spinner"></div>
-                    <p>Analyzing your floor plan...</p>
-                    <small>${hasImages ? 'Analyzing image and generating improved layout — this may take a minute...' : 'Evaluating energy flow, furniture placement, and feng shui principles'}</small>
-                </div>
-            `;
-        }
-        
-        try {
-            if (hasImages) {
+
+        if (hasImages) {
+            if (panel) {
+                panel.querySelector('.feng-shui-body').innerHTML = `
+                    <div class="feng-shui-loading">
+                        <div class="feng-shui-spinner"></div>
+                        <p>Analyzing your floor plan...</p>
+                        <small>Analyzing image and generating improved layout — this may take a minute...</small>
+                    </div>
+                `;
+            }
+            try {
                 const refImage = referenceImages[0];
                 const imageBase64 = refImage.dataUrl;
-                
                 const response = await fetch('/api/feng-shui-image', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ imageBase64 })
                 });
-                
                 if (!response.ok) {
                     const err = await response.json().catch(() => ({}));
                     throw new Error(err.error || 'Image analysis failed');
                 }
-                
                 const result = await response.json();
                 displayImageFengShuiResults(result, imageBase64);
-            } else {
-                const floorPlanData = extractFloorPlanData();
-                
-                const response = await fetch('/api/feng-shui', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ floorPlanData })
-                });
-                
-                if (!response.ok) {
-                    const err = await response.json().catch(() => ({}));
-                    throw new Error(err.error || 'Analysis failed');
+            } catch (err) {
+                console.error('Feng shui analysis error:', err);
+                if (panel) {
+                    panel.querySelector('.feng-shui-body').innerHTML = `
+                        <div class="feng-shui-error">
+                            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#ef4444" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg>
+                            <p>${err.message}</p>
+                            <button class="secondary-btn" onclick="this.closest('.feng-shui-body').innerHTML=''; document.getElementById('feng-shui-panel')?.remove();">Close</button>
+                        </div>
+                    `;
                 }
-                
-                const result = await response.json();
-                displayFengShuiResults(result);
             }
-        } catch (err) {
-            console.error('Feng shui analysis error:', err);
-            const panel = document.getElementById('feng-shui-panel');
-            if (panel) {
-                panel.querySelector('.feng-shui-body').innerHTML = `
-                    <div class="feng-shui-error">
-                        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#ef4444" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg>
-                        <p>${err.message}</p>
-                        <button class="secondary-btn" onclick="this.closest('.feng-shui-body').innerHTML=''; document.getElementById('feng-shui-panel')?.remove();">Close</button>
-                    </div>
-                `;
-            }
+        } else {
+            const result = analyzeFengShui();
+            displayFengShuiResults(result);
         }
     }
     
     function showFengShuiPanel() {
         document.getElementById('feng-shui-panel')?.remove();
-        removeFengShuiZones();
         
         const container = document.querySelector('.layout-canvas-container');
         if (!container) return;
@@ -5852,7 +6308,6 @@ const FloorPlanEditor = (() => {
         
         document.getElementById('feng-shui-close-btn').addEventListener('click', () => {
             panel.remove();
-            removeFengShuiZones();
         });
     }
     
@@ -5878,82 +6333,29 @@ const FloorPlanEditor = (() => {
         if (result.suggestions && result.suggestions.length > 0) {
             html += `<div class="feng-shui-suggestions">`;
             
-            // Apply All button
-            html += `
-                <button class="feng-shui-apply-all" id="feng-shui-apply-all">
-                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20 6 9 17 4 12"/></svg>
-                    Apply All Suggestions
-                </button>
-            `;
-            
-            result.suggestions.forEach((suggestion, i) => {
+            result.suggestions.forEach((suggestion) => {
                 const priorityColor = suggestion.priority === 'high' ? '#ef4444' : suggestion.priority === 'medium' ? '#f59e0b' : '#22c55e';
-                const matchedFurniture = furniture.find(f => f.id === suggestion.furnitureId);
                 
                 html += `
-                    <div class="feng-shui-suggestion" data-index="${i}">
+                    <div class="feng-shui-suggestion">
                         <div class="suggestion-header">
                             <span class="suggestion-priority" style="background: ${priorityColor}">${suggestion.priority}</span>
-                            <span class="suggestion-name">${suggestion.furnitureName || (matchedFurniture?.name) || 'Furniture'}</span>
+                            <span class="suggestion-name">${suggestion.furnitureName || 'Furniture'}</span>
                         </div>
                         <p class="suggestion-principle">${suggestion.principle}</p>
                         <p class="suggestion-desc">${suggestion.description}</p>
-                        <div class="suggestion-actions">
-                            <button class="feng-shui-show-btn" data-index="${i}">
-                                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/></svg>
-                                Show Zone
-                            </button>
-                            ${matchedFurniture ? `<button class="feng-shui-apply-btn" data-index="${i}">
-                                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20 6 9 17 4 12"/></svg>
-                                Apply
-                            </button>` : `<span class="suggestion-no-match">Furniture not found</span>`}
-                        </div>
                     </div>
                 `;
             });
             
             html += `</div>`;
-        } else {
+        } else if (result.overallScore >= 8) {
             html += `<p class="feng-shui-no-suggestions">Your floor plan has good feng shui! No major changes suggested.</p>`;
+        } else {
+            html += `<p class="feng-shui-no-suggestions">${result.summary}</p>`;
         }
         
         body.innerHTML = html;
-        
-        // Store suggestions for later use
-        panel.dataset.suggestions = JSON.stringify(result.suggestions || []);
-        
-        // Hook up buttons
-        body.querySelectorAll('.feng-shui-show-btn').forEach(btn => {
-            btn.addEventListener('click', () => {
-                const idx = parseInt(btn.dataset.index);
-                const suggestions = JSON.parse(panel.dataset.suggestions);
-                showFengShuiZone(suggestions[idx], idx);
-            });
-        });
-        
-        body.querySelectorAll('.feng-shui-apply-btn').forEach(btn => {
-            btn.addEventListener('click', () => {
-                const idx = parseInt(btn.dataset.index);
-                const suggestions = JSON.parse(panel.dataset.suggestions);
-                applyFengShuiSuggestion(suggestions[idx]);
-                btn.textContent = 'Applied';
-                btn.disabled = true;
-                btn.classList.add('applied');
-            });
-        });
-        
-        document.getElementById('feng-shui-apply-all')?.addEventListener('click', () => {
-            const suggestions = JSON.parse(panel.dataset.suggestions);
-            addToHistory();
-            suggestions.forEach(s => applyFengShuiSuggestion(s, true));
-            redrawAll();
-            removeFengShuiZones();
-            body.querySelectorAll('.feng-shui-apply-btn').forEach(b => {
-                b.textContent = 'Applied';
-                b.disabled = true;
-                b.classList.add('applied');
-            });
-        });
     }
     
     function displayImageFengShuiResults(result, originalImageBase64) {
@@ -6044,118 +6446,45 @@ const FloorPlanEditor = (() => {
         });
     }
     
-    function showFengShuiZone(suggestion, index) {
-        removeFengShuiZones();
-        
-        if (!suggestion.zoneX && !suggestion.newX) return;
-        
-        const floorPlanGroup = document.getElementById('floor-plan-group');
-        if (!floorPlanGroup) return;
-        
-        const zoneGroup = document.createElementNS('http://www.w3.org/2000/svg', 'g');
-        zoneGroup.classList.add('feng-shui-zone');
-        
-        const cx = suggestion.zoneX || suggestion.newX;
-        const cy = suggestion.zoneY || suggestion.newY;
-        const zw = suggestion.zoneWidth || 150;
-        const zh = suggestion.zoneHeight || 150;
-        
-        // Highlighted zone
-        const zone = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
-        zone.setAttribute('x', cx - zw / 2);
-        zone.setAttribute('y', cy - zh / 2);
-        zone.setAttribute('width', zw);
-        zone.setAttribute('height', zh);
-        zone.setAttribute('rx', 8);
-        zone.setAttribute('fill', 'rgba(34, 197, 94, 0.15)');
-        zone.setAttribute('stroke', '#22c55e');
-        zone.setAttribute('stroke-width', 2 / zoom);
-        zone.setAttribute('stroke-dasharray', `${6 / zoom}`);
-        zoneGroup.appendChild(zone);
-        
-        // Ghost furniture at suggested position
-        const matchedFurniture = furniture.find(f => f.id === suggestion.furnitureId);
-        if (matchedFurniture && suggestion.newX !== undefined) {
-            const ghost = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
-            ghost.setAttribute('x', suggestion.newX);
-            ghost.setAttribute('y', suggestion.newY);
-            ghost.setAttribute('width', matchedFurniture.width);
-            ghost.setAttribute('height', matchedFurniture.height);
-            ghost.setAttribute('rx', 3);
-            ghost.setAttribute('fill', 'rgba(34, 197, 94, 0.25)');
-            ghost.setAttribute('stroke', '#22c55e');
-            ghost.setAttribute('stroke-width', 2 / zoom);
-            
-            if (suggestion.newRotation !== undefined && suggestion.newRotation !== (matchedFurniture.rotation || 0)) {
-                const rcx = suggestion.newX + matchedFurniture.width / 2;
-                const rcy = suggestion.newY + matchedFurniture.height / 2;
-                ghost.setAttribute('transform', `rotate(${suggestion.newRotation}, ${rcx}, ${rcy})`);
+    
+    function getRoomBounds() {
+        let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+        for (const w of walls) {
+            minX = Math.min(minX, w.start.x, w.end.x);
+            minY = Math.min(minY, w.start.y, w.end.y);
+            maxX = Math.max(maxX, w.start.x, w.end.x);
+            maxY = Math.max(maxY, w.start.y, w.end.y);
+        }
+        if (!isFinite(minX)) return null;
+        return { minX, minY, maxX, maxY };
+    }
+
+    function rectOverlapsWall(rx, ry, rw, rh) {
+        const halfThick = wallThickness / 2 + 2;
+        for (const w of walls) {
+            const dx = w.end.x - w.start.x;
+            const dy = w.end.y - w.start.y;
+            const len = Math.sqrt(dx * dx + dy * dy);
+            if (len === 0) continue;
+            const nx = -dy / len * halfThick;
+            const ny = dx / len * halfThick;
+            const corners = [
+                { x: w.start.x + nx, y: w.start.y + ny },
+                { x: w.end.x + nx, y: w.end.y + ny },
+                { x: w.end.x - nx, y: w.end.y - ny },
+                { x: w.start.x - nx, y: w.start.y - ny }
+            ];
+            const wx1 = Math.min(corners[0].x, corners[1].x, corners[2].x, corners[3].x);
+            const wy1 = Math.min(corners[0].y, corners[1].y, corners[2].y, corners[3].y);
+            const wx2 = Math.max(corners[0].x, corners[1].x, corners[2].x, corners[3].x);
+            const wy2 = Math.max(corners[0].y, corners[1].y, corners[2].y, corners[3].y);
+            if (rx < wx2 && rx + rw > wx1 && ry < wy2 && ry + rh > wy1) {
+                return true;
             }
-            zoneGroup.appendChild(ghost);
-            
-            // Arrow from current to suggested position
-            const arrow = document.createElementNS('http://www.w3.org/2000/svg', 'line');
-            arrow.setAttribute('x1', matchedFurniture.x + matchedFurniture.width / 2);
-            arrow.setAttribute('y1', matchedFurniture.y + matchedFurniture.height / 2);
-            arrow.setAttribute('x2', suggestion.newX + matchedFurniture.width / 2);
-            arrow.setAttribute('y2', suggestion.newY + matchedFurniture.height / 2);
-            arrow.setAttribute('stroke', '#22c55e');
-            arrow.setAttribute('stroke-width', 2 / zoom);
-            arrow.setAttribute('stroke-dasharray', `${4 / zoom}`);
-            arrow.setAttribute('marker-end', 'url(#feng-shui-arrow)');
-            zoneGroup.appendChild(arrow);
         }
-        
-        // Label
-        const label = document.createElementNS('http://www.w3.org/2000/svg', 'text');
-        label.setAttribute('x', cx);
-        label.setAttribute('y', cy - zh / 2 - 8 / zoom);
-        label.setAttribute('text-anchor', 'middle');
-        label.setAttribute('font-size', 12 / zoom);
-        label.setAttribute('fill', '#22c55e');
-        label.setAttribute('font-weight', '600');
-        label.textContent = suggestion.principle || 'Suggested zone';
-        zoneGroup.appendChild(label);
-        
-        // Add arrow marker if not present
-        let defs = svg.querySelector('defs');
-        if (!defs.querySelector('#feng-shui-arrow')) {
-            const marker = document.createElementNS('http://www.w3.org/2000/svg', 'marker');
-            marker.setAttribute('id', 'feng-shui-arrow');
-            marker.setAttribute('markerWidth', '10');
-            marker.setAttribute('markerHeight', '7');
-            marker.setAttribute('refX', '10');
-            marker.setAttribute('refY', '3.5');
-            marker.setAttribute('orient', 'auto');
-            const path = document.createElementNS('http://www.w3.org/2000/svg', 'polygon');
-            path.setAttribute('points', '0 0, 10 3.5, 0 7');
-            path.setAttribute('fill', '#22c55e');
-            marker.appendChild(path);
-            defs.appendChild(marker);
-        }
-        
-        floorPlanGroup.appendChild(zoneGroup);
+        return false;
     }
-    
-    function removeFengShuiZones() {
-        document.querySelectorAll('.feng-shui-zone').forEach(el => el.remove());
-    }
-    
-    function applyFengShuiSuggestion(suggestion, skipHistory) {
-        const item = furniture.find(f => f.id === suggestion.furnitureId);
-        if (!item) return;
-        
-        if (!skipHistory) addToHistory();
-        
-        if (suggestion.newX !== undefined) item.x = suggestion.newX;
-        if (suggestion.newY !== undefined) item.y = suggestion.newY;
-        if (suggestion.newRotation !== undefined) item.rotation = suggestion.newRotation;
-        
-        if (!skipHistory) {
-            redrawAll();
-            removeFengShuiZones();
-        }
-    }
+
     
     function showFengShuiMessage(msg) {
         const container = document.querySelector('.layout-canvas-container');

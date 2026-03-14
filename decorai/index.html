@@ -307,7 +307,7 @@
                 </button>
                 <div class="layout-editor-title-text">
                     <h2>Floor Plan Editor</h2>
-                    <span id="layout-name-display" class="layout-name-display" contenteditable="true" title="Click to edit layout name">Untitled layout</span>
+                    <span id="layout-name-display" class="layout-name-display" contenteditable="true" title="Click to edit layout name"></span>
                 </div>
             </div>
             <div class="layout-editor-controls">
@@ -506,22 +506,23 @@
                 <!-- Properties Panel (shown when item selected) -->
                 <div class="properties-panel hidden" id="properties-panel">
                     <h4>Properties</h4>
-                    <div class="property-row">
+                    <div class="property-item-name" id="property-item-name"></div>
+                    <div class="property-row" id="property-row-width">
                         <label>Width:</label>
                         <input type="number" id="prop-width" step="0.5">
                         <span class="unit-label">ft</span>
                     </div>
-                    <div class="property-row">
+                    <div class="property-row" id="property-row-height">
                         <label>Height:</label>
                         <input type="number" id="prop-height" step="0.5">
                         <span class="unit-label">ft</span>
                     </div>
-                    <div class="property-row">
+                    <div class="property-row" id="property-row-rotation">
                         <label>Rotation:</label>
                         <input type="number" id="prop-rotation" step="15" min="0" max="360">
                         <span class="unit-label">°</span>
                     </div>
-                    <div class="property-row rotate-buttons">
+                    <div class="property-row rotate-buttons" id="property-row-rotate-buttons">
                         <button id="rotate-left-btn" class="rotate-btn" title="Rotate 90° left">
                             <i data-feather="rotate-ccw"></i>
                         </button>
