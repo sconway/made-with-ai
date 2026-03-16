@@ -92,6 +92,21 @@ const userDropdown = document.getElementById('user-dropdown');
 const userEmailDisplay = document.getElementById('user-email-display');
 const logoutBtn = document.getElementById('logout-btn');
 
+// Generic alert modal elements
+const alertModal = document.getElementById('alert-modal');
+const alertModalTitle = document.getElementById('alert-modal-title');
+const alertModalMessage = document.getElementById('alert-modal-message');
+const alertModalCloseBtn = document.getElementById('alert-modal-close');
+const alertModalOkBtn = document.getElementById('alert-modal-ok');
+
+// Generic confirm modal elements
+const confirmModal = document.getElementById('confirm-modal');
+const confirmModalTitle = document.getElementById('confirm-modal-title');
+const confirmModalMessage = document.getElementById('confirm-modal-message');
+const confirmModalCloseBtn = document.getElementById('confirm-modal-close');
+const confirmModalCancelBtn = document.getElementById('confirm-modal-cancel');
+const confirmModalConfirmBtn = document.getElementById('confirm-modal-confirm');
+
 // Error message management
 function showItemsSelectionError() {
     if (itemsSelectionError) {
@@ -117,6 +132,9 @@ let generatedDesigns = [];
 let selectedRoomItems = new Set(); // Track selected room items
 let furnishedOption = null; // Track furnished room option - no default selection
 let isRoomActuallyEmpty = true; // Track if the uploaded room is actually empty
+
+// Confirm dialog state
+let confirmResolve = null;
 let isMobile = window.innerWidth <= 768; // Track if we're on mobile
 
 // API is now handled server-side - no client keys needed
@@ -291,7 +309,12 @@ async function handleSaveLayout() {
             const existing = await byNameRes.json().catch(() => null);
             existingId = existing?.id || null;
             if (existingId) {
-                const proceed = confirm(`A layout named "${name}" already exists. Overwrite it? The current saved version will be replaced.`);
+                const proceed = await showConfirmDialog(
+                    `A layout named "${name}" already exists. Overwrite it? The current saved version will be replaced.`,
+                    'Overwrite layout',
+                    'Overwrite',
+                    'Cancel'
+                );
                 if (!proceed) return;
             }
         }
@@ -514,7 +537,13 @@ async function loadLayoutById(id) {
 
 async function deleteLayoutById(id) {
     if (!currentSession?.access_token) return;
-    if (!confirm('Delete this saved layout? This cannot be undone.')) return;
+    const proceed = await showConfirmDialog(
+        'Delete this saved layout? This cannot be undone.',
+        'Delete layout',
+        'Delete',
+        'Cancel'
+    );
+    if (!proceed) return;
     try {
         const res = await fetch(`${PROXY_SERVER_URL}/api/layouts/${id}`, {
             method: 'DELETE',
@@ -546,6 +575,9 @@ function updateAuthUI() {
 function showAuthModal(mode = 'login') {
     if (!authModal) return;
     authModal.classList.add('show');
+    // Ensure visibility/opacity are explicitly set so CSS transitions always apply
+    authModal.style.opacity = '1';
+    authModal.style.visibility = 'visible';
     if (loginError) loginError.classList.add('hidden');
     if (signupError) signupError.classList.add('hidden');
     hideLoginResendBlock();
@@ -570,7 +602,11 @@ function showAuthModal(mode = 'login') {
 }
 
 function hideAuthModal() {
-    if (authModal) authModal.classList.remove('show');
+    if (authModal) {
+        authModal.classList.remove('show');
+        authModal.style.opacity = '';
+        authModal.style.visibility = '';
+    }
     if (loginForm) loginForm.reset();
     if (signupForm) signupForm.reset();
     if (loginError) { loginError.classList.add('hidden'); loginError.textContent = ''; }
@@ -877,6 +913,67 @@ async function handleLogout() {
 }
 
 // Event Listeners
+function showAlertDialog(message, title = 'Notice') {
+    if (!alertModal || !alertModalMessage) {
+        console.error('Alert modal not initialized:', message);
+        return;
+    }
+    if (alertModalTitle) alertModalTitle.textContent = title;
+    alertModalMessage.textContent = message;
+    alertModal.classList.add('show');
+    alertModal.style.opacity = '1';
+    alertModal.style.visibility = 'visible';
+    if (typeof feather !== 'undefined') feather.replace();
+}
+
+function hideAlertDialog() {
+    if (alertModal) {
+        alertModal.classList.remove('show');
+        alertModal.style.opacity = '';
+        alertModal.style.visibility = '';
+    }
+}
+
+// Expose to other scripts (e.g. floorPlanEditor)
+window.showAlertDialog = showAlertDialog;
+
+function showConfirmDialog(message, title = 'Confirm', confirmLabel = 'OK', cancelLabel = 'Cancel') {
+    if (!confirmModal || !confirmModalMessage) {
+        console.error('Confirm modal not initialized:', message);
+        return Promise.resolve(false);
+    }
+    if (confirmModalTitle) confirmModalTitle.textContent = title;
+    confirmModalMessage.textContent = message;
+    if (confirmModalConfirmBtn) confirmModalConfirmBtn.textContent = confirmLabel;
+    if (confirmModalCancelBtn) confirmModalCancelBtn.textContent = cancelLabel;
+    confirmModal.classList.add('show');
+    confirmModal.style.opacity = '1';
+    confirmModal.style.visibility = 'visible';
+    if (typeof feather !== 'undefined') feather.replace();
+    if (confirmResolve) {
+        confirmResolve(false);
+        confirmResolve = null;
+    }
+    return new Promise(resolve => {
+        confirmResolve = resolve;
+    });
+}
+
+function resolveConfirmDialog(result) {
+    if (confirmModal) {
+        confirmModal.classList.remove('show');
+        confirmModal.style.opacity = '';
+        confirmModal.style.visibility = '';
+    }
+    if (confirmResolve) {
+        confirmResolve(result);
+        confirmResolve = null;
+    }
+}
+
+// Expose confirm globally
+window.showConfirmDialog = showConfirmDialog;
+
 document.addEventListener('DOMContentLoaded', async () => {
     await initializeApp();
 
@@ -896,6 +993,25 @@ document.addEventListener('DOMContentLoaded', async () => {
     if (authModal) {
         authModal.addEventListener('click', (event) => {
             if (event.target === authModal) hideAuthModal();
+        });
+    }
+
+    // Alert modal listeners
+    if (alertModalCloseBtn) alertModalCloseBtn.addEventListener('click', hideAlertDialog);
+    if (alertModalOkBtn) alertModalOkBtn.addEventListener('click', hideAlertDialog);
+    if (alertModal) {
+        alertModal.addEventListener('click', (event) => {
+            if (event.target === alertModal) hideAlertDialog();
+        });
+    }
+
+    // Confirm modal listeners
+    if (confirmModalCloseBtn) confirmModalCloseBtn.addEventListener('click', () => resolveConfirmDialog(false));
+    if (confirmModalCancelBtn) confirmModalCancelBtn.addEventListener('click', () => resolveConfirmDialog(false));
+    if (confirmModalConfirmBtn) confirmModalConfirmBtn.addEventListener('click', () => resolveConfirmDialog(true));
+    if (confirmModal) {
+        confirmModal.addEventListener('click', (event) => {
+            if (event.target === confirmModal) resolveConfirmDialog(false);
         });
     }
     if (loginForm) loginForm.addEventListener('submit', handleLogin);
@@ -1054,7 +1170,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
                     reader.readAsDataURL(file);
                 } else {
-                    alert('Please upload a valid image file (JPEG, PNG, etc.)');
+                    showAlertDialog('Please upload a valid image file (JPEG, PNG, etc.)');
                 }
             }
         });
@@ -1363,7 +1479,7 @@ async function handleImageUpload(e) {
 
         reader.readAsDataURL(file);
     } else if (file) {
-        alert('Please upload a valid image file (JPEG, PNG, etc.)');
+        showAlertDialog('Please upload a valid image file (JPEG, PNG, etc.)');
     }
 }
 
@@ -1434,11 +1550,11 @@ function openCamera() {
             })
             .catch(error => {
                 console.error('Error accessing camera:', error);
-                alert('Unable to access camera. Please check your device permissions.');
+                showAlertDialog('Unable to access camera. Please check your device permissions.');
                 cameraView.remove();
             });
     } else {
-        alert('Your device does not support camera access');
+        showAlertDialog('Your device does not support camera access');
     }
 }
 
@@ -1737,24 +1853,30 @@ function generatePromptsWithItems(basePrompt, style) {
             result.negativePrompt = `${baseNegativePrompt}, ${unselectedItemNames}, existing furniture, other furniture`;
         }
     } else if (currentRoomType === 'empty' || shouldTreatAsEmpty) {
-        // Empty room logic (or empty room uploaded but user selected furnished)
+        // Empty room: add ONLY selected items, room stays identical (no other changes)
         if (selectedRoomItems.size === 0) {
-            // No items selected for empty room - don't generate
             result.shouldGenerate = false;
             result.positivePrompt = '';
             result.negativePrompt = '';
         } else {
-            // Get selected items only - these are the ONLY things that should be in the room
             const selectedItems = roomItems.filter(item => selectedRoomItems.has(item.id));
+            // Use prompt-friendly names so the model clearly generates the object (e.g. "television" not just "tv")
+            const promptItemNames = selectedItems.map(item => {
+                const name = item.name.toLowerCase();
+                if (name === 'tv') return 'television';
+                if (name === 'art') return 'wall art';
+                if (name === 'chairs') return 'chair';
+                return name;
+            }).join(', ');
             const selectedItemNames = selectedItems.map(item => item.name.toLowerCase()).join(', ');
-
-            // Build simplified positive prompt with ONLY selected items
-            result.positivePrompt = `Given this image of an empty room, add the following items without changing anything about the walls, floor, ceiling, windows, or doors: ${selectedItemNames}. ${ARCHITECTURAL_PRESERVATION_SUFFIX}.`;
-
-            // Build simplified negative prompt excluding other furniture
             const allOtherItems = roomItems.filter(item => !selectedRoomItems.has(item.id));
             const allOtherItemNames = allOtherItems.map(item => item.name.toLowerCase()).join(', ');
-            result.negativePrompt = `${baseNegativePrompt}, ${allOtherItemNames}, other furniture`;
+
+            // Lead with the object(s) so the model prioritizes adding them; then stress room unchanged
+            result.positivePrompt = `A room with ${promptItemNames} visible. Add ${promptItemNames} to this room. Keep the room exactly as it is: same walls, floor, ceiling, windows, doors, same lighting, same colors, same perspective. No other changes.`;
+
+            // Strong negative: no room/lighting changes, no other furniture or decor
+            result.negativePrompt = `${baseNegativePrompt}, modified walls, modified floor, modified ceiling, modified windows, modified doors, changed lighting, different lighting, altered lighting, brighter, darker, shadow change, different shadows, changed perspective, changed colors, different materials, architectural change, structural change, ${allOtherItemNames}, other furniture, decor, plants, art, rugs, curtains, accessories, extra objects, style change, different room, empty room without furniture`;
         }
     } else {
         // Furnished room logic (and room is actually furnished)
@@ -2053,19 +2175,15 @@ async function generateEmptyRoomWithTextToImage(prompt, negativePrompt) {
 async function generateImageWithControlNet(imageBase64, prompt, negativePrompt) {
     // Check if this is a "start fresh" scenario (empty room generation)
     const isStartFresh = prompt.includes("completely empty space") || prompt.includes("Remove all furniture") || prompt.includes("empty room") || prompt.includes("COMPLETELY EMPTY ROOM") || prompt.includes("REMOVE ALL EXISTING FURNITURE") || prompt.includes("EMPTY ROOM ONLY");
+    // Empty room + add furniture only: add specified items while preserving room structure
+    const isEmptyRoomAddFurniture = (/keep the room exactly|add .+ to this room|a room with .+ visible|empty room/i.test(prompt)) && (/add .+(to this room|these items|the following)/i.test(prompt));
 
     // Multiple model options with fallbacks
-    // For "start fresh" scenarios, prioritize img2img models as they're better at dramatic changes
-    const modelOptions = isStartFresh ? [
+    const modelOptions = [
         {
-            version: "stability-ai/stable-diffusion-3.5-large",
-            name: "SD 3.5 Large",
-            type: "img2img"
-        },
-        {
-            version: "stability-ai/stable-diffusion-xl-base-1.0",
-            name: "SDXL Base",
-            type: "img2img"
+            version: "adirik/interior-design:76604baddc85b1b4616e1c6475eca080da339c8875bd4996705440484a6eac38",
+            name: "Interior Design",
+            type: "interior-design"
         },
         {
             version: "adirik/t2i-adapter-sdxl-depth-midas:8a89b0ab59a050244a751b6475d91041a8582ba33692ae6fab65e0c51b700328",
@@ -2073,29 +2191,8 @@ async function generateImageWithControlNet(imageBase64, prompt, negativePrompt) 
             type: "controlnet"
         },
         {
-            version: "lucataco/sdxl-controlnet-depth:465fb41789dc2203a9d7158be11d1d2570606a039c65e0e236fd329b5eecb10c",
-            name: "SDXL ControlNet Depth",
-            type: "controlnet"
-        }
-    ] : [
-        {
-            version: "adirik/t2i-adapter-sdxl-depth-midas:8a89b0ab59a050244a751b6475d91041a8582ba33692ae6fab65e0c51b700328",
-            name: "SDXL Depth Midas",
-            type: "controlnet"
-        },
-        {
-            version: "lucataco/sdxl-controlnet-depth:465fb41789dc2203a9d7158be11d1d2570606a039c65e0e236fd329b5eecb10c",
-            name: "SDXL ControlNet Depth",
-            type: "controlnet"
-        },
-        {
             version: "stability-ai/stable-diffusion-3.5-large",
             name: "SD 3.5 Large",
-            type: "img2img"
-        },
-        {
-            version: "stability-ai/stable-diffusion-xl-base-1.0",
-            name: "SDXL Base",
             type: "img2img"
         }
     ];
@@ -2112,36 +2209,42 @@ async function generateImageWithControlNet(imageBase64, prompt, negativePrompt) 
                 prompt: prompt,
             };
 
-            // Add negative prompt if provided
             if (negativePrompt && negativePrompt.trim()) {
-                // inputData.negative_prompt = negativePrompt;
+                inputData.negative_prompt = negativePrompt;
             }
 
-            // Add model-specific parameters
-            if (model.type === 'controlnet') {
-                // ControlNet specific parameters - higher guidance for more precise adherence
-                inputData.guidance_scale = 12.0; // Increased from 7.5 for better prompt adherence
-                inputData.num_inference_steps = 30; // Increased for better quality
-
-                // For start fresh scenarios, use very low ControlNet strength to preserve room structure but remove furniture
-                if (isStartFresh) {
-                    inputData.controlnet_conditioning_scale = 0.01; // Extremely low strength to allow maximum furniture removal while preserving structure
+            if (model.type === 'interior-design') {
+                if (isEmptyRoomAddFurniture) {
+                    // Add furniture to empty room: higher strength so model actually adds the object(s)
+                    inputData.guidance_scale = 16;
+                    inputData.num_inference_steps = 55;
+                    inputData.prompt_strength = 0.82;
                 } else {
-                    inputData.controlnet_conditioning_scale = 0.8; // Normal ControlNet strength
+                    inputData.guidance_scale = 15;
+                    inputData.num_inference_steps = 50;
+                    inputData.prompt_strength = 0.5;
+                }
+                inputData.seed = Math.floor(Math.random() * 1000000);
+            } else if (model.type === 'controlnet') {
+                inputData.guidance_scale = 12.0;
+                inputData.num_inference_steps = 30;
+                if (isStartFresh) {
+                    inputData.controlnet_conditioning_scale = 0.01;
+                } else {
+                    inputData.controlnet_conditioning_scale = 0.8;
                 }
             } else if (model.type === 'img2img') {
-                // Standard img2img parameters - for start fresh, use very high denoising strength to allow major changes
                 if (isStartFresh) {
-                    inputData.denoising_strength = 0.95; // Very high denoising strength to allow major changes
-                    inputData.guidance_scale = 20.0; // Very high guidance for better prompt adherence
-                    inputData.num_inference_steps = 50; // More steps for better quality
+                    inputData.denoising_strength = 0.95;
+                    inputData.guidance_scale = 20.0;
+                    inputData.num_inference_steps = 50;
                 } else {
-                    inputData.denoising_strength = 0.7; // Normal denoising strength
-                    inputData.guidance_scale = 12.0; // Normal guidance scale
-                    inputData.num_inference_steps = 30; // Normal inference steps
+                    inputData.denoising_strength = 0.7;
+                    inputData.guidance_scale = 12.0;
+                    inputData.num_inference_steps = 30;
                 }
                 inputData.scheduler = "K_EULER";
-                inputData.seed = Math.floor(Math.random() * 1000000); // Random seed for variety
+                inputData.seed = Math.floor(Math.random() * 1000000);
             }
 
             const response = await fetchWithRetry(REPLICATE_API_URL, {
@@ -2275,7 +2378,7 @@ async function generateImageWithReplicate(imageBase64, prompt) {
 async function generateDesigns() {
     if (!requireEmailConfirmedForFeature('design generation')) return;
     if (!currentUploadedImage) {
-        alert('Please upload an image first');
+        showAlertDialog('Please upload an image first');
         return;
     }
 
@@ -2299,7 +2402,7 @@ async function generateDesigns() {
     // Validate that we have a valid room type
     if (!currentRoomType || !designStyles[currentRoomType]) {
         console.error('Invalid room type:', currentRoomType, 'isCurrentlyOnResults:', isCurrentlyOnResults);
-        alert('Please select a room type first');
+        showAlertDialog('Please select a room type first');
         return;
     }
 

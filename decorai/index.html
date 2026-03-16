@@ -630,6 +630,43 @@
         </div>
     </div>
 
+    <!-- Generic Alert Modal -->
+    <div class="modal" id="alert-modal">
+        <div class="modal-content alert-modal">
+            <div class="modal-header">
+                <h2 id="alert-modal-title">Notice</h2>
+                <button id="alert-modal-close" class="close-modal-btn" type="button">
+                    <i data-feather="x"></i>
+                </button>
+            </div>
+            <div class="modal-body">
+                <p id="alert-modal-message"></p>
+                <div class="modal-footer">
+                    <button id="alert-modal-ok" class="primary-btn" type="button">OK</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Generic Confirm Modal -->
+    <div class="modal" id="confirm-modal">
+        <div class="modal-content alert-modal">
+            <div class="modal-header">
+                <h2 id="confirm-modal-title">Confirm</h2>
+                <button id="confirm-modal-close" class="close-modal-btn" type="button">
+                    <i data-feather="x"></i>
+                </button>
+            </div>
+            <div class="modal-body">
+                <p id="confirm-modal-message"></p>
+                <div class="modal-footer">
+                    <button id="confirm-modal-cancel" class="secondary-btn" type="button">Cancel</button>
+                    <button id="confirm-modal-confirm" class="primary-btn" type="button">OK</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
     <script type="module" src="/src/main.js"></script>
 </body>
 

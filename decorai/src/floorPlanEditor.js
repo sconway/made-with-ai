@@ -190,7 +190,8 @@ const FloorPlanEditor = (() => {
         
         // Feng Shui
         document.getElementById('feng-shui-btn')?.addEventListener('click', startFengShuiAnalysis);
-        
+        updateFengShuiButtonState();
+
         // Export
         document.getElementById('layout-export-btn')?.addEventListener('click', toggleExportMenu);
         document.getElementById('export-png-btn')?.addEventListener('click', () => exportAs('png'));
@@ -345,11 +346,18 @@ const FloorPlanEditor = (() => {
         document.body.style.overflow = '';
     }
     
-    function handleBackFromEditor() {
+    async function handleBackFromEditor() {
         if (hasUnsavedChanges && !layoutEditorScreen.classList.contains('hidden')) {
-            if (!confirm('You have unsaved changes. Leave without exporting?')) {
-                return;
+            let proceed = true;
+            if (window.showConfirmDialog) {
+                proceed = await window.showConfirmDialog(
+                    'You have unsaved changes. Leave without exporting?',
+                    'Unsaved changes',
+                    'Leave without exporting',
+                    'Cancel'
+                );
             }
+            if (!proceed) return;
         }
         hide();
     }
@@ -1017,7 +1025,9 @@ const FloorPlanEditor = (() => {
             return;
         }
         if (!file.type.startsWith('image/')) {
-            alert('Drop an image file (PNG, JPG) or a DecorAI layout file (.decorai-layout.json)');
+            if (window.showAlertDialog) {
+                window.showAlertDialog('Drop an image file (PNG, JPG) or a DecorAI layout file (.decorai-layout.json)');
+            }
             return;
         }
         
@@ -1775,7 +1785,9 @@ const FloorPlanEditor = (() => {
     
     async function convertImageToSVG(file) {
         if (isConvertingImage) {
-            alert('Already converting an image. Please wait...');
+            if (window.showAlertDialog) {
+                window.showAlertDialog('Already converting an image. Please wait...');
+            }
             return;
         }
         
@@ -1827,8 +1839,14 @@ const FloorPlanEditor = (() => {
             
             // Fallback: add as reference image
             const fallbackMsg = `Could not convert image to SVG: ${error.message}\n\nWould you like to add it as a reference image instead?`;
-            if (confirm(fallbackMsg)) {
-                addImageAsReference(file);
+            if (window.showConfirmDialog) {
+                const proceed = await window.showConfirmDialog(
+                    fallbackMsg,
+                    'Import image as reference?',
+                    'Add as reference',
+                    'Cancel'
+                );
+                if (proceed) addImageAsReference(file);
             }
         } finally {
             isConvertingImage = false;
@@ -4946,8 +4964,16 @@ const FloorPlanEditor = (() => {
         restoreState(nextState);
     }
     
-    function clearAll() {
-        if (!confirm('Clear the entire floor plan?')) return;
+    async function clearAll() {
+        if (window.showConfirmDialog) {
+            const proceed = await window.showConfirmDialog(
+                'Clear the entire floor plan?',
+                'Clear floor plan',
+                'Clear',
+                'Cancel'
+            );
+            if (!proceed) return;
+        }
         
         corners = [];
         walls = [];
@@ -4986,8 +5012,50 @@ const FloorPlanEditor = (() => {
         labels.forEach(label => renderLabel(label));
         corners.forEach(corner => renderCorner(corner));
         redrawDimensions();
+        updateFengShuiButtonState();
     }
-    
+
+    function updateFengShuiButtonState() {
+        const btn = document.getElementById('feng-shui-btn');
+        if (!btn) return;
+        const multiRoomTooltip = 'Feng shui analysis only supports single-room layouts. Your plan has multiple enclosed rooms.';
+        if (referenceImages.length > 0) {
+            unwrapFengShuiButton();
+            btn.disabled = false;
+            btn.title = 'Feng Shui Analysis';
+            return;
+        }
+        const roomCount = countEnclosedRooms();
+        if (roomCount > 1) {
+            btn.disabled = true;
+            btn.title = 'Feng Shui Analysis';
+            wrapFengShuiButtonForTooltip(multiRoomTooltip);
+        } else {
+            unwrapFengShuiButton();
+            btn.disabled = false;
+            btn.title = 'Feng Shui Analysis';
+        }
+    }
+
+    function wrapFengShuiButtonForTooltip(tooltipText) {
+        const btn = document.getElementById('feng-shui-btn');
+        if (!btn || btn.closest('.feng-shui-btn-tooltip-wrap')) return;
+        const wrap = document.createElement('span');
+        wrap.className = 'feng-shui-btn-tooltip-wrap';
+        wrap.title = tooltipText;
+        wrap.setAttribute('aria-label', tooltipText);
+        btn.parentNode.insertBefore(wrap, btn);
+        wrap.appendChild(btn);
+    }
+
+    function unwrapFengShuiButton() {
+        const wrap = document.querySelector('.feng-shui-btn-tooltip-wrap');
+        if (!wrap || !wrap.parentNode) return;
+        const btn = document.getElementById('feng-shui-btn');
+        if (btn) wrap.parentNode.insertBefore(btn, wrap);
+        wrap.remove();
+    }
+
     function redrawFurniture() {
         furnitureLayer.innerHTML = '';
         furniture.forEach(item => renderFurniture(item));
@@ -5872,6 +5940,18 @@ const FloorPlanEditor = (() => {
         return dist(px, py, ax + t * dx, ay + t * dy);
     }
 
+    /** Minimum distance from point (px, py) to the boundary of rotated furniture f (clearance). */
+    function minDistancePointToRotatedRect(px, py, f) {
+        const corners = getRotatedCorners(f);
+        let minD = Infinity;
+        for (let i = 0; i < 4; i++) {
+            const a = corners[i];
+            const b = corners[(i + 1) % 4];
+            minD = Math.min(minD, distPointToSegment(px, py, a.x, a.y, b.x, b.y));
+        }
+        return minD;
+    }
+
     function minWallDistance(px, py) {
         let min = Infinity;
         for (const w of walls) {
@@ -5880,20 +5960,44 @@ const FloorPlanEditor = (() => {
         return min;
     }
 
+    function getRotatedCorners(f) {
+        const rot = (f.rotation || 0) * Math.PI / 180;
+        const c = Math.cos(rot), s = Math.sin(rot);
+        const cx = f.x + f.width / 2, cy = f.y + f.height / 2;
+        const hw = f.width / 2, hh = f.height / 2;
+        return [
+            { x: cx + (-hw) * c - (-hh) * s, y: cy + (-hw) * s + (-hh) * c },
+            { x: cx + ( hw) * c - (-hh) * s, y: cy + ( hw) * s + (-hh) * c },
+            { x: cx + ( hw) * c - ( hh) * s, y: cy + ( hw) * s + ( hh) * c },
+            { x: cx + (-hw) * c - ( hh) * s, y: cy + (-hw) * s + ( hh) * c }
+        ];
+    }
+
+    function getRotatedAABB(f) {
+        const corners = getRotatedCorners(f);
+        let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+        for (const p of corners) {
+            minX = Math.min(minX, p.x); minY = Math.min(minY, p.y);
+            maxX = Math.max(maxX, p.x); maxY = Math.max(maxY, p.y);
+        }
+        return { minX, minY, maxX, maxY };
+    }
+
     function rectsOverlap(a, b) {
-        return a.x < b.x + b.width && a.x + a.width > b.x &&
-               a.y < b.y + b.height && a.y + a.height > b.y;
+        const aa = getRotatedAABB(a), ab = getRotatedAABB(b);
+        return aa.minX < ab.maxX && aa.maxX > ab.minX && aa.minY < ab.maxY && aa.maxY > ab.minY;
     }
 
     function minEdgeToWallDistance(f) {
-        let min = Infinity;
-        const corners = [
-            { x: f.x, y: f.y }, { x: f.x + f.width, y: f.y },
-            { x: f.x, y: f.y + f.height }, { x: f.x + f.width, y: f.y + f.height },
-            { x: f.x + f.width / 2, y: f.y }, { x: f.x + f.width / 2, y: f.y + f.height },
-            { x: f.x, y: f.y + f.height / 2 }, { x: f.x + f.width, y: f.y + f.height / 2 }
+        const corners = getRotatedCorners(f);
+        const midpoints = [
+            { x: (corners[0].x + corners[1].x) / 2, y: (corners[0].y + corners[1].y) / 2 },
+            { x: (corners[1].x + corners[2].x) / 2, y: (corners[1].y + corners[2].y) / 2 },
+            { x: (corners[2].x + corners[3].x) / 2, y: (corners[2].y + corners[3].y) / 2 },
+            { x: (corners[3].x + corners[0].x) / 2, y: (corners[3].y + corners[0].y) / 2 }
         ];
-        for (const pt of corners) {
+        let min = Infinity;
+        for (const pt of [...corners, ...midpoints]) {
             for (const w of walls) {
                 min = Math.min(min, distPointToSegment(pt.x, pt.y, w.start.x, w.start.y, w.end.x, w.end.y));
             }
@@ -5902,10 +6006,60 @@ const FloorPlanEditor = (() => {
     }
 
     function edgeGap(a, b) {
-        const gapX = Math.max(a.x - (b.x + b.width), b.x - (a.x + a.width));
-        const gapY = Math.max(a.y - (b.y + b.height), b.y - (a.y + a.height));
+        const aa = getRotatedAABB(a), ab = getRotatedAABB(b);
+        const gapX = Math.max(aa.minX - ab.maxX, ab.minX - aa.maxX);
+        const gapY = Math.max(aa.minY - ab.maxY, ab.minY - aa.maxY);
         if (gapX > 0 && gapY > 0) return Math.sqrt(gapX * gapX + gapY * gapY);
         return Math.max(gapX, gapY);
+    }
+
+    function rectOverlapsWallRotated(f) {
+        const corners = getRotatedCorners(f);
+        const halfThick = wallThickness / 2 + 2;
+        for (const w of walls) {
+            const dx = w.end.x - w.start.x, dy = w.end.y - w.start.y;
+            const len = Math.sqrt(dx * dx + dy * dy);
+            if (len === 0) continue;
+            const nx = -dy / len * halfThick, ny = dx / len * halfThick;
+            const wx1 = Math.min(w.start.x + nx, w.end.x + nx, w.end.x - nx, w.start.x - nx);
+            const wy1 = Math.min(w.start.y + ny, w.end.y + ny, w.end.y - ny, w.start.y - ny);
+            const wx2 = Math.max(w.start.x + nx, w.end.x + nx, w.end.x - nx, w.start.x - nx);
+            const wy2 = Math.max(w.start.y + ny, w.end.y + ny, w.end.y - ny, w.start.y - ny);
+            const poly = corners;
+            for (const p of poly) {
+                if (p.x >= wx1 && p.x <= wx2 && p.y >= wy1 && p.y <= wy2) return true;
+            }
+            for (let i = 0; i < poly.length; i++) {
+                const p1 = poly[i], p2 = poly[(i + 1) % poly.length];
+                if (segmentIntersectRect(p1.x, p1.y, p2.x, p2.y, wx1, wy1, wx2, wy2)) return true;
+            }
+        }
+        return false;
+    }
+
+    function segmentIntersectRect(x1, y1, x2, y2, rx1, ry1, rx2, ry2) {
+        const segs = [[rx1, ry1, rx2, ry1], [rx2, ry1, rx2, ry2], [rx2, ry2, rx1, ry2], [rx1, ry2, rx1, ry1]];
+        for (const [sx1, sy1, sx2, sy2] of segs) {
+            const d = (x2 - x1) * (sy2 - sy1) - (y2 - y1) * (sx2 - sx1);
+            if (Math.abs(d) < 1e-9) continue;
+            const t = ((sx1 - x1) * (sy2 - sy1) - (sy1 - y1) * (sx2 - sx1)) / d;
+            const u = ((x2 - x1) * (sy1 - y1) - (y2 - y1) * (sx1 - x1)) / d;
+            if (t >= 0 && t <= 1 && u >= 0 && u <= 1) return true;
+        }
+        return false;
+    }
+
+    function getFacingVector(f) {
+        const rot = (f.rotation || 0) * Math.PI / 180;
+        return { x: Math.cos(rot), y: Math.sin(rot) };
+    }
+
+    function getWallSideFromDirection(dx, dy) {
+        if (dy < -0.3) return 'top';
+        if (dy > 0.3) return 'bottom';
+        if (dx < -0.3) return 'left';
+        if (dx > 0.3) return 'right';
+        return null;
     }
 
     function analyzeFengShui() {
@@ -5943,7 +6097,7 @@ const FloorPlanEditor = (() => {
 
         // ---------- RULE: Furniture overlapping walls ----------
         for (const f of furniture) {
-            if (rectOverlapsWall(f.x, f.y, f.width, f.height)) {
+            if (rectOverlapsWallRotated(f)) {
                 addIssue(f, 3, 'Wall obstruction',
                     `${f.name} is clipping through a wall. Move it fully inside the room.`, 'high');
             }
@@ -5951,21 +6105,21 @@ const FloorPlanEditor = (() => {
 
         // ---------- RULE: Furniture outside room ----------
         for (const f of furniture) {
-            const fc = furnitureCenter(f);
-            if (fc.x < bounds.minX || fc.x > bounds.maxX || fc.y < bounds.minY || fc.y > bounds.maxY) {
+            const aabb = getRotatedAABB(f);
+            if (aabb.minX < bounds.minX || aabb.maxX > bounds.maxX || aabb.minY < bounds.minY || aabb.maxY > bounds.maxY) {
                 addIssue(f, 3, 'Outside room',
                     `${f.name} is outside the room boundaries.`, 'high');
             }
         }
 
-        // ---------- RULE: Furniture blocking doors ----------
+        // ---------- RULE: Furniture blocking doors (use clearance: nearest edge to door) ----------
         for (const f of furniture) {
-            const fc = furnitureCenter(f);
             for (const door of doors) {
-                const d = dist(fc.x, fc.y, door.cx, door.cy);
-                if (d < 3 * ft) {
+                const clearancePx = minDistancePointToRotatedRect(door.cx, door.cy, f);
+                const clearanceFt = clearancePx / ft;
+                if (clearanceFt < 3) {
                     addIssue(f, 2.5, 'Door clearance',
-                        `${f.name} is ${(d / ft).toFixed(1)} ft from a door. Keep at least 3 ft clear for chi to enter.`, 'high');
+                        `${f.name} is ${clearanceFt.toFixed(1)} ft from a door (clearance). Keep at least 3 ft clear for chi to enter.`, 'high');
                     break;
                 }
             }
@@ -5998,15 +6152,14 @@ const FloorPlanEditor = (() => {
         // ---------- RULE: Bed headboard near window ----------
         for (const f of furniture) {
             if (!bedTypes.has(f.typeId)) continue;
-            const edges = [
-                { x: f.x + f.width / 2, y: f.y },
-                { x: f.x + f.width / 2, y: f.y + f.height },
-                { x: f.x, y: f.y + f.height / 2 },
-                { x: f.x + f.width, y: f.y + f.height / 2 }
-            ];
+            const rot = (f.rotation || 0) * Math.PI / 180;
+            const length = Math.max(f.width, f.height);
+            const headDx = Math.sin(rot), headDy = -Math.cos(rot);
+            const cx = furnitureCenter(f).x, cy = furnitureCenter(f).y;
+            const headboardCenter = { x: cx + (length / 2) * headDx, y: cy + (length / 2) * headDy };
             for (const win of windows) {
-                const nearestEdgeDist = Math.min(...edges.map(e => dist(e.x, e.y, win.cx, win.cy)));
-                if (nearestEdgeDist < 2 * ft) {
+                const d = dist(headboardCenter.x, headboardCenter.y, win.cx, win.cy);
+                if (d < 2 * ft) {
                     addIssue(f, 1.5, 'Bed near window',
                         `${f.name} is too close to a window. Place the headboard against a solid wall for restful sleep.`, 'medium');
                     break;
@@ -6019,14 +6172,17 @@ const FloorPlanEditor = (() => {
             if (f.typeId !== 'sofa' && f.typeId !== 'desk') continue;
             if (doors.length === 0) continue;
             const fc = furnitureCenter(f);
-            const fSide = nearestWallSide(fc.x, fc.y, bounds);
+            const facing = getFacingVector(f);
+            const depth = Math.min(f.width, f.height) / 2;
+            const backPoint = { x: fc.x - facing.x * depth, y: fc.y - facing.y * depth };
+            const backSide = nearestWallSide(backPoint.x, backPoint.y, bounds);
             const nearestDoor = doors.reduce((best, d) => {
                 const dd = dist(fc.x, fc.y, d.cx, d.cy);
                 return dd < best.dist ? { door: d, dist: dd } : best;
             }, { door: null, dist: Infinity });
             if (!nearestDoor.door) continue;
             const doorSide = nearestWallSide(nearestDoor.door.cx, nearestDoor.door.cy, bounds);
-            if (fSide === doorSide) {
+            if (backSide === doorSide) {
                 addIssue(f, 1.5, 'Command position',
                     `${f.name} has its back facing the door. In feng shui, you should be able to see the entrance — reposition to the opposite wall.`, 'medium');
             }
@@ -6093,8 +6249,9 @@ const FloorPlanEditor = (() => {
         };
         const centerBlockers = [];
         for (const f of furniture) {
-            const ox = Math.max(0, Math.min(f.x + f.width, centerZone.x + centerZone.width) - Math.max(f.x, centerZone.x));
-            const oy = Math.max(0, Math.min(f.y + f.height, centerZone.y + centerZone.height) - Math.max(f.y, centerZone.y));
+            const aabb = getRotatedAABB(f);
+            const ox = Math.max(0, Math.min(aabb.maxX, centerZone.x + centerZone.width) - Math.max(aabb.minX, centerZone.x));
+            const oy = Math.max(0, Math.min(aabb.maxY, centerZone.y + centerZone.height) - Math.max(aabb.minY, centerZone.y));
             if (ox > 0 && oy > 0) {
                 centerBlockers.push({ f, overlap: ox * oy });
             }
@@ -6117,19 +6274,20 @@ const FloorPlanEditor = (() => {
             const pathLength = Math.max(roomW, roomH) * 0.6;
             const isHWall = Math.abs(Math.cos(door.wallAngle)) > 0.7;
             for (const f of furniture) {
+                const aabb = getRotatedAABB(f);
                 let blocks = false;
                 if (isHWall) {
                     const pathMinX = door.cx - pathWidth / 2;
                     const pathMaxX = door.cx + pathWidth / 2;
                     const pathMinY = Math.min(door.cy, door.cy + door.normalY * pathLength);
                     const pathMaxY = Math.max(door.cy, door.cy + door.normalY * pathLength);
-                    blocks = f.x + f.width > pathMinX && f.x < pathMaxX && f.y + f.height > pathMinY && f.y < pathMaxY;
+                    blocks = aabb.minX < pathMaxX && aabb.maxX > pathMinX && aabb.minY < pathMaxY && aabb.maxY > pathMinY;
                 } else {
                     const pathMinY = door.cy - pathWidth / 2;
                     const pathMaxY = door.cy + pathWidth / 2;
                     const pathMinX = Math.min(door.cx, door.cx + door.normalX * pathLength);
                     const pathMaxX = Math.max(door.cx, door.cx + door.normalX * pathLength);
-                    blocks = f.x + f.width > pathMinX && f.x < pathMaxX && f.y + f.height > pathMinY && f.y < pathMaxY;
+                    blocks = aabb.minX < pathMaxX && aabb.maxX > pathMinX && aabb.minY < pathMaxY && aabb.maxY > pathMinY;
                 }
                 if (blocks) {
                     addIssue(f, 1.5, 'Pathway blocked',
@@ -6145,8 +6303,9 @@ const FloorPlanEditor = (() => {
             const edgeDist = minEdgeToWallDistance(f);
             if (edgeDist > 1.5 * ft) continue;
             const side = nearestWallSide(fc.x, fc.y, bounds);
-            const isLandscape = f.width > f.height;
-            const facesWall = (side === 'top' || side === 'bottom') ? !isLandscape : isLandscape;
+            const facing = getFacingVector(f);
+            const facingWall = getWallSideFromDirection(facing.x, facing.y);
+            const facesWall = facingWall && side === facingWall;
             if (facesWall && doors.length > 0) {
                 addIssue(f, 1.5, 'Facing wall',
                     `${f.name} faces the wall. Rotate so it faces into the room for better awareness and energy flow.`, 'medium');
@@ -6169,11 +6328,15 @@ const FloorPlanEditor = (() => {
             if (!bedTypes.has(f.typeId)) continue;
             if (doors.length === 0) continue;
             if (itemIssues.has(f.id)) continue;
-            const fc = furnitureCenter(f);
-            const fSide = nearestWallSide(fc.x, fc.y, bounds);
+            const rot = (f.rotation || 0) * Math.PI / 180;
+            const length = Math.max(f.width, f.height);
+            const headDx = Math.sin(rot), headDy = -Math.cos(rot);
+            const cx = furnitureCenter(f).x, cy = furnitureCenter(f).y;
+            const headboardCenter = { x: cx + (length / 2) * headDx, y: cy + (length / 2) * headDy };
+            const bedHeadWall = nearestWallSide(headboardCenter.x, headboardCenter.y, bounds);
             for (const door of doors) {
                 const doorSide = nearestWallSide(door.cx, door.cy, bounds);
-                if (fSide === doorSide) {
+                if (bedHeadWall === doorSide) {
                     addIssue(f, 1.5, 'Bed command position',
                         `${f.name} is on the same wall as the door. Ideally place the bed on a wall diagonal to the door for the command position.`, 'medium');
                     break;
@@ -6223,9 +6386,225 @@ const FloorPlanEditor = (() => {
         return { overallScore: score, summary, suggestions: dedupedSuggestions };
     }
 
+    const ALIGN_ORDERS = [
+        [0.5, 0.3, 0.7, 0.2, 0.8, 0.15, 0.85, 0.1, 0.9],
+        [0.3, 0.7, 0.5, 0.2, 0.8, 0.4, 0.6, 0.1, 0.9],
+        [0.7, 0.3, 0.5, 0.8, 0.2, 0.6, 0.4, 0.9, 0.1],
+        [0.2, 0.8, 0.5, 0.4, 0.6, 0.3, 0.7, 0.15, 0.85],
+        [0.8, 0.2, 0.5, 0.6, 0.4, 0.7, 0.3, 0.85, 0.15],
+        [0.4, 0.6, 0.5, 0.25, 0.75, 0.1, 0.9, 0.35, 0.65],
+        [0.6, 0.4, 0.5, 0.75, 0.25, 0.9, 0.1, 0.65, 0.35],
+        [0.25, 0.75, 0.5, 0.35, 0.65, 0.2, 0.8, 0.4, 0.6]
+    ];
+
+    function generateAlternativeLayout(tryIndex) {
+        tryIndex = tryIndex || 0;
+        const bounds = getRoomBounds();
+        if (!bounds) return null;
+        const ft = scale;
+        const margin = wallThickness / 2 + 6;
+        const doors = getAllDoorPositions();
+        const windows = getAllWindowPositions();
+        const alignOrder = ALIGN_ORDERS[tryIndex % ALIGN_ORDERS.length] || ALIGN_ORDERS[0];
+
+        const items = furniture.map(f => ({
+            id: f.id, typeId: f.typeId, name: f.name,
+            width: f.width, height: f.height,
+            x: f.x, y: f.y, rotation: f.rotation || 0
+        }));
+
+        const placed = [];
+        const gap = 2;
+
+        function aabbOverlap(a, b) {
+            return a.minX < b.maxX + gap && a.maxX > b.minX - gap && a.minY < b.maxY + gap && a.maxY > b.minY - gap;
+        }
+        function overlapsAny(rx, ry, rw, rh, rot) {
+            const candidate = { x: rx, y: ry, width: rw, height: rh, rotation: rot };
+            const aabb = getRotatedAABB(candidate);
+            for (const p of placed) {
+                const pAabb = getRotatedAABB(p);
+                if (aabbOverlap(aabb, pAabb)) return true;
+            }
+            return false;
+        }
+        function inBoundsRotated(rx, ry, rw, rh, rot) {
+            const candidate = { x: rx, y: ry, width: rw, height: rh, rotation: rot };
+            const aabb = getRotatedAABB(candidate);
+            return aabb.minX >= bounds.minX + margin && aabb.maxX <= bounds.maxX - margin &&
+                   aabb.minY >= bounds.minY + margin && aabb.maxY <= bounds.maxY - margin;
+        }
+        function tooNearDoor(rx, ry, rw, rh) {
+            const cx = rx + rw / 2, cy = ry + rh / 2;
+            for (const d of doors) {
+                if (dist(cx, cy, d.cx, d.cy) < 3 * ft) return true;
+            }
+            return false;
+        }
+        function tryPlace(rx, ry, rw, rh, rot) {
+            if (!inBoundsRotated(rx, ry, rw, rh, rot)) return false;
+            if (rectOverlapsWallRotated({ x: rx, y: ry, width: rw, height: rh, rotation: rot })) return false;
+            if (overlapsAny(rx, ry, rw, rh, rot)) return false;
+            if (tooNearDoor(rx, ry, rw, rh)) return false;
+            return true;
+        }
+        function findSpot(rw, rh, rot, preferWall, preferAlign) {
+            const roomW = bounds.maxX - bounds.minX;
+            const roomH = bounds.maxY - bounds.minY;
+            const aligns = [preferAlign, ...alignOrder.filter(a => Math.abs(a - preferAlign) > 0.05)];
+            const wallOrder = [preferWall, ...['top', 'bottom', 'left', 'right'].filter(w => w !== preferWall)];
+            for (const wall of wallOrder) {
+                for (const a of aligns) {
+                    let x, y;
+                    if (wall === 'top') { x = bounds.minX + margin + a * (roomW - rw - 2 * margin); y = bounds.minY + margin; }
+                    else if (wall === 'bottom') { x = bounds.minX + margin + a * (roomW - rw - 2 * margin); y = bounds.maxY - rh - margin; }
+                    else if (wall === 'left') { x = bounds.minX + margin; y = bounds.minY + margin + a * (roomH - rh - 2 * margin); }
+                    else { x = bounds.maxX - rw - margin; y = bounds.minY + margin + a * (roomH - rh - 2 * margin); }
+                    if (tryPlace(x, y, rw, rh, rot)) return { x, y };
+                }
+            }
+            const step = ft * 0.5;
+            for (let gy = bounds.minY + margin; gy + rh <= bounds.maxY - margin; gy += step) {
+                for (let gx = bounds.minX + margin; gx + rw <= bounds.maxX - margin; gx += step) {
+                    if (tryPlace(gx, gy, rw, rh, rot)) return { x: gx, y: gy };
+                }
+            }
+            return null;
+        }
+
+        const bedTypes = new Set(['queen-bed', 'king-bed', 'twin-bed']);
+        const doorSides = doors.length ? doors.map(d => nearestWallSide(d.cx, d.cy, bounds)) : [];
+        const windowSides = windows.length ? windows.map(w => nearestWallSide(w.cx, w.cy, bounds)) : [];
+
+        function bestBedWall() {
+            const sides = ['top', 'bottom', 'left', 'right'];
+            const avoid = new Set([...doorSides, ...windowSides]);
+            const perp = sides.filter(s => !avoid.has(s) && !doorSides.some(ds => ds === oppositeWall(s)));
+            return perp[0] || sides.find(s => !doorSides.includes(s)) || 'top';
+        }
+        function wallToRotation(wall) {
+            return { top: 0, bottom: 180, left: 90, right: 270 }[wall] || 0;
+        }
+        function bestSeatWall() {
+            if (!doorSides.length) return 'bottom';
+            return oppositeWall(doorSides[0]);
+        }
+
+        const sortedItems = [...items].sort((a, b) => {
+            const areaA = a.width * a.height, areaB = b.width * b.height;
+            const bedA = bedTypes.has(a.typeId) ? 0 : 1;
+            const bedB = bedTypes.has(b.typeId) ? 0 : 1;
+            if (bedA !== bedB) return bedA - bedB;
+            return areaB - areaA;
+        });
+
+        for (const item of sortedItems) {
+            let wall, align, rot = item.rotation;
+            if (bedTypes.has(item.typeId)) {
+                wall = bestBedWall();
+                align = 0.5;
+                rot = wallToRotation(wall);
+            } else if (item.typeId === 'sofa' || item.typeId === 'desk') {
+                wall = bestSeatWall();
+                align = 0.5;
+                rot = wallToRotation(wall);
+            } else if (item.typeId === 'nightstand') {
+                const bed = placed.find(p => bedTypes.has(p.typeId));
+                if (bed) {
+                    const leftOfBed = { x: bed.x - item.width - 4, y: bed.y };
+                    const rightOfBed = { x: bed.x + bed.width + 4, y: bed.y };
+                    if (tryPlace(leftOfBed.x, leftOfBed.y, item.width, item.height, item.rotation)) {
+                        item.x = leftOfBed.x; item.y = leftOfBed.y;
+                        placed.push(item); continue;
+                    }
+                    if (tryPlace(rightOfBed.x, rightOfBed.y, item.width, item.height, item.rotation)) {
+                        item.x = rightOfBed.x; item.y = rightOfBed.y;
+                        placed.push(item); continue;
+                    }
+                }
+                wall = 'left'; align = 0.3;
+            } else if (item.typeId === 'tv-stand') {
+                const sofa = placed.find(p => p.typeId === 'sofa');
+                wall = sofa ? oppositeWall(nearestWallSide(sofa.x + sofa.width / 2, sofa.y + sofa.height / 2, bounds)) : 'top';
+                align = sofa ? (sofa.x + sofa.width / 2 - bounds.minX) / (bounds.maxX - bounds.minX) : 0.5;
+            } else if (item.typeId === 'dresser' || item.typeId === 'wardrobe' || item.typeId === 'bookshelf') {
+                wall = doorSides[0] ? oppositeWall(doorSides[0]) : 'right';
+                align = 0.7;
+            } else {
+                wall = 'right'; align = 0.5;
+            }
+            const spot = findSpot(item.width, item.height, rot, wall, align);
+            if (spot) {
+                item.x = spot.x;
+                item.y = spot.y;
+                item.rotation = rot;
+            }
+            placed.push(item);
+        }
+
+        return items;
+    }
+
+    function renderLayoutThumbnail(layoutItems, maxSize) {
+        const bounds = getRoomBounds();
+        if (!bounds) return '';
+        const pad = 10;
+        const bw = bounds.maxX - bounds.minX + pad * 2;
+        const bh = bounds.maxY - bounds.minY + pad * 2;
+        const sc = maxSize / Math.max(bw, bh);
+        const w = Math.round(bw * sc);
+        const h = Math.round(bh * sc);
+        const ox = bounds.minX - pad;
+        const oy = bounds.minY - pad;
+
+        let svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${w}" height="${h}" viewBox="${ox} ${oy} ${bw} ${bh}" style="background:#fff;border-radius:6px">`;
+
+        for (const wall of walls) {
+            svg += `<line x1="${wall.start.x}" y1="${wall.start.y}" x2="${wall.end.x}" y2="${wall.end.y}" stroke="#333" stroke-width="${wallThickness}" stroke-linecap="round"/>`;
+            for (const o of (wall.openings || [])) {
+                const cx = wall.start.x + o.position * (wall.end.x - wall.start.x);
+                const cy = wall.start.y + o.position * (wall.end.y - wall.start.y);
+                const dx = wall.end.x - wall.start.x;
+                const dy = wall.end.y - wall.start.y;
+                const len = Math.sqrt(dx * dx + dy * dy);
+                const ux = dx / len, uy = dy / len;
+                const hw = o.width / 2;
+                if (o.type === 'door') {
+                    svg += `<line x1="${cx - ux * hw}" y1="${cy - uy * hw}" x2="${cx + ux * hw}" y2="${cy + uy * hw}" stroke="#fff" stroke-width="${wallThickness + 2}"/>`;
+                    svg += `<line x1="${cx - ux * hw}" y1="${cy - uy * hw}" x2="${cx + ux * hw}" y2="${cy + uy * hw}" stroke="#7c3aed" stroke-width="2" stroke-dasharray="4"/>`;
+                } else if (o.type === 'window') {
+                    svg += `<line x1="${cx - ux * hw}" y1="${cy - uy * hw}" x2="${cx + ux * hw}" y2="${cy + uy * hw}" stroke="#fff" stroke-width="${wallThickness + 2}"/>`;
+                    svg += `<line x1="${cx - ux * hw}" y1="${cy - uy * hw}" x2="${cx + ux * hw}" y2="${cy + uy * hw}" stroke="#38bdf8" stroke-width="3"/>`;
+                }
+            }
+        }
+
+        for (const item of layoutItems) {
+            const rx = item.x, ry = item.y, rw = item.width, rh = item.height;
+            const rot = item.rotation || 0;
+            const cx = rx + rw / 2, cy = ry + rh / 2;
+            svg += `<g transform="translate(${cx},${cy}) rotate(${rot}) translate(${-rw/2},${-rh/2})">`;
+            svg += `<rect x="0" y="0" width="${rw}" height="${rh}" rx="2" fill="#e0e7ff" stroke="#6366f1" stroke-width="1"/>`;
+            const fontSize = Math.min(rw * 0.3, rh * 0.4, 10);
+            if (fontSize > 4) {
+                const label = (item.name || item.typeId || '').split(' ').map(w => w[0] || '').join('').toUpperCase().slice(0, 3);
+                svg += `<text x="${rw / 2}" y="${rh / 2}" text-anchor="middle" dominant-baseline="central" font-size="${fontSize}" fill="#4338ca" font-family="sans-serif" font-weight="600">${label}</text>`;
+            }
+            svg += `</g>`;
+        }
+
+        svg += `</svg>`;
+        return `data:image/svg+xml;base64,${btoa(unescape(encodeURIComponent(svg)))}`;
+    }
+
     async function startFengShuiAnalysis() {
         const hasImages = referenceImages.length > 0;
         const hasDrawnContent = furniture.length > 0 || walls.length > 0;
+
+        if (!hasImages && countEnclosedRooms() > 1) {
+            showFengShuiMessage('Feng shui analysis only supports single-room layouts. Your plan has multiple enclosed rooms.');
+            return;
+        }
         
         if (!hasImages && !hasDrawnContent) {
             showFengShuiMessage('Add a floor plan image or draw some walls and furniture before running feng shui analysis.');
@@ -6314,12 +6693,48 @@ const FloorPlanEditor = (() => {
     function displayFengShuiResults(result) {
         const panel = document.getElementById('feng-shui-panel');
         if (!panel) return;
-        
+        panel.classList.add('feng-shui-panel-wide');
+
         const body = panel.querySelector('.feng-shui-body');
-        
-        // Score display
         const scoreColor = result.overallScore >= 7 ? '#22c55e' : result.overallScore >= 4 ? '#f59e0b' : '#ef4444';
-        
+
+        const currentItems = furniture.map(f => ({ id: f.id, typeId: f.typeId, name: f.name, width: f.width, height: f.height, x: f.x, y: f.y, rotation: f.rotation }));
+        const currentThumb = renderLayoutThumbnail(currentItems, 280);
+
+        let altItems = null;
+        let altScore = null;
+        let altThumb = null;
+        const currentScore = result.overallScore;
+        if (currentScore < 8) {
+            const origPositions = furniture.map(f => ({ id: f.id, x: f.x, y: f.y, rotation: f.rotation }));
+            let bestScore = currentScore;
+            let bestLayout = null;
+            const numTries = 8;
+            for (let tryIndex = 0; tryIndex < numTries; tryIndex++) {
+                const candidate = generateAlternativeLayout(tryIndex);
+                if (!candidate) continue;
+                for (const ai of candidate) {
+                    const f = furniture.find(fi => fi.id === ai.id);
+                    if (f) { f.x = ai.x; f.y = ai.y; f.rotation = ai.rotation; }
+                }
+                const r = analyzeFengShui();
+                for (const op of origPositions) {
+                    const f = furniture.find(fi => fi.id === op.id);
+                    if (f) { f.x = op.x; f.y = op.y; f.rotation = op.rotation; }
+                }
+                if (r.overallScore > bestScore) {
+                    bestScore = r.overallScore;
+                    bestLayout = candidate.map(it => ({ ...it }));
+                }
+            }
+            if (bestLayout && bestScore > currentScore) {
+                altItems = bestLayout;
+                altScore = bestScore;
+                altThumb = renderLayoutThumbnail(altItems, 280);
+            }
+        }
+        const altScoreColor = altScore != null && altScore >= 7 ? '#22c55e' : altScore != null && altScore >= 4 ? '#f59e0b' : '#ef4444';
+
         let html = `
             <div class="feng-shui-score">
                 <div class="score-circle" style="border-color: ${scoreColor}">
@@ -6329,13 +6744,28 @@ const FloorPlanEditor = (() => {
                 <p class="score-summary">${result.summary}</p>
             </div>
         `;
-        
+
+        if (altThumb && altScore != null) {
+            html += `
+                <div class="fs-layouts">
+                    <div class="fs-layout-card">
+                        <div class="fs-layout-label">Current Layout</div>
+                        <img class="fs-layout-img" src="${currentThumb}" alt="Current layout"/>
+                        <div class="fs-layout-score" style="color:${scoreColor}">${result.overallScore}/10</div>
+                    </div>
+                    <div class="fs-layout-card fs-layout-alt">
+                        <div class="fs-layout-label">Suggested Layout</div>
+                        <img class="fs-layout-img" src="${altThumb}" alt="Suggested layout"/>
+                        <div class="fs-layout-score" style="color:${altScoreColor}">${altScore}/10</div>
+                    </div>
+                </div>
+            `;
+        }
+
         if (result.suggestions && result.suggestions.length > 0) {
-            html += `<div class="feng-shui-suggestions">`;
-            
+            html += `<div class="feng-shui-suggestions"><div class="fs-suggestions-title">Recommendations</div>`;
             result.suggestions.forEach((suggestion) => {
                 const priorityColor = suggestion.priority === 'high' ? '#ef4444' : suggestion.priority === 'medium' ? '#f59e0b' : '#22c55e';
-                
                 html += `
                     <div class="feng-shui-suggestion">
                         <div class="suggestion-header">
@@ -6347,14 +6777,13 @@ const FloorPlanEditor = (() => {
                     </div>
                 `;
             });
-            
             html += `</div>`;
         } else if (result.overallScore >= 8) {
             html += `<p class="feng-shui-no-suggestions">Your floor plan has good feng shui! No major changes suggested.</p>`;
         } else {
             html += `<p class="feng-shui-no-suggestions">${result.summary}</p>`;
         }
-        
+
         body.innerHTML = html;
     }
     
@@ -6447,6 +6876,46 @@ const FloorPlanEditor = (() => {
     }
     
     
+    /** Count enclosed regions (rooms) from the wall graph. Planar formula: rooms = E - V + C. */
+    function countEnclosedRooms() {
+        if (!walls.length) return 0;
+        const vertexIds = new Set();
+        const adj = new Map();
+        for (const w of walls) {
+            const a = w.start?.id ?? w.start;
+            const b = w.end?.id ?? w.end;
+            if (a == null || b == null) continue;
+            vertexIds.add(a);
+            vertexIds.add(b);
+            if (!adj.has(a)) adj.set(a, new Set());
+            if (!adj.has(b)) adj.set(b, new Set());
+            adj.get(a).add(b);
+            adj.get(b).add(a);
+        }
+        const V = vertexIds.size;
+        const E = walls.length;
+        if (E === 0 || V === 0) return 0;
+        let C = 0;
+        const visited = new Set();
+        for (const id of vertexIds) {
+            if (visited.has(id)) continue;
+            C++;
+            const stack = [id];
+            visited.add(id);
+            while (stack.length) {
+                const cur = stack.pop();
+                for (const next of (adj.get(cur) || [])) {
+                    if (!visited.has(next)) {
+                        visited.add(next);
+                        stack.push(next);
+                    }
+                }
+            }
+        }
+        const rooms = E - V + C;
+        return Math.max(0, rooms);
+    }
+
     function getRoomBounds() {
         let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
         for (const w of walls) {
