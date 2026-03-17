@@ -4,6 +4,12 @@ import feather from 'feather-icons';
 // FLOOR PLAN EDITOR
 // ==========================================
 
+// Base URL for furniture assets (works in dev and deployed builds; public/furniture is copied to dist)
+const FURNITURE_BASE = `${(import.meta.env.BASE_URL || '/').replace(/\/?$/, '/')}furniture/`;
+function furnitureAssetUrl(id) {
+    return `${FURNITURE_BASE}${id}.svg`;
+}
+
 const FloorPlanEditor = (() => {
     // DOM Elements
     let svg, wallsLayer, roomsLayer, furnitureLayer, labelsLayer, dimensionsLayer, cornersLayer, imageLayer;
@@ -138,7 +144,7 @@ const FloorPlanEditor = (() => {
         const ids = furnitureLibrary.map(f => f.id);
         await Promise.all(ids.map(async (id) => {
             try {
-                const res = await fetch(`/src/furniture/${id}.svg`);
+                const res = await fetch(furnitureAssetUrl(id));
                 if (!res.ok) return;
                 const text = await res.text();
                 const parser = new DOMParser();
@@ -3523,7 +3529,7 @@ const FloorPlanEditor = (() => {
     }
     
     function getFurnitureIcon(item) {
-        return `<img src="/src/furniture/${item.id}.svg" alt="${item.name}" width="44" height="44" style="object-fit:contain">`;
+        return `<img src="${furnitureAssetUrl(item.id)}" alt="${item.name}" width="44" height="44" style="object-fit:contain">`;
     }
     
     // Furniture
@@ -6709,7 +6715,8 @@ const FloorPlanEditor = (() => {
             const origPositions = furniture.map(f => ({ id: f.id, x: f.x, y: f.y, rotation: f.rotation }));
             let bestScore = currentScore;
             let bestLayout = null;
-            const numTries = 8;
+            // Try multiple alternative layouts and keep the best-scoring one
+            const numTries = 16;
             for (let tryIndex = 0; tryIndex < numTries; tryIndex++) {
                 const candidate = generateAlternativeLayout(tryIndex);
                 if (!candidate) continue;
@@ -6727,7 +6734,9 @@ const FloorPlanEditor = (() => {
                     bestLayout = candidate.map(it => ({ ...it }));
                 }
             }
-            if (bestLayout && bestScore > currentScore) {
+            // Only surface a suggested layout if it actually improves the score
+            // and reaches at least 8/10 overall
+            if (bestLayout && bestScore > currentScore && bestScore >= 8) {
                 altItems = bestLayout;
                 altScore = bestScore;
                 altThumb = renderLayoutThumbnail(altItems, 280);
@@ -6759,6 +6768,9 @@ const FloorPlanEditor = (() => {
                         <div class="fs-layout-score" style="color:${altScoreColor}">${altScore}/10</div>
                     </div>
                 </div>
+                <div class="fs-apply-wrap">
+                    <button type="button" id="feng-shui-apply-btn" class="primary-btn fs-apply-btn">Apply suggested layout</button>
+                </div>
             `;
         }
 
@@ -6785,6 +6797,26 @@ const FloorPlanEditor = (() => {
         }
 
         body.innerHTML = html;
+
+        // Apply button: only enabled when suggested layout scores higher (altItems is set only when altScore > currentScore)
+        const applyBtn = body.querySelector('#feng-shui-apply-btn');
+        if (applyBtn && altItems) {
+            applyBtn.addEventListener('click', () => {
+                addToHistory();
+                for (const ai of altItems) {
+                    const f = furniture.find(fi => fi.id === ai.id);
+                    if (f) {
+                        f.x = ai.x;
+                        f.y = ai.y;
+                        f.rotation = ai.rotation;
+                    }
+                }
+                redrawFurniture();
+                hasUnsavedChanges = true;
+                showFengShuiToast('Layout applied');
+                panel.remove();
+            });
+        }
     }
     
     function displayImageFengShuiResults(result, originalImageBase64) {

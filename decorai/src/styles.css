@@ -3532,6 +3532,17 @@ footer {
   margin-top: 6px;
 }
 
+.fs-apply-wrap {
+  margin-top: 14px;
+  margin-bottom: 24px;
+}
+
+.fs-apply-btn {
+  width: 100%;
+  padding: 10px 16px;
+  font-weight: 600;
+}
+
 /* Suggestions */
 .fs-suggestions-title {
   font-size: 11px;

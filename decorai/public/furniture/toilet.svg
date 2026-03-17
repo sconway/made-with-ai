@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 15 25" fill="none" stroke="#333" stroke-width="1">
+  <!-- Tank -->
+  <rect x="2.25" y="0" width="10.5" height="8" rx="1.5"/>
+  <line x1="5.25" y1="2" x2="9.75" y2="2"/>
+  <!-- Bowl -->
+  <path d="M1.5,7.5 Q1.5,23.75 7.5,23.75 Q13.5,23.75 13.5,7.5"/>
+  <!-- Inner bowl -->
+  <path d="M3.3,9.5 Q3.3,20.5 7.5,20.5 Q11.7,20.5 11.7,9.5" stroke="#999" stroke-width="0.7"/>
+</svg>
