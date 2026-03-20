@@ -309,6 +309,8 @@ const FloorPlanEditor = (() => {
         document.getElementById('prop-height')?.addEventListener('change', updateSelectedProperties);
         document.getElementById('prop-rotation')?.addEventListener('change', updateSelectedProperties);
         document.getElementById('delete-selected-btn')?.addEventListener('click', deleteSelected);
+        document.getElementById('door-reverse-swing-btn')?.addEventListener('click', reverseSelectedDoorSwing);
+        document.getElementById('door-invert-direction-btn')?.addEventListener('click', invertSelectedDoorDirection);
         document.getElementById('rotate-left-btn')?.addEventListener('click', () => rotateSelectedBy(-90));
         document.getElementById('rotate-right-btn')?.addEventListener('click', () => rotateSelectedBy(90));
         
@@ -573,13 +575,17 @@ const FloorPlanEditor = (() => {
             if (openingEl) {
                 const wallId = openingEl.dataset.wallId;
                 const openingId = openingEl.dataset.openingId;
-                const wall = walls.find(w => w.id === wallId);
-                const opening = wall?.openings?.find(o => o.id === openingId);
-                if (wall && opening) {
+                let wall = wallId ? walls.find(w => w.id === wallId) : null;
+                let opening = wall?.openings?.find(o => o.id === openingId);
+                if (!opening && openingEl.classList.contains('freeform-opening')) {
+                    opening = freeformOpenings.find(o => o.id === openingId);
+                }
+                if (opening) {
+                    const payload = wall ? { wall, opening } : { opening, freeform: true };
                     if (e.shiftKey) {
-                        addToSelection({ wall, opening }, 'opening');
-                    } else if (!isElementSelected({ wall, opening }, 'opening')) {
-                        selectElement({ wall, opening }, 'opening');
+                        addToSelection(payload, 'opening');
+                    } else if (!isElementSelected(payload, 'opening')) {
+                        selectElement(payload, 'opening');
                     }
                     return;
                 }
@@ -2012,7 +2018,13 @@ const FloorPlanEditor = (() => {
                 selectAll();
             }
         } else if (!isTyping) {
-            if (e.key === 'v') {
+            if (e.key.toLowerCase() === 'f' && selectedElement?.type === 'opening' && selectedElement.element.opening?.type === 'door') {
+                e.preventDefault();
+                reverseSelectedDoorSwing();
+            } else if (e.key.toLowerCase() === 'i' && selectedElement?.type === 'opening' && selectedElement.element.opening?.type === 'door') {
+                e.preventDefault();
+                invertSelectedDoorDirection();
+            } else if (e.key === 'v') {
                 selectTool('select');
             } else if (e.key === 'w') {
                 selectTool('wall');
@@ -3260,25 +3272,37 @@ const FloorPlanEditor = (() => {
             frameLine.setAttribute('stroke-linecap', 'round');
             group.appendChild(frameLine);
             
-            // Door swing arc
+            // Door swing arc (hinge left or right)
             const arcRadius = length * 0.9;
+            const swingRight = !!opening.swingRight;
+            const hingeX = swingRight ? halfLength : -halfLength;
+            const sweep = swingRight ? 0 : 1;
+            const arcEndX = swingRight ? hingeX - arcRadius : hingeX + arcRadius;
             const arc = document.createElementNS('http://www.w3.org/2000/svg', 'path');
-            arc.setAttribute('d', `M ${-halfLength} 0 A ${arcRadius} ${arcRadius} 0 0 1 ${-halfLength + arcRadius} ${-arcRadius}`);
+            arc.setAttribute('d', `M ${hingeX} 0 A ${arcRadius} ${arcRadius} 0 0 ${sweep} ${arcEndX} ${-arcRadius}`);
             arc.setAttribute('stroke', '#8B4513');
             arc.setAttribute('stroke-width', '1');
             arc.setAttribute('fill', 'none');
             arc.setAttribute('stroke-dasharray', '4,2');
-            group.appendChild(arc);
             
             // Door panel (the actual door)
             const doorPanel = document.createElementNS('http://www.w3.org/2000/svg', 'line');
-            doorPanel.setAttribute('x1', -halfLength);
+            doorPanel.setAttribute('x1', hingeX);
             doorPanel.setAttribute('y1', 0);
-            doorPanel.setAttribute('x2', -halfLength);
+            doorPanel.setAttribute('x2', hingeX);
             doorPanel.setAttribute('y2', -arcRadius);
             doorPanel.setAttribute('stroke', '#8B4513');
             doorPanel.setAttribute('stroke-width', '3');
-            group.appendChild(doorPanel);
+            
+            let swingParentFf = group;
+            if (opening.swingInvert) {
+                const wrap = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+                wrap.setAttribute('transform', 'scale(1,-1)');
+                group.appendChild(wrap);
+                swingParentFf = wrap;
+            }
+            swingParentFf.appendChild(arc);
+            swingParentFf.appendChild(doorPanel);
         } else {
             // Window - double line with glass fill
             const windowRect = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
@@ -3392,22 +3416,34 @@ const FloorPlanEditor = (() => {
             frame.classList.add('door-frame');
             group.appendChild(frame);
             
-            // Door swing arc - starts from left side of opening
+            // Door swing arc — hinge on left (-halfWidth) or right (+halfWidth) when swingRight is set
             const arc = document.createElementNS('http://www.w3.org/2000/svg', 'path');
             const swingRadius = opening.width * 0.9;
-            arc.setAttribute('d', `M ${-halfWidth} 0 A ${swingRadius} ${swingRadius} 0 0 0 ${-halfWidth} ${-swingRadius}`);
+            const swingRight = !!opening.swingRight;
+            const hingeX = swingRight ? halfWidth : -halfWidth;
+            const sweep = swingRight ? 1 : 0;
+            arc.setAttribute('d', `M ${hingeX} 0 A ${swingRadius} ${swingRadius} 0 0 ${sweep} ${hingeX} ${-swingRadius}`);
             arc.classList.add('door-swing');
-            group.appendChild(arc);
             
             // Door panel line
             const doorPanel = document.createElementNS('http://www.w3.org/2000/svg', 'line');
-            doorPanel.setAttribute('x1', -halfWidth);
+            doorPanel.setAttribute('x1', hingeX);
             doorPanel.setAttribute('y1', 0);
-            doorPanel.setAttribute('x2', -halfWidth);
+            doorPanel.setAttribute('x2', hingeX);
             doorPanel.setAttribute('y2', -swingRadius);
             doorPanel.setAttribute('stroke', '#8B4513');
             doorPanel.setAttribute('stroke-width', '2');
-            group.appendChild(doorPanel);
+            
+            // Flip arc + panel to opposite side of wall (local Y)
+            let swingParent = group;
+            if (opening.swingInvert) {
+                const wrap = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+                wrap.setAttribute('transform', 'scale(1,-1)');
+                group.appendChild(wrap);
+                swingParent = wrap;
+            }
+            swingParent.appendChild(arc);
+            swingParent.appendChild(doorPanel);
             
             wallsLayer.appendChild(group);
             
@@ -3866,6 +3902,8 @@ const FloorPlanEditor = (() => {
             if (selectedElement.type === 'furniture') {
                 addRotationHandle(selectedElement.element);
                 showProperties(selectedElement.element);
+            } else if (selectedElement.type === 'opening') {
+                showPropertiesForOpening(selectedElement.element);
             }
         } else {
             selectedElement = null;
@@ -4673,6 +4711,8 @@ const FloorPlanEditor = (() => {
         if (!panel) return;
         
         panel.classList.remove('hidden');
+        const doorSwingRow = document.getElementById('property-row-door-swing');
+        if (doorSwingRow) doorSwingRow.style.display = 'none';
         const nameEl = document.getElementById('property-item-name');
         if (nameEl) nameEl.textContent = item.name || '';
         ['property-row-height', 'property-row-rotation', 'property-row-rotate-buttons'].forEach(id => {
@@ -4699,7 +4739,38 @@ const FloorPlanEditor = (() => {
         document.getElementById('property-row-rotation').style.display = 'none';
         const rotateRow = document.getElementById('property-row-rotate-buttons');
         if (rotateRow) rotateRow.style.display = 'none';
-        document.getElementById('prop-width').value = (element.opening.width / scale).toFixed(1);
+        const doorSwingRow = document.getElementById('property-row-door-swing');
+        if (doorSwingRow) {
+            doorSwingRow.style.display = element.opening?.type === 'door' ? '' : 'none';
+        }
+        let widthPx = element.opening.width;
+        if (widthPx == null && element.opening.start && element.opening.end) {
+            const dx = element.opening.end.x - element.opening.start.x;
+            const dy = element.opening.end.y - element.opening.start.y;
+            widthPx = Math.sqrt(dx * dx + dy * dy);
+        }
+        document.getElementById('prop-width').value = ((widthPx || 0) / scale).toFixed(1);
+    }
+    
+    function reverseSelectedDoorSwing() {
+        if (!selectedElement || selectedElement.type !== 'opening') return;
+        const opening = selectedElement.element.opening;
+        if (!opening || opening.type !== 'door') return;
+        
+        addToHistory();
+        opening.swingRight = !opening.swingRight;
+        redrawWalls();
+    }
+    
+    /** Swing arc to the opposite side of the wall (which way the door opens into the plan). */
+    function invertSelectedDoorDirection() {
+        if (!selectedElement || selectedElement.type !== 'opening') return;
+        const opening = selectedElement.element.opening;
+        if (!opening || opening.type !== 'door') return;
+        
+        addToHistory();
+        opening.swingInvert = !opening.swingInvert;
+        redrawWalls();
     }
     
     function hideProperties() {
@@ -4716,13 +4787,28 @@ const FloorPlanEditor = (() => {
             item.rotation = parseInt(document.getElementById('prop-rotation').value);
             redrawFurniture();
         } else if (selectedElement.type === 'opening') {
-            const { wall, opening } = selectedElement.element;
-            const wallLength = Math.sqrt((wall.end.x - wall.start.x) ** 2 + (wall.end.y - wall.start.y) ** 2);
+            const pack = selectedElement.element;
+            const { wall, opening } = pack;
             const minWidth = 1 * scale;
             let newWidth = parseFloat(document.getElementById('prop-width').value) * scale;
-            newWidth = Math.max(minWidth, Math.min(wallLength, newWidth));
-            opening.width = newWidth;
-            document.getElementById('prop-width').value = (opening.width / scale).toFixed(1);
+            if (wall) {
+                const wallLength = Math.sqrt((wall.end.x - wall.start.x) ** 2 + (wall.end.y - wall.start.y) ** 2);
+                newWidth = Math.max(minWidth, Math.min(wallLength, newWidth));
+                opening.width = newWidth;
+            } else if (pack.freeform && opening.start && opening.end) {
+                newWidth = Math.max(minWidth, newWidth);
+                const cx = (opening.start.x + opening.end.x) / 2;
+                const cy = (opening.start.y + opening.end.y) / 2;
+                const dx = opening.end.x - opening.start.x;
+                const dy = opening.end.y - opening.start.y;
+                const curLen = Math.sqrt(dx * dx + dy * dy) || 1;
+                const ux = dx / curLen;
+                const uy = dy / curLen;
+                const half = newWidth / 2;
+                opening.start = { x: cx - ux * half, y: cy - uy * half };
+                opening.end = { x: cx + ux * half, y: cy + uy * half };
+            }
+            document.getElementById('prop-width').value = (newWidth / scale).toFixed(1);
             redrawWalls();
         }
     }
@@ -4749,7 +4835,11 @@ const FloorPlanEditor = (() => {
                 labels = labels.filter(l => l.id !== sel.element.id);
             } else if (sel.type === 'opening') {
                 const { wall, opening } = sel.element;
-                wall.openings = wall.openings.filter(o => o.id !== opening.id);
+                if (wall) {
+                    wall.openings = wall.openings.filter(o => o.id !== opening.id);
+                } else {
+                    freeformOpenings = freeformOpenings.filter(o => o.id !== opening.id);
+                }
             } else if (sel.type === 'imported') {
                 const imported = sel.element;
                 if (imported.element && imported.element.parentNode) {
