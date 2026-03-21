@@ -34,6 +34,8 @@ const FloorPlanEditor = (() => {
     let currentTool = 'select';
     let isDrawing = false;
     let drawingStartCorner = null;
+    /** First wall click on empty space: store {x,y} until second click commits both corners + wall (so undo removes the whole segment). */
+    let wallDrawPendingStart = null;
     let previewLine = null;
     let selectedElement = null;
     let selectedElements = []; // For multi-selection
@@ -643,17 +645,55 @@ const FloorPlanEditor = (() => {
                 }
             }
             
-            if (drawingStartCorner) {
+            const hasSegmentStart = !!(drawingStartCorner || wallDrawPendingStart);
+            
+            if (hasSegmentStart) {
+                // Second click: finish segment — one history entry for corners + wall together
                 if (snapToGrid && !targetCorner) {
-                    snapPos = applyDrawingSnaps(drawingStartCorner, snapPos);
+                    snapPos = applyDrawingSnaps(
+                        drawingStartCorner || { x: wallDrawPendingStart.x, y: wallDrawPendingStart.y, walls: [] },
+                        snapPos
+                    );
                 }
-                const endCorner = targetCorner || createCorner(snapPos);
-                if (endCorner.id !== drawingStartCorner.id) {
-                    createWall(drawingStartCorner, endCorner);
-                    drawingStartCorner = endCorner;
+                
+                if (drawingStartCorner) {
+                    if (targetCorner) {
+                        if (targetCorner.id !== drawingStartCorner.id) {
+                            addToHistory();
+                            createWall(drawingStartCorner, targetCorner, { skipHistory: true });
+                            drawingStartCorner = targetCorner;
+                            wallDrawPendingStart = null;
+                        }
+                    } else {
+                        addToHistory();
+                        const endCorner = createCorner(snapPos, { skipHistory: true });
+                        if (endCorner.id !== drawingStartCorner.id) {
+                            createWall(drawingStartCorner, endCorner, { skipHistory: true });
+                            drawingStartCorner = endCorner;
+                        }
+                        wallDrawPendingStart = null;
+                    }
+                } else if (wallDrawPendingStart) {
+                    const dx = snapPos.x - wallDrawPendingStart.x;
+                    const dy = snapPos.y - wallDrawPendingStart.y;
+                    if (Math.sqrt(dx * dx + dy * dy) >= 1) {
+                        addToHistory();
+                        const startCorner = createCorner(wallDrawPendingStart, { skipHistory: true });
+                        const endCorner = targetCorner || createCorner(snapPos, { skipHistory: true });
+                        if (endCorner.id !== startCorner.id) {
+                            createWall(startCorner, endCorner, { skipHistory: true });
+                        }
+                        drawingStartCorner = endCorner;
+                        wallDrawPendingStart = null;
+                    }
                 }
             } else {
-                drawingStartCorner = targetCorner || createCorner(snapPos);
+                // First click: use existing corner / split, or defer corner until segment completes (undo-friendly)
+                if (targetCorner) {
+                    drawingStartCorner = targetCorner;
+                } else {
+                    wallDrawPendingStart = { x: snapPos.x, y: snapPos.y };
+                }
             }
             isDrawing = true;
             currentSnapTarget = null;
@@ -800,14 +840,18 @@ const FloorPlanEditor = (() => {
         
         // Handle drawing preview
         if (isDrawing) {
-            if (currentTool === 'wall' && drawingStartCorner) {
+            if (currentTool === 'wall' && (drawingStartCorner || wallDrawPendingStart)) {
                 const rawPos = getMousePos(e, true);
                 let previewEnd = rawPos;
+                const wallPreviewStart = drawingStartCorner || wallDrawPendingStart;
                 if (snapToGrid) {
                     const snap = getMagneticSnapPos(rawPos);
                     previewEnd = snap || rawPos;
                     if (!currentSnapTarget) {
-                        previewEnd = applyDrawingSnaps(drawingStartCorner, previewEnd);
+                        previewEnd = applyDrawingSnaps(
+                            drawingStartCorner || { x: wallDrawPendingStart.x, y: wallDrawPendingStart.y, walls: [] },
+                            previewEnd
+                        );
                     }
                     highlightSnapTarget(rawPos);
                 } else {
@@ -815,7 +859,7 @@ const FloorPlanEditor = (() => {
                     removeMagneticIndicator();
                     cornersLayer.querySelectorAll('.snap-target').forEach(el => el.classList.remove('snap-target'));
                 }
-                drawWallPreview(drawingStartCorner, previewEnd);
+                drawWallPreview(wallPreviewStart, previewEnd);
             } else if (currentTool === 'room' && drawingStartCorner) {
                 const rawPos = getMousePos(e, true);
                 drawRoomPreview(drawingStartCorner, rawPos);
@@ -2039,14 +2083,14 @@ const FloorPlanEditor = (() => {
     }
     
     // Corner management
-    function createCorner(pos) {
+    function createCorner(pos, opts = {}) {
         const corner = {
             id: 'corner-' + Date.now() + '-' + Math.random().toString(36).substr(2, 9),
             x: pos.x,
             y: pos.y,
             walls: []
         };
-        addToHistory();
+        if (!opts.skipHistory) addToHistory();
         corners.push(corner);
         renderCorner(corner);
         return corner;
@@ -2580,8 +2624,8 @@ const FloorPlanEditor = (() => {
     }
     
     // Wall management
-    function createWall(startCorner, endCorner) {
-        addToHistory();
+    function createWall(startCorner, endCorner, opts = {}) {
+        if (!opts.skipHistory) addToHistory();
         
         const wall = {
             id: 'wall-' + Date.now() + '-' + Math.random().toString(36).substr(2, 9),
@@ -2775,6 +2819,7 @@ const FloorPlanEditor = (() => {
         
         isDrawing = false;
         drawingStartCorner = null;
+        wallDrawPendingStart = null;
         currentSnapTarget = null;
         removePreview();
         cornersLayer.querySelectorAll('.snap-target').forEach(el => el.classList.remove('snap-target'));
@@ -3605,6 +3650,8 @@ const FloorPlanEditor = (() => {
                 <div class="furniture-preview">${getFurnitureIcon(item)}</div>
                 <span>${item.name}</span>
             `;
+            div.dataset.tooltip = `Add ${item.name} — click or drag`;
+            div.setAttribute('aria-label', `Add ${item.name} to the plan—click to place at center, or drag onto the canvas`);
             
             div.addEventListener('dragstart', (e) => {
                 e.dataTransfer.setData('furnitureType', item.id);
@@ -4200,7 +4247,8 @@ const FloorPlanEditor = (() => {
         const btn = document.createElement('button');
         btn.className = 'selection-action-btn';
         btn.innerHTML = `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"></path><polyline points="15 3 21 3 21 9"></polyline><line x1="10" y1="14" x2="21" y2="3"></line></svg> Detach`;
-        btn.title = 'Detach selected walls from connected walls';
+        btn.dataset.tooltip = 'Detach walls';
+        btn.setAttribute('aria-label', 'Detach selected walls from connected walls');
         btn.addEventListener('click', (e) => {
             e.stopPropagation();
             detachSelectedWalls();
@@ -5115,30 +5163,36 @@ const FloorPlanEditor = (() => {
         const btn = document.getElementById('feng-shui-btn');
         if (!btn) return;
         const multiRoomTooltip = 'Feng shui analysis only supports single-room layouts. Your plan has multiple enclosed rooms.';
+        const defaultHover = 'Feng Shui';
+        const defaultAria = 'Analyze layout with Feng Shui (energy and flow)';
         if (referenceImages.length > 0) {
             unwrapFengShuiButton();
             btn.disabled = false;
-            btn.title = 'Feng Shui Analysis';
+            btn.dataset.tooltip = defaultHover;
+            btn.setAttribute('aria-label', defaultAria + ' — uses your reference image as context');
             return;
         }
         const roomCount = countEnclosedRooms();
         if (roomCount > 1) {
             btn.disabled = true;
-            btn.title = 'Feng Shui Analysis';
+            btn.removeAttribute('data-tooltip');
+            btn.setAttribute('aria-label', defaultAria);
             wrapFengShuiButtonForTooltip(multiRoomTooltip);
         } else {
             unwrapFengShuiButton();
             btn.disabled = false;
-            btn.title = 'Feng Shui Analysis';
+            btn.dataset.tooltip = defaultHover;
+            btn.setAttribute('aria-label', defaultAria);
         }
     }
 
     function wrapFengShuiButtonForTooltip(tooltipText) {
         const btn = document.getElementById('feng-shui-btn');
         if (!btn || btn.closest('.feng-shui-btn-tooltip-wrap')) return;
+        btn.removeAttribute('data-tooltip');
         const wrap = document.createElement('span');
         wrap.className = 'feng-shui-btn-tooltip-wrap';
-        wrap.title = tooltipText;
+        wrap.dataset.tooltip = tooltipText;
         wrap.setAttribute('aria-label', tooltipText);
         btn.parentNode.insertBefore(wrap, btn);
         wrap.appendChild(btn);

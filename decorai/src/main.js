@@ -501,13 +501,13 @@ function refreshLayoutsList(bustCache = false) {
             loadBtn.type = 'button';
             loadBtn.className = 'my-layouts-load-btn';
             loadBtn.textContent = 'Load';
-            loadBtn.title = 'Load this layout';
+            loadBtn.setAttribute('aria-label', 'Load this floor plan into the editor');
             loadBtn.addEventListener('click', () => loadLayoutById(layout.id));
             const delBtn = document.createElement('button');
             delBtn.type = 'button';
             delBtn.className = 'my-layouts-delete-btn';
             delBtn.textContent = 'Delete';
-            delBtn.title = 'Delete this layout';
+            delBtn.setAttribute('aria-label', 'Remove this layout from your saved layouts');
             delBtn.addEventListener('click', () => deleteLayoutById(layout.id));
             actions.append(loadBtn, delBtn);
             row.append(topRow, actions);
@@ -1831,8 +1831,10 @@ function generatePromptsWithItems(basePrompt, style) {
     // Simplified base negative prompt - focused on architectural preservation
     const baseNegativePrompt = "blurry, distorted, out of frame, unrealistic shadows, text, watermark, signature, low quality, pixelated, artifacts, change walls, change windows, change floor, change ceiling, change doors, architectural changes, structural modifications";
 
-    // Check if we have an empty room but user selected furnished room
-    const shouldTreatAsEmpty = isRoomActuallyEmpty && currentRoomType === 'furnished';
+    // If the image looks empty but the user picked "furnished", we usually treat it like an empty room
+    // (pick items, etc.) — except for "keep existing items", which has its own prompt and no item grid.
+    const shouldTreatAsEmpty =
+        isRoomActuallyEmpty && currentRoomType === 'furnished' && furnishedOption !== 'keep-existing';
 
     // Special case: "start fresh" should always generate, even with no items
     if (currentRoomType === 'furnished' && furnishedOption === 'start-fresh') {

@@ -17,11 +17,11 @@
     <div class="app-container">
         <header>
             <div class="logo">
-                <h1>DecorAI</h1>
+                <h1>DecorAIt</h1>
                 <span class="tagline">Reimagine Your Space</span>
             </div>
             <div class="header-actions">
-                <button id="layout-editor-btn" class="layout-editor-btn">
+                <button type="button" id="layout-editor-btn" class="layout-editor-btn" title="Open the floor plan editor—draw walls, add furniture, and export your layout">
                     <i data-feather="layout"></i>
                     <span>Layout Editor</span>
                 </button>
@@ -115,22 +115,7 @@
                         </div>
                     </div>
 
-                    <!-- Dynamic room items selection (shown for empty rooms and some furnished room options) -->
-                    <div class="room-items-selection hidden" id="room-items-selection">
-                        <h3 id="items-selection-title">What would you like to add?</h3>
-                        <p class="selection-hint" id="items-selection-hint">Select items you'd like to include in your
-                            room design</p>
-                        <div class="items-grid" id="items-grid">
-                            <!-- Items will be populated by JavaScript -->
-                        </div>
-                        <div class="error-message hidden" id="items-selection-error">
-                            <i data-feather="alert-circle"></i>
-                            <span>Please select at least one item to add to your empty room before generating a
-                                design.</span>
-                        </div>
-                    </div>
-
-                    <!-- Furnished room options (shown only for furnished rooms) -->
+                    <!-- Furnished room options (shown only for furnished rooms) — above item picks -->
                     <div class="furnished-options hidden" id="furnished-options">
                         <h3>How would you like to redesign your room?</h3>
                         <div class="furnished-options-grid">
@@ -170,6 +155,21 @@
                                     </div>
                                 </label>
                             </div>
+                        </div>
+                    </div>
+
+                    <!-- Dynamic room items selection (shown for empty rooms and some furnished room options) -->
+                    <div class="room-items-selection hidden" id="room-items-selection">
+                        <h3 id="items-selection-title">What would you like to add?</h3>
+                        <p class="selection-hint" id="items-selection-hint">Select items you'd like to include in your
+                            room design</p>
+                        <div class="items-grid" id="items-grid">
+                            <!-- Items will be populated by JavaScript -->
+                        </div>
+                        <div class="error-message hidden" id="items-selection-error">
+                            <i data-feather="alert-circle"></i>
+                            <span>Please select at least one item to add to your empty room before generating a
+                                design.</span>
                         </div>
                     </div>
                     <div class="preview-actions">
@@ -225,22 +225,7 @@
                 <h2 class="mobile-options-title" id="mobile-options-title">Additional Options</h2>
             </div>
             <div class="mobile-options-content">
-                <!-- Dynamic room items selection (shown for empty rooms and some furnished room options) -->
-                <div class="room-items-selection" id="mobile-room-items-selection">
-                    <h3 id="mobile-items-selection-title">What would you like to add?</h3>
-                    <p class="selection-hint" id="mobile-items-selection-hint">Select items you'd like to include in
-                        your room design</p>
-                    <div class="items-grid" id="mobile-items-grid">
-                        <!-- Items will be populated by JavaScript -->
-                    </div>
-                    <div class="error-message hidden" id="mobile-items-selection-error">
-                        <i data-feather="alert-circle"></i>
-                        <span>Please select at least one item to add to your empty room before generating a
-                            design.</span>
-                    </div>
-                </div>
-
-                <!-- Furnished room options (shown only for furnished rooms) -->
+                <!-- Furnished room options (shown only for furnished rooms) — above item picks -->
                 <div class="furnished-options" id="mobile-furnished-options">
                     <h3>How would you like to redesign your room?</h3>
                     <div class="furnished-options-grid">
@@ -284,6 +269,21 @@
                         </div>
                     </div>
                 </div>
+
+                <!-- Dynamic room items selection (shown for empty rooms and some furnished room options) -->
+                <div class="room-items-selection" id="mobile-room-items-selection">
+                    <h3 id="mobile-items-selection-title">What would you like to add?</h3>
+                    <p class="selection-hint" id="mobile-items-selection-hint">Select items you'd like to include in
+                        your room design</p>
+                    <div class="items-grid" id="mobile-items-grid">
+                        <!-- Items will be populated by JavaScript -->
+                    </div>
+                    <div class="error-message hidden" id="mobile-items-selection-error">
+                        <i data-feather="alert-circle"></i>
+                        <span>Please select at least one item to add to your empty room before generating a
+                            design.</span>
+                    </div>
+                </div>
             </div>
             <div class="mobile-options-actions">
                 <button class="primary-btn" id="mobile-generate-btn">
@@ -292,17 +292,13 @@
                 </button>
             </div>
         </div>
-
-        <footer>
-            <p>Created with AI • <a href="../index.html">Back to Projects</a></p>
-        </footer>
     </div>
 
     <!-- Layout Editor Screen -->
     <div class="layout-editor-screen hidden" id="layout-editor-screen">
         <div class="layout-editor-header">
             <div class="layout-editor-title">
-                <button id="layout-editor-back-btn" class="back-btn">
+                <button type="button" id="layout-editor-back-btn" class="back-btn" data-tooltip="Back to DecorAI" aria-label="Back to DecorAI (close floor plan editor)">
                     <i data-feather="arrow-left"></i>
                 </button>
                 <div class="layout-editor-title-text">
@@ -329,23 +325,26 @@
                 </div>
             </div>
             <div class="layout-editor-actions">
-                <button id="layout-undo-btn" class="tool-btn" title="Undo (Ctrl+Z)">
+                <button type="button" id="layout-undo-btn" class="tool-btn" data-tooltip="Undo" aria-label="Undo last change (Ctrl+Z or ⌘Z)">
                     <i data-feather="rotate-ccw"></i>
                 </button>
-                <button id="layout-redo-btn" class="tool-btn" title="Redo (Ctrl+Y)">
+                <button type="button" id="layout-redo-btn" class="tool-btn" data-tooltip="Redo" aria-label="Redo (Ctrl+Y or ⌘⇧Z)">
                     <i data-feather="rotate-cw"></i>
                 </button>
-                <button id="layout-select-all-btn" class="tool-btn" title="Select All (Ctrl+A)">
+                <button type="button" id="layout-select-all-btn" class="tool-btn" data-tooltip="Select all" aria-label="Select all walls, furniture, and labels (Ctrl+A)">
                     <i data-feather="check-square"></i>
                 </button>
-                <button id="layout-clear-btn" class="tool-btn" title="Clear All">
+                <button type="button" id="layout-clear-btn" class="tool-btn" data-tooltip="Clear layout" aria-label="Clear the entire floor plan (walls, furniture, labels)">
                     <i data-feather="trash-2"></i>
                 </button>
-                <button id="feng-shui-btn" class="tool-btn feng-shui-btn" title="Feng Shui Analysis">
+                <button type="button" id="feng-shui-btn" class="tool-btn feng-shui-btn" data-tooltip="Feng Shui" aria-label="Analyze layout with Feng Shui (energy and flow)">
                     <i data-feather="compass"></i>
                 </button>
+                <button type="button" id="layout-save-btn" class="layout-save-primary-btn" data-tooltip="Save" aria-label="Save layout to your account">
+                    <i data-feather="save"></i>
+                </button>
                 <div class="export-dropdown">
-                    <button id="layout-export-btn" class="primary-btn">
+                    <button type="button" id="layout-export-btn" class="primary-btn" data-tooltip="Export" aria-label="Export PNG or SVG, or save layout as a file">
                         <i data-feather="download"></i>
                         <span>Export</span>
                         <i data-feather="chevron-down" class="dropdown-arrow"></i>
@@ -358,15 +357,12 @@
                             </label>
                         </div>
                         <div class="export-buttons">
-                            <button id="export-png-btn">Export as PNG</button>
-                            <button id="export-svg-btn">Export as SVG</button>
-                            <button id="export-layout-file-btn">Save layout as file</button>
+                            <button type="button" id="export-png-btn" data-tooltip="Export as PNG image" aria-label="Export the current view as a PNG image">Export as PNG</button>
+                            <button type="button" id="export-svg-btn" data-tooltip="Export as SVG" aria-label="Export the floor plan as SVG">Export as SVG</button>
+                            <button type="button" id="export-layout-file-btn" data-tooltip="Save layout file" aria-label="Download layout as a .decorai-layout.json file">Save layout as file</button>
                         </div>
                     </div>
                 </div>
-                <button id="layout-save-btn" class="layout-save-primary-btn" title="Save layout to your account">
-                    <i data-feather="save"></i>
-                </button>
             </div>
         </div>
         
@@ -376,27 +372,27 @@
                 <div class="tool-section">
                     <h4>Tools</h4>
                     <div class="tool-list">
-                        <button class="floor-tool active" data-tool="select" title="Select & Move (V)">
+                        <button type="button" class="floor-tool active" data-tool="select" data-tooltip="Select &amp; move (V)" aria-label="Select and move items (V)">
                             <i data-feather="mouse-pointer"></i>
                             <span>Select</span>
                         </button>
-                        <button class="floor-tool" data-tool="wall" title="Draw Walls (W)">
+                        <button type="button" class="floor-tool" data-tool="wall" data-tooltip="Draw walls (W)" aria-label="Draw walls by clicking two points (W)">
                             <i data-feather="edit-3"></i>
                             <span>Draw Walls</span>
                         </button>
-                        <button class="floor-tool" data-tool="room" title="Draw Room (R)">
+                        <button type="button" class="floor-tool" data-tool="room" data-tooltip="Draw room (R)" aria-label="Draw a rectangular room (R)">
                             <i data-feather="square"></i>
                             <span>Draw Room</span>
                         </button>
-                        <button class="floor-tool" data-tool="door" title="Add Door (D)">
+                        <button type="button" class="floor-tool" data-tool="door" data-tooltip="Add door (D)" aria-label="Place a door on a wall—click twice on the same wall, or drag for a free-standing door (D)">
                             <i data-feather="log-in"></i>
                             <span>Door</span>
                         </button>
-                        <button class="floor-tool" data-tool="window" title="Add Window">
+                        <button type="button" class="floor-tool" data-tool="window" data-tooltip="Add window" aria-label="Place a window on a wall—click twice on the same wall, or drag for a free-standing window">
                             <i data-feather="columns"></i>
                             <span>Window</span>
                         </button>
-                        <button class="floor-tool" data-tool="label" title="Add Label (L)">
+                        <button type="button" class="floor-tool" data-tool="label" data-tooltip="Add label (L)" aria-label="Add a text label on the plan (L)">
                             <i data-feather="type"></i>
                             <span>Label</span>
                         </button>
@@ -435,7 +431,7 @@
                     </div>
                 </div>
                 <div class="tool-section my-layouts-section">
-                    <button type="button" id="my-layouts-toggle" class="my-layouts-toggle" title="Saved layouts">
+                    <button type="button" id="my-layouts-toggle" class="my-layouts-toggle" data-tooltip="My layouts" aria-label="Open My layouts—load or manage floor plans saved to your account">
                         <i data-feather="folder"></i>
                         <span>My layouts</span>
                         <i data-feather="chevron-down" class="my-layouts-chevron"></i>
@@ -489,15 +485,15 @@
             <div class="furniture-panel">
                 <div class="panel-header">
                     <h4>Furniture</h4>
-                    <input type="text" id="furniture-search" placeholder="Search...">
+                    <input type="text" id="furniture-search" placeholder="Search..." aria-label="Search furniture by name" title="Search furniture by name">
                 </div>
                 <div class="furniture-categories">
-                    <button class="category-btn" data-category="living">Living</button>
-                    <button class="category-btn" data-category="bedroom">Bedroom</button>
-                    <button class="category-btn" data-category="dining">Dining</button>
-                    <button class="category-btn" data-category="kitchen">Kitchen</button>
-                    <button class="category-btn" data-category="bathroom">Bathroom</button>
-                    <button class="category-btn" data-category="office">Office</button>
+                    <button type="button" class="category-btn" data-category="living" data-tooltip="Living room" aria-label="Show living room furniture">Living</button>
+                    <button type="button" class="category-btn" data-category="bedroom" data-tooltip="Bedroom" aria-label="Show bedroom furniture">Bedroom</button>
+                    <button type="button" class="category-btn" data-category="dining" data-tooltip="Dining" aria-label="Show dining furniture">Dining</button>
+                    <button type="button" class="category-btn" data-category="kitchen" data-tooltip="Kitchen" aria-label="Show kitchen furniture">Kitchen</button>
+                    <button type="button" class="category-btn" data-category="bathroom" data-tooltip="Bathroom" aria-label="Show bathroom fixtures">Bathroom</button>
+                    <button type="button" class="category-btn" data-category="office" data-tooltip="Office" aria-label="Show office furniture">Office</button>
                 </div>
                 <div class="furniture-grid" id="furniture-grid">
                     <!-- Furniture items will be populated by JavaScript -->
@@ -523,23 +519,23 @@
                         <span class="unit-label">°</span>
                     </div>
                     <div class="property-row rotate-buttons" id="property-row-rotate-buttons">
-                        <button id="rotate-left-btn" class="rotate-btn" title="Rotate 90° left">
+                        <button type="button" id="rotate-left-btn" class="rotate-btn" data-tooltip="Rotate 90° left" aria-label="Rotate selected furniture 90° counterclockwise">
                             <i data-feather="rotate-ccw"></i>
                         </button>
-                        <button id="rotate-right-btn" class="rotate-btn" title="Rotate 90° right">
+                        <button type="button" id="rotate-right-btn" class="rotate-btn" data-tooltip="Rotate 90° right" aria-label="Rotate selected furniture 90° clockwise">
                             <i data-feather="rotate-cw"></i>
                         </button>
                     </div>
                     <div class="property-row door-swing-actions" id="property-row-door-swing" style="display: none;">
-                        <button type="button" id="door-reverse-swing-btn" class="secondary-btn door-swing-btn" title="Move hinge to the other jamb (keyboard: F)">
+                        <button type="button" id="door-reverse-swing-btn" class="secondary-btn door-swing-btn" data-tooltip="Reverse hinge (F)" aria-label="Move hinge to the other jamb (keyboard: F)">
                             Reverse swing
                         </button>
-                        <button type="button" id="door-invert-direction-btn" class="secondary-btn door-swing-btn" title="Swing into the other room / flip side of wall (keyboard: I)">
+                        <button type="button" id="door-invert-direction-btn" class="secondary-btn door-swing-btn" data-tooltip="Invert swing side (I)" aria-label="Swing into the other room / flip side of wall (keyboard: I)">
                             Invert direction
                         </button>
                     </div>
                     <div class="property-row">
-                        <button id="delete-selected-btn" class="delete-btn">
+                        <button type="button" id="delete-selected-btn" class="delete-btn" data-tooltip="Delete" aria-label="Delete selected items (Delete or Backspace)">
                             <i data-feather="trash-2"></i>
                             Delete
                         </button>

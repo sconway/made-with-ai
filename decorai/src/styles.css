@@ -109,14 +109,6 @@ main {
   flex-direction: column;
 }
 
-footer {
-  padding: 1.5rem 1rem;
-  text-align: center;
-  color: var(--text-light);
-  border-top: 1px solid var(--border-color);
-  margin-top: auto;
-}
-
 /* Components */
 .logo {
   display: flex;
@@ -247,7 +239,8 @@ footer {
 
 .modal-footer {
   padding: 1.5rem;
-  border-top: 1px solid rgba(148, 163, 184, 0.35);
+  padding-top: 0;
+  margin-top: 3rem;
   display: flex;
   justify-content: center;
   gap: 0.75rem;
@@ -943,7 +936,8 @@ footer {
   }
 
   .modal-footer {
-    padding: 1rem;
+    padding: 0 1rem 1rem;
+    margin-top: 2.5rem;
   }
 
   /* Mobile header adjustments */
@@ -2533,11 +2527,63 @@ footer {
   border-color: var(--primary-color);
 }
 
+/* Layout editor: visible hover tooltips (native title is slow/easy to miss) */
+.layout-editor-screen [data-tooltip] {
+  position: relative;
+}
+
+.layout-editor-screen [data-tooltip]::after {
+  content: attr(data-tooltip);
+  position: absolute;
+  left: 50%;
+  top: calc(100% + 8px);
+  transform: translateX(-50%);
+  padding: 6px 10px;
+  background: #1f2937;
+  color: #fff;
+  font-size: 0.75rem;
+  font-weight: 500;
+  line-height: 1.35;
+  border-radius: 6px;
+  white-space: normal;
+  max-width: min(280px, 85vw);
+  width: max-content;
+  text-align: center;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.22);
+  z-index: 10060;
+  pointer-events: none;
+  opacity: 0;
+  visibility: hidden;
+  transition: opacity 0.1s ease, visibility 0.1s ease;
+}
+
+.layout-editor-screen [data-tooltip]:not(:disabled):hover::after,
+.layout-editor-screen [data-tooltip]:not(:disabled):focus-visible::after {
+  opacity: 1;
+  visibility: visible;
+}
+
+/* Canvas overlay: avoid clipping by overflow:hidden on the canvas wrapper */
+.selection-action-btn[data-tooltip]::after {
+  top: auto;
+  bottom: calc(100% + 8px);
+  transform: translateX(-50%);
+}
+
 /* Header Actions */
 .layout-editor-actions {
   display: flex;
   align-items: center;
   gap: 8px;
+}
+
+/* Keep toolbar controls one consistent row height (matches .tool-btn 36px) */
+.layout-editor-actions > .tool-btn,
+.layout-editor-actions > .layout-save-primary-btn,
+.layout-editor-actions > .export-dropdown .primary-btn {
+  height: 36px;
+  min-height: 36px;
+  box-sizing: border-box;
 }
 
 .tool-btn {
@@ -2571,19 +2617,22 @@ footer {
 /* Export Dropdown */
 .export-dropdown {
   position: relative;
+  flex-shrink: 0;
 }
 
 .export-dropdown .primary-btn {
-  display: flex;
+  display: inline-flex;
   align-items: center;
+  justify-content: center;
   gap: 6px;
-  padding: 8px 14px;
+  padding: 0 12px;
   background: var(--primary-color);
   color: white;
   border: none;
   border-radius: var(--button-border-radius);
   font-size: 0.9rem;
   font-weight: 500;
+  line-height: 1;
   cursor: pointer;
   transition: all 0.2s ease;
 }
@@ -2608,7 +2657,9 @@ footer {
   display: flex;
   align-items: center;
   justify-content: center;
+  flex-shrink: 0;
   width: 36px;
+  min-width: 36px;
   height: 36px;
   padding: 0;
   background: var(--primary-color);
@@ -2637,7 +2688,7 @@ footer {
   border: 1px solid #e0e0e0;
   border-radius: 8px;
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
-  overflow: hidden;
+  overflow: visible;
   display: none;
   z-index: 100;
 }
