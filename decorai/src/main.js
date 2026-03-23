@@ -1058,6 +1058,8 @@ document.addEventListener('DOMContentLoaded', async () => {
         layoutNameDisplayEl.addEventListener('keydown', (e) => {
             if (e.key === 'Enter') {
                 e.preventDefault();
+                layoutNameDisplayEl.blur();
+                handleSaveLayout();
             }
         });
     }

@@ -3929,60 +3929,12 @@ main {
   50% { opacity: 0.7; r: 10; }
 }
 
-.edge-snap-indicator {
-  fill: none;
-  stroke: #00ff88;
-  stroke-width: 3;
-  pointer-events: none;
-  animation: pulse-edge-snap 0.6s ease-in-out infinite;
-}
-
-@keyframes pulse-edge-snap {
-  0%, 100% { opacity: 1; stroke-width: 3; }
-  50% { opacity: 0.6; stroke-width: 5; }
-}
-
-.edge-overlay {
-  pointer-events: none;
-}
-
-.edge-detection-row {
-  margin-top: 8px;
-}
-
-.checkbox-label {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  cursor: pointer;
-  font-size: 13px;
-}
-
-.checkbox-label input[type="checkbox"] {
-  width: 16px;
-  height: 16px;
-  cursor: pointer;
-}
-
-.snap-info {
-  margin-top: 4px;
-  padding: 8px;
-  background: rgba(0, 255, 136, 0.1);
-  border-radius: 4px;
-  border-left: 3px solid #00ff88;
-}
-
-.snap-info small,
 .drag-info small {
   display: flex;
   align-items: center;
   gap: 6px;
   color: #666;
   font-size: 11px;
-}
-
-.snap-info svg {
-  color: #00ff88;
 }
 
 .drag-info {
@@ -4026,6 +3978,10 @@ main {
 .reference-image.selectable {
   pointer-events: auto;
   cursor: move;
+}
+
+.reference-image.selected {
+  filter: drop-shadow(0 0 3px rgba(79, 70, 229, 0.9));
 }
 
 .control-section {
@@ -4113,18 +4069,22 @@ main {
   pointer-events: none;
 }
 
-/* Resize handles */
+/* Resize handles — large hit target for reference image corners */
 .ref-image-handle {
   fill: white;
   stroke: #6366f1;
-  stroke-width: 2;
+  stroke-width: 2.5;
   cursor: nwse-resize;
-  rx: 2;
-  ry: 2;
+  pointer-events: all;
+  touch-action: none;
+  filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.15));
 }
 
 .ref-image-handle:hover {
-  fill: #6366f1;
+  fill: #eef2ff;
+  stroke: #4f46e5;
+  stroke-width: 3;
+  filter: drop-shadow(0 2px 4px rgba(79, 70, 229, 0.35));
 }
 
 .ref-image-handle[data-handle="ne"],
@@ -4327,182 +4287,6 @@ main {
   z-index: 100;
 }
 
-/* Image Import Dialog */
-.image-import-dialog {
-  position: fixed;
-  top: 0;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  background: rgba(0, 0, 0, 0.6);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  z-index: 10000;
-  backdrop-filter: blur(4px);
-}
-
-.image-import-content {
-  background: white;
-  border-radius: 16px;
-  padding: 32px;
-  max-width: 500px;
-  width: 90%;
-  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
-}
-
-.image-import-content h3 {
-  margin: 0 0 8px;
-  font-size: 1.5rem;
-  color: #1f2937;
-}
-
-.image-import-content p {
-  margin: 0 0 24px;
-  color: #6b7280;
-}
-
-.import-options {
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-  margin-bottom: 24px;
-}
-
-.import-option {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 4px;
-  padding: 16px 20px;
-  border: 2px solid #e5e7eb;
-  border-radius: var(--button-border-radius);
-  background: #f9fafb;
-  cursor: pointer;
-  transition: all 0.2s ease;
-}
-
-.import-option:hover {
-  border-color: var(--primary-color);
-  background: rgba(79, 70, 229, 0.05);
-}
-
-.import-option svg {
-  margin-bottom: 4px;
-  color: var(--primary-color);
-}
-
-.import-option span {
-  font-weight: 600;
-  color: #1f2937;
-}
-
-.import-option small {
-  color: #6b7280;
-  font-size: 0.85rem;
-}
-
-.import-option.recommended {
-  border-color: var(--primary-color);
-  background: rgba(79, 70, 229, 0.05);
-  position: relative;
-}
-
-.option-badge {
-  position: absolute;
-  top: -10px;
-  right: 10px;
-  background: var(--primary-color);
-  color: white;
-  font-size: 0.7rem;
-  padding: 2px 8px;
-  border-radius: 10px;
-  font-weight: 600;
-}
-
-/* Conversion Options Dialog */
-.conversion-options {
-  display: flex;
-  flex-direction: column;
-  gap: 16px;
-  margin-bottom: 24px;
-  padding: 16px;
-  background: #f9fafb;
-  border-radius: 8px;
-}
-
-.option-row {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-}
-
-.option-row label {
-  min-width: 140px;
-  font-size: 0.9rem;
-  color: #374151;
-  font-weight: 500;
-}
-
-.option-row input[type="range"] {
-  flex: 1;
-  height: 6px;
-  accent-color: var(--primary-color);
-}
-
-.option-row span {
-  min-width: 50px;
-  font-size: 0.85rem;
-  color: #6b7280;
-  text-align: right;
-}
-
-.option-row select {
-  flex: 1;
-  padding: 8px 12px;
-  border: 1px solid #d1d5db;
-  border-radius: 6px;
-  font-size: 0.9rem;
-  background: white;
-}
-
-.import-actions .primary-btn {
-  padding: 10px 24px;
-  border: none;
-  border-radius: var(--button-border-radius);
-  background: linear-gradient(135deg, var(--primary-color), var(--secondary-color));
-  color: white;
-  cursor: pointer;
-  font-weight: 600;
-  margin-left: 12px;
-  transition: all 0.2s ease;
-}
-
-.import-actions .primary-btn:hover {
-  transform: translateY(-1px);
-  box-shadow: 0 4px 12px rgba(79, 70, 229, 0.3);
-}
-
-.import-actions {
-  display: flex;
-  justify-content: flex-end;
-}
-
-.import-actions .cancel-btn {
-  padding: 10px 20px;
-  border: 1px solid #d1d5db;
-  border-radius: var(--button-border-radius);
-  background: white;
-  color: #6b7280;
-  cursor: pointer;
-  font-weight: 500;
-  transition: all 0.2s ease;
-}
-
-.import-actions .cancel-btn:hover {
-  background: #f3f4f6;
-}
-
 /* Image Conversion Loading */
 .image-convert-loading {
   position: fixed;
@@ -4551,10 +4335,9 @@ main {
   color: #6b7280;
 }
 
-/* Reference Image Controls */
+/* Reference Image Controls — match .tool-section padding (16px) */
 .ref-image-controls {
-  margin-top: 16px;
-  padding-top: 16px;
+  padding: 16px;
   border-top: 1px solid #e0e0e0;
 }
 

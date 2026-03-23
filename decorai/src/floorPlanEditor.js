@@ -27,8 +27,6 @@ const FloorPlanEditor = (() => {
     let redoStack = [];
     let hasUnsavedChanges = false;
     let isConvertingImage = false;
-    let detectedEdges = []; // Store detected edges from reference images
-    let showEdgeOverlay = true; // Toggle for edge detection overlay
     
     // Current tool and drawing state
     let currentTool = 'select';
@@ -63,6 +61,8 @@ const FloorPlanEditor = (() => {
     let snapToGrid = true;
     let showDimensions = true;
     let gridSize = 50; // pixels per grid unit (1 foot = 50 pixels)
+    /** Furniture uses a finer snap than walls (quarter-foot) so placement and drags move in smaller steps */
+    const FURNITURE_GRID_DIVISOR = 4;
     let snapDistance = 30; // pixels for corner snapping
     let cornerAngleSnapDistance = 25; // pixels: when moving a corner, snap to 90°/180° positions within this
     let snapRelease = 45; // pixels to break free once snapped (hysteresis)
@@ -70,6 +70,10 @@ const FloorPlanEditor = (() => {
     let angleSnapDegrees = 2.5; // degrees: snap to 90°/180° only when very close (connecting lines)
     let currentSnapTarget = null; // { x, y, type } — tracks the active magnetic snap
     let zoom = 1;
+    
+    /** Reference image corner resize handles (SVG px) — larger = easier to grab / touch */
+    const REF_IMAGE_HANDLE_SIZE = 32;
+    const REF_IMAGE_HANDLE_HALF = REF_IMAGE_HANDLE_SIZE / 2;
     
     // Panning state
     let isPanning = false;
@@ -115,6 +119,7 @@ const FloorPlanEditor = (() => {
         { id: 'sofa', name: 'Sofa', category: 'living', width: 7, height: 3, color: '#8B7355' },
         { id: 'armchair', name: 'Armchair', category: 'living', width: 3, height: 3, color: '#A0896B' },
         { id: 'coffee-table', name: 'Coffee Table', category: 'living', width: 4, height: 2, color: '#A0522D' },
+        { id: 'floor-plant', name: 'Floor Plant', category: 'living', width: 1.5, height: 1.5, color: '#2E7D32' },
         { id: 'tv-stand', name: 'TV Stand', category: 'living', width: 5, height: 1.5, color: '#4A4A4A' },
         { id: 'bookshelf', name: 'Bookshelf', category: 'living', width: 4, height: 1, color: '#8B4513' },
         { id: 'queen-bed', name: 'Queen Bed', category: 'bedroom', width: 5, height: 6.5, color: '#D4C4B7' },
@@ -135,6 +140,9 @@ const FloorPlanEditor = (() => {
         { id: 'bathtub', name: 'Bathtub', category: 'bathroom', width: 2.5, height: 5, color: '#FAFAFA' },
         { id: 'shower', name: 'Shower', category: 'bathroom', width: 3, height: 3, color: '#E3F2FD' },
         { id: 'sink-bath', name: 'Bathroom Sink', category: 'bathroom', width: 2, height: 1.5, color: '#FAFAFA' },
+        { id: 'towel-holder', name: 'Towel Holder', category: 'bathroom', width: 1.5, height: 0.5, color: '#C0C0C0' },
+        { id: 'floor-mat', name: 'Floor Mat', category: 'bathroom', width: 2, height: 3, color: '#8B7355' },
+        { id: 'light-fixture', name: 'Light Fixture', category: 'lighting', width: 1, height: 1, color: '#F5F5DC' },
         { id: 'desk', name: 'Desk', category: 'office', width: 5, height: 2.5, color: '#8D6E63' },
         { id: 'office-chair', name: 'Office Chair', category: 'office', width: 2, height: 2, color: '#333' },
         { id: 'filing-cabinet', name: 'Filing Cabinet', category: 'office', width: 1.5, height: 2, color: '#757575' },
@@ -440,6 +448,7 @@ const FloorPlanEditor = (() => {
             
             // Check if clicking on the selection bounding box (drag to move)
             if (target.classList.contains('scale-bbox')) {
+                addToHistory(); // Save pre-drag state so undo restores positions (not post-drag)
                 isDragging = true;
                 dragTarget = { type: 'selection-bbox', element: null };
                 dragOffset = { x: pos.x, y: pos.y };
@@ -452,6 +461,7 @@ const FloorPlanEditor = (() => {
             if (target.closest('.selection-rotation-handle')) {
                 const bbox = getSelectionBBox();
                 if (bbox && selectedElements.length > 0) {
+                    addToHistory(); // Pre-rotation state for undo
                     isRotatingSelection = true;
                     selectionRotationCenter = { x: bbox.x + bbox.width / 2, y: bbox.y + bbox.height / 2 };
                     selectionRotationStart = Math.atan2(pos.y - selectionRotationCenter.y, pos.x - selectionRotationCenter.x) * 180 / Math.PI;
@@ -466,6 +476,7 @@ const FloorPlanEditor = (() => {
                 const furnitureId = handleEl.dataset.furnitureId;
                 const item = furniture.find(f => f.id === furnitureId);
                 if (item) {
+                    addToHistory(); // Pre-rotation state for undo
                     isRotating = true;
                     rotationTarget = item;
                     // Calculate initial angle from furniture center to mouse
@@ -482,6 +493,7 @@ const FloorPlanEditor = (() => {
                 const cornerId = target.dataset.cornerId;
                 const corner = corners.find(c => c.id === cornerId);
                 if (corner) {
+                    addToHistory(); // Pre-drag / pre-gesture state for undo
                     isDragging = true;
                     dragTarget = { type: 'corner', element: corner };
                     return;
@@ -499,6 +511,7 @@ const FloorPlanEditor = (() => {
                     } else if (!isElementSelected(item, 'furniture')) {
                         selectElement(item, 'furniture');
                     }
+                    addToHistory(); // Pre-drag state for undo
                     isDragging = true;
                     dragTarget = { type: 'furniture', element: item };
                     dragOffset = { x: pos.x - item.x, y: pos.y - item.y };
@@ -516,9 +529,38 @@ const FloorPlanEditor = (() => {
                     } else if (!isElementSelected(label, 'label')) {
                         selectElement(label, 'label');
                     }
+                    addToHistory(); // Pre-drag state for undo
                     isDragging = true;
                     dragTarget = { type: 'label', element: label };
                     dragOffset = { x: pos.x - label.x, y: pos.y - label.y };
+                    return;
+                }
+            }
+            
+            // Reference image (drawn under walls; only receives clicks where not covered)
+            if (target.closest('.reference-image')) {
+                const refEl = target.closest('.reference-image');
+                const rid = refEl.dataset.refImageId;
+                const refImg = referenceImages.find(r => r.id === rid);
+                if (refImg) {
+                    if (e.shiftKey) {
+                        addToSelection(refImg, 'referenceImage');
+                        return;
+                    }
+                    if (!isElementSelected(refImg, 'referenceImage')) {
+                        selectElement(refImg, 'referenceImage');
+                    }
+                    const refOnly =
+                        selectedElements.length > 0 && selectedElements.every(s => s.type === 'referenceImage');
+                    addToHistory(); // Pre-drag state for undo
+                    isDragging = true;
+                    dragTarget = { type: 'referenceImage' };
+                    if (refOnly && selectedElements.length === 1) {
+                        dragOffset = { x: pos.x - refImg.x, y: pos.y - refImg.y };
+                    } else {
+                        dragOffset = { x: pos.x, y: pos.y };
+                    }
+                    e.preventDefault();
                     return;
                 }
             }
@@ -586,9 +628,15 @@ const FloorPlanEditor = (() => {
                     const payload = wall ? { wall, opening } : { opening, freeform: true };
                     if (e.shiftKey) {
                         addToSelection(payload, 'opening');
-                    } else if (!isElementSelected(payload, 'opening')) {
+                        return;
+                    }
+                    if (!isElementSelected(payload, 'opening')) {
                         selectElement(payload, 'opening');
                     }
+                    addToHistory(); // Pre-drag state for undo
+                    isDragging = true;
+                    dragTarget = { type: 'opening' };
+                    dragOffset = { x: pos.x, y: pos.y };
                     return;
                 }
             }
@@ -598,6 +646,7 @@ const FloorPlanEditor = (() => {
                 const nearbyCorner = findNearbyCorner(pos);
                 if (nearbyCorner) {
                     deselectAll();
+                    addToHistory(); // Pre-drag state for undo
                     isDragging = true;
                     dragTarget = { type: 'corner', element: nearbyCorner };
                     return;
@@ -610,6 +659,7 @@ const FloorPlanEditor = (() => {
                     } else if (!isElementSelected(wall, 'wall')) {
                         selectElement(wall, 'wall');
                     }
+                    addToHistory(); // Pre-drag state for undo
                     isDragging = true;
                     dragTarget = { type: 'wall', element: wall };
                     dragOffset = { x: pos.x, y: pos.y };
@@ -637,10 +687,7 @@ const FloorPlanEditor = (() => {
                         redrawAll();
                     }
                 }
-                if (!targetCorner) {
-                    const edgeSnap = findNearestEdgePoint(rawPos, snapDistance);
-                    if (edgeSnap) snapPos = edgeSnap;
-                } else {
+                if (targetCorner) {
                     snapPos = rawPos;
                 }
             }
@@ -706,29 +753,45 @@ const FloorPlanEditor = (() => {
             drawingStartCorner = { x: rawPos.x, y: rawPos.y };
             
         } else if (currentTool === 'door' || currentTool === 'window') {
-            // Use raw position for wall detection so grid snapping doesn't push us away from walls
             const rawPos = getMousePos(e, true);
             
             if (!openingStartPoint) {
-                // First click - find the nearest wall using the raw cursor position
-                const nearestWall = findNearestWall(rawPos);
-                if (nearestWall) {
-                    const projected = projectPointOnWall(nearestWall, rawPos);
-                    openingStartPoint = { x: projected.x, y: projected.y, wall: nearestWall, projected };
+                const resolved = resolveWallOpeningEndpoint(rawPos);
+                if (resolved) {
+                    openingStartPoint = {
+                        x: resolved.x,
+                        y: resolved.y,
+                        wall: resolved.wall,
+                        projected: resolved.projected
+                    };
                 } else {
-                    openingStartPoint = { x: rawPos.x, y: rawPos.y };
+                    const p = snapFreeformOpeningPoint(rawPos);
+                    openingStartPoint = { x: p.x, y: p.y, wall: null, projected: null };
                 }
                 
                 showOpeningStartMarker(openingStartPoint);
             } else {
-                // Second click - create the door/window
-                const endWall = findNearestWall(rawPos);
+                const resolvedEnd = resolveWallOpeningEndpoint(rawPos);
                 
-                if (openingStartPoint.wall && endWall && openingStartPoint.wall === endWall) {
-                    const endProjected = projectPointOnWall(endWall, rawPos);
-                    placeOpeningBetweenPoints(endWall, openingStartPoint.projected, endProjected, currentTool);
+                if (openingStartPoint.wall && resolvedEnd && resolvedEnd.wall === openingStartPoint.wall) {
+                    placeOpeningBetweenPoints(
+                        openingStartPoint.wall,
+                        openingStartPoint.projected,
+                        resolvedEnd.projected,
+                        currentTool
+                    );
                 } else {
-                    createFreeformOpening(openingStartPoint, rawPos, currentTool);
+                    const startPt = { x: openingStartPoint.x, y: openingStartPoint.y };
+                    let endPt = resolvedEnd
+                        ? { x: resolvedEnd.x, y: resolvedEnd.y }
+                        : snapFreeformOpeningPoint(rawPos);
+                    if (snapToGrid) {
+                        endPt = applyDrawingSnaps(
+                            { x: startPt.x, y: startPt.y, walls: [] },
+                            endPt
+                        );
+                    }
+                    createFreeformOpening(startPt, endPt, currentTool);
                 }
                 
                 openingStartPoint = null;
@@ -828,6 +891,48 @@ const FloorPlanEditor = (() => {
                 } else {
                     moveLabel(dragTarget.element, pos.x - dragOffset.x, pos.y - dragOffset.y);
                 }
+            } else if (dragTarget.type === 'referenceImage') {
+                const refOnly =
+                    selectedElements.length > 0 && selectedElements.every(s => s.type === 'referenceImage');
+                if (refOnly && selectedElements.length === 1) {
+                    const ref = selectedElements[0].element;
+                    ref.x = pos.x - dragOffset.x;
+                    ref.y = pos.y - dragOffset.y;
+                    const imgEl = imageLayer.querySelector(`[data-ref-image-id="${ref.id}"]`);
+                    if (imgEl) {
+                        imgEl.setAttribute('x', ref.x);
+                        imgEl.setAttribute('y', ref.y);
+                    }
+                    updateAllHandlePositions(ref);
+                } else {
+                    const dx = pos.x - dragOffset.x;
+                    const dy = pos.y - dragOffset.y;
+                    dragOffset = { x: pos.x, y: pos.y };
+                    moveSelectedElements(dx, dy);
+                }
+                showScaleHandles();
+            } else if (dragTarget.type === 'opening') {
+                const dx = pos.x - dragOffset.x;
+                const dy = pos.y - dragOffset.y;
+                dragOffset = { x: pos.x, y: pos.y };
+                const onlyOpenings =
+                    selectedElements.length > 0 &&
+                    selectedElements.every(s => s.type === 'opening');
+                if (onlyOpenings) {
+                    for (const sel of selectedElements) {
+                        if (sel.type !== 'opening') continue;
+                        const el = sel.element;
+                        if (el.freeform) {
+                            slideFreeformOpeningByDelta(el.opening, dx, dy);
+                        } else {
+                            slideWallOpeningByDelta(el.wall, el.opening, dx, dy);
+                        }
+                    }
+                    redrawWalls();
+                } else {
+                    moveSelectedElements(dx, dy);
+                }
+                showScaleHandles();
             } else if (dragTarget.type === 'wall' || dragTarget.type === 'selection-bbox') {
                 const dx = pos.x - dragOffset.x;
                 const dy = pos.y - dragOffset.y;
@@ -866,16 +971,29 @@ const FloorPlanEditor = (() => {
             }
         }
         
-        // Handle door/window placement preview
+        // Handle door/window placement preview (snapped endpoints match click behavior)
         if ((currentTool === 'door' || currentTool === 'window') && openingStartPoint) {
             const rawPos = getMousePos(e, true);
-            const endWall = findNearestWall(rawPos);
+            const resolvedEnd = resolveWallOpeningEndpoint(rawPos);
             
-            if (openingStartPoint.wall && endWall && openingStartPoint.wall === endWall) {
-                const endProjected = projectPointOnWall(endWall, rawPos);
-                showWallOpeningPreview(endWall, openingStartPoint.projected, endProjected, currentTool);
+            if (openingStartPoint.wall && resolvedEnd && resolvedEnd.wall === openingStartPoint.wall) {
+                showWallOpeningPreview(
+                    openingStartPoint.wall,
+                    openingStartPoint.projected,
+                    resolvedEnd.projected,
+                    currentTool
+                );
             } else {
-                showFreeformOpeningPreview(openingStartPoint, rawPos, currentTool);
+                let endPt = resolvedEnd
+                    ? { x: resolvedEnd.x, y: resolvedEnd.y }
+                    : snapFreeformOpeningPoint(rawPos);
+                if (snapToGrid) {
+                    endPt = applyDrawingSnaps(
+                        { x: openingStartPoint.x, y: openingStartPoint.y, walls: [] },
+                        endPt
+                    );
+                }
+                showFreeformOpeningPreview(openingStartPoint, endPt, currentTool);
             }
         }
     }
@@ -888,23 +1006,21 @@ const FloorPlanEditor = (() => {
             return;
         }
         
-        // Stop group selection rotation
+        // Stop group selection rotation (history saved on mousedown)
         if (isRotatingSelection) {
             isRotatingSelection = false;
             selectionRotationCenter = null;
             selectionRotationStart = 0;
             svg.style.cursor = '';
-            addToHistory();
             showScaleHandles();
             return;
         }
         
-        // Stop rotation
+        // Stop rotation (history saved on mousedown)
         if (isRotating) {
             isRotating = false;
             rotationTarget = null;
             svg.style.cursor = '';
-            addToHistory();
             return;
         }
         
@@ -934,14 +1050,21 @@ const FloorPlanEditor = (() => {
             createRoomFromRect(drawingStartCorner, pos);
         }
         
-        // Finalize corner snap if we were dragging a corner
+        // Finalize corner snap if we were dragging a corner (history saved on mousedown)
         if (dragTarget && dragTarget.type === 'corner') {
             finalizeCornerSnap(dragTarget.element);
         }
         
         if (isDragging && dragTarget && dragTarget.type === 'selection-bbox') {
             svg.style.cursor = '';
-            addToHistory();
+            showScaleHandles();
+        }
+        
+        if (isDragging && dragTarget && dragTarget.type === 'opening') {
+            showScaleHandles();
+        }
+        
+        if (isDragging && dragTarget && dragTarget.type === 'referenceImage') {
             showScaleHandles();
         }
         
@@ -969,7 +1092,6 @@ const FloorPlanEditor = (() => {
             const dist = Math.sqrt((otherCorner.x - corner.x) ** 2 + (otherCorner.y - corner.y) ** 2);
             if (dist < 1) { // Very close - they should be merged
                 mergeCorners(corner, otherCorner);
-                addToHistory();
                 return;
             }
         }
@@ -988,14 +1110,10 @@ const FloorPlanEditor = (() => {
                     const newCorner = splitWallAtPoint(wall, { x: corner.x, y: corner.y });
                     // Merge our corner with the new corner
                     mergeCorners(corner, newCorner);
-                    addToHistory();
                     return;
                 }
             }
         }
-        
-        // No snap occurred, just save history for the move
-        addToHistory();
     }
     
     function handleTouchStart(e) {
@@ -1087,63 +1205,10 @@ const FloorPlanEditor = (() => {
             return;
         }
         
-        // Show options dialog
-        showImageImportDialog(file);
+        addImageAsReference(file);
     }
     
-    function showImageImportDialog(file) {
-        const dialog = document.createElement('div');
-        dialog.className = 'image-import-dialog';
-        dialog.innerHTML = `
-            <div class="image-import-content">
-                <h3>Import Image</h3>
-                <p>How would you like to import this image?</p>
-                <div class="import-options">
-                    <button class="import-option recommended" id="import-with-edge-detection">
-                        <div class="option-badge">Recommended</div>
-                        <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"></path><polyline points="3.27 6.96 12 12.01 20.73 6.96"></polyline><line x1="12" y1="22.08" x2="12" y2="12"></line></svg>
-                        <span>Trace with Edge Detection</span>
-                        <small>Auto-snap to detected edges while drawing walls.</small>
-                    </button>
-                    <button class="import-option" id="import-basic-trace">
-                        <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect><circle cx="8.5" cy="8.5" r="1.5"></circle><polyline points="21 15 16 10 5 21"></polyline></svg>
-                        <span>Trace</span>
-                        <small>Simple background layer for manual tracing.</small>
-                    </button>
-                </div>
-                <div class="import-actions">
-                    <button class="cancel-btn" id="import-cancel">Cancel</button>
-                </div>
-            </div>
-        `;
-        
-        document.body.appendChild(dialog);
-        
-        // Event handlers
-        document.getElementById('import-with-edge-detection').addEventListener('click', () => {
-            dialog.remove();
-            addImageAsReference(file, true); // with edge detection
-        });
-        
-        document.getElementById('import-basic-trace').addEventListener('click', () => {
-            dialog.remove();
-            addImageAsReference(file, false); // without edge detection
-        });
-        
-        document.getElementById('import-cancel').addEventListener('click', () => {
-            dialog.remove();
-        });
-        
-        // Close on backdrop click
-        dialog.addEventListener('click', (e) => {
-            if (e.target === dialog) {
-                dialog.remove();
-            }
-        });
-    }
-    
-    // Vectorize floor plan to native walls using floor plan recognition API
-    function addImageAsReference(file, withEdgeDetection = true) {
+    function addImageAsReference(file) {
         const reader = new FileReader();
         reader.onload = (e) => {
             const dataUrl = e.target.result;
@@ -1153,7 +1218,6 @@ const FloorPlanEditor = (() => {
                 const canvasWidth = wrapper.clientWidth;
                 const canvasHeight = wrapper.clientHeight;
                 
-                // Scale image to fit canvas while maintaining aspect ratio
                 let width = img.width;
                 let height = img.height;
                 const maxWidth = canvasWidth * 0.9;
@@ -1168,7 +1232,16 @@ const FloorPlanEditor = (() => {
                     height = maxHeight;
                 }
                 
-                // Center the image
+                // At least 10 ft on the shorter side (layout units: scale px = 1 ft) so traced walls have room
+                const minSpanFeet = 10;
+                const minSpanPx = minSpanFeet * scale;
+                const minDim = Math.min(width, height);
+                if (minDim > 0 && minDim < minSpanPx) {
+                    const up = minSpanPx / minDim;
+                    width *= up;
+                    height *= up;
+                }
+                
                 const x = (canvasWidth - width) / 2;
                 const y = (canvasHeight - height) / 2;
                 
@@ -1181,163 +1254,18 @@ const FloorPlanEditor = (() => {
                     height: height,
                     originalWidth: img.width,
                     originalHeight: img.height,
-                    opacity: 0.5,
-                    hasEdgeDetection: withEdgeDetection
+                    opacity: 0.5
                 };
                 
                 addToHistory();
                 referenceImages.push(refImage);
                 renderReferenceImage(refImage);
                 
-                // Run edge detection only if requested
-                if (withEdgeDetection) {
-                    detectEdges(img, refImage);
-                }
-                
-                // Show reference image controls
                 showReferenceImageControls(refImage);
             };
             img.src = dataUrl;
         };
         reader.readAsDataURL(file);
-    }
-    
-    // Edge detection using Sobel operator on canvas
-    function detectEdges(img, refImage) {
-        const canvas = document.createElement('canvas');
-        const ctx = canvas.getContext('2d');
-        
-        // Use a reasonable resolution for edge detection
-        const maxDim = 800;
-        let w = img.width;
-        let h = img.height;
-        if (w > maxDim || h > maxDim) {
-            const scale = maxDim / Math.max(w, h);
-            w = Math.floor(w * scale);
-            h = Math.floor(h * scale);
-        }
-        
-        canvas.width = w;
-        canvas.height = h;
-        ctx.drawImage(img, 0, 0, w, h);
-        
-        const imageData = ctx.getImageData(0, 0, w, h);
-        const data = imageData.data;
-        
-        // Convert to grayscale
-        const gray = new Uint8Array(w * h);
-        for (let i = 0; i < w * h; i++) {
-            const idx = i * 4;
-            gray[i] = Math.round(0.299 * data[idx] + 0.587 * data[idx + 1] + 0.114 * data[idx + 2]);
-        }
-        
-        // Apply Sobel operator for edge detection
-        const edges = new Uint8Array(w * h);
-        const sobelX = [-1, 0, 1, -2, 0, 2, -1, 0, 1];
-        const sobelY = [-1, -2, -1, 0, 0, 0, 1, 2, 1];
-        
-        for (let y = 1; y < h - 1; y++) {
-            for (let x = 1; x < w - 1; x++) {
-                let gx = 0, gy = 0;
-                for (let ky = -1; ky <= 1; ky++) {
-                    for (let kx = -1; kx <= 1; kx++) {
-                        const idx = (y + ky) * w + (x + kx);
-                        const ki = (ky + 1) * 3 + (kx + 1);
-                        gx += gray[idx] * sobelX[ki];
-                        gy += gray[idx] * sobelY[ki];
-                    }
-                }
-                const magnitude = Math.sqrt(gx * gx + gy * gy);
-                edges[y * w + x] = magnitude > 50 ? 255 : 0; // Threshold
-            }
-        }
-        
-        // Extract line segments using a simple connected component approach
-        const scaleX = refImage.width / w;
-        const scaleY = refImage.height / h;
-        
-        // Find edge points and cluster them into lines
-        const edgePoints = [];
-        for (let y = 0; y < h; y++) {
-            for (let x = 0; x < w; x++) {
-                if (edges[y * w + x] === 255) {
-                    edgePoints.push({
-                        x: refImage.x + x * scaleX,
-                        y: refImage.y + y * scaleY
-                    });
-                }
-            }
-        }
-        
-        // Store edge points for snapping
-        detectedEdges = edgePoints;
-        refImage.edgePoints = edgePoints;
-        
-        // Render edge overlay
-        renderEdgeOverlay(refImage);
-        
-        console.log(`Detected ${edgePoints.length} edge points`);
-    }
-    
-    // Render detected edges as an overlay
-    function renderEdgeOverlay(refImage) {
-        // Remove existing overlay
-        const existingOverlay = document.getElementById('edge-overlay-' + refImage.id);
-        if (existingOverlay) existingOverlay.remove();
-        
-        if (!showEdgeOverlay || !refImage.edgePoints || refImage.edgePoints.length === 0) return;
-        
-        const g = document.createElementNS('http://www.w3.org/2000/svg', 'g');
-        g.setAttribute('id', 'edge-overlay-' + refImage.id);
-        g.classList.add('edge-overlay');
-        
-        // Sample points to avoid performance issues (show every Nth point)
-        const sampleRate = Math.max(1, Math.floor(refImage.edgePoints.length / 5000));
-        
-        for (let i = 0; i < refImage.edgePoints.length; i += sampleRate) {
-            const p = refImage.edgePoints[i];
-            const circle = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
-            circle.setAttribute('cx', p.x);
-            circle.setAttribute('cy', p.y);
-            circle.setAttribute('r', 1.5);
-            circle.setAttribute('fill', '#00ff88');
-            circle.setAttribute('opacity', '0.6');
-            g.appendChild(circle);
-        }
-        
-        // Insert after image layer but before wall layer
-        imageLayer.parentNode.insertBefore(g, imageLayer.nextSibling);
-    }
-    
-    // Toggle edge overlay visibility
-    function toggleEdgeOverlay() {
-        showEdgeOverlay = !showEdgeOverlay;
-        referenceImages.forEach(refImage => {
-            if (showEdgeOverlay) {
-                renderEdgeOverlay(refImage);
-            } else {
-                const overlay = document.getElementById('edge-overlay-' + refImage.id);
-                if (overlay) overlay.remove();
-            }
-        });
-    }
-    
-    // Find nearest edge point for snapping
-    function findNearestEdgePoint(pos, maxDistance = 30) {
-        if (!detectedEdges || detectedEdges.length === 0) return null;
-        
-        let nearestPoint = null;
-        let minDist = maxDistance;
-        
-        for (const edge of detectedEdges) {
-            const dist = Math.sqrt((edge.x - pos.x) ** 2 + (edge.y - pos.y) ** 2);
-            if (dist < minDist) {
-                minDist = dist;
-                nearestPoint = { x: edge.x, y: edge.y };
-            }
-        }
-        
-        return nearestPoint;
     }
     
     function renderReferenceImage(refImage) {
@@ -1368,20 +1296,6 @@ const FloorPlanEditor = (() => {
             refImage.baseHeight = refImage.height;
         }
         
-        const edgeDetectionHtml = refImage.hasEdgeDetection ? `
-                <div class="control-row edge-detection-row">
-                    <label class="checkbox-label">
-                        <input type="checkbox" id="ref-show-edges" ${showEdgeOverlay ? 'checked' : ''}>
-                        <span>Show Edge Detection</span>
-                    </label>
-                </div>
-                <div class="control-row snap-info">
-                    <small>
-                        <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="16" x2="12" y2="12"></line><line x1="12" y1="8" x2="12.01" y2="8"></line></svg>
-                        Wall corners will snap to detected edges
-                    </small>
-                </div>` : '';
-        
         const controls = document.createElement('div');
         controls.className = 'ref-image-controls';
         controls.innerHTML = `
@@ -1392,7 +1306,6 @@ const FloorPlanEditor = (() => {
                     <input type="range" id="ref-opacity" min="0" max="100" value="${refImage.opacity * 100}">
                     <span id="ref-opacity-value">${Math.round(refImage.opacity * 100)}%</span>
                 </div>
-                ${edgeDetectionHtml}
                 <div class="control-row resize-info">
                     <small>
                         <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 3 21 3 21 9"></polyline><polyline points="9 21 3 21 3 15"></polyline><line x1="21" y1="3" x2="14" y2="10"></line><line x1="3" y1="21" x2="10" y2="14"></line></svg>
@@ -1427,13 +1340,6 @@ const FloorPlanEditor = (() => {
             }
         });
         
-        // Edge detection toggle (only if edge detection is enabled)
-        if (refImage.hasEdgeDetection) {
-            document.getElementById('ref-show-edges').addEventListener('change', (e) => {
-                toggleEdgeOverlay();
-            });
-        }
-        
         // Center button
         document.getElementById('ref-center-btn').addEventListener('click', () => {
             centerReferenceImage(refImage);
@@ -1444,9 +1350,6 @@ const FloorPlanEditor = (() => {
             removeReferenceImage(refImage.id);
             controls.remove();
         });
-        
-        // Make reference image draggable and resizable
-        makeReferenceImageDraggable(refImage);
     }
     
     // Ruler functions
@@ -1623,8 +1526,10 @@ const FloorPlanEditor = (() => {
             handle.classList.add('ref-image-handle');
             handle.dataset.handle = pos;
             handle.dataset.refImageId = refImage.id;
-            handle.setAttribute('width', 12);
-            handle.setAttribute('height', 12);
+            handle.setAttribute('width', REF_IMAGE_HANDLE_SIZE);
+            handle.setAttribute('height', REF_IMAGE_HANDLE_SIZE);
+            handle.setAttribute('rx', '4');
+            handle.setAttribute('ry', '4');
             
             updateHandlePosition(handle, refImage, pos);
             
@@ -1636,8 +1541,9 @@ const FloorPlanEditor = (() => {
     }
     
     function updateHandlePosition(handle, refImage, pos) {
-        const x = pos.includes('w') ? refImage.x - 6 : refImage.x + refImage.width - 6;
-        const y = pos.includes('n') ? refImage.y - 6 : refImage.y + refImage.height - 6;
+        const h = REF_IMAGE_HANDLE_HALF;
+        const x = pos.includes('w') ? refImage.x - h : refImage.x + refImage.width - h;
+        const y = pos.includes('n') ? refImage.y - h : refImage.y + refImage.height - h;
         handle.setAttribute('x', x);
         handle.setAttribute('y', y);
     }
@@ -1721,14 +1627,6 @@ const FloorPlanEditor = (() => {
         const onMouseUp = () => {
             if (isResizing) {
                 isResizing = false;
-                // Re-run edge detection if enabled
-                if (refImage.hasEdgeDetection) {
-                    const img = new Image();
-                    img.onload = () => {
-                        detectEdges(img, refImage);
-                    };
-                    img.src = refImage.dataUrl;
-                }
             }
         };
         
@@ -1749,93 +1647,14 @@ const FloorPlanEditor = (() => {
             imgEl.setAttribute('x', refImage.x);
             imgEl.setAttribute('y', refImage.y);
         }
-        
-        // Update edge detection overlay position
-        if (refImage.hasEdgeDetection) {
-            const img = new Image();
-            img.onload = () => {
-                detectEdges(img, refImage);
-            };
-            img.src = refImage.dataUrl;
-        }
-    }
-    
-    function makeReferenceImageDraggable(refImage) {
-        const imgEl = imageLayer.querySelector(`[data-ref-image-id="${refImage.id}"]`);
-        if (!imgEl) return;
-        
-        let isDragging = false;
-        let startX, startY, origX, origY;
-        
-        imgEl.addEventListener('mousedown', (e) => {
-            if (currentTool !== 'select') return;
-            isDragging = true;
-            startX = e.clientX;
-            startY = e.clientY;
-            origX = refImage.x;
-            origY = refImage.y;
-            
-            // Show resize handles on click
-            addResizeHandles(refImage);
-            
-            e.stopPropagation();
-        });
-        
-        document.addEventListener('mousemove', (e) => {
-            if (!isDragging) return;
-            
-            const dx = e.clientX - startX;
-            const dy = e.clientY - startY;
-            
-            refImage.x = origX + dx;
-            refImage.y = origY + dy;
-            
-            imgEl.setAttribute('x', refImage.x);
-            imgEl.setAttribute('y', refImage.y);
-            
-            // Update resize handles position
-            updateAllHandlePositions(refImage);
-            
-            // Update edge overlay position in real-time
-            const edgeOverlay = document.getElementById('edge-overlay-' + refImage.id);
-            if (edgeOverlay) {
-                edgeOverlay.setAttribute('transform', `translate(${dx}, ${dy})`);
-            }
-        });
-        
-        document.addEventListener('mouseup', () => {
-            if (isDragging) {
-                isDragging = false;
-                // Re-calculate edge positions after drag
-                if (refImage.hasEdgeDetection && showEdgeOverlay) {
-                    const img = new Image();
-                    img.onload = () => {
-                        detectEdges(img, refImage);
-                    };
-                    img.src = refImage.dataUrl;
-                }
-            }
-        });
     }
     
     function removeReferenceImage(id) {
-        const refImage = referenceImages.find(img => img.id === id);
-        if (refImage && refImage.edgePoints) {
-            // Remove edge points from global array
-            detectedEdges = detectedEdges.filter(p => !refImage.edgePoints.includes(p));
-        }
-        
         referenceImages = referenceImages.filter(img => img.id !== id);
         
         const imgEl = imageLayer.querySelector(`[data-ref-image-id="${id}"]`);
         if (imgEl) {
             imgEl.remove();
-        }
-        
-        // Remove edge overlay
-        const edgeOverlay = document.getElementById('edge-overlay-' + id);
-        if (edgeOverlay) {
-            edgeOverlay.remove();
         }
     }
     
@@ -2483,7 +2302,7 @@ const FloorPlanEditor = (() => {
                 // Too far from the wall – break snap
                 currentSnapTarget = null;
             } else {
-                // Corner / edge: distance to the fixed snap point
+                // Corner (fixed snap point)
                 const distFromSnap = Math.sqrt(
                     (rawPos.x - currentSnapTarget.x) ** 2 + (rawPos.y - currentSnapTarget.y) ** 2
                 );
@@ -2508,13 +2327,6 @@ const FloorPlanEditor = (() => {
             return currentSnapTarget;
         }
         
-        // Edge detection snap
-        const edgeSnap = findNearestEdgePoint(rawPos);
-        if (edgeSnap) {
-            currentSnapTarget = { x: edgeSnap.x, y: edgeSnap.y, type: 'edge' };
-            return currentSnapTarget;
-        }
-        
         currentSnapTarget = null;
         return null;
     }
@@ -2523,7 +2335,6 @@ const FloorPlanEditor = (() => {
         // Remove existing highlights
         cornersLayer.querySelectorAll('.snap-target').forEach(el => el.classList.remove('snap-target'));
         removeWallSnapIndicator();
-        removeEdgeSnapIndicator();
         removeMagneticIndicator();
         
         const snap = currentSnapTarget;
@@ -2535,9 +2346,6 @@ const FloorPlanEditor = (() => {
             showMagneticIndicator(snap);
         } else if (snap.type === 'wall') {
             showWallSnapIndicator(snap);
-            showMagneticIndicator(snap);
-        } else if (snap.type === 'edge') {
-            showEdgeSnapIndicator(snap);
             showMagneticIndicator(snap);
         }
     }
@@ -2588,23 +2396,6 @@ const FloorPlanEditor = (() => {
     
     function removeMagneticIndicator() {
         document.getElementById('magnetic-snap-indicator')?.remove();
-    }
-    
-    function showEdgeSnapIndicator(point) {
-        removeEdgeSnapIndicator();
-        
-        const indicator = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
-        indicator.setAttribute('cx', point.x);
-        indicator.setAttribute('cy', point.y);
-        indicator.setAttribute('r', 10);
-        indicator.classList.add('edge-snap-indicator');
-        indicator.id = 'edge-snap-indicator';
-        cornersLayer.appendChild(indicator);
-    }
-    
-    function removeEdgeSnapIndicator() {
-        const indicator = document.getElementById('edge-snap-indicator');
-        if (indicator) indicator.remove();
     }
     
     function showWallSnapIndicator(point) {
@@ -2870,6 +2661,57 @@ const FloorPlanEditor = (() => {
         return nearestWall;
     }
     
+    /**
+     * Snap a door/window endpoint onto a wall: corner → mid-wall → nearest wall projection.
+     * Returns { x, y, wall, projected } or null if not near any wall.
+     */
+    function resolveWallOpeningEndpoint(rawPos) {
+        const corner = findNearbyCorner(rawPos);
+        if (corner && corner.walls && corner.walls.length) {
+            let bestWall = corner.walls[0];
+            let bestDist = Infinity;
+            for (const wall of corner.walls) {
+                const d = pointToLineDistance(rawPos, wall.start, wall.end);
+                if (d < bestDist) {
+                    bestDist = d;
+                    bestWall = wall;
+                }
+            }
+            const proj = projectPointOnWall(bestWall, { x: corner.x, y: corner.y });
+            return { x: proj.x, y: proj.y, wall: bestWall, projected: proj };
+        }
+        const wallSnap = findSnapPointOnWall(rawPos, null);
+        if (wallSnap) {
+            const proj = projectPointOnWall(wallSnap.wall, wallSnap.point);
+            return { x: proj.x, y: proj.y, wall: wallSnap.wall, projected: proj };
+        }
+        const nearestWall = findNearestWall(rawPos);
+        if (nearestWall) {
+            const proj = projectPointOnWall(nearestWall, rawPos);
+            return { x: proj.x, y: proj.y, wall: nearestWall, projected: proj };
+        }
+        return null;
+    }
+    
+    /** Snap a freeform door/window endpoint to corner, mid-wall, or grid. */
+    function snapFreeformOpeningPoint(rawPos) {
+        const corner = findNearbyCorner(rawPos);
+        if (corner) {
+            return { x: corner.x, y: corner.y };
+        }
+        const wallSnap = findSnapPointOnWall(rawPos, null);
+        if (wallSnap) {
+            return { x: wallSnap.point.x, y: wallSnap.point.y };
+        }
+        if (snapToGrid) {
+            return {
+                x: Math.round(rawPos.x / gridSize) * gridSize,
+                y: Math.round(rawPos.y / gridSize) * gridSize
+            };
+        }
+        return { x: rawPos.x, y: rawPos.y };
+    }
+    
     function pointToLineDistance(point, lineStart, lineEnd) {
         const A = point.x - lineStart.x;
         const B = point.y - lineStart.y;
@@ -2940,6 +2782,31 @@ const FloorPlanEditor = (() => {
             y: wall.start.y + clampedT * (wall.end.y - wall.start.y),
             t: clampedT
         };
+    }
+    
+    /** Keep opening center (normalized `position`) so the gap stays fully on the wall segment. */
+    function clampOpeningPositionOnWall(wall, opening, t) {
+        const wallLength = Math.sqrt((wall.end.x - wall.start.x) ** 2 + (wall.end.y - wall.start.y) ** 2);
+        if (wallLength < 1e-6) return t;
+        const halfNorm = (opening.width / 2) / wallLength;
+        if (halfNorm >= 0.5) return 0.5;
+        return Math.max(halfNorm, Math.min(1 - halfNorm, t));
+    }
+    
+    /** Slide a wall-attached opening by a screen delta (center moves, then re-projects onto wall). */
+    function slideWallOpeningByDelta(wall, opening, dx, dy) {
+        const cx = wall.start.x + opening.position * (wall.end.x - wall.start.x);
+        const cy = wall.start.y + opening.position * (wall.end.y - wall.start.y);
+        const proj = projectPointOnWall(wall, { x: cx + dx, y: cy + dy });
+        opening.position = clampOpeningPositionOnWall(wall, opening, proj.t);
+    }
+    
+    /** Move a freeform opening by translation. */
+    function slideFreeformOpeningByDelta(opening, dx, dy) {
+        opening.start.x += dx;
+        opening.start.y += dy;
+        opening.end.x += dx;
+        opening.end.y += dy;
     }
     
     // Show a marker at the start point when placing door/window
@@ -3672,16 +3539,71 @@ const FloorPlanEditor = (() => {
         }
     }
     
+    /** Snap furniture to a finer grid than walls (quarter-foot when snap-to-grid is on). */
+    function snapFurniturePosition(x, y) {
+        if (!snapToGrid) return { x, y };
+        const inc = gridSize / FURNITURE_GRID_DIVISOR;
+        return {
+            x: Math.round(x / inc) * inc,
+            y: Math.round(y / inc) * inc
+        };
+    }
+
+    const FURNITURE_WALL_SNAP_THRESHOLD = 25;
+
+    /** Snap furniture position to align with a nearby wall. Returns adjusted {x, y} or null if not near any wall. */
+    function snapFurnitureToWall(shape, x, y) {
+        if (walls.length === 0) return null;
+        const s = { x, y, width: shape.width, height: shape.height, rotation: shape.rotation || 0 };
+        const corners = getRotatedCorners(s, 1);
+        let bestWall = null, bestDist = Infinity, bestCorner = null, bestProj = null;
+        for (const w of walls) {
+            for (const p of corners) {
+                const d = distPointToSegment(p.x, p.y, w.start.x, w.start.y, w.end.x, w.end.y);
+                if (d < bestDist) {
+                    bestDist = d;
+                    bestWall = w;
+                    bestCorner = p;
+                    const dx = w.end.x - w.start.x, dy = w.end.y - w.start.y;
+                    const len2 = dx * dx + dy * dy;
+                    if (len2 === 0) bestProj = { x: w.start.x, y: w.start.y };
+                    else {
+                        const t = Math.max(0, Math.min(1, ((p.x - w.start.x) * dx + (p.y - w.start.y) * dy) / len2));
+                        bestProj = { x: w.start.x + t * dx, y: w.start.y + t * dy };
+                    }
+                }
+            }
+        }
+        if (!bestWall || bestDist >= FURNITURE_WALL_SNAP_THRESHOLD) return null;
+        const halfThick = wallThickness / 2;
+        const vx = bestCorner.x - bestProj.x, vy = bestCorner.y - bestProj.y;
+        const vlen = Math.sqrt(vx * vx + vy * vy);
+        if (vlen < 1e-9) return { x, y };
+        const shift = (halfThick - bestDist) / vlen;
+        return { x: x + vx * shift, y: y + vy * shift };
+    }
+
+    /** True if furniture is placed against a wall (min distance to any wall < 1 foot). Uses scale so threshold is meaningful. */
+    function isFurnitureSnappedToWall(f) {
+        if (walls.length === 0) return false;
+        const minDist = minEdgeToWallDistance(f);
+        return minDist < scale;
+    }
+
     function addFurniture(typeId, x, y) {
         const template = furnitureLibrary.find(f => f.id === typeId);
         if (!template) return;
         
+        let pos = snapFurniturePosition(x, y);
+        const shape = { width: template.width * scale, height: template.height * scale, rotation: 0 };
+        const wallSnap = snapFurnitureToWall(shape, pos.x, pos.y);
+        if (wallSnap) pos = wallSnap;
         const item = {
             id: 'furniture-' + Date.now(),
             typeId: typeId,
             name: template.name,
-            x: x,
-            y: y,
+            x: pos.x,
+            y: pos.y,
             width: template.width * scale,
             height: template.height * scale,
             rotation: 0,
@@ -3710,6 +3632,18 @@ const FloorPlanEditor = (() => {
         hitRect.setAttribute('fill', 'transparent');
         hitRect.setAttribute('pointer-events', 'all');
         els.push(hitRect);
+        // Debug: border showing full bounds
+        const debugRect = document.createElementNS(ns, 'rect');
+        debugRect.setAttribute('x', 0);
+        debugRect.setAttribute('y', 0);
+        debugRect.setAttribute('width', w);
+        debugRect.setAttribute('height', h);
+        debugRect.setAttribute('fill', 'none');
+        debugRect.setAttribute('stroke', '#e11d48');
+        debugRect.setAttribute('stroke-width', '1');
+        debugRect.setAttribute('stroke-dasharray', '4 2');
+        debugRect.classList.add('furniture-debug-border');
+        els.push(debugRect);
 
         const cached = furnitureSvgCache[item.typeId];
         if (cached) {
@@ -3751,13 +3685,11 @@ const FloorPlanEditor = (() => {
     }
     
     function moveFurniture(item, x, y) {
-        if (snapToGrid) {
-            x = Math.round(x / gridSize) * gridSize;
-            y = Math.round(y / gridSize) * gridSize;
-        }
-        
-        item.x = x;
-        item.y = y;
+        let pos = snapFurniturePosition(x, y);
+        const wallSnap = snapFurnitureToWall(item, pos.x, pos.y);
+        if (wallSnap) pos = wallSnap;
+        item.x = pos.x;
+        item.y = pos.y;
         
         const el = furnitureLayer.querySelector(`[data-furniture-id="${item.id}"]`);
         if (el) {
@@ -3919,10 +3851,15 @@ const FloorPlanEditor = (() => {
             const el = wallsLayer.querySelector(`[data-opening-id="${element.opening.id}"]`);
             if (el) el.classList.add('selected');
             showPropertiesForOpening(element);
+        } else if (type === 'referenceImage') {
+            const el = imageLayer.querySelector(`[data-ref-image-id="${element.id}"]`);
+            if (el) el.classList.add('selected');
+            addResizeHandles(element);
+            showReferenceImageControls(element);
         }
         
         // Show scale handles for scalable elements
-        if (type === 'wall' || type === 'label' || type === 'imported') {
+        if (type === 'wall' || type === 'label' || type === 'imported' || type === 'referenceImage') {
             showScaleHandles();
         }
     }
@@ -3951,6 +3888,9 @@ const FloorPlanEditor = (() => {
                 showProperties(selectedElement.element);
             } else if (selectedElement.type === 'opening') {
                 showPropertiesForOpening(selectedElement.element);
+            } else if (selectedElement.type === 'referenceImage') {
+                showReferenceImageControls(selectedElement.element);
+                addResizeHandles(selectedElement.element);
             }
         } else {
             selectedElement = null;
@@ -3976,6 +3916,11 @@ const FloorPlanEditor = (() => {
         } else if (type === 'opening') {
             const el = wallsLayer.querySelector(`[data-opening-id="${element.opening.id}"]`);
             if (el) on ? el.classList.add('selected') : el.classList.remove('selected');
+        } else if (type === 'referenceImage') {
+            const el = imageLayer.querySelector(`[data-ref-image-id="${element.id}"]`);
+            if (el) on ? el.classList.add('selected') : el.classList.remove('selected');
+            if (on) addResizeHandles(element);
+            else removeRefImageHandles();
         }
     }
     
@@ -4035,6 +3980,7 @@ const FloorPlanEditor = (() => {
         wallsLayer.querySelectorAll('.wall-line.selected').forEach(el => el.classList.remove('selected'));
         wallsLayer.querySelectorAll('.door-element.selected, .window-element.selected').forEach(el => el.classList.remove('selected'));
         wallsLayer.querySelectorAll('.imported-svg-element.selected, .imported-svg-group.selected').forEach(el => el.classList.remove('selected'));
+        imageLayer.querySelectorAll('.reference-image.selected').forEach(el => el.classList.remove('selected'));
         removeRotationHandle();
         removeScaleHandles();
         removeRefImageHandles();
@@ -4046,12 +3992,23 @@ const FloorPlanEditor = (() => {
         selectedElements = [];
         for (const wall of walls) {
             selectedElements.push({ element: wall, type: 'wall' });
+            if (wall.openings) {
+                for (const opening of wall.openings) {
+                    selectedElements.push({ element: { wall, opening }, type: 'opening' });
+                }
+            }
         }
         for (const item of furniture) {
             selectedElements.push({ element: item, type: 'furniture' });
         }
         for (const label of labels) {
             selectedElements.push({ element: label, type: 'label' });
+        }
+        for (const opening of freeformOpenings) {
+            selectedElements.push({ element: { opening, freeform: true }, type: 'opening' });
+        }
+        for (const ref of referenceImages) {
+            selectedElements.push({ element: ref, type: 'referenceImage' });
         }
         for (const imported of importedElements) {
             selectedElements.push({ element: imported, type: 'imported' });
@@ -4068,6 +4025,12 @@ const FloorPlanEditor = (() => {
             } else if (sel.type === 'wall') {
                 const el = wallsLayer.querySelector(`[data-wall-id="${sel.element.id}"]`);
                 if (el) el.classList.add('selected');
+            } else if (sel.type === 'opening') {
+                const el = wallsLayer.querySelector(`[data-opening-id="${sel.element.opening.id}"]`);
+                if (el) el.classList.add('selected');
+            } else if (sel.type === 'referenceImage') {
+                const el = imageLayer.querySelector(`[data-ref-image-id="${sel.element.id}"]`);
+                if (el) el.classList.add('selected');
             } else if (sel.type === 'imported' && sel.element.element) {
                 sel.element.element.classList.add('selected');
             }
@@ -4079,6 +4042,9 @@ const FloorPlanEditor = (() => {
                 showProperties(selectedElement.element);
             } else if (selectedElement.type === 'wall' || selectedElement.type === 'label' || selectedElement.type === 'imported') {
                 showScaleHandles();
+            } else if (selectedElement.type === 'referenceImage') {
+                addResizeHandles(selectedElement.element);
+                showReferenceImageControls(selectedElement.element);
             }
         } else {
             hideProperties();
@@ -4122,6 +4088,24 @@ const FloorPlanEditor = (() => {
                 minY = Math.min(minY, sel.element.y);
                 maxX = Math.max(maxX, sel.element.x + sel.element.width);
                 maxY = Math.max(maxY, sel.element.y + sel.element.height);
+            } else if (sel.type === 'opening') {
+                const payload = sel.element;
+                const b = payload.freeform
+                    ? getFreeformOpeningMarqueeBounds(payload.opening)
+                    : getWallOpeningMarqueeBounds(payload.wall, payload.opening);
+                if (b) {
+                    minX = Math.min(minX, b.minX);
+                    minY = Math.min(minY, b.minY);
+                    maxX = Math.max(maxX, b.maxX);
+                    maxY = Math.max(maxY, b.maxY);
+                }
+            } else if (sel.type === 'referenceImage') {
+                const r = sel.element;
+                minX = Math.min(minX, r.x);
+                minY = Math.min(minY, r.y);
+                maxX = Math.max(maxX, r.x + r.width);
+                maxY = Math.max(maxY, r.y + r.height);
+                hasScalable = true;
             }
         }
         
@@ -4306,7 +4290,7 @@ const FloorPlanEditor = (() => {
     }
     
     function snapshotPositions() {
-        const snap = { corners: {}, furniture: {}, labels: {} };
+        const snap = { corners: {}, furniture: {}, labels: {}, referenceImages: {} };
         const seenCorners = new Set();
         
         for (const sel of selectedElements) {
@@ -4321,6 +4305,9 @@ const FloorPlanEditor = (() => {
                 snap.furniture[sel.element.id] = { x: sel.element.x, y: sel.element.y };
             } else if (sel.type === 'label') {
                 snap.labels[sel.element.id] = { x: sel.element.x, y: sel.element.y };
+            } else if (sel.type === 'referenceImage') {
+                const r = sel.element;
+                snap.referenceImages[r.id] = { x: r.x, y: r.y, width: r.width, height: r.height };
             }
         }
         return snap;
@@ -4392,6 +4379,23 @@ const FloorPlanEditor = (() => {
                     sel.element.x = anchorX + (snap.labels[sel.element.id].x - anchorX) * finalSx;
                     sel.element.y = anchorY + (snap.labels[sel.element.id].y - anchorY) * finalSy;
                 }
+            } else if (sel.type === 'referenceImage') {
+                const r = sel.element;
+                const o = snap.referenceImages && snap.referenceImages[r.id];
+                if (o) {
+                    r.x = anchorX + (o.x - anchorX) * finalSx;
+                    r.y = anchorY + (o.y - anchorY) * finalSy;
+                    r.width = Math.max(20, o.width * finalSx);
+                    r.height = Math.max(20, o.height * finalSy);
+                    const imgEl = imageLayer.querySelector(`[data-ref-image-id="${r.id}"]`);
+                    if (imgEl) {
+                        imgEl.setAttribute('x', r.x);
+                        imgEl.setAttribute('y', r.y);
+                        imgEl.setAttribute('width', r.width);
+                        imgEl.setAttribute('height', r.height);
+                    }
+                    updateAllHandlePositions(r);
+                }
             }
         }
         
@@ -4435,6 +4439,94 @@ const FloorPlanEditor = (() => {
         marqueeBox = null;
     }
     
+    /** Axis-aligned bounds of a wall opening's hit rect (matches renderOpening hit area). */
+    function getWallOpeningMarqueeBounds(wall, opening) {
+        const wallLength = Math.sqrt((wall.end.x - wall.start.x) ** 2 + (wall.end.y - wall.start.y) ** 2);
+        if (wallLength < 1e-6) return null;
+        const ux = (wall.end.x - wall.start.x) / wallLength;
+        const uy = (wall.end.y - wall.start.y) / wallLength;
+        const cx = wall.start.x + opening.position * (wall.end.x - wall.start.x);
+        const cy = wall.start.y + opening.position * (wall.end.y - wall.start.y);
+        const halfWidth = opening.width / 2;
+        const hitPadding = Math.max(8, wallThickness);
+        const lxMin = -halfWidth - hitPadding;
+        const lxMax = halfWidth + hitPadding;
+        const lyMin = -wallThickness / 2 - hitPadding;
+        const lyMax = wallThickness / 2 + hitPadding;
+        const corners = [
+            { lx: lxMin, ly: lyMin },
+            { lx: lxMax, ly: lyMin },
+            { lx: lxMax, ly: lyMax },
+            { lx: lxMin, ly: lyMax }
+        ];
+        let minX = Infinity;
+        let minY = Infinity;
+        let maxX = -Infinity;
+        let maxY = -Infinity;
+        for (const c of corners) {
+            const wx = cx + c.lx * ux - c.ly * uy;
+            const wy = cy + c.lx * uy + c.ly * ux;
+            minX = Math.min(minX, wx);
+            maxX = Math.max(maxX, wx);
+            minY = Math.min(minY, wy);
+            maxY = Math.max(maxY, wy);
+        }
+        return { minX, minY, maxX, maxY };
+    }
+    
+    /** Axis-aligned bounds of a freeform opening (matches visual extent in renderFreeformOpening). */
+    function getFreeformOpeningMarqueeBounds(opening) {
+        const dx = opening.end.x - opening.start.x;
+        const dy = opening.end.y - opening.start.y;
+        const length = Math.sqrt(dx * dx + dy * dy);
+        if (length < 1e-6) return null;
+        const ux = dx / length;
+        const uy = dy / length;
+        const cx = (opening.start.x + opening.end.x) / 2;
+        const cy = (opening.start.y + opening.end.y) / 2;
+        const halfL = length / 2;
+        const hitPadding = Math.max(8, wallThickness);
+        let lxMin;
+        let lxMax;
+        let lyMin;
+        let lyMax;
+        if (opening.type === 'door') {
+            const arcR = length * 0.9;
+            lxMin = -halfL - hitPadding;
+            lxMax = halfL + hitPadding;
+            lyMin = -arcR - hitPadding;
+            lyMax = wallThickness / 2 + hitPadding;
+        } else {
+            lxMin = -halfL - hitPadding;
+            lxMax = halfL + hitPadding;
+            lyMin = -wallThickness / 2 - hitPadding;
+            lyMax = wallThickness / 2 + hitPadding;
+        }
+        const corners = [
+            { lx: lxMin, ly: lyMin },
+            { lx: lxMax, ly: lyMin },
+            { lx: lxMax, ly: lyMax },
+            { lx: lxMin, ly: lyMax }
+        ];
+        let minX = Infinity;
+        let minY = Infinity;
+        let maxX = -Infinity;
+        let maxY = -Infinity;
+        for (const c of corners) {
+            const wx = cx + c.lx * ux - c.ly * uy;
+            const wy = cy + c.lx * uy + c.ly * ux;
+            minX = Math.min(minX, wx);
+            maxX = Math.max(maxX, wx);
+            minY = Math.min(minY, wy);
+            maxY = Math.max(maxY, wy);
+        }
+        return { minX, minY, maxX, maxY };
+    }
+    
+    function marqueeBoundsOverlap(b, mx1, my1, mx2, my2) {
+        return b.minX < mx2 && b.maxX > mx1 && b.minY < my2 && b.maxY > my1;
+    }
+    
     function finishMarqueeSelection(start, end) {
         const x1 = Math.min(start.x, end.x);
         const y1 = Math.min(start.y, end.y);
@@ -4474,6 +4566,38 @@ const FloorPlanEditor = (() => {
             }
         }
         
+        // Wall-attached doors/windows (same payload shape as click selection)
+        for (const wall of walls) {
+            if (!wall.openings || wall.openings.length === 0) continue;
+            for (const opening of wall.openings) {
+                const b = getWallOpeningMarqueeBounds(wall, opening);
+                if (b && marqueeBoundsOverlap(b, x1, y1, x2, y2)) {
+                    selectedElements.push({ element: { wall, opening }, type: 'opening' });
+                }
+            }
+        }
+        
+        // Freeform doors/windows
+        for (const opening of freeformOpenings) {
+            const b = getFreeformOpeningMarqueeBounds(opening);
+            if (b && marqueeBoundsOverlap(b, x1, y1, x2, y2)) {
+                selectedElements.push({ element: { opening, freeform: true }, type: 'opening' });
+            }
+        }
+        
+        // Reference images
+        for (const ref of referenceImages) {
+            const b = {
+                minX: ref.x,
+                minY: ref.y,
+                maxX: ref.x + ref.width,
+                maxY: ref.y + ref.height
+            };
+            if (marqueeBoundsOverlap(b, x1, y1, x2, y2)) {
+                selectedElements.push({ element: ref, type: 'referenceImage' });
+            }
+        }
+        
         // Highlight all selected elements
         for (const sel of selectedElements) {
             if (sel.type === 'furniture') {
@@ -4485,17 +4609,34 @@ const FloorPlanEditor = (() => {
             } else if (sel.type === 'wall') {
                 const el = wallsLayer.querySelector(`[data-wall-id="${sel.element.id}"]`);
                 if (el) el.classList.add('selected');
+            } else if (sel.type === 'opening') {
+                const oid = sel.element.opening.id;
+                const el = wallsLayer.querySelector(`[data-opening-id="${oid}"]`);
+                if (el) el.classList.add('selected');
+            } else if (sel.type === 'referenceImage') {
+                const el = imageLayer.querySelector(`[data-ref-image-id="${sel.element.id}"]`);
+                if (el) el.classList.add('selected');
             }
         }
         
         // Update selectedElement for single selection compatibility
+        removeRotationHandle();
         if (selectedElements.length === 1) {
             selectedElement = selectedElements[0];
             if (selectedElement.type === 'furniture') {
                 addRotationHandle(selectedElement.element);
                 showProperties(selectedElement.element);
+            } else if (selectedElement.type === 'opening') {
+                showPropertiesForOpening(selectedElement.element);
+            } else if (selectedElement.type === 'referenceImage') {
+                addResizeHandles(selectedElement.element);
+                showReferenceImageControls(selectedElement.element);
             }
         } else if (selectedElements.length > 1) {
+            selectedElement = null;
+            hideProperties();
+        } else {
+            selectedElement = null;
             hideProperties();
         }
         
@@ -4593,18 +4734,45 @@ const FloorPlanEditor = (() => {
                     el.setAttribute('x', sel.element.x);
                     el.setAttribute('y', sel.element.y);
                 }
+            } else if (sel.type === 'opening') {
+                const el = sel.element;
+                if (el.freeform) {
+                    slideFreeformOpeningByDelta(el.opening, dx, dy);
+                } else {
+                    const wallAlsoSelected = selectedElements.some(
+                        s => s.type === 'wall' && s.element === el.wall
+                    );
+                    if (!wallAlsoSelected) {
+                        slideWallOpeningByDelta(el.wall, el.opening, dx, dy);
+                    }
+                }
+            } else if (sel.type === 'referenceImage') {
+                const r = sel.element;
+                r.x += dx;
+                r.y += dy;
+                const imgEl = imageLayer.querySelector(`[data-ref-image-id="${r.id}"]`);
+                if (imgEl) {
+                    imgEl.setAttribute('x', r.x);
+                    imgEl.setAttribute('y', r.y);
+                }
+                updateAllHandlePositions(r);
             }
         }
         
         // Redraw walls and corners if any were moved
         if (movedCornerIds.size > 0) {
             redrawAll();
+        } else if (selectedElements.some(s => s.type === 'opening')) {
+            redrawWalls();
         }
     }
     
     function isElementSelected(element, type) {
         if (type === 'opening' && element && element.opening) {
             return selectedElements.some(sel => sel.type === 'opening' && sel.element.opening.id === element.opening.id);
+        }
+        if (type === 'referenceImage' && element && element.id) {
+            return selectedElements.some(sel => sel.type === 'referenceImage' && sel.element.id === element.id);
         }
         return selectedElements.some(sel => sel.element === element && sel.type === type);
     }
@@ -4894,6 +5062,9 @@ const FloorPlanEditor = (() => {
                     imported.element.parentNode.removeChild(imported.element);
                 }
                 importedElements = importedElements.filter(i => i.id !== imported.id);
+            } else if (sel.type === 'referenceImage') {
+                removeReferenceImage(sel.element.id);
+                document.querySelector('.ref-image-controls')?.remove();
             }
         }
         
@@ -5157,6 +5328,26 @@ const FloorPlanEditor = (() => {
         corners.forEach(corner => renderCorner(corner));
         redrawDimensions();
         updateFengShuiButtonState();
+        reapplySelectionHighlights();
+    }
+    
+    function reapplySelectionHighlights() {
+        if (selectedElements.length === 0) return;
+        for (const sel of selectedElements) {
+            highlightElement(sel.element, sel.type, true);
+        }
+        if (selectedElements.length === 1) {
+            const s = selectedElements[0];
+            if (s.type === 'furniture') {
+                addRotationHandle(s.element);
+                showProperties(s.element);
+            } else if (s.type === 'opening') {
+                showPropertiesForOpening(s.element);
+            } else if (s.type === 'referenceImage') {
+                showReferenceImageControls(s.element);
+            }
+        }
+        showScaleHandles();
     }
 
     function updateFengShuiButtonState() {
@@ -5164,14 +5355,7 @@ const FloorPlanEditor = (() => {
         if (!btn) return;
         const multiRoomTooltip = 'Feng shui analysis only supports single-room layouts. Your plan has multiple enclosed rooms.';
         const defaultHover = 'Feng Shui';
-        const defaultAria = 'Analyze layout with Feng Shui (energy and flow)';
-        if (referenceImages.length > 0) {
-            unwrapFengShuiButton();
-            btn.disabled = false;
-            btn.dataset.tooltip = defaultHover;
-            btn.setAttribute('aria-label', defaultAria + ' — uses your reference image as context');
-            return;
-        }
+        const defaultAria = 'Analyze layout with Feng Shui (energy and flow) — uses your drawn walls and furniture';
         const roomCount = countEnclosedRooms();
         if (roomCount > 1) {
             btn.disabled = true;
@@ -6110,11 +6294,14 @@ const FloorPlanEditor = (() => {
         return min;
     }
 
-    function getRotatedCorners(f) {
+    /** Scale factor for overlap/clipping bounds (0.85 = 85%). Collision rect is inset so it matches visual footprint; SVGs often have padding. */
+    const OVERLAP_BOUNDS_SCALE = 0.85;
+
+    function getRotatedCorners(f, boundsScale = 1) {
         const rot = (f.rotation || 0) * Math.PI / 180;
         const c = Math.cos(rot), s = Math.sin(rot);
         const cx = f.x + f.width / 2, cy = f.y + f.height / 2;
-        const hw = f.width / 2, hh = f.height / 2;
+        const hw = (f.width / 2) * boundsScale, hh = (f.height / 2) * boundsScale;
         return [
             { x: cx + (-hw) * c - (-hh) * s, y: cy + (-hw) * s + (-hh) * c },
             { x: cx + ( hw) * c - (-hh) * s, y: cy + ( hw) * s + (-hh) * c },
@@ -6123,8 +6310,8 @@ const FloorPlanEditor = (() => {
         ];
     }
 
-    function getRotatedAABB(f) {
-        const corners = getRotatedCorners(f);
+    function getRotatedAABB(f, boundsScale = 1) {
+        const corners = getRotatedCorners(f, boundsScale);
         let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
         for (const p of corners) {
             minX = Math.min(minX, p.x); minY = Math.min(minY, p.y);
@@ -6133,9 +6320,50 @@ const FloorPlanEditor = (() => {
         return { minX, minY, maxX, maxY };
     }
 
+    /** Point-in-convex-polygon test. Uses centroid to determine inside-side of each edge. */
+    function pointInConvexPolygon(px, py, corners) {
+        const n = corners.length;
+        const cx = corners.reduce((s, p) => s + p.x, 0) / n;
+        const cy = corners.reduce((s, p) => s + p.y, 0) / n;
+        for (let i = 0; i < n; i++) {
+            const a = corners[i];
+            const b = corners[(i + 1) % n];
+            const crossP = (b.x - a.x) * (py - a.y) - (b.y - a.y) * (px - a.x);
+            const crossC = (b.x - a.x) * (cy - a.y) - (b.y - a.y) * (cx - a.x);
+            if ((crossP > 0) !== (crossC > 0) && crossP !== 0 && crossC !== 0) return false;
+        }
+        return true;
+    }
+
+    /** Segment-segment intersection. Returns true if segments (a1,a2) and (b1,b2) intersect. */
+    function segmentsIntersect(a1x, a1y, a2x, a2y, b1x, b1y, b2x, b2y) {
+        const d = (a2x - a1x) * (b2y - b1y) - (a2y - a1y) * (b2x - b1x);
+        if (Math.abs(d) < 1e-9) return false;
+        const t = ((b1x - a1x) * (b2y - b1y) - (b1y - a1y) * (b2x - b1x)) / d;
+        const u = ((a2x - a1x) * (b1y - a1y) - (a2y - a1y) * (b1x - a1x)) / d;
+        return t >= 0 && t <= 1 && u >= 0 && u <= 1;
+    }
+
+    /** True if two rotated rectangles actually overlap (polygon intersection). Uses scaled bounds to match visual footprint. */
     function rectsOverlap(a, b) {
-        const aa = getRotatedAABB(a), ab = getRotatedAABB(b);
-        return aa.minX < ab.maxX && aa.maxX > ab.minX && aa.minY < ab.maxY && aa.maxY > ab.minY;
+        const scale = OVERLAP_BOUNDS_SCALE;
+        const ca = getRotatedCorners(a, scale), cb = getRotatedCorners(b, scale);
+        // AABB quick-reject
+        const aa = getRotatedAABB(a, scale), ab = getRotatedAABB(b, scale);
+        if (aa.minX >= ab.maxX || aa.maxX <= ab.minX || aa.minY >= ab.maxY || aa.maxY <= ab.minY) return false;
+        // Check if any vertex of a is inside b
+        for (const p of ca) if (pointInConvexPolygon(p.x, p.y, cb)) return true;
+        // Check if any vertex of b is inside a
+        for (const p of cb) if (pointInConvexPolygon(p.x, p.y, ca)) return true;
+        // Check edge-edge intersections
+        for (let i = 0; i < 4; i++) {
+            const a1 = ca[i], a2 = ca[(i + 1) % 4];
+            for (let j = 0; j < 4; j++) {
+                const b1 = cb[j], b2 = cb[(j + 1) % 4];
+                if (segmentsIntersect(a1.x, a1.y, a2.x, a2.y, b1.x, b1.y, b2.x, b2.y)) return true;
+            }
+        }
+        return false;
     }
 
     function minEdgeToWallDistance(f) {
@@ -6163,38 +6391,178 @@ const FloorPlanEditor = (() => {
         return Math.max(gapX, gapY);
     }
 
-    function rectOverlapsWallRotated(f) {
-        const corners = getRotatedCorners(f);
-        const halfThick = wallThickness / 2 + 2;
+    /** Get solid wall segments (excluding door/window openings). Returns [{startT,endT},...] with 0<=startT<endT<=1. */
+    function getWallSolidSegments(wall) {
+        const segments = [];
+        let lastT = 0;
+        const openings = (wall.openings || []).slice().sort((a, b) => a.position - b.position);
+        const wallLength = Math.sqrt((wall.end.x - wall.start.x) ** 2 + (wall.end.y - wall.start.y) ** 2);
+        for (const o of openings) {
+            if (wallLength < 1e-6) continue;
+            const halfNorm = Math.min(0.499, (o.width / 2) / wallLength);
+            const t1 = Math.max(0, o.position - halfNorm);
+            const t2 = Math.min(1, o.position + halfNorm);
+            if (t1 > lastT) segments.push({ startT: lastT, endT: t1 });
+            lastT = Math.max(lastT, t2);
+        }
+        if (lastT < 1) segments.push({ startT: lastT, endT: 1 });
+        return segments;
+    }
+
+    /** Extract line segments from imported SVG elements (from image conversion) for obstacle checks. */
+    function getImportedObstacleSegments() {
+        const segments = [];
+        if (!svg) return segments;
+        const toGlobal = (el, x, y) => {
+            const pt = svg.createSVGPoint();
+            pt.x = x;
+            pt.y = y;
+            const ctm = el.getCTM();
+            if (!ctm) return null;
+            const t = pt.matrixTransform(ctm);
+            return { x: t.x, y: t.y };
+        };
+        for (const imp of importedElements) {
+            const el = imp.element;
+            if (!el || !el.ownerDocument || !el.ownerDocument.contains(el)) continue;
+            try {
+                if (imp.type === 'line') {
+                    const x1 = parseFloat(el.getAttribute('x1')) || 0;
+                    const y1 = parseFloat(el.getAttribute('y1')) || 0;
+                    const x2 = parseFloat(el.getAttribute('x2')) || 0;
+                    const y2 = parseFloat(el.getAttribute('y2')) || 0;
+                    const p1 = toGlobal(el, x1, y1), p2 = toGlobal(el, x2, y2);
+                    if (p1 && p2) segments.push({ x1: p1.x, y1: p1.y, x2: p2.x, y2: p2.y });
+                } else if (imp.type === 'rect') {
+                    const x = parseFloat(el.getAttribute('x')) || 0;
+                    const y = parseFloat(el.getAttribute('y')) || 0;
+                    const w = parseFloat(el.getAttribute('width')) || 0;
+                    const h = parseFloat(el.getAttribute('height')) || 0;
+                    const corners = [[x, y], [x + w, y], [x + w, y + h], [x, y + h]];
+                    for (let i = 0; i < 4; i++) {
+                        const [ax, ay] = corners[i], [bx, by] = corners[(i + 1) % 4];
+                        const p1 = toGlobal(el, ax, ay), p2 = toGlobal(el, bx, by);
+                        if (p1 && p2) segments.push({ x1: p1.x, y1: p1.y, x2: p2.x, y2: p2.y });
+                    }
+                } else if (imp.type === 'polyline' || imp.type === 'polygon') {
+                    const pts = (el.getAttribute('points') || '').trim().split(/[\s,]+/).map(parseFloat);
+                    for (let i = 0; i + 3 < pts.length; i += 2) {
+                        const p1 = toGlobal(el, pts[i], pts[i + 1]);
+                        const p2 = toGlobal(el, pts[i + 2], pts[i + 3]);
+                        if (p1 && p2) segments.push({ x1: p1.x, y1: p1.y, x2: p2.x, y2: p2.y });
+                    }
+                    if (imp.type === 'polygon' && pts.length >= 4) {
+                        const p1 = toGlobal(el, pts[pts.length - 2], pts[pts.length - 1]);
+                        const p2 = toGlobal(el, pts[0], pts[1]);
+                        if (p1 && p2) segments.push({ x1: p1.x, y1: p1.y, x2: p2.x, y2: p2.y });
+                    }
+                } else if (imp.type === 'path') {
+                    try {
+                        const len = el.getTotalLength();
+                        const n = Math.max(2, Math.ceil(len / 8));
+                        for (let i = 0; i < n; i++) {
+                            const t1 = i / n, t2 = (i + 1) / n;
+                            const pt1 = el.getPointAtLength(t1 * len);
+                            const pt2 = el.getPointAtLength(t2 * len);
+                            const p1 = toGlobal(el, pt1.x, pt1.y), p2 = toGlobal(el, pt2.x, pt2.y);
+                            if (p1 && p2 && (Math.abs(p1.x - p2.x) > 0.5 || Math.abs(p1.y - p2.y) > 0.5)) {
+                                segments.push({ x1: p1.x, y1: p1.y, x2: p2.x, y2: p2.y });
+                            }
+                        }
+                    } catch (_) {}
+                }
+            } catch (_) {}
+        }
+        return segments;
+    }
+
+    /** All obstacle segments to check: solid wall parts + freeform doors/windows + imported SVG (e.g. converted floor plan walls). */
+    function getAllObstacleSegments() {
+        const segments = [];
         for (const w of walls) {
             const dx = w.end.x - w.start.x, dy = w.end.y - w.start.y;
             const len = Math.sqrt(dx * dx + dy * dy);
             if (len === 0) continue;
-            const nx = -dy / len * halfThick, ny = dx / len * halfThick;
-            const wx1 = Math.min(w.start.x + nx, w.end.x + nx, w.end.x - nx, w.start.x - nx);
-            const wy1 = Math.min(w.start.y + ny, w.end.y + ny, w.end.y - ny, w.start.y - ny);
-            const wx2 = Math.max(w.start.x + nx, w.end.x + nx, w.end.x - nx, w.start.x - nx);
-            const wy2 = Math.max(w.start.y + ny, w.end.y + ny, w.end.y - ny, w.start.y - ny);
-            const poly = corners;
-            for (const p of poly) {
-                if (p.x >= wx1 && p.x <= wx2 && p.y >= wy1 && p.y <= wy2) return true;
+            const solid = getWallSolidSegments(w);
+            for (const seg of solid) {
+                segments.push({
+                    x1: w.start.x + seg.startT * dx, y1: w.start.y + seg.startT * dy,
+                    x2: w.start.x + seg.endT * dx, y2: w.start.y + seg.endT * dy
+                });
             }
-            for (let i = 0; i < poly.length; i++) {
-                const p1 = poly[i], p2 = poly[(i + 1) % poly.length];
-                if (segmentIntersectRect(p1.x, p1.y, p2.x, p2.y, wx1, wy1, wx2, wy2)) return true;
+        }
+        for (const o of freeformOpenings) {
+            if (o.start && o.end) {
+                segments.push({ x1: o.start.x, y1: o.start.y, x2: o.end.x, y2: o.end.y });
             }
+        }
+        for (const seg of getImportedObstacleSegments()) {
+            segments.push(seg);
+        }
+        return segments;
+    }
+
+    /**
+     * Check if furniture overlaps solid wall segments or freeform openings.
+     * @param {Object} f - furniture {x, y, width, height, rotation}
+     * @param {boolean} strict - If true, reject any overlap (for placement). If false, only reject when furniture fully passes through (for analysis).
+     */
+    function rectOverlapsWallRotated(f, strict = false) {
+        // For placement, use full bounds (1.0) to avoid allowing overlaps. For analysis, use scaled bounds to avoid false positives on wall-adjacent furniture.
+        const boundsScale = strict ? 1 : OVERLAP_BOUNDS_SCALE;
+        const corners = getRotatedCorners(f, boundsScale);
+        // Slightly larger buffer for placement to avoid furniture clipping into walls
+        const halfThick = strict ? wallThickness : wallThickness / 2 + 2;
+        const allSegments = getAllObstacleSegments();
+        for (const seg of allSegments) {
+            const dx = seg.x2 - seg.x1, dy = seg.y2 - seg.y1;
+            const len = Math.sqrt(dx * dx + dy * dy);
+            if (len === 0) continue;
+            const nx = -dy / len, ny = dx / len;
+            const wx1 = Math.min(seg.x1 + nx * halfThick, seg.x2 + nx * halfThick, seg.x2 - nx * halfThick, seg.x1 - nx * halfThick);
+            const wy1 = Math.min(seg.y1 + ny * halfThick, seg.y2 + ny * halfThick, seg.y2 - ny * halfThick, seg.y1 - ny * halfThick);
+            const wx2 = Math.max(seg.x1 + nx * halfThick, seg.x2 + nx * halfThick, seg.x2 - nx * halfThick, seg.x1 - nx * halfThick);
+            const wy2 = Math.max(seg.y1 + ny * halfThick, seg.y2 + ny * halfThick, seg.y2 - ny * halfThick, seg.y1 - ny * halfThick);
+            let hasOverlap = false;
+            for (const p of corners) {
+                if (p.x >= wx1 && p.x <= wx2 && p.y >= wy1 && p.y <= wy2) { hasOverlap = true; break; }
+            }
+            if (!hasOverlap) {
+                for (let i = 0; i < corners.length; i++) {
+                    const p1 = corners[i], p2 = corners[(i + 1) % corners.length];
+                    if (segmentIntersectRect(p1.x, p1.y, p2.x, p2.y, wx1, wy1, wx2, wy2)) { hasOverlap = true; break; }
+                }
+            }
+            if (!hasOverlap) continue;
+            if (strict) return true;
+            const segMidX = (seg.x1 + seg.x2) / 2, segMidY = (seg.y1 + seg.y2) / 2;
+            const signedDist = (p) => (p.x - segMidX) * ny - (p.y - segMidY) * nx;
+            const sides = corners.map(p => Math.sign(signedDist(p))).filter(s => s !== 0);
+            const hasPos = sides.some(s => s > 0);
+            const hasNeg = sides.some(s => s < 0);
+            if (hasPos && hasNeg) return true;
         }
         return false;
     }
 
+    /** Orientation of point c relative to segment (a,b): -1=cw, 0=collinear, 1=ccw. */
+    function orient(ax, ay, bx, by, cx, cy) {
+        const v = (bx - ax) * (cy - by) - (by - ay) * (cx - bx);
+        if (Math.abs(v) < 1e-9) return 0;
+        return v > 0 ? 1 : -1;
+    }
     function segmentIntersectRect(x1, y1, x2, y2, rx1, ry1, rx2, ry2) {
         const segs = [[rx1, ry1, rx2, ry1], [rx2, ry1, rx2, ry2], [rx2, ry2, rx1, ry2], [rx1, ry2, rx1, ry1]];
         for (const [sx1, sy1, sx2, sy2] of segs) {
-            const d = (x2 - x1) * (sy2 - sy1) - (y2 - y1) * (sx2 - sx1);
-            if (Math.abs(d) < 1e-9) continue;
-            const t = ((sx1 - x1) * (sy2 - sy1) - (sy1 - y1) * (sx2 - sx1)) / d;
-            const u = ((x2 - x1) * (sy1 - y1) - (y2 - y1) * (sx1 - x1)) / d;
-            if (t >= 0 && t <= 1 && u >= 0 && u <= 1) return true;
+            const o1 = orient(x1, y1, x2, y2, sx1, sy1);
+            const o2 = orient(x1, y1, x2, y2, sx2, sy2);
+            const o3 = orient(sx1, sy1, sx2, sy2, x1, y1);
+            const o4 = orient(sx1, sy1, sx2, sy2, x2, y2);
+            if (o1 !== o2 && o3 !== o4) return true; // straddle
+            if (o1 === 0 && o2 === 0) {
+                const minX = Math.min(sx1, sx2), maxX = Math.max(sx1, sx2), minY = Math.min(sy1, sy2), maxY = Math.max(sy1, sy2);
+                if (Math.max(x1, x2) >= minX && Math.min(x1, x2) <= maxX && Math.max(y1, y2) >= minY && Math.min(y1, y2) <= maxY) return true;
+            }
         }
         return false;
     }
@@ -6236,6 +6604,8 @@ const FloorPlanEditor = (() => {
         for (let i = 0; i < furniture.length; i++) {
             for (let j = i + 1; j < furniture.length; j++) {
                 const a = furniture[i], b = furniture[j];
+                const aSnapped = isFurnitureSnappedToWall(a), bSnapped = isFurnitureSnappedToWall(b);
+                if (aSnapped && bSnapped) continue;
                 if (rectsOverlap(a, b)) {
                     const smaller = (a.width * a.height <= b.width * b.height) ? a : b;
                     const larger = smaller === a ? b : a;
@@ -6245,8 +6615,9 @@ const FloorPlanEditor = (() => {
             }
         }
 
-        // ---------- RULE: Furniture overlapping walls ----------
+        // ---------- RULE: Furniture overlapping walls (skip if snapped to wall — intentional placement) ----------
         for (const f of furniture) {
+            if (isFurnitureSnappedToWall(f)) continue;
             if (rectOverlapsWallRotated(f)) {
                 addIssue(f, 3, 'Wall obstruction',
                     `${f.name} is clipping through a wall. Move it fully inside the room.`, 'high');
@@ -6552,7 +6923,7 @@ const FloorPlanEditor = (() => {
         const bounds = getRoomBounds();
         if (!bounds) return null;
         const ft = scale;
-        const margin = wallThickness / 2 + 6;
+        const margin = wallThickness + 12;
         const doors = getAllDoorPositions();
         const windows = getAllWindowPositions();
         const alignOrder = ALIGN_ORDERS[tryIndex % ALIGN_ORDERS.length] || ALIGN_ORDERS[0];
@@ -6593,12 +6964,15 @@ const FloorPlanEditor = (() => {
         }
         function tryPlace(rx, ry, rw, rh, rot) {
             if (!inBoundsRotated(rx, ry, rw, rh, rot)) return false;
-            if (rectOverlapsWallRotated({ x: rx, y: ry, width: rw, height: rh, rotation: rot })) return false;
+            if (rectOverlapsWallRotated({ x: rx, y: ry, width: rw, height: rh, rotation: rot }, true)) return false;
             if (overlapsAny(rx, ry, rw, rh, rot)) return false;
             if (tooNearDoor(rx, ry, rw, rh)) return false;
             return true;
         }
         function findSpot(rw, rh, rot, preferWall, preferAlign) {
+            const aabbAtOrigin = getRotatedAABB({ x: 0, y: 0, width: rw, height: rh, rotation: rot });
+            const aabbW = aabbAtOrigin.maxX - aabbAtOrigin.minX;
+            const aabbH = aabbAtOrigin.maxY - aabbAtOrigin.minY;
             const roomW = bounds.maxX - bounds.minX;
             const roomH = bounds.maxY - bounds.minY;
             const aligns = [preferAlign, ...alignOrder.filter(a => Math.abs(a - preferAlign) > 0.05)];
@@ -6606,17 +6980,26 @@ const FloorPlanEditor = (() => {
             for (const wall of wallOrder) {
                 for (const a of aligns) {
                     let x, y;
-                    if (wall === 'top') { x = bounds.minX + margin + a * (roomW - rw - 2 * margin); y = bounds.minY + margin; }
-                    else if (wall === 'bottom') { x = bounds.minX + margin + a * (roomW - rw - 2 * margin); y = bounds.maxY - rh - margin; }
-                    else if (wall === 'left') { x = bounds.minX + margin; y = bounds.minY + margin + a * (roomH - rh - 2 * margin); }
-                    else { x = bounds.maxX - rw - margin; y = bounds.minY + margin + a * (roomH - rh - 2 * margin); }
+                    if (wall === 'top') {
+                        y = bounds.minY + margin - aabbAtOrigin.minY;
+                        x = bounds.minX + margin + a * (roomW - aabbW - 2 * margin) - aabbAtOrigin.minX;
+                    } else if (wall === 'bottom') {
+                        y = bounds.maxY - margin - aabbAtOrigin.maxY;
+                        x = bounds.minX + margin + a * (roomW - aabbW - 2 * margin) - aabbAtOrigin.minX;
+                    } else if (wall === 'left') {
+                        x = bounds.minX + margin - aabbAtOrigin.minX;
+                        y = bounds.minY + margin + a * (roomH - aabbH - 2 * margin) - aabbAtOrigin.minY;
+                    } else {
+                        x = bounds.maxX - margin - aabbAtOrigin.maxX;
+                        y = bounds.minY + margin + a * (roomH - aabbH - 2 * margin) - aabbAtOrigin.minY;
+                    }
                     if (tryPlace(x, y, rw, rh, rot)) return { x, y };
                 }
             }
             const step = ft * 0.5;
-            for (let gy = bounds.minY + margin; gy + rh <= bounds.maxY - margin; gy += step) {
-                for (let gx = bounds.minX + margin; gx + rw <= bounds.maxX - margin; gx += step) {
-                    if (tryPlace(gx, gy, rw, rh, rot)) return { x: gx, y: gy };
+            for (let y = bounds.minY + margin - aabbAtOrigin.minY; y <= bounds.maxY - margin - aabbAtOrigin.maxY; y += step) {
+                for (let x = bounds.minX + margin - aabbAtOrigin.minX; x <= bounds.maxX - margin - aabbAtOrigin.maxX; x += step) {
+                    if (tryPlace(x, y, rw, rh, rot)) return { x, y };
                 }
             }
             return null;
@@ -6730,85 +7113,47 @@ const FloorPlanEditor = (() => {
         }
 
         for (const item of layoutItems) {
-            const rx = item.x, ry = item.y, rw = item.width, rh = item.height;
+            const cx = item.x + item.width / 2, cy = item.y + item.height / 2;
+            const rw = item.width * OVERLAP_BOUNDS_SCALE, rh = item.height * OVERLAP_BOUNDS_SCALE;
+            const fw = item.width, fh = item.height;
             const rot = item.rotation || 0;
-            const cx = rx + rw / 2, cy = ry + rh / 2;
-            svg += `<g transform="translate(${cx},${cy}) rotate(${rot}) translate(${-rw/2},${-rh/2})">`;
+            svg += `<g transform="translate(${cx},${cy}) rotate(${rot})">`;
+            svg += `<rect x="${-fw/2}" y="${-fh/2}" width="${fw}" height="${fh}" fill="none" stroke="#e11d48" stroke-width="1" stroke-dasharray="3 2"/>`;
+            svg += `<g transform="translate(${-rw/2},${-rh/2})">`;
             svg += `<rect x="0" y="0" width="${rw}" height="${rh}" rx="2" fill="#e0e7ff" stroke="#6366f1" stroke-width="1"/>`;
             const fontSize = Math.min(rw * 0.3, rh * 0.4, 10);
             if (fontSize > 4) {
                 const label = (item.name || item.typeId || '').split(' ').map(w => w[0] || '').join('').toUpperCase().slice(0, 3);
                 svg += `<text x="${rw / 2}" y="${rh / 2}" text-anchor="middle" dominant-baseline="central" font-size="${fontSize}" fill="#4338ca" font-family="sans-serif" font-weight="600">${label}</text>`;
             }
-            svg += `</g>`;
+            svg += `</g></g>`;
         }
 
         svg += `</svg>`;
         return `data:image/svg+xml;base64,${btoa(unescape(encodeURIComponent(svg)))}`;
     }
 
-    async function startFengShuiAnalysis() {
-        const hasImages = referenceImages.length > 0;
+    function startFengShuiAnalysis() {
         const hasDrawnContent = furniture.length > 0 || walls.length > 0;
 
-        if (!hasImages && countEnclosedRooms() > 1) {
+        if (countEnclosedRooms() > 1) {
             showFengShuiMessage('Feng shui analysis only supports single-room layouts. Your plan has multiple enclosed rooms.');
             return;
         }
         
-        if (!hasImages && !hasDrawnContent) {
-            showFengShuiMessage('Add a floor plan image or draw some walls and furniture before running feng shui analysis.');
+        if (!hasDrawnContent) {
+            showFengShuiMessage('Draw walls and add furniture in the layout editor before running feng shui analysis.');
             return;
         }
         
-        if (!hasImages && furniture.length === 0) {
+        if (furniture.length === 0) {
             showFengShuiMessage('Add furniture to your floor plan first. Feng shui analysis rearranges furniture — it won\'t modify walls, doors, or windows.');
             return;
         }
         
         showFengShuiPanel();
-        const panel = document.getElementById('feng-shui-panel');
-
-        if (hasImages) {
-            if (panel) {
-                panel.querySelector('.feng-shui-body').innerHTML = `
-                    <div class="feng-shui-loading">
-                        <div class="feng-shui-spinner"></div>
-                        <p>Analyzing your floor plan...</p>
-                        <small>Analyzing image and generating improved layout — this may take a minute...</small>
-                    </div>
-                `;
-            }
-            try {
-                const refImage = referenceImages[0];
-                const imageBase64 = refImage.dataUrl;
-                const response = await fetch('/api/feng-shui-image', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ imageBase64 })
-                });
-                if (!response.ok) {
-                    const err = await response.json().catch(() => ({}));
-                    throw new Error(err.error || 'Image analysis failed');
-                }
-                const result = await response.json();
-                displayImageFengShuiResults(result, imageBase64);
-            } catch (err) {
-                console.error('Feng shui analysis error:', err);
-                if (panel) {
-                    panel.querySelector('.feng-shui-body').innerHTML = `
-                        <div class="feng-shui-error">
-                            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#ef4444" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg>
-                            <p>${err.message}</p>
-                            <button class="secondary-btn" onclick="this.closest('.feng-shui-body').innerHTML=''; document.getElementById('feng-shui-panel')?.remove();">Close</button>
-                        </div>
-                    `;
-                }
-            }
-        } else {
-            const result = analyzeFengShui();
-            displayFengShuiResults(result);
-        }
+        const result = analyzeFengShui();
+        displayFengShuiResults(result);
     }
     
     function showFengShuiPanel() {
@@ -6957,98 +7302,10 @@ const FloorPlanEditor = (() => {
                 }
                 redrawFurniture();
                 hasUnsavedChanges = true;
-                showFengShuiToast('Layout applied');
+                showFengShuiMessage('Layout applied');
                 panel.remove();
             });
         }
-    }
-    
-    function displayImageFengShuiResults(result, originalImageBase64) {
-        const panel = document.getElementById('feng-shui-panel');
-        if (!panel) return;
-        
-        panel.classList.add('feng-shui-panel-wide');
-        const body = panel.querySelector('.feng-shui-body');
-        const scoreColor = result.overallScore >= 7 ? '#22c55e' : result.overallScore >= 4 ? '#f59e0b' : '#ef4444';
-        
-        let html = `
-            <div class="feng-shui-score">
-                <div class="score-circle" style="border-color: ${scoreColor}">
-                    <span class="score-number" style="color: ${scoreColor}">${result.overallScore}</span>
-                    <span class="score-label">/ 10</span>
-                </div>
-                <p class="score-summary">${result.summary}</p>
-            </div>
-        `;
-        
-        if (result.newImageBase64) {
-            html += `
-                <div class="feng-shui-image-comparison">
-                    <div class="comparison-tabs">
-                        <button class="comparison-tab active" data-view="after">Improved Layout</button>
-                        <button class="comparison-tab" data-view="before">Original</button>
-                        <button class="comparison-tab" data-view="side-by-side">Side by Side</button>
-                    </div>
-                    <div class="comparison-view comparison-after active" data-view="after">
-                        <img src="${result.newImageBase64}" alt="Improved feng shui layout" />
-                    </div>
-                    <div class="comparison-view comparison-before" data-view="before">
-                        <img src="${originalImageBase64}" alt="Original layout" />
-                    </div>
-                    <div class="comparison-view comparison-side-by-side" data-view="side-by-side">
-                        <div class="side-by-side-container">
-                            <div class="side-by-side-item">
-                                <span class="side-by-side-label">Before</span>
-                                <img src="${originalImageBase64}" alt="Original layout" />
-                            </div>
-                            <div class="side-by-side-item">
-                                <span class="side-by-side-label">After</span>
-                                <img src="${result.newImageBase64}" alt="Improved layout" />
-                            </div>
-                        </div>
-                    </div>
-                </div>
-            `;
-        } else {
-            html += `<p class="feng-shui-image-note">Could not generate an improved layout image. See suggestions below.</p>`;
-        }
-        
-        if (result.suggestions && result.suggestions.length > 0) {
-            html += `<div class="feng-shui-suggestions feng-shui-image-suggestions">`;
-            html += `<h4 class="suggestions-heading">Suggestions</h4>`;
-            
-            result.suggestions.forEach((suggestion, i) => {
-                const priorityColor = suggestion.priority === 'high' ? '#ef4444' : suggestion.priority === 'medium' ? '#f59e0b' : '#22c55e';
-                
-                html += `
-                    <div class="feng-shui-suggestion">
-                        <div class="suggestion-header">
-                            <span class="suggestion-priority" style="background: ${priorityColor}">${suggestion.priority}</span>
-                            <span class="suggestion-name">${suggestion.furnitureName || 'Furniture'}</span>
-                        </div>
-                        <p class="suggestion-principle">${suggestion.principle}</p>
-                        <p class="suggestion-desc">${suggestion.description}</p>
-                        ${suggestion.currentPosition ? `<p class="suggestion-position"><strong>Current:</strong> ${suggestion.currentPosition}</p>` : ''}
-                        ${suggestion.suggestedPosition ? `<p class="suggestion-position"><strong>Move to:</strong> ${suggestion.suggestedPosition}</p>` : ''}
-                    </div>
-                `;
-            });
-            
-            html += `</div>`;
-        }
-        
-        body.innerHTML = html;
-        
-        // Hook up comparison tabs
-        body.querySelectorAll('.comparison-tab').forEach(tab => {
-            tab.addEventListener('click', () => {
-                const view = tab.dataset.view;
-                body.querySelectorAll('.comparison-tab').forEach(t => t.classList.remove('active'));
-                body.querySelectorAll('.comparison-view').forEach(v => v.classList.remove('active'));
-                tab.classList.add('active');
-                body.querySelector(`.comparison-view[data-view="${view}"]`)?.classList.add('active');
-            });
-        });
     }
     
     

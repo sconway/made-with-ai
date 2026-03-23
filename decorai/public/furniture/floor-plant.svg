@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 15 15" fill="none" stroke="#333" stroke-width="1">
+  <!-- Pot base -->
+  <ellipse cx="7.5" cy="12" rx="6" ry="2"/>
+  <!-- Pot body (trapezoid - wider at top) -->
+  <path d="M2,12 L4,5 L11,5 L13,12 Z"/>
+  <!-- Pot rim -->
+  <ellipse cx="7.5" cy="5" rx="3.5" ry="1"/>
+  <!-- Leaf left -->
+  <path d="M7.5,4 Q3,2 2,6 Q4,8 7.5,6" stroke-width="0.8"/>
+  <!-- Leaf right -->
+  <path d="M7.5,4 Q12,2 13,6 Q11,8 7.5,6" stroke-width="0.8"/>
+  <!-- Leaf center -->
+  <path d="M7.5,3 Q7.5,0 7.5,4" stroke-width="0.8"/>
+</svg>
