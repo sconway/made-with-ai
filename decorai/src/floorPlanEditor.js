@@ -6615,10 +6615,10 @@ const FloorPlanEditor = (() => {
             }
         }
 
-        // ---------- RULE: Furniture overlapping walls (skip if snapped to wall — intentional placement) ----------
+        // ---------- RULE: Furniture overlapping walls (only flag when fully passes through; skip if snapped and not clipping) ----------
         for (const f of furniture) {
-            if (isFurnitureSnappedToWall(f)) continue;
-            if (rectOverlapsWallRotated(f)) {
+            if (isFurnitureSnappedToWall(f) && !rectOverlapsWallRotated(f, false)) continue;
+            if (rectOverlapsWallRotated(f, false)) {
                 addIssue(f, 3, 'Wall obstruction',
                     `${f.name} is clipping through a wall. Move it fully inside the room.`, 'high');
             }
