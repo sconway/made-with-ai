@@ -3632,18 +3632,6 @@ const FloorPlanEditor = (() => {
         hitRect.setAttribute('fill', 'transparent');
         hitRect.setAttribute('pointer-events', 'all');
         els.push(hitRect);
-        // Debug: border showing full bounds
-        const debugRect = document.createElementNS(ns, 'rect');
-        debugRect.setAttribute('x', 0);
-        debugRect.setAttribute('y', 0);
-        debugRect.setAttribute('width', w);
-        debugRect.setAttribute('height', h);
-        debugRect.setAttribute('fill', 'none');
-        debugRect.setAttribute('stroke', '#e11d48');
-        debugRect.setAttribute('stroke-width', '1');
-        debugRect.setAttribute('stroke-dasharray', '4 2');
-        debugRect.classList.add('furniture-debug-border');
-        els.push(debugRect);
 
         const cached = furnitureSvgCache[item.typeId];
         if (cached) {
@@ -7115,10 +7103,8 @@ const FloorPlanEditor = (() => {
         for (const item of layoutItems) {
             const cx = item.x + item.width / 2, cy = item.y + item.height / 2;
             const rw = item.width * OVERLAP_BOUNDS_SCALE, rh = item.height * OVERLAP_BOUNDS_SCALE;
-            const fw = item.width, fh = item.height;
             const rot = item.rotation || 0;
             svg += `<g transform="translate(${cx},${cy}) rotate(${rot})">`;
-            svg += `<rect x="${-fw/2}" y="${-fh/2}" width="${fw}" height="${fh}" fill="none" stroke="#e11d48" stroke-width="1" stroke-dasharray="3 2"/>`;
             svg += `<g transform="translate(${-rw/2},${-rh/2})">`;
             svg += `<rect x="0" y="0" width="${rw}" height="${rh}" rx="2" fill="#e0e7ff" stroke="#6366f1" stroke-width="1"/>`;
             const fontSize = Math.min(rw * 0.3, rh * 0.4, 10);

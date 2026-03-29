@@ -35,6 +35,14 @@
                         <span>Sign Up</span>
                     </button>
                 </div>
+                <!-- Token display (shown when logged in) -->
+                <div id="tokens-display" class="tokens-display hidden">
+                    <button id="buy-tokens-btn" class="tokens-btn" type="button" title="Tokens remaining — click to buy more">
+                        <i data-feather="zap"></i>
+                        <span id="tokens-count">2</span>
+                        <span class="tokens-label">tokens</span>
+                    </button>
+                </div>
                 <!-- User Menu (shown when logged in) -->
                 <div id="user-menu" class="user-menu hidden">
                     <button id="user-menu-btn" class="user-menu-btn" type="button">
@@ -668,6 +676,39 @@
                     <button id="confirm-modal-cancel" class="secondary-btn" type="button">Cancel</button>
                     <button id="confirm-modal-confirm" class="primary-btn" type="button">OK</button>
                 </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Buy Tokens Modal -->
+    <div class="modal hidden" id="buy-tokens-modal">
+        <div class="modal-content buy-tokens-modal-content">
+            <div class="modal-header">
+                <h2>Get More Tokens</h2>
+                <button id="close-buy-tokens-modal-btn" class="close-modal-btn" type="button">
+                    <i data-feather="x"></i>
+                </button>
+            </div>
+            <div class="modal-body">
+                <div class="tokens-info">
+                    <div class="tokens-icon-large">
+                        <i data-feather="zap"></i>
+                    </div>
+                    <p class="tokens-current">You have <strong id="modal-tokens-count">0</strong> token(s) remaining.</p>
+                    <p class="tokens-description">Each AI-generated layout design uses 1 token. Tokens are only used when a design is successfully generated — failed attempts are free.</p>
+                </div>
+                <div class="tokens-purchase-card">
+                    <div class="purchase-details">
+                        <span class="purchase-amount" id="tokens-per-purchase">5</span>
+                        <span class="purchase-label">tokens</span>
+                    </div>
+                    <div class="purchase-price" id="tokens-price">$1.99</div>
+                    <button id="checkout-btn" class="primary-btn checkout-btn" type="button">
+                        <i data-feather="credit-card"></i>
+                        <span>Purchase Tokens</span>
+                    </button>
+                </div>
+                <p class="tokens-footer">Payments are processed securely by Stripe.</p>
             </div>
         </div>
     </div>

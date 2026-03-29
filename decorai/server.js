@@ -4,6 +4,7 @@ import cors from 'cors';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import dotenv from 'dotenv';
+import Stripe from 'stripe';
 import { createClient } from '@supabase/supabase-js';
 
 // Load environment variables
@@ -15,11 +16,18 @@ const __dirname = path.dirname(__filename);
 const app = express();
 const port = process.env.PORT || 3001;
 
+// Initialize Stripe
+const stripe = new Stripe(process.env.STRIPE_SECRET_KEY || '');
+
 // Initialize Supabase (set SUPABASE_URL, SUPABASE_ANON_KEY, SUPABASE_SERVICE_ROLE_KEY in .env for auth)
 const supabase = createClient(
   process.env.SUPABASE_URL || '',
   process.env.SUPABASE_SERVICE_ROLE_KEY || ''
 );
+
+// Token configuration
+const FREE_TOKENS = parseInt(process.env.FREE_TOKENS) || 2;
+const TOKENS_PER_PURCHASE = parseInt(process.env.TOKENS_PER_PURCHASE) || 5;
 
 // CORS configuration
 const corsOptions = {
@@ -32,7 +40,182 @@ const corsOptions = {
 };
 
 app.use(cors(corsOptions));
+
+// ── Stripe webhook (raw body required — must come before express.json) ────────
+app.post('/webhook/stripe', express.raw({ type: 'application/json' }), async (req, res) => {
+  const sig = req.headers['stripe-signature'];
+  let event;
+
+  try {
+    event = stripe.webhooks.constructEvent(req.body, sig, process.env.STRIPE_WEBHOOK_SECRET);
+  } catch (err) {
+    console.error('Stripe webhook signature failed:', err.message);
+    return res.status(400).send(`Webhook Error: ${err.message}`);
+  }
+
+  if (event.type === 'checkout.session.completed') {
+    const session = event.data.object;
+    try {
+      const userId = session.metadata.user_id;
+      if (!userId) {
+        console.error('No user_id in Stripe session metadata');
+        return res.status(400).send('No user_id in session metadata');
+      }
+
+      // Fetch current token balance
+      const { data: currentCredits, error: fetchError } = await supabase
+        .from('user_credits')
+        .select('credits')
+        .eq('user_id', userId)
+        .single();
+
+      if (fetchError && fetchError.code !== 'PGRST116') {
+        console.error('Error fetching user credits:', fetchError);
+        return res.status(500).send('Error fetching user credits');
+      }
+
+      const newCredits = (currentCredits?.credits || 0) + TOKENS_PER_PURCHASE;
+
+      const { error: upsertError } = await supabase
+        .from('user_credits')
+        .upsert({ user_id: userId, credits: newCredits }, { onConflict: 'user_id' });
+
+      if (upsertError) {
+        console.error('Error updating user credits:', upsertError);
+        return res.status(500).send('Error updating user credits');
+      }
+
+      // Record payment
+      await supabase.from('payments').insert({
+        user_id: userId,
+        stripe_checkout_session_id: session.id,
+        stripe_payment_intent_id: session.payment_intent,
+        amount: session.amount_total,
+        credits_purchased: TOKENS_PER_PURCHASE,
+        status: 'completed'
+      });
+
+      console.log(`Added ${TOKENS_PER_PURCHASE} tokens to user ${userId}. New total: ${newCredits}`);
+    } catch (error) {
+      console.error('Error processing Stripe webhook:', error);
+      return res.status(500).send('Error processing webhook');
+    }
+  }
+
+  res.json({ received: true });
+});
+
 app.use(express.json({ limit: '50mb' }));
+
+// ── Token / credits routes ─────────────────────────────────────────────────────
+
+// GET /api/credits — fetch current token balance
+app.get('/api/credits', async (req, res) => {
+  try {
+    const user = await getAuthUser(req, res);
+    if (!user) return;
+
+    const { data: credits, error: creditsError } = await supabase
+      .from('user_credits')
+      .select('credits, total_generations')
+      .eq('user_id', user.id)
+      .single();
+
+    if (creditsError) {
+      if (creditsError.code === 'PGRST116') {
+        // No record yet — create one with free tokens
+        const { data: newCredits, error: insertError } = await supabase
+          .from('user_credits')
+          .insert({ user_id: user.id, credits: FREE_TOKENS })
+          .select()
+          .single();
+
+        if (insertError) {
+          console.error('Error creating credits record:', insertError);
+          return res.status(500).json({ error: 'Failed to create credits record' });
+        }
+        return res.json({ credits: newCredits.credits, total_generations: 0 });
+      }
+      console.error('Error fetching credits:', creditsError);
+      return res.status(500).json({ error: 'Failed to fetch credits' });
+    }
+
+    res.json({ credits: credits.credits, total_generations: credits.total_generations });
+  } catch (error) {
+    console.error('Error in GET /api/credits:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// POST /api/credits/use — deduct one token (called AFTER a successful generation)
+app.post('/api/credits/use', async (req, res) => {
+  try {
+    const user = await getAuthUser(req, res);
+    if (!user) return;
+
+    const { data: credits, error: creditsError } = await supabase
+      .from('user_credits')
+      .select('credits, total_generations')
+      .eq('user_id', user.id)
+      .single();
+
+    if (creditsError) {
+      console.error('Error fetching credits:', creditsError);
+      return res.status(500).json({ error: 'Failed to fetch credits' });
+    }
+
+    if (credits.credits <= 0) {
+      return res.status(403).json({ error: 'No tokens remaining', credits: 0 });
+    }
+
+    const { error: updateError } = await supabase
+      .from('user_credits')
+      .update({
+        credits: credits.credits - 1,
+        total_generations: credits.total_generations + 1
+      })
+      .eq('user_id', user.id);
+
+    if (updateError) {
+      console.error('Error updating credits:', updateError);
+      return res.status(500).json({ error: 'Failed to update credits' });
+    }
+
+    res.json({
+      success: true,
+      credits: credits.credits - 1,
+      total_generations: credits.total_generations + 1
+    });
+  } catch (error) {
+    console.error('Error in POST /api/credits/use:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// POST /api/checkout — create a Stripe checkout session for buying more tokens
+app.post('/api/checkout', async (req, res) => {
+  try {
+    const user = await getAuthUser(req, res);
+    if (!user) return;
+
+    const appUrl = process.env.APP_URL || 'http://localhost:5173';
+
+    const session = await stripe.checkout.sessions.create({
+      payment_method_types: ['card'],
+      line_items: [{ price: process.env.STRIPE_PRICE_ID, quantity: 1 }],
+      mode: 'payment',
+      success_url: `${appUrl}?payment=success`,
+      cancel_url: `${appUrl}?payment=cancelled`,
+      customer_email: user.email,
+      metadata: { user_id: user.id }
+    });
+
+    res.json({ url: session.url });
+  } catch (error) {
+    console.error('Error creating checkout session:', error);
+    res.status(500).json({ error: 'Failed to create checkout session', detail: error.message });
+  }
+});
 
 // Serve static files from the dist directory in production
 if (process.env.NODE_ENV === 'production') {
@@ -505,7 +688,10 @@ Return this exact JSON structure:
 app.get('/api/config', (req, res) => {
   res.json({
     supabaseUrl: process.env.SUPABASE_URL || '',
-    supabaseAnonKey: process.env.SUPABASE_ANON_KEY || ''
+    supabaseAnonKey: process.env.SUPABASE_ANON_KEY || '',
+    stripePublishableKey: process.env.STRIPE_PUBLISHABLE_KEY || '',
+    tokensPerPurchase: TOKENS_PER_PURCHASE,
+    priceAmount: parseInt(process.env.PRICE_AMOUNT) || 199
   });
 });
 

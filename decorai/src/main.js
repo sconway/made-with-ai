@@ -17,6 +17,9 @@ let supabase = null;
 let appConfig = null;
 let currentUser = null;
 let currentSession = null;
+
+// Token state
+let userTokens = 0;
 // Fetched layout state: restored once when user opens the layout editor after sign-in/load
 let savedLayoutState = null;
 let savedLayoutId = null;
@@ -91,6 +94,17 @@ const userMenuBtn = document.getElementById('user-menu-btn');
 const userDropdown = document.getElementById('user-dropdown');
 const userEmailDisplay = document.getElementById('user-email-display');
 const logoutBtn = document.getElementById('logout-btn');
+
+// Token / payment elements
+const tokensDisplay = document.getElementById('tokens-display');
+const tokensCount = document.getElementById('tokens-count');
+const buyTokensBtn = document.getElementById('buy-tokens-btn');
+const buyTokensModal = document.getElementById('buy-tokens-modal');
+const closeBuyTokensModalBtn = document.getElementById('close-buy-tokens-modal-btn');
+const modalTokensCount = document.getElementById('modal-tokens-count');
+const checkoutBtn = document.getElementById('checkout-btn');
+const tokensPerPurchaseEl = document.getElementById('tokens-per-purchase');
+const tokensPriceEl = document.getElementById('tokens-price');
 
 // Generic alert modal elements
 const alertModal = document.getElementById('alert-modal');
@@ -237,6 +251,15 @@ async function initializeApp() {
     try {
         const response = await fetch(`${PROXY_SERVER_URL}/api/config`);
         appConfig = await response.json();
+
+        // Populate purchase UI from config
+        if (appConfig.tokensPerPurchase && tokensPerPurchaseEl) {
+            tokensPerPurchaseEl.textContent = appConfig.tokensPerPurchase;
+        }
+        if (appConfig.priceAmount && tokensPriceEl) {
+            tokensPriceEl.textContent = `$${(appConfig.priceAmount / 100).toFixed(2)}`;
+        }
+
         if (appConfig.supabaseUrl && appConfig.supabaseAnonKey) {
             const createClient = await loadSupabase();
             supabase = createClient(appConfig.supabaseUrl, appConfig.supabaseAnonKey);
@@ -245,12 +268,20 @@ async function initializeApp() {
                 currentUser = session.user;
                 currentSession = session;
                 await fetchSavedLayout();
+                await fetchUserTokens();
             }
             supabase.auth.onAuthStateChange(async (_event, session) => {
                 currentUser = session?.user ?? null;
                 currentSession = session ?? null;
-                if (session) await fetchSavedLayout();
-                else { savedLayoutState = null; savedLayoutId = null; savedLayoutName = null; }
+                if (session) {
+                    await fetchSavedLayout();
+                    await fetchUserTokens();
+                } else {
+                    savedLayoutState = null;
+                    savedLayoutId = null;
+                    savedLayoutName = null;
+                    userTokens = 0;
+                }
                 updateAuthUI();
             });
             window.__decoraiGetLayoutStateToRestore = function () {
@@ -263,6 +294,31 @@ async function initializeApp() {
                 if (s == null) return null;
                 return { state: s, layoutId: id || undefined, name: name || 'Untitled layout' };
             };
+
+            // Handle Stripe payment redirect
+            const urlParams = new URLSearchParams(window.location.search);
+            const paymentStatus = urlParams.get('payment');
+            if (paymentStatus === 'success') {
+                // Poll until the Stripe webhook has credited the tokens
+                let attempts = 0;
+                const previousTokens = userTokens;
+                const checkTokens = async () => {
+                    attempts++;
+                    await fetchUserTokens();
+                    if (userTokens > previousTokens) {
+                        showToastMessage(`Payment successful! You now have ${userTokens} token(s).`, 'success');
+                    } else if (attempts < 5) {
+                        setTimeout(checkTokens, 1500);
+                    } else {
+                        showToastMessage('Payment received! Tokens may take a moment to appear.', 'info');
+                    }
+                };
+                setTimeout(checkTokens, 500);
+                window.history.replaceState({}, document.title, window.location.pathname);
+            } else if (paymentStatus === 'cancelled') {
+                showToastMessage('Payment cancelled.', 'error');
+                window.history.replaceState({}, document.title, window.location.pathname);
+            }
         }
         updateAuthUI();
     } catch (err) {
@@ -270,6 +326,154 @@ async function initializeApp() {
         updateAuthUI();
     }
 }
+
+// ── Token helpers ──────────────────────────────────────────────────────────────
+
+async function fetchUserTokens() {
+    if (!currentUser || !currentSession) return;
+    try {
+        const res = await fetch(`${PROXY_SERVER_URL}/api/credits`, {
+            headers: { Authorization: `Bearer ${currentSession.access_token}` }
+        });
+        if (res.ok) {
+            const data = await res.json();
+            userTokens = data.credits;
+            updateTokensDisplay();
+        }
+    } catch (err) {
+        console.error('fetchUserTokens error:', err);
+    }
+}
+
+function updateTokensDisplay() {
+    if (tokensCount) tokensCount.textContent = userTokens;
+    if (modalTokensCount) modalTokensCount.textContent = userTokens;
+    // Turn badge red when running low
+    if (tokensDisplay) {
+        tokensDisplay.classList.toggle('tokens-low', userTokens === 0);
+    }
+}
+
+/**
+ * Check whether the user has tokens available before starting generation.
+ * Returns true if generation may proceed, false otherwise (shows buy modal).
+ */
+function hasTokensAvailable() {
+    if (!currentUser || !currentSession) {
+        showAuthModal('login');
+        return false;
+    }
+    if (userTokens <= 0) {
+        showBuyTokensModal();
+        return false;
+    }
+    return true;
+}
+
+/**
+ * Deduct one token after a SUCCESSFUL image generation.
+ * Only called on success — failed generations do not consume a token.
+ */
+async function useTokenAfterSuccess() {
+    if (!currentUser || !currentSession) return;
+    try {
+        const res = await fetch(`${PROXY_SERVER_URL}/api/credits/use`, {
+            method: 'POST',
+            headers: {
+                Authorization: `Bearer ${currentSession.access_token}`,
+                'Content-Type': 'application/json'
+            }
+        });
+        if (res.ok) {
+            const data = await res.json();
+            userTokens = data.credits;
+            updateTokensDisplay();
+        } else {
+            // Token count may be stale — refresh from server
+            await fetchUserTokens();
+        }
+    } catch (err) {
+        console.error('useTokenAfterSuccess error:', err);
+        await fetchUserTokens();
+    }
+}
+
+function showBuyTokensModal() {
+    if (!currentUser) { showAuthModal('login'); return; }
+    updateTokensDisplay();
+    if (checkoutBtn) {
+        checkoutBtn.disabled = false;
+        checkoutBtn.innerHTML = '<i data-feather="credit-card"></i><span>Purchase Tokens</span>';
+    }
+    if (buyTokensModal) {
+        buyTokensModal.classList.remove('hidden');
+        buyTokensModal.classList.add('show');
+        buyTokensModal.style.opacity = '1';
+        buyTokensModal.style.visibility = 'visible';
+    }
+    if (typeof feather !== 'undefined') feather.replace();
+}
+
+function hideBuyTokensModal() {
+    if (buyTokensModal) {
+        buyTokensModal.classList.remove('show');
+        buyTokensModal.style.opacity = '';
+        buyTokensModal.style.visibility = '';
+        buyTokensModal.classList.add('hidden');
+    }
+}
+
+async function handleCheckout() {
+    if (!currentUser || !currentSession) { showAuthModal('login'); return; }
+    try {
+        if (checkoutBtn) {
+            checkoutBtn.disabled = true;
+            checkoutBtn.innerHTML = '<span>Processing...</span>';
+        }
+        const res = await fetch(`${PROXY_SERVER_URL}/api/checkout`, {
+            method: 'POST',
+            headers: {
+                Authorization: `Bearer ${currentSession.access_token}`,
+                'Content-Type': 'application/json'
+            }
+        });
+        if (res.ok) {
+            const { url } = await res.json();
+            window.location.href = url;
+        } else {
+            const body = await res.json().catch(() => ({}));
+            throw new Error(body.detail || 'Failed to create checkout session');
+        }
+    } catch (err) {
+        console.error('handleCheckout error:', err);
+        showToastMessage('Error starting checkout. Please try again.', 'error');
+        if (checkoutBtn) {
+            checkoutBtn.disabled = false;
+            checkoutBtn.innerHTML = '<i data-feather="credit-card"></i><span>Purchase Tokens</span>';
+            if (typeof feather !== 'undefined') feather.replace();
+        }
+    }
+}
+
+/** Lightweight toast notification (no external dependency) */
+let _activeToast = null;
+function showToastMessage(message, type = 'info') {
+    if (_activeToast) _activeToast.remove();
+    const toast = document.createElement('div');
+    toast.className = `toast toast-${type}`;
+    toast.textContent = message;
+    document.body.appendChild(toast);
+    _activeToast = toast;
+    requestAnimationFrame(() => toast.classList.add('show'));
+    if (type !== 'loading') {
+        setTimeout(() => {
+            toast.classList.remove('show');
+            setTimeout(() => { if (toast.parentNode) toast.remove(); if (_activeToast === toast) _activeToast = null; }, 300);
+        }, 4000);
+    }
+}
+
+// ── End token helpers ──────────────────────────────────────────────────────────
 
 async function fetchSavedLayout() {
     if (!currentSession?.access_token) return;
@@ -564,10 +768,13 @@ function updateAuthUI() {
     if (currentUser) {
         authButtons.classList.add('hidden');
         userMenu.classList.remove('hidden');
+        if (tokensDisplay) tokensDisplay.classList.remove('hidden');
         if (userEmailDisplay) userEmailDisplay.textContent = currentUser.email?.split('@')[0] || 'Account';
+        updateTokensDisplay();
     } else {
         authButtons.classList.remove('hidden');
         userMenu.classList.add('hidden');
+        if (tokensDisplay) tokensDisplay.classList.add('hidden');
     }
     if (typeof feather !== 'undefined') feather.replace();
 }
@@ -985,6 +1192,17 @@ document.addEventListener('DOMContentLoaded', async () => {
     if (backToOptionsBtn) backToOptionsBtn.addEventListener('click', goBackToPreview);
     if (regenerateBtn) regenerateBtn.addEventListener('click', regenerateDesigns);
     if (saveDesignBtn) saveDesignBtn.addEventListener('click', saveCurrentDesign);
+
+    // Token / payment listeners
+    if (buyTokensBtn) buyTokensBtn.addEventListener('click', showBuyTokensModal);
+    if (closeBuyTokensModalBtn) closeBuyTokensModalBtn.addEventListener('click', hideBuyTokensModal);
+    if (checkoutBtn) checkoutBtn.addEventListener('click', handleCheckout);
+    // Close modal when clicking outside
+    if (buyTokensModal) {
+        buyTokensModal.addEventListener('click', (e) => {
+            if (e.target === buyTokensModal) hideBuyTokensModal();
+        });
+    }
 
     // Auth event listeners
     if (loginBtn) loginBtn.addEventListener('click', () => showAuthModal('login'));
@@ -2386,6 +2604,10 @@ async function generateDesigns() {
         return;
     }
 
+    // Check token availability BEFORE starting generation.
+    // Tokens are only deducted after a SUCCESSFUL generation.
+    if (!hasTokensAvailable()) return;
+
 
     // Check if we're regenerating (already on results screen)
     const isCurrentlyOnResults = resultsSection && !resultsSection.classList.contains('hidden');
@@ -2484,8 +2706,12 @@ async function generateDesigns() {
         initialDesign.loading = false;
         initialDesign.isFallback = false;
 
+        // Deduct one token now that generation succeeded
+        await useTokenAfterSuccess();
+
     } catch (error) {
         console.error(`Error in image generation for design (${style}):`, error);
+        // Token is NOT deducted on failure
 
         // Provide user-friendly error messages
         let userFriendlyMessage = 'Image generation failed. Please try again.';
@@ -2564,6 +2790,9 @@ function showRetryButton(card, cardData, index) {
 
 async function retryImageGeneration() {
     console.log('Retrying image generation');
+
+    // Check token availability before retrying — retries also cost a token on success
+    if (!hasTokensAvailable()) return;
 
     // Get the current design data
     const design = generatedDesigns[0];
@@ -2682,8 +2911,12 @@ async function retryImageGeneration() {
 
         console.log('Retry successful');
 
+        // Deduct one token on successful retry
+        await useTokenAfterSuccess();
+
     } catch (error) {
         console.error('Retry failed:', error);
+        // Token is NOT deducted on failed retry
         design.imageUrl = '';
         design.loading = false;
         design.needsRetry = true;

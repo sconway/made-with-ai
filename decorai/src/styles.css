@@ -4771,3 +4771,176 @@ main {
   color: var(--primary-color);
   text-decoration: underline;
 }
+
+/* ── Token / payment UI ──────────────────────────────────────────────────────── */
+
+.tokens-display {
+  display: flex;
+  align-items: center;
+}
+
+.tokens-btn {
+  background: transparent;
+  border: 1px solid var(--border-color);
+  color: var(--text-color);
+  padding: 8px 12px;
+  border-radius: var(--button-border-radius);
+  cursor: pointer;
+  font-size: 14px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  transition: all 0.2s ease;
+  min-height: 38px;
+  white-space: nowrap;
+}
+
+.tokens-btn:hover {
+  border-color: var(--primary-color);
+  background: var(--secondary-color);
+}
+
+.tokens-btn svg {
+  width: 16px;
+  height: 16px;
+  color: var(--primary-color);
+}
+
+.tokens-label {
+  font-size: 12px;
+  color: var(--text-light);
+}
+
+/* Low-token warning */
+.tokens-display.tokens-low .tokens-btn {
+  border-color: #ef4444;
+  color: #ef4444;
+}
+
+.tokens-display.tokens-low .tokens-btn svg {
+  color: #ef4444;
+}
+
+/* Buy tokens modal */
+.buy-tokens-modal-content {
+  max-width: 420px;
+  width: 90%;
+}
+
+.tokens-info {
+  text-align: center;
+  padding: 1rem 0;
+}
+
+.tokens-icon-large {
+  margin: 0 auto 1rem;
+  width: 56px;
+  height: 56px;
+  border-radius: 50%;
+  background: var(--secondary-color);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.tokens-icon-large svg {
+  width: 28px;
+  height: 28px;
+  color: var(--primary-color);
+}
+
+.tokens-current {
+  font-size: 1rem;
+  margin-bottom: 0.75rem;
+  color: var(--text-color);
+}
+
+.tokens-description {
+  font-size: 0.875rem;
+  color: var(--text-light);
+  line-height: 1.5;
+  margin-bottom: 1.5rem;
+}
+
+.tokens-purchase-card {
+  background: var(--secondary-color);
+  border: 1px solid var(--border-color);
+  border-radius: 12px;
+  padding: 1.25rem;
+  text-align: center;
+  margin-bottom: 1rem;
+}
+
+.purchase-details {
+  display: flex;
+  align-items: baseline;
+  justify-content: center;
+  gap: 6px;
+  margin-bottom: 4px;
+}
+
+.purchase-amount {
+  font-size: 2rem;
+  font-weight: 700;
+  color: var(--primary-color);
+}
+
+.purchase-label {
+  font-size: 1rem;
+  color: var(--text-light);
+}
+
+.purchase-price {
+  font-size: 1.1rem;
+  font-weight: 600;
+  color: var(--text-color);
+  margin-bottom: 1rem;
+}
+
+.checkout-btn {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+}
+
+.checkout-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.tokens-footer {
+  font-size: 0.75rem;
+  color: var(--text-light);
+  text-align: center;
+  margin: 0;
+}
+
+/* Toast notifications */
+.toast {
+  position: fixed;
+  bottom: 24px;
+  left: 50%;
+  transform: translateX(-50%) translateY(20px);
+  background: #1e1e2e;
+  color: #fff;
+  padding: 12px 20px;
+  border-radius: 8px;
+  font-size: 14px;
+  box-shadow: 0 4px 16px rgba(0,0,0,0.3);
+  opacity: 0;
+  transition: opacity 0.25s ease, transform 0.25s ease;
+  z-index: 9999;
+  max-width: 360px;
+  text-align: center;
+}
+
+.toast.show {
+  opacity: 1;
+  transform: translateX(-50%) translateY(0);
+}
+
+.toast-success { border-left: 4px solid #10b981; }
+.toast-error   { border-left: 4px solid #ef4444; }
+.toast-info    { border-left: 4px solid #6366f1; }
