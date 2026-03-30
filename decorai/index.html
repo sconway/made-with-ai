@@ -713,6 +713,60 @@
         </div>
     </div>
 
+    <!-- Subscription modal -->
+    <div class="modal hidden" id="subscribe-modal">
+        <div class="modal-content subscribe-modal-content">
+            <div class="modal-header">
+                <h2>Unlock Full Layout Access</h2>
+                <button id="close-subscribe-modal-btn" class="close-modal-btn" type="button">
+                    <i data-feather="x"></i>
+                </button>
+            </div>
+            <div class="modal-body">
+                <div class="subscribe-hero">
+                    <div class="subscribe-icon-large">
+                        <i data-feather="layout"></i>
+                    </div>
+                    <p class="subscribe-tagline">Get unlimited access to the full floor plan editor with a monthly subscription.</p>
+                </div>
+                <div class="subscribe-features">
+                    <div class="subscribe-feature">
+                        <i data-feather="check-circle"></i>
+                        <span>All drawing tools — rooms, doors, windows, labels</span>
+                    </div>
+                    <div class="subscribe-feature">
+                        <i data-feather="check-circle"></i>
+                        <span>Full furniture library across all categories</span>
+                    </div>
+                    <div class="subscribe-feature">
+                        <i data-feather="check-circle"></i>
+                        <span>Save unlimited layouts to your account</span>
+                    </div>
+                    <div class="subscribe-feature">
+                        <i data-feather="check-circle"></i>
+                        <span>Export as PNG, SVG, or layout file</span>
+                    </div>
+                    <div class="subscribe-feature">
+                        <i data-feather="check-circle"></i>
+                        <span>Unlimited layout generations</span>
+                    </div>
+                </div>
+                <div class="subscribe-cta-card">
+                    <div class="subscribe-price">
+                        <span class="subscribe-price-amount">$19.99</span>
+                        <span class="subscribe-price-period">/ month</span>
+                    </div>
+                    <button id="subscribe-checkout-btn" class="primary-btn subscribe-btn" type="button">
+                        <i data-feather="zap"></i>
+                        <span>Subscribe — $19.99/mo</span>
+                    </button>
+                    <p class="subscribe-note">Free wall tool always available. Cancel anytime.</p>
+                </div>
+                <p class="tokens-footer">Payments are processed securely by Stripe.</p>
+            </div>
+        </div>
+    </div>
+
     <script type="module" src="/src/main.js"></script>
 </body>
 

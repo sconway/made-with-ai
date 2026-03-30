@@ -135,7 +135,43 @@ CREATE INDEX IF NOT EXISTS idx_user_credits_user_id ON user_credits(user_id);
 CREATE INDEX IF NOT EXISTS idx_payments_user_id ON payments(user_id);
 CREATE INDEX IF NOT EXISTS idx_payments_stripe_session ON payments(stripe_checkout_session_id);
 
+-- ============================================================
+-- Subscription System
+-- ============================================================
+
+-- Tracks active Stripe subscriptions per user
+CREATE TABLE IF NOT EXISTS user_subscriptions (
+    id UUID DEFAULT uuid_generate_v4() PRIMARY KEY,
+    user_id UUID REFERENCES auth.users(id) ON DELETE CASCADE UNIQUE NOT NULL,
+    stripe_subscription_id TEXT UNIQUE,
+    stripe_customer_id TEXT,
+    status TEXT DEFAULT 'none' NOT NULL, -- active | trialing | past_due | canceled | none
+    is_active BOOLEAN DEFAULT FALSE NOT NULL,
+    current_period_end TIMESTAMP WITH TIME ZONE,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_user_subscriptions_user_id ON user_subscriptions(user_id);
+CREATE INDEX IF NOT EXISTS idx_user_subscriptions_stripe_id ON user_subscriptions(stripe_subscription_id);
+
+ALTER TABLE user_subscriptions ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "Users can view own subscription" ON user_subscriptions;
+CREATE POLICY "Users can view own subscription" ON user_subscriptions
+    FOR SELECT USING (auth.uid() = user_id);
+
+DROP POLICY IF EXISTS "Service role can manage subscriptions" ON user_subscriptions;
+CREATE POLICY "Service role can manage subscriptions" ON user_subscriptions
+    FOR ALL USING (auth.role() = 'service_role');
+
+DROP TRIGGER IF EXISTS update_user_subscriptions_updated_at ON user_subscriptions;
+CREATE TRIGGER update_user_subscriptions_updated_at
+    BEFORE UPDATE ON user_subscriptions
+    FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+
 -- Permissions
 GRANT USAGE ON SCHEMA public TO anon, authenticated;
 GRANT SELECT ON user_credits TO authenticated;
 GRANT SELECT ON payments TO authenticated;
+GRANT SELECT ON user_subscriptions TO authenticated;

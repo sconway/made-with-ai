@@ -4917,6 +4917,170 @@ main {
   margin: 0;
 }
 
+/* ── Subscribe modal ──────────────────────────────────────────────────────────── */
+
+.subscribe-modal-content {
+  max-width: 480px;
+}
+
+.subscribe-hero {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.75rem;
+  margin-bottom: 1.5rem;
+  text-align: center;
+}
+
+.subscribe-icon-large {
+  width: 56px;
+  height: 56px;
+  background: linear-gradient(135deg, #6366f1, #818cf8);
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: white;
+}
+
+.subscribe-icon-large svg {
+  width: 28px;
+  height: 28px;
+}
+
+.subscribe-tagline {
+  font-size: 0.95rem;
+  color: var(--text-secondary, #64748b);
+  margin: 0;
+  max-width: 340px;
+}
+
+.subscribe-features {
+  display: flex;
+  flex-direction: column;
+  gap: 0.65rem;
+  margin-bottom: 1.5rem;
+}
+
+.subscribe-feature {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  font-size: 0.9rem;
+  color: var(--text-primary, #1e293b);
+}
+
+.subscribe-feature svg {
+  width: 16px;
+  height: 16px;
+  color: #6366f1;
+  flex-shrink: 0;
+}
+
+.subscribe-cta-card {
+  background: linear-gradient(135deg, #f0f0ff 0%, #f8f8ff 100%);
+  border: 1px solid #c7d2fe;
+  border-radius: 1rem;
+  padding: 1.25rem;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.85rem;
+  margin-bottom: 1rem;
+}
+
+.subscribe-price {
+  display: flex;
+  align-items: baseline;
+  gap: 0.3rem;
+}
+
+.subscribe-price-amount {
+  font-size: 2rem;
+  font-weight: 700;
+  color: #4f46e5;
+}
+
+.subscribe-price-period {
+  font-size: 1rem;
+  color: var(--text-secondary, #64748b);
+}
+
+.subscribe-btn {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  padding: 0.75rem 1.5rem;
+  font-size: 1rem;
+  background: linear-gradient(135deg, #6366f1, #4f46e5);
+  border: none;
+}
+
+.subscribe-btn:hover {
+  background: linear-gradient(135deg, #4f46e5, #4338ca);
+}
+
+.subscribe-btn:disabled {
+  opacity: 0.7;
+  cursor: not-allowed;
+}
+
+.subscribe-note {
+  font-size: 0.78rem;
+  color: var(--text-light, #94a3b8);
+  margin: 0;
+  text-align: center;
+}
+
+/* Locked overlay for restricted layout tools */
+.layout-tool-locked {
+  position: relative;
+  opacity: 0.4;
+  pointer-events: none;
+}
+
+.furniture-panel-locked {
+  position: relative;
+}
+
+.furniture-panel-locked::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: rgba(255,255,255,0.6);
+  z-index: 10;
+  border-radius: inherit;
+  pointer-events: all;
+  cursor: pointer;
+}
+
+.layout-subscription-banner {
+  background: linear-gradient(135deg, #eef2ff, #f5f3ff);
+  border: 1px solid #c7d2fe;
+  border-radius: 0.75rem;
+  padding: 0.75rem 1rem;
+  margin: 0.5rem 0.75rem;
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  font-size: 0.82rem;
+  color: #4338ca;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+
+.layout-subscription-banner:hover {
+  background: linear-gradient(135deg, #e0e7ff, #ede9fe);
+}
+
+.layout-subscription-banner svg {
+  width: 15px;
+  height: 15px;
+  flex-shrink: 0;
+}
+
 /* Toast notifications */
 .toast {
   position: fixed;

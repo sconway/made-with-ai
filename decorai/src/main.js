@@ -20,6 +20,8 @@ let currentSession = null;
 
 // Token state
 let userTokens = 0;
+// Subscription state
+let userHasSubscription = false;
 // Fetched layout state: restored once when user opens the layout editor after sign-in/load
 let savedLayoutState = null;
 let savedLayoutId = null;
@@ -269,6 +271,7 @@ async function initializeApp() {
                 currentSession = session;
                 await fetchSavedLayout();
                 await fetchUserTokens();
+                await fetchUserSubscription();
             }
             supabase.auth.onAuthStateChange(async (_event, session) => {
                 currentUser = session?.user ?? null;
@@ -276,11 +279,14 @@ async function initializeApp() {
                 if (session) {
                     await fetchSavedLayout();
                     await fetchUserTokens();
+                    await fetchUserSubscription();
                 } else {
                     savedLayoutState = null;
                     savedLayoutId = null;
                     savedLayoutName = null;
                     userTokens = 0;
+                    userHasSubscription = false;
+                    window.__decoraiHasSubscription = false;
                 }
                 updateAuthUI();
             });
@@ -319,6 +325,29 @@ async function initializeApp() {
                 showToastMessage('Payment cancelled.', 'error');
                 window.history.replaceState({}, document.title, window.location.pathname);
             }
+
+            // Handle subscription redirect
+            const subscriptionStatus = urlParams.get('subscription');
+            if (subscriptionStatus === 'success') {
+                // Poll until the webhook has activated the subscription
+                let attempts = 0;
+                const checkSub = async () => {
+                    attempts++;
+                    await fetchUserSubscription();
+                    if (userHasSubscription) {
+                        showToastMessage('Subscription activated! You now have full layout access.', 'success');
+                    } else if (attempts < 6) {
+                        setTimeout(checkSub, 2000);
+                    } else {
+                        showToastMessage('Subscription received! Access may take a moment to activate.', 'info');
+                    }
+                };
+                setTimeout(checkSub, 1000);
+                window.history.replaceState({}, document.title, window.location.pathname);
+            } else if (subscriptionStatus === 'cancelled') {
+                showToastMessage('Subscription cancelled.', 'error');
+                window.history.replaceState({}, document.title, window.location.pathname);
+            }
         }
         updateAuthUI();
     } catch (err) {
@@ -343,6 +372,23 @@ async function fetchUserTokens() {
     } catch (err) {
         console.error('fetchUserTokens error:', err);
     }
+}
+
+async function fetchUserSubscription() {
+    if (!currentUser || !currentSession) return;
+    try {
+        const res = await fetch(`${PROXY_SERVER_URL}/api/subscription`, {
+            headers: { Authorization: `Bearer ${currentSession.access_token}` }
+        });
+        if (res.ok) {
+            const data = await res.json();
+            userHasSubscription = data.isActive === true;
+        }
+    } catch (err) {
+        console.error('fetchUserSubscription error:', err);
+    }
+    // Expose to the floor plan editor via the window bridge
+    window.__decoraiHasSubscription = userHasSubscription;
 }
 
 function updateTokensDisplay() {
@@ -454,6 +500,71 @@ async function handleCheckout() {
         }
     }
 }
+
+// ── Subscription modal helpers ─────────────────────────────────────────────────
+
+function showSubscribeModal() {
+    if (!currentUser) { showAuthModal('login'); return; }
+    const modal = document.getElementById('subscribe-modal');
+    const subscribeBtn = document.getElementById('subscribe-checkout-btn');
+    if (subscribeBtn) {
+        subscribeBtn.disabled = false;
+        subscribeBtn.innerHTML = '<i data-feather="zap"></i><span>Subscribe — $19.99/mo</span>';
+    }
+    if (modal) {
+        modal.classList.remove('hidden');
+        modal.classList.add('show');
+        modal.style.opacity = '1';
+        modal.style.visibility = 'visible';
+    }
+    if (typeof feather !== 'undefined') feather.replace();
+}
+
+function hideSubscribeModal() {
+    const modal = document.getElementById('subscribe-modal');
+    if (modal) {
+        modal.classList.remove('show');
+        modal.style.opacity = '';
+        modal.style.visibility = '';
+        modal.classList.add('hidden');
+    }
+}
+
+async function handleSubscribeCheckout() {
+    if (!currentUser || !currentSession) { showAuthModal('login'); return; }
+    const subscribeBtn = document.getElementById('subscribe-checkout-btn');
+    try {
+        if (subscribeBtn) {
+            subscribeBtn.disabled = true;
+            subscribeBtn.innerHTML = '<span>Processing...</span>';
+        }
+        const res = await fetch(`${PROXY_SERVER_URL}/api/subscribe`, {
+            method: 'POST',
+            headers: {
+                Authorization: `Bearer ${currentSession.access_token}`,
+                'Content-Type': 'application/json'
+            }
+        });
+        if (res.ok) {
+            const { url } = await res.json();
+            window.location.href = url;
+        } else {
+            const body = await res.json().catch(() => ({}));
+            throw new Error(body.detail || 'Failed to create subscription session');
+        }
+    } catch (err) {
+        console.error('handleSubscribeCheckout error:', err);
+        showToastMessage(err.message || 'Error starting subscription. Please try again.', 'error');
+        if (subscribeBtn) {
+            subscribeBtn.disabled = false;
+            subscribeBtn.innerHTML = '<i data-feather="zap"></i><span>Subscribe — $19.99/mo</span>';
+            if (typeof feather !== 'undefined') feather.replace();
+        }
+    }
+}
+
+// Exposed so floorPlanEditor can open the modal
+window.__decoraiShowSubscribeModal = showSubscribeModal;
 
 /** Lightweight toast notification (no external dependency) */
 let _activeToast = null;
@@ -768,7 +879,7 @@ function updateAuthUI() {
     if (currentUser) {
         authButtons.classList.add('hidden');
         userMenu.classList.remove('hidden');
-        if (tokensDisplay) tokensDisplay.classList.remove('hidden');
+        if (tokensDisplay) tokensDisplay.classList.toggle('hidden', userHasSubscription);
         if (userEmailDisplay) userEmailDisplay.textContent = currentUser.email?.split('@')[0] || 'Account';
         updateTokensDisplay();
     } else {
@@ -1204,6 +1315,18 @@ document.addEventListener('DOMContentLoaded', async () => {
         });
     }
 
+    // Subscription modal listeners
+    const subscribeCheckoutBtn = document.getElementById('subscribe-checkout-btn');
+    const closeSubscribeModalBtn = document.getElementById('close-subscribe-modal-btn');
+    const subscribeModal = document.getElementById('subscribe-modal');
+    if (subscribeCheckoutBtn) subscribeCheckoutBtn.addEventListener('click', handleSubscribeCheckout);
+    if (closeSubscribeModalBtn) closeSubscribeModalBtn.addEventListener('click', hideSubscribeModal);
+    if (subscribeModal) {
+        subscribeModal.addEventListener('click', (e) => {
+            if (e.target === subscribeModal) hideSubscribeModal();
+        });
+    }
+
     // Auth event listeners
     if (loginBtn) loginBtn.addEventListener('click', () => showAuthModal('login'));
     if (signupBtn) signupBtn.addEventListener('click', () => showAuthModal('signup'));
@@ -1282,7 +1405,13 @@ document.addEventListener('DOMContentLoaded', async () => {
         });
     }
     const layoutSaveBtn = document.getElementById('layout-save-btn');
-    if (layoutSaveBtn) layoutSaveBtn.addEventListener('click', handleSaveLayout);
+    if (layoutSaveBtn) layoutSaveBtn.addEventListener('click', () => {
+        if (layoutSaveBtn.getAttribute('data-subscription-locked') === '1') {
+            showSubscribeModal();
+            return;
+        }
+        handleSaveLayout();
+    });
     const myLayoutsToggle = document.getElementById('my-layouts-toggle');
     const myLayoutsPanel = document.getElementById('my-layouts-panel');
     if (myLayoutsToggle && myLayoutsPanel) {

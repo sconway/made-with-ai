@@ -195,7 +195,15 @@ const FloorPlanEditor = (() => {
         
         // Tool buttons
         document.querySelectorAll('.floor-tool').forEach(btn => {
-            btn.addEventListener('click', () => selectTool(btn.dataset.tool));
+            btn.addEventListener('click', () => {
+                if (btn.getAttribute('data-subscription-locked') === '1') {
+                    if (typeof window.__decoraiShowSubscribeModal === 'function') {
+                        window.__decoraiShowSubscribeModal();
+                    }
+                    return;
+                }
+                selectTool(btn.dataset.tool);
+            });
         });
         
         // Action buttons
@@ -209,7 +217,13 @@ const FloorPlanEditor = (() => {
         updateFengShuiButtonState();
 
         // Export
-        document.getElementById('layout-export-btn')?.addEventListener('click', toggleExportMenu);
+        document.getElementById('layout-export-btn')?.addEventListener('click', () => {
+            if (document.getElementById('layout-export-btn').getAttribute('data-subscription-locked') === '1') {
+                if (typeof window.__decoraiShowSubscribeModal === 'function') window.__decoraiShowSubscribeModal();
+                return;
+            }
+            toggleExportMenu();
+        });
         document.getElementById('export-png-btn')?.addEventListener('click', () => exportAs('png'));
         document.getElementById('export-svg-btn')?.addEventListener('click', () => exportAs('svg'));
         document.getElementById('export-layout-file-btn')?.addEventListener('click', () => { document.getElementById('export-menu')?.classList.remove('show'); downloadLayoutFile(); });
@@ -304,14 +318,26 @@ const FloorPlanEditor = (() => {
         // Furniture categories - toggle on/off
         document.querySelectorAll('.category-btn').forEach(btn => {
             btn.addEventListener('click', () => {
+                if (window.__decoraiHasSubscription !== true) {
+                    if (typeof window.__decoraiShowSubscribeModal === 'function') window.__decoraiShowSubscribeModal();
+                    return;
+                }
                 btn.classList.toggle('active');
                 updateFurnitureGrid();
             });
         });
-        
+
         // Search furniture
         document.getElementById('furniture-search')?.addEventListener('input', () => {
+            if (window.__decoraiHasSubscription !== true) return;
             updateFurnitureGrid();
+        });
+
+        // Furniture panel click-through guard
+        document.querySelector('.furniture-panel')?.addEventListener('click', (e) => {
+            if (window.__decoraiHasSubscription !== true) {
+                if (typeof window.__decoraiShowSubscribeModal === 'function') window.__decoraiShowSubscribeModal();
+            }
         });
         
         // Properties panel
@@ -346,6 +372,84 @@ const FloorPlanEditor = (() => {
         updateCanvasInfo();
         initRulers();
         setInitialZoom();
+        applySubscriptionRestrictions();
+    }
+
+    function applySubscriptionRestrictions() {
+        const hasSubscription = window.__decoraiHasSubscription === true;
+
+        // ── Tool buttons: lock everything except 'wall' ──────────────────────────
+        document.querySelectorAll('.floor-tool').forEach(btn => {
+            const tool = btn.dataset.tool;
+            if (tool === 'wall') {
+                btn.classList.remove('layout-tool-locked');
+                btn.removeAttribute('data-subscription-locked');
+            } else {
+                if (!hasSubscription) {
+                    btn.classList.add('layout-tool-locked');
+                    btn.setAttribute('data-subscription-locked', '1');
+                } else {
+                    btn.classList.remove('layout-tool-locked');
+                    btn.removeAttribute('data-subscription-locked');
+                }
+            }
+        });
+
+        // ── Furniture panel ──────────────────────────────────────────────────────
+        const furniturePanel = document.querySelector('.furniture-panel');
+        if (furniturePanel) {
+            if (!hasSubscription) {
+                furniturePanel.classList.add('furniture-panel-locked');
+                furniturePanel.setAttribute('data-subscription-locked', '1');
+            } else {
+                furniturePanel.classList.remove('furniture-panel-locked');
+                furniturePanel.removeAttribute('data-subscription-locked');
+            }
+        }
+
+        // ── Save and export buttons ──────────────────────────────────────────────
+        const saveBtn = document.getElementById('layout-save-btn');
+        const exportBtn = document.getElementById('layout-export-btn');
+        [saveBtn, exportBtn].forEach(btn => {
+            if (!btn) return;
+            if (!hasSubscription) {
+                btn.setAttribute('data-subscription-locked', '1');
+                btn.setAttribute('data-original-tooltip', btn.getAttribute('data-tooltip') || '');
+                btn.setAttribute('data-tooltip', 'Subscribe to save & export');
+            } else {
+                btn.removeAttribute('data-subscription-locked');
+                const orig = btn.getAttribute('data-original-tooltip');
+                if (orig) btn.setAttribute('data-tooltip', orig);
+            }
+        });
+
+        // ── Subscription upsell banner in the toolbar ────────────────────────────
+        const existingBanner = document.getElementById('subscription-upsell-banner');
+        if (!hasSubscription) {
+            if (!existingBanner) {
+                const toolbar = document.querySelector('.layout-toolbar');
+                if (toolbar) {
+                    const banner = document.createElement('div');
+                    banner.id = 'subscription-upsell-banner';
+                    banner.className = 'layout-subscription-banner';
+                    banner.innerHTML = '<i data-feather="zap"></i><span>Subscribe for full access — $19.99/mo</span>';
+                    banner.addEventListener('click', () => {
+                        if (typeof window.__decoraiShowSubscribeModal === 'function') {
+                            window.__decoraiShowSubscribeModal();
+                        }
+                    });
+                    toolbar.prepend(banner);
+                    feather.replace();
+                }
+            }
+        } else {
+            if (existingBanner) existingBanner.remove();
+        }
+
+        // If currently on a locked tool, switch to wall
+        if (!hasSubscription && currentTool !== 'wall') {
+            selectTool('wall');
+        }
     }
     
     function setInitialZoom() {
@@ -1179,6 +1283,10 @@ const FloorPlanEditor = (() => {
         // Check if this is a furniture drop
         const furnitureType = e.dataTransfer.getData('furnitureType');
         if (furnitureType) {
+            if (window.__decoraiHasSubscription !== true) {
+                if (typeof window.__decoraiShowSubscribeModal === 'function') window.__decoraiShowSubscribeModal();
+                return;
+            }
             // Get drop position relative to canvas (account for pan and zoom)
             const rect = svg.getBoundingClientRect();
             const x = (e.clientX - rect.left - panOffset.x) / zoom;
@@ -3521,16 +3629,26 @@ const FloorPlanEditor = (() => {
             div.setAttribute('aria-label', `Add ${item.name} to the plan—click to place at center, or drag onto the canvas`);
             
             div.addEventListener('dragstart', (e) => {
+                if (window.__decoraiHasSubscription !== true) {
+                    e.preventDefault();
+                    if (typeof window.__decoraiShowSubscribeModal === 'function') window.__decoraiShowSubscribeModal();
+                    return;
+                }
                 e.dataTransfer.setData('furnitureType', item.id);
             });
-            
-            div.addEventListener('click', () => {
+
+            div.addEventListener('click', (e) => {
+                if (window.__decoraiHasSubscription !== true) {
+                    e.stopPropagation();
+                    if (typeof window.__decoraiShowSubscribeModal === 'function') window.__decoraiShowSubscribeModal();
+                    return;
+                }
                 // Add furniture at center of visible canvas area
                 const wrapper = document.getElementById('layout-canvas-wrapper');
                 const centerX = (wrapper.clientWidth / 2 - panOffset.x) / zoom;
                 const centerY = (wrapper.clientHeight / 2 - panOffset.y) / zoom;
                 addFurniture(item.id, centerX, centerY);
-                
+
                 // Switch to select tool so user can move/adjust the furniture
                 selectTool('select');
             });

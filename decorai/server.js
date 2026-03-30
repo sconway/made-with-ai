@@ -29,6 +29,9 @@ const supabase = createClient(
 const FREE_TOKENS = parseInt(process.env.FREE_TOKENS) || 2;
 const TOKENS_PER_PURCHASE = parseInt(process.env.TOKENS_PER_PURCHASE) || 5;
 
+// Subscription configuration
+const SUBSCRIPTION_PRICE_ID = process.env.STRIPE_SUBSCRIPTION_PRICE_ID || '';
+
 // CORS configuration
 const corsOptions = {
   origin: process.env.NODE_ENV === 'production' 
@@ -53,52 +56,102 @@ app.post('/webhook/stripe', express.raw({ type: 'application/json' }), async (re
     return res.status(400).send(`Webhook Error: ${err.message}`);
   }
 
+  // ── One-time token purchase ──────────────────────────────────────────────────
   if (event.type === 'checkout.session.completed') {
     const session = event.data.object;
+    // Only handle one-time payments here (subscriptions are handled via subscription events)
+    if (session.mode === 'payment') {
+      try {
+        const userId = session.metadata.user_id;
+        if (!userId) {
+          console.error('No user_id in Stripe session metadata');
+          return res.status(400).send('No user_id in session metadata');
+        }
+
+        // Fetch current token balance
+        const { data: currentCredits, error: fetchError } = await supabase
+          .from('user_credits')
+          .select('credits')
+          .eq('user_id', userId)
+          .single();
+
+        if (fetchError && fetchError.code !== 'PGRST116') {
+          console.error('Error fetching user credits:', fetchError);
+          return res.status(500).send('Error fetching user credits');
+        }
+
+        const newCredits = (currentCredits?.credits || 0) + TOKENS_PER_PURCHASE;
+
+        const { error: upsertError } = await supabase
+          .from('user_credits')
+          .upsert({ user_id: userId, credits: newCredits }, { onConflict: 'user_id' });
+
+        if (upsertError) {
+          console.error('Error updating user credits:', upsertError);
+          return res.status(500).send('Error updating user credits');
+        }
+
+        // Record payment
+        await supabase.from('payments').insert({
+          user_id: userId,
+          stripe_checkout_session_id: session.id,
+          stripe_payment_intent_id: session.payment_intent,
+          amount: session.amount_total,
+          credits_purchased: TOKENS_PER_PURCHASE,
+          status: 'completed'
+        });
+
+        console.log(`Added ${TOKENS_PER_PURCHASE} tokens to user ${userId}. New total: ${newCredits}`);
+      } catch (error) {
+        console.error('Error processing Stripe webhook:', error);
+        return res.status(500).send('Error processing webhook');
+      }
+    }
+  }
+
+  // ── Subscription activated or renewed ────────────────────────────────────────
+  if (event.type === 'customer.subscription.created' || event.type === 'customer.subscription.updated') {
+    const subscription = event.data.object;
     try {
-      const userId = session.metadata.user_id;
+      const userId = subscription.metadata.user_id;
       if (!userId) {
-        console.error('No user_id in Stripe session metadata');
-        return res.status(400).send('No user_id in session metadata');
+        console.error('No user_id in subscription metadata');
+        return res.status(400).send('No user_id in subscription metadata');
       }
-
-      // Fetch current token balance
-      const { data: currentCredits, error: fetchError } = await supabase
-        .from('user_credits')
-        .select('credits')
-        .eq('user_id', userId)
-        .single();
-
-      if (fetchError && fetchError.code !== 'PGRST116') {
-        console.error('Error fetching user credits:', fetchError);
-        return res.status(500).send('Error fetching user credits');
-      }
-
-      const newCredits = (currentCredits?.credits || 0) + TOKENS_PER_PURCHASE;
-
-      const { error: upsertError } = await supabase
-        .from('user_credits')
-        .upsert({ user_id: userId, credits: newCredits }, { onConflict: 'user_id' });
-
-      if (upsertError) {
-        console.error('Error updating user credits:', upsertError);
-        return res.status(500).send('Error updating user credits');
-      }
-
-      // Record payment
-      await supabase.from('payments').insert({
+      const isActive = subscription.status === 'active' || subscription.status === 'trialing';
+      await supabase.from('user_subscriptions').upsert({
         user_id: userId,
-        stripe_checkout_session_id: session.id,
-        stripe_payment_intent_id: session.payment_intent,
-        amount: session.amount_total,
-        credits_purchased: TOKENS_PER_PURCHASE,
-        status: 'completed'
-      });
-
-      console.log(`Added ${TOKENS_PER_PURCHASE} tokens to user ${userId}. New total: ${newCredits}`);
+        stripe_subscription_id: subscription.id,
+        stripe_customer_id: subscription.customer,
+        status: subscription.status,
+        current_period_end: new Date(subscription.current_period_end * 1000).toISOString(),
+        is_active: isActive
+      }, { onConflict: 'user_id' });
+      console.log(`Subscription ${subscription.status} for user ${userId}`);
     } catch (error) {
-      console.error('Error processing Stripe webhook:', error);
-      return res.status(500).send('Error processing webhook');
+      console.error('Error processing subscription webhook:', error);
+      return res.status(500).send('Error processing subscription webhook');
+    }
+  }
+
+  // ── Subscription cancelled / expired ─────────────────────────────────────────
+  if (event.type === 'customer.subscription.deleted') {
+    const subscription = event.data.object;
+    try {
+      const userId = subscription.metadata.user_id;
+      if (!userId) return res.status(400).send('No user_id in subscription metadata');
+      await supabase.from('user_subscriptions').upsert({
+        user_id: userId,
+        stripe_subscription_id: subscription.id,
+        stripe_customer_id: subscription.customer,
+        status: 'canceled',
+        current_period_end: new Date(subscription.current_period_end * 1000).toISOString(),
+        is_active: false
+      }, { onConflict: 'user_id' });
+      console.log(`Subscription canceled for user ${userId}`);
+    } catch (error) {
+      console.error('Error processing subscription deletion:', error);
+      return res.status(500).send('Error processing subscription deletion');
     }
   }
 
@@ -214,6 +267,65 @@ app.post('/api/checkout', async (req, res) => {
   } catch (error) {
     console.error('Error creating checkout session:', error);
     res.status(500).json({ error: 'Failed to create checkout session', detail: error.message });
+  }
+});
+
+// GET /api/subscription — check if current user has an active subscription
+app.get('/api/subscription', async (req, res) => {
+  try {
+    const user = await getAuthUser(req, res);
+    if (!user) return;
+
+    const { data, error } = await supabase
+      .from('user_subscriptions')
+      .select('is_active, status, current_period_end')
+      .eq('user_id', user.id)
+      .single();
+
+    if (error && error.code !== 'PGRST116') {
+      console.error('Error fetching subscription:', error);
+      return res.status(500).json({ error: 'Failed to fetch subscription' });
+    }
+
+    // Also guard against past-due subscriptions whose period has expired
+    const isActive = data?.is_active === true &&
+      data?.current_period_end &&
+      new Date(data.current_period_end) > new Date();
+
+    res.json({ isActive: !!isActive, status: data?.status || 'none' });
+  } catch (error) {
+    console.error('Error in GET /api/subscription:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// POST /api/subscribe — create a Stripe subscription checkout session
+app.post('/api/subscribe', async (req, res) => {
+  try {
+    const user = await getAuthUser(req, res);
+    if (!user) return;
+
+    if (!SUBSCRIPTION_PRICE_ID) {
+      return res.status(500).json({ error: 'Subscription not configured', detail: 'STRIPE_SUBSCRIPTION_PRICE_ID is not set' });
+    }
+
+    const appUrl = process.env.APP_URL || 'http://localhost:5173';
+
+    const session = await stripe.checkout.sessions.create({
+      payment_method_types: ['card'],
+      line_items: [{ price: SUBSCRIPTION_PRICE_ID, quantity: 1 }],
+      mode: 'subscription',
+      success_url: `${appUrl}?subscription=success`,
+      cancel_url: `${appUrl}?subscription=cancelled`,
+      customer_email: user.email,
+      subscription_data: { metadata: { user_id: user.id } },
+      metadata: { user_id: user.id }
+    });
+
+    res.json({ url: session.url });
+  } catch (error) {
+    console.error('Error creating subscription session:', error);
+    res.status(500).json({ error: 'Failed to create subscription session', detail: error.message });
   }
 });
 
