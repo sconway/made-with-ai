@@ -147,6 +147,7 @@ let currentRoomType = null;
 let generatedDesigns = [];
 let selectedRoomItems = new Set(); // Track selected room items
 let furnishedOption = null; // Track furnished room option - no default selection
+let selectedDesignStyle = 'modern-minimalist'; // Track selected interior design style
 let isRoomActuallyEmpty = true; // Track if the uploaded room is actually empty
 
 // Confirm dialog state
@@ -221,6 +222,70 @@ const roomItems = [
     { id: 'vase', name: 'Vase', icon: 'droplet', category: 'decor' },
     { id: 'candles', name: 'Candles', icon: 'zap', category: 'decor' },
     { id: 'clock', name: 'Clock', icon: 'clock', category: 'decor' }
+];
+
+// Interior design style options (shown as a selectable grid)
+const interiorDesignStyles = [
+    {
+        id: 'modern-minimalist',
+        name: 'Minimalist',
+        icon: 'minus-square',
+        promptText: 'modern minimalist style with clean lines, neutral colors, uncluttered surfaces, and simple functional furniture'
+    },
+    {
+        id: 'scandinavian',
+        name: 'Scandinavian',
+        icon: 'feather',
+        promptText: 'Scandinavian hygge style with light wood, cozy textures, soft neutrals, and warm natural elements'
+    },
+    {
+        id: 'industrial',
+        name: 'Industrial',
+        icon: 'tool',
+        promptText: 'industrial style with exposed metal accents, raw concrete surfaces, dark tones, and urban loft aesthetics'
+    },
+    {
+        id: 'bohemian',
+        name: 'Bohemian',
+        icon: 'sun',
+        promptText: 'bohemian boho style with rich jewel tones, layered patterned textiles, eclectic global-inspired decor, and abundant plants'
+    },
+    {
+        id: 'mid-century',
+        name: 'Mid-Century',
+        icon: 'watch',
+        promptText: 'mid-century modern style with organic curved furniture, warm walnut wood, tapered legs, and retro 1950s–60s design elements'
+    },
+    {
+        id: 'traditional',
+        name: 'Traditional',
+        icon: 'columns',
+        promptText: 'traditional classic style with rich dark wood furniture, ornate details, warm jewel-tone fabrics, and timeless elegant decor'
+    },
+    {
+        id: 'coastal',
+        name: 'Coastal',
+        icon: 'anchor',
+        promptText: 'coastal beach house style with light blues, sandy neutrals, natural rattan and driftwood textures, and airy breezy atmosphere'
+    },
+    {
+        id: 'farmhouse',
+        name: 'Farmhouse',
+        icon: 'home',
+        promptText: 'modern farmhouse style with shiplap walls, distressed wood, vintage-inspired furniture, cozy textiles, and rustic charm'
+    },
+    {
+        id: 'art-deco',
+        name: 'Art Deco',
+        icon: 'star',
+        promptText: 'Art Deco style with bold geometric patterns, gold and brass accents, jewel tones, luxurious velvet fabrics, and glamorous drama'
+    },
+    {
+        id: 'japandi',
+        name: 'Japandi',
+        icon: 'circle',
+        promptText: 'Japandi style blending Japanese wabi-sabi minimalism with Scandinavian coziness using natural materials, muted earthy tones, and serene simplicity'
+    }
 ];
 
 // AI prompt templates for different room types - simplified for clarity
@@ -408,6 +473,9 @@ function hasTokensAvailable() {
     if (!currentUser || !currentSession) {
         showAuthModal('login');
         return false;
+    }
+    if (userHasSubscription) {
+        return true;
     }
     if (userTokens <= 0) {
         showBuyTokensModal();
@@ -1295,6 +1363,9 @@ window.showConfirmDialog = showConfirmDialog;
 document.addEventListener('DOMContentLoaded', async () => {
     await initializeApp();
 
+    // Populate design style grids on load
+    populateDesignStyles();
+
     // Event Listeners (Add null checks for safety)
     if (roomUpload) roomUpload.addEventListener('change', handleImageUpload);
     if (cameraBtn) cameraBtn.addEventListener('click', openCamera);
@@ -2098,6 +2169,52 @@ function populateRoomItems() {
     feather.replace();
 }
 
+// Populate the design style grids (desktop + mobile)
+function populateDesignStyles() {
+    const gridConfigs = [
+        { gridId: 'style-options-grid', radioName: 'design-style', idPrefix: '' },
+        { gridId: 'mobile-style-options-grid', radioName: 'mobile-design-style', idPrefix: 'mobile-' }
+    ];
+
+    gridConfigs.forEach(({ gridId, radioName, idPrefix }) => {
+        const grid = document.getElementById(gridId);
+        if (!grid) return;
+
+        grid.innerHTML = '';
+
+        interiorDesignStyles.forEach(style => {
+            const inputId = `${idPrefix}style-${style.id}`;
+            const el = document.createElement('div');
+            el.className = 'style-option';
+
+            el.innerHTML = `
+                <input type="radio" id="${inputId}" name="${radioName}" value="${style.id}" ${style.id === selectedDesignStyle ? 'checked' : ''}>
+                <label for="${inputId}" class="style-label">
+                    <div class="style-thumbnail">
+                        <i data-feather="${style.icon}"></i>
+                    </div>
+                    <span class="style-name">${style.name}</span>
+                </label>
+            `;
+
+            const radio = el.querySelector('input[type="radio"]');
+            radio.addEventListener('change', (e) => {
+                if (e.target.checked) {
+                    selectedDesignStyle = style.id;
+                    // Sync the other grid
+                    const otherName = radioName === 'design-style' ? 'mobile-design-style' : 'design-style';
+                    const otherRadio = document.querySelector(`input[name="${otherName}"][value="${style.id}"]`);
+                    if (otherRadio) otherRadio.checked = true;
+                }
+            });
+
+            grid.appendChild(el);
+        });
+    });
+
+    feather.replace();
+}
+
 // Handle furnished room option changes
 function handleFurnishedOptionChange() {
     const roomItemsSelection = document.getElementById('room-items-selection');
@@ -2188,7 +2305,7 @@ function generatePromptsWithItems(basePrompt, style) {
     // Special case: "start fresh" should always generate, even with no items
     if (currentRoomType === 'furnished' && furnishedOption === 'start-fresh') {
         if (selectedRoomItems.size === 0) {
-            result.positivePrompt = `Given this image of a furnished room, remove all furniture, leaving an empty room. DO NOT change walls, floor, ceiling, windows, or doors.`;
+            result.positivePrompt = `Given this image of a furnished room, remove all furniture, leaving an empty room. DO NOT change walls, floor, ceiling, windows, or doors. Style: ${style}.`;
             result.negativePrompt = `${baseNegativePrompt}, furniture, decor, items, objects`;
         } else {
             // Get selected and unselected items
@@ -2224,7 +2341,7 @@ function generatePromptsWithItems(basePrompt, style) {
             const allOtherItemNames = allOtherItems.map(item => item.name.toLowerCase()).join(', ');
 
             // Lead with the object(s) so the model prioritizes adding them; then stress room unchanged
-            result.positivePrompt = `A room with ${promptItemNames} visible. Add ${promptItemNames} to this room. Keep the room exactly as it is: same walls, floor, ceiling, windows, doors, same lighting, same colors, same perspective. No other changes.`;
+            result.positivePrompt = `A room with ${promptItemNames} visible. Add ${promptItemNames} to this room. Keep the room exactly as it is: same walls, floor, ceiling, windows, doors, same lighting, same colors, same perspective. No other changes. Style: ${style}.`;
 
             // Strong negative: no room/lighting changes, no other furniture or decor
             result.negativePrompt = `${baseNegativePrompt}, modified walls, modified floor, modified ceiling, modified windows, modified doors, changed lighting, different lighting, altered lighting, brighter, darker, shadow change, different shadows, changed perspective, changed colors, different materials, architectural change, structural change, ${allOtherItemNames}, other furniture, decor, plants, art, rugs, curtains, accessories, extra objects, style change, different room, empty room without furniture`;
@@ -2762,7 +2879,8 @@ async function generateDesigns() {
     }
 
     const basePrompt = aiPrompts[currentRoomType];
-    const style = designStyles[currentRoomType][0]; // Use first style
+    const styleObj = interiorDesignStyles.find(s => s.id === selectedDesignStyle) || interiorDesignStyles[0];
+    const style = styleObj.promptText;
     const description = designDescriptions[currentRoomType][0]; // Use first description
     const prompts = generatePromptsWithItems(basePrompt, style);
 
@@ -3011,7 +3129,8 @@ async function retryImageGeneration() {
     try {
         // Generate new prompts for retry
         const basePrompt = aiPrompts[currentRoomType];
-        const style = designStyles[currentRoomType][0];
+        const styleObj = interiorDesignStyles.find(s => s.id === selectedDesignStyle) || interiorDesignStyles[0];
+        const style = styleObj.promptText;
         const prompts = generatePromptsWithItems(basePrompt, style);
 
         // Check if we should generate an image
@@ -3482,8 +3601,8 @@ function saveCurrentDesign() {
     // Find the currently visible design card (first one in mobile view)
     const selectedDesign = document.querySelector('.design-card');
     if (selectedDesign) {
-        const designImage = selectedDesign.querySelector('.design-image');
-        if (designImage) {
+        const designImage = selectedDesign.querySelector('.design-image.generated-image');
+        if (designImage && designImage.src) {
             const link = document.createElement('a');
             link.download = 'decorai-design.jpg';
 

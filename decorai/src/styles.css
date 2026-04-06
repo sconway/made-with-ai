@@ -805,21 +805,52 @@ main {
 /* Mobile-First Responsive Design */
 /* Mobile styles (768px and below) */
 @media (max-width: 768px) {
+  /* ── Prevent horizontal overflow across the board ── */
+  body {
+    overflow-x: hidden;
+  }
+
   .app-container {
     max-width: 100%;
     margin: 0;
+    overflow-x: hidden;
   }
 
+  /* ── Header: compact, single-line ── */
+  header {
+    padding: 0.6rem 1rem;
+  }
+
+  .logo h1 {
+    font-size: 1.3rem;
+    margin-bottom: 0;
+  }
+
+  /* Hide tagline to save header vertical space */
+  .tagline {
+    display: none;
+  }
+
+  /* Layout editor: icon-only on mobile */
+  .layout-editor-btn span {
+    display: none;
+  }
+
+  .layout-editor-btn {
+    padding: 8px 10px;
+    gap: 0;
+  }
+
+  /* ── Main content area ── */
   main {
-    padding: 1rem;
+    padding: 0.75rem;
   }
 
-  /* Mobile upload section - keep unchanged */
   .upload-section {
-    margin-bottom: 1.5rem;
+    margin-bottom: 1rem;
   }
 
-  /* Mobile preview container - show only room type selection after upload */
+  /* ── Preview container (after image upload) ── */
   .preview-container {
     display: flex;
     flex-direction: column;
@@ -827,53 +858,92 @@ main {
     padding: 0;
   }
 
-  /* Hide additional options on mobile initially */
+  /* Compact back-button row */
+  .back-to-upload-btn {
+    padding: 0.5rem 0.5rem;
+    font-size: 0.9rem;
+  }
+
+  /* Smaller image preview — leaves room for controls below */
+  .image-preview-wrapper {
+    max-width: 100%;
+    margin: 0;
+  }
+
+  /* Disable hover scale on touch — it causes layout shift */
+  .image-preview-wrapper:hover {
+    transform: none;
+  }
+
+  #room-preview {
+    max-height: 32vh;
+  }
+
+  /* ── Room type selection on main screen ── */
+  /* Hide additional options — they live in the mobile overlay */
   .room-items-selection,
-  .furnished-options {
+  .furnished-options,
+  .design-style-selection {
     display: none;
   }
 
-  /* Mobile room type selection - full width buttons */
   .room-type-selection {
-    margin: 1rem 0;
+    margin: 0.6rem 0;
     padding: 0;
     width: 100%;
   }
 
+  .room-type-selection h3 {
+    font-size: 1rem;
+    margin-bottom: 0.5rem;
+  }
+
   .room-options {
     flex-direction: column;
-    gap: 1rem;
+    gap: 0.5rem;
     width: 100%;
   }
 
   .room-option {
     width: 100%;
-    min-width: auto;
+    min-width: 0;
   }
 
   .room-option label {
-    height: 80px;
-    padding: 1rem;
+    height: 68px;
+    padding: 0.75rem;
   }
 
-  /* Mobile preview actions - center the generate button */
+  .room-option .option-icon {
+    width: 34px;
+    height: 34px;
+  }
+
+  .room-option .option-text h4 {
+    font-size: 0.9rem;
+  }
+
+  .room-option .option-text p {
+    font-size: 0.78rem;
+  }
+
+  /* ── Generate button (mobile main screen — hidden by default) ── */
   .preview-actions {
     justify-content: center;
-    margin-top: 1.5rem;
+    margin-top: 1rem;
   }
 
-  /* Hide generate button on mobile by default - will be shown by JavaScript when needed */
   .preview-actions .primary-btn {
     display: none;
   }
 
   .primary-btn {
     width: 100%;
-    padding: 1rem 1.5rem;
+    padding: 0.875rem 1.5rem;
     font-size: 1rem;
   }
 
-  /* Mobile results section */
+  /* ── Results section ── */
   .results-section {
     margin-top: 1rem;
     display: flex;
@@ -886,7 +956,7 @@ main {
     top: 0;
     z-index: 5;
     background-color: var(--background-color);
-    padding-bottom: 1rem;
+    padding-bottom: 0.75rem;
     margin-bottom: 0;
   }
 
@@ -925,7 +995,7 @@ main {
     padding: 0.875rem 1rem;
   }
 
-  /* Mobile modal adjustments */
+  /* ── Modals ── */
   .modal-content {
     margin: 1rem;
     max-height: calc(100vh - 2rem);
@@ -940,30 +1010,7 @@ main {
     margin-top: 2.5rem;
   }
 
-  /* Mobile header adjustments */
-  header {
-    padding: 1rem;
-  }
-
-  .logo h1 {
-    font-size: 1.5rem;
-  }
-
-  .tagline {
-    font-size: 0.8rem;
-  }
-
-  /* Mobile image preview */
-  .image-preview-wrapper {
-    max-width: 100%;
-    margin: 0;
-  }
-
-  #room-preview {
-    max-height: 50vh;
-  }
-
-  /* Mobile options screen styles */
+  /* ── Mobile options overlay ── */
   .mobile-options-screen {
     display: none !important;
     position: fixed;
@@ -974,6 +1021,7 @@ main {
     background-color: var(--background-color);
     z-index: 15;
     overflow-y: auto;
+    overflow-x: hidden;
     transform: translateX(100%);
     transition: transform 0.3s ease;
     padding: 0;
@@ -985,6 +1033,7 @@ main {
     transform: translateX(0);
   }
 
+  /* Compact sticky header inside overlay */
   .mobile-options-header {
     display: flex;
     align-items: center;
@@ -1000,13 +1049,13 @@ main {
   .mobile-options-back-btn {
     display: flex;
     align-items: center;
-    gap: 0.5rem;
+    gap: 0.4rem;
     background: none;
     border: none;
     color: var(--text-color);
-    font-size: 1rem;
+    font-size: 0.95rem;
     cursor: pointer;
-    padding: 1rem;
+    padding: 0.75rem;
     border-radius: var(--button-border-radius);
     transition: background-color 0.2s ease;
   }
@@ -1016,51 +1065,113 @@ main {
   }
 
   .mobile-options-title {
-    font-size: 1.25rem;
+    font-size: 1.1rem;
     font-weight: 600;
     color: var(--text-color);
     margin: 0;
-    padding: 1rem;
+    padding: 0.75rem;
   }
 
   .mobile-options-content {
     padding: 0;
   }
 
-  /* Show room items and furnished options in mobile options screen */
+  /* Sections inside overlay: tight padding, left-aligned headings */
   .mobile-options-screen .room-items-selection,
-  .mobile-options-screen .furnished-options {
+  .mobile-options-screen .furnished-options,
+  .mobile-options-screen .design-style-selection {
     display: block;
     margin: 0;
-    padding: 1rem;
+    padding: 0.75rem;
+    border-bottom: 1px solid var(--border-color);
   }
 
   .mobile-options-screen .room-items-selection h3,
-  .mobile-options-screen .furnished-options h3 {
+  .mobile-options-screen .furnished-options h3,
+  .mobile-options-screen .design-style-selection h3 {
+    font-size: 0.95rem;
     text-align: left;
-    margin-bottom: 1rem;
+    margin-bottom: 0.5rem;
   }
 
+  /* Hint text smaller */
+  .mobile-options-screen .selection-hint {
+    font-size: 0.75rem;
+    margin-bottom: 0.5rem;
+  }
+
+  /* ── Style grid: 4 columns, short cards ── */
+  .mobile-options-screen .style-options-grid {
+    grid-template-columns: repeat(auto-fill, minmax(72px, 1fr));
+    gap: 6px;
+    max-width: 100%;
+  }
+
+  .mobile-options-screen .style-label {
+    height: 80px;
+    padding: 10px 6px;
+    gap: 6px;
+  }
+
+  .mobile-options-screen .style-thumbnail {
+    width: 28px;
+    height: 28px;
+  }
+
+  .mobile-options-screen .style-name {
+    font-size: 0.72rem;
+  }
+
+  /* ── Items grid: 4 columns, short cards ── */
   .mobile-options-screen .items-grid {
-    grid-template-columns: repeat(auto-fit, minmax(100px, 1fr));
-    gap: 0.75rem;
+    grid-template-columns: repeat(auto-fill, minmax(72px, 1fr));
+    gap: 6px;
     max-width: 100%;
   }
 
   .mobile-options-screen .item-label {
-    height: 80px;
-    padding: 0.75rem 0.5rem;
+    height: 72px;
+    padding: 0.5rem 0.3rem;
+    gap: 5px;
   }
 
+  .mobile-options-screen .item-icon {
+    width: 26px;
+    height: 26px;
+  }
+
+  .mobile-options-screen .item-name {
+    font-size: 0.72rem;
+  }
+
+  /* ── Furnished options: compact stacked cards ── */
   .mobile-options-screen .furnished-options-grid {
-    gap: 1rem;
+    gap: 0.5rem;
   }
 
   .mobile-options-screen .furnished-option label {
-    min-height: 100px;
-    padding: 1rem;
+    min-height: 0;
+    padding: 0.75rem;
+    gap: 10px;
   }
 
+  .mobile-options-screen .furnished-option .option-icon {
+    width: 32px;
+    height: 32px;
+    flex-shrink: 0;
+  }
+
+  .mobile-options-screen .furnished-option .option-text h4 {
+    font-size: 0.9rem;
+    margin-bottom: 2px;
+  }
+
+  .mobile-options-screen .furnished-option .option-text p {
+    font-size: 0.78rem;
+    line-height: 1.35;
+  }
+
+  /* ── Sticky generate button at bottom of overlay ── */
   .mobile-options-actions {
     position: sticky;
     bottom: 0;
@@ -1074,7 +1185,8 @@ main {
   .mobile-options-actions .primary-btn {
     flex: 1;
     max-width: none;
-    margin: 1rem;
+    margin: 0.75rem;
+    padding: 0.875rem;
   }
 }
 
@@ -1504,7 +1616,7 @@ main {
 .room-option {
   position: relative;
   flex: 1;
-  min-width: 320px;
+  min-width: min(320px, 100%);
   display: flex;
 }
 
@@ -1717,6 +1829,118 @@ main {
   }
 
   .item-name {
+    font-size: 0.8rem;
+  }
+}
+
+/* Design Style Selection */
+.design-style-selection {
+  margin: 20px 0;
+  padding: 0 20px;
+}
+
+.design-style-selection h3 {
+  margin-bottom: 8px;
+  color: #1f2937;
+  font-size: 1.2rem;
+  font-weight: 600;
+  text-align: center;
+}
+
+.style-options-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+  gap: 12px;
+  max-width: 900px;
+  margin: 0 auto;
+}
+
+.style-option {
+  position: relative;
+}
+
+.style-option input[type="radio"] {
+  position: absolute;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.style-label {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  padding: 16px 12px;
+  border: 2px solid #e5e7eb;
+  border-radius: 12px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  background: #fff;
+  height: 100px;
+  box-sizing: border-box;
+  justify-content: center;
+}
+
+.style-label:hover {
+  border-color: #d1d5db;
+  background: #f9fafb;
+  transform: translateY(-2px);
+}
+
+.style-option input[type="radio"]:checked + .style-label {
+  border-color: var(--primary-color);
+  background: rgba(99, 102, 241, 0.05);
+  box-shadow: 0 4px 12px rgba(99, 102, 241, 0.15);
+}
+
+.style-thumbnail {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  border-radius: 8px;
+  background: #f3f4f6;
+  color: #6b7280;
+  flex-shrink: 0;
+  transition: all 0.2s ease;
+}
+
+.style-option input[type="radio"]:checked + .style-label .style-thumbnail {
+  background: var(--primary-color);
+  color: white;
+}
+
+.style-name {
+  font-size: 0.875rem;
+  font-weight: 500;
+  color: #374151;
+  text-align: center;
+  line-height: 1.2;
+}
+
+.style-option input[type="radio"]:checked + .style-label .style-name {
+  color: var(--primary-color);
+  font-weight: 600;
+}
+
+@media (max-width: 480px) {
+  .style-options-grid {
+    grid-template-columns: repeat(auto-fit, minmax(100px, 1fr));
+    gap: 8px;
+  }
+
+  .style-label {
+    padding: 12px 8px;
+    height: 80px;
+  }
+
+  .style-thumbnail {
+    width: 30px;
+    height: 30px;
+  }
+
+  .style-name {
     font-size: 0.8rem;
   }
 }

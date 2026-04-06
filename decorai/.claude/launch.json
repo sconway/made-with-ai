@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "decorai",
+      "runtimeExecutable": "/Users/scottconway/.nvm/versions/node/v20.12.2/bin/npx",
+      "runtimeArgs": ["vite", "--port", "5173"],
+      "port": 5173
+    }
+  ]
+}

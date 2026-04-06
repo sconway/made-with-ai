@@ -28,6 +28,10 @@ const supabase = createClient(
 // Token configuration
 const FREE_TOKENS = parseInt(process.env.FREE_TOKENS) || 2;
 const TOKENS_PER_PURCHASE = parseInt(process.env.TOKENS_PER_PURCHASE) || 5;
+const SUBSCRIPTION_DAILY_LIMIT = parseInt(process.env.SUBSCRIPTION_DAILY_LIMIT) || 50;
+
+// In-memory daily generation tracker for subscription users: userId -> { count, date }
+const subscriptionDailyUsage = new Map();
 
 // Subscription configuration
 const SUBSCRIPTION_PRICE_ID = process.env.STRIPE_SUBSCRIPTION_PRICE_ID || '';
@@ -205,6 +209,55 @@ app.post('/api/credits/use', async (req, res) => {
   try {
     const user = await getAuthUser(req, res);
     if (!user) return;
+
+    // Check if user has an active subscription
+    const { data: subData } = await supabase
+      .from('user_subscriptions')
+      .select('is_active, current_period_end')
+      .eq('user_id', user.id)
+      .single();
+
+    const hasActiveSubscription = subData?.is_active === true &&
+      subData?.current_period_end &&
+      new Date(subData.current_period_end) > new Date();
+
+    if (hasActiveSubscription) {
+      // Enforce daily generation limit for subscription users
+      const today = new Date().toISOString().slice(0, 10);
+      const usage = subscriptionDailyUsage.get(user.id);
+      const todayCount = (usage?.date === today) ? usage.count : 0;
+
+      if (todayCount >= SUBSCRIPTION_DAILY_LIMIT) {
+        return res.status(429).json({
+          error: 'Daily generation limit reached',
+          limit: SUBSCRIPTION_DAILY_LIMIT,
+          resets: 'tomorrow'
+        });
+      }
+
+      subscriptionDailyUsage.set(user.id, { count: todayCount + 1, date: today });
+
+      // Increment total_generations for analytics without touching credits
+      const { data: creditsData } = await supabase
+        .from('user_credits')
+        .select('total_generations')
+        .eq('user_id', user.id)
+        .single();
+
+      if (creditsData) {
+        await supabase
+          .from('user_credits')
+          .update({ total_generations: creditsData.total_generations + 1 })
+          .eq('user_id', user.id);
+      }
+
+      return res.json({
+        success: true,
+        subscription: true,
+        dailyUsage: todayCount + 1,
+        dailyLimit: SUBSCRIPTION_DAILY_LIMIT
+      });
+    }
 
     const { data: credits, error: creditsError } = await supabase
       .from('user_credits')
