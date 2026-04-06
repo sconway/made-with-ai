@@ -1,6 +1,9 @@
 # Render Blueprint for DecorAI
 # In Render dashboard: set Root Directory to "decorai" for this service
 # so npm install runs here and installs @supabase/supabase-js etc.
+#
+# Variables marked sync: false must be set manually in the Render dashboard
+# (Environment > Environment Variables) — they are secrets and not stored here.
 services:
   - type: web
     name: decorai
@@ -10,3 +13,45 @@ services:
     envVars:
       - key: NODE_ENV
         value: production
+
+      # Replicate (image generation)
+      - key: REPLICATE_API_KEY
+        sync: false
+
+      # OpenAI (optional features)
+      - key: OPENAI_API_KEY
+        sync: false
+
+      # Supabase
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_ANON_KEY
+        sync: false
+      - key: SUPABASE_SERVICE_ROLE_KEY
+        sync: false
+
+      # Stripe
+      - key: STRIPE_SECRET_KEY
+        sync: false
+      - key: STRIPE_PUBLISHABLE_KEY
+        sync: false
+      - key: STRIPE_WEBHOOK_SECRET
+        sync: false
+      - key: STRIPE_PRICE_ID
+        sync: false
+      - key: STRIPE_SUBSCRIPTION_PRICE_ID
+        sync: false
+
+      # App configuration
+      - key: APP_URL
+        sync: false
+      - key: ALLOWED_ORIGIN
+        sync: false
+      - key: FREE_TOKENS
+        value: "2"
+      - key: TOKENS_PER_PURCHASE
+        value: "5"
+      - key: PRICE_AMOUNT
+        value: "199"
+      - key: SUBSCRIPTION_DAILY_LIMIT
+        value: "50"
