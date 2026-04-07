@@ -806,10 +806,8 @@ main {
 /* Mobile styles (768px and below) */
 @media (max-width: 768px) {
   /* ── Prevent horizontal overflow across the board ── */
-  body {
-    overflow-x: hidden;
-  }
-
+  /* NOTE: overflow-x must NOT be set on body — doing so disables vertical
+     scrolling on iOS Safari. Containment is handled by .app-container. */
   .app-container {
     max-width: 100%;
     margin: 0;
@@ -948,7 +946,6 @@ main {
     margin-top: 1rem;
     display: flex;
     flex-direction: column;
-    overflow: hidden;
   }
 
   .results-header {
@@ -1191,13 +1188,19 @@ main {
 }
 
 /* Tablet and up styles */
-@media (min-width: 640px) {
+@media (min-width: 768px) {
   .app-container {
-    max-width: 640px;
+    max-width: 768px;
   }
 
   main {
     padding: 2rem;
+  }
+
+  .logo {
+    flex-direction: row;
+    align-items: baseline;
+    gap: 0.5rem;
   }
 
   .options-actions,
@@ -1205,16 +1208,6 @@ main {
     justify-content: flex-end;
   }
 
-  /* Make header and footer full width on desktop */
-  header,
-  footer {
-    width: 100vw;
-    margin-left: calc(-50vw + 50%);
-    margin-right: calc(-50vw + 50%);
-  }
-}
-
-@media (min-width: 769px) {
   .results-actions {
     flex-direction: row;
     justify-content: center;
@@ -1223,18 +1216,6 @@ main {
   .results-actions .primary-btn,
   .results-actions .secondary-btn {
     width: auto;
-  }
-}
-
-@media (min-width: 768px) {
-  .app-container {
-    max-width: 768px;
-  }
-
-  .logo {
-    flex-direction: row;
-    align-items: baseline;
-    gap: 0.5rem;
   }
 
   .design-carousel {
@@ -1699,7 +1680,7 @@ main {
 
   .room-option {
     flex: 1;
-    min-width: 320px;
+    min-width: 0;
   }
 }
 
