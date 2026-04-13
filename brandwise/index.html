@@ -98,6 +98,11 @@
                             ></textarea>
                         </div>
 
+                        <div class="form-group checkbox-field">
+                            <input type="checkbox" id="logo-include-text" name="logo-include-text">
+                            <label for="logo-include-text">Include the brand name as text in the logo (wordmark or icon + type). Leave unchecked for a symbol-only mark with no lettering.</label>
+                        </div>
+
                         <button type="submit" id="generate-btn" class="primary-btn">
                             <span>Generate Brand Identity</span>
                             <i data-feather="zap"></i>
@@ -144,6 +149,21 @@
                                         <span>Regenerate</span>
                                     </button>
                                 </div>
+                                <div class="logo-option-row">
+                                    <input type="checkbox" id="logo-include-text-results" name="logo-include-text-results">
+                                    <label for="logo-include-text-results">Include brand name in logo</label>
+                                </div>
+                                <div class="form-group logo-feedback-group">
+                                    <label for="logo-regenerate-feedback">Changes for next logo (optional)</label>
+                                    <textarea
+                                        id="logo-regenerate-feedback"
+                                        name="logo-regenerate-feedback"
+                                        rows="3"
+                                        maxlength="2000"
+                                        placeholder="e.g., Simpler icon, more geometric, thicker strokes, no circle around the mark, swap primary and accent colors…"
+                                    ></textarea>
+                                    <p class="logo-feedback-hint">When you click Regenerate, these notes are sent with your brand context so the new logo reflects your feedback. The image above is replaced by the new result.</p>
+                                </div>
                             </div>
                         </div>
 
@@ -178,10 +198,6 @@
                 </div>
             </section>
         </main>
-
-        <footer>
-            <p>Created with AI • <a href="../index.html">Back to Projects</a></p>
-        </footer>
     </div>
 
     <!-- Auth Modal -->

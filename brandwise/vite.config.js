@@ -12,6 +12,10 @@ export default defineConfig({
         target: 'http://localhost:3002',
         changeOrigin: true
       },
+      '/replicate': {
+        target: 'http://localhost:3002',
+        changeOrigin: true
+      },
       '/api': {
         target: 'http://localhost:3002',
         changeOrigin: true

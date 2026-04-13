@@ -117,18 +117,6 @@ main {
   width: 100%;
 }
 
-footer {
-  padding: 1.5rem 2rem;
-  text-align: center;
-  color: var(--text-light);
-  border-top: 1px solid var(--border-color);
-  margin-top: auto;
-}
-
-footer a {
-  color: var(--primary-color);
-}
-
 /* Input Section */
 .input-section {
   width: 100%;
@@ -231,6 +219,64 @@ footer a {
   color: #555;
 }
 
+.form-group.checkbox-field {
+  flex-direction: row;
+  align-items: flex-start;
+  gap: 0.75rem;
+}
+
+.form-group.checkbox-field input[type="checkbox"] {
+  width: auto;
+  margin-top: 4px;
+  flex-shrink: 0;
+  cursor: pointer;
+}
+
+.form-group.checkbox-field label {
+  font-weight: 400;
+  line-height: 1.45;
+  cursor: pointer;
+}
+
+.logo-option-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.5rem;
+  margin-top: 1rem;
+  font-size: 14px;
+  color: var(--text-color);
+}
+
+.logo-option-row input[type="checkbox"] {
+  margin-top: 3px;
+  flex-shrink: 0;
+  cursor: pointer;
+}
+
+.logo-option-row label {
+  cursor: pointer;
+  font-weight: 400;
+  line-height: 1.4;
+}
+
+.logo-card .logo-feedback-group {
+  margin-top: 1.25rem;
+  width: 100%;
+  max-width: 520px;
+}
+
+.logo-card .logo-feedback-group textarea {
+  min-height: 72px;
+  resize: vertical;
+}
+
+.logo-feedback-hint {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--text-light, #888);
+}
+
 /* Buttons */
 .primary-btn {
   background: var(--primary-color);
@@ -301,6 +347,10 @@ footer a {
 .action-btn:disabled {
   opacity: 0.6;
   cursor: not-allowed;
+}
+
+.action-btn svg.spin {
+  animation: spin 1s linear infinite;
 }
 
 /* Results Section */

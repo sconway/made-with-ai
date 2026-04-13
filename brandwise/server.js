@@ -29,6 +29,9 @@ const supabase = createClient(
 const FREE_CREDITS = parseInt(process.env.FREE_CREDITS) || 2;
 const CREDITS_PER_PURCHASE = parseInt(process.env.CREDITS_PER_PURCHASE) || 5;
 
+/** Replicate: native SVG logos (palette & mood board still use OpenAI DALL-E) */
+const REPLICATE_LOGO_MODEL_PATH = 'recraft-ai/recraft-v4-svg';
+
 // CORS configuration
 const corsOptions = {
   origin: process.env.NODE_ENV === 'production' 
@@ -335,6 +338,87 @@ app.post('/openai/images/generations', async (req, res) => {
   }
 });
 
+// Replicate logo generation (Recraft V4 SVG — native vector output)
+app.post('/replicate/logo', async (req, res) => {
+  try {
+    const token = process.env.REPLICATE_API_TOKEN;
+    if (!token) {
+      console.error('REPLICATE_API_TOKEN not configured on server');
+      return res.status(500).json({ error: 'Logo generation is not configured (REPLICATE_API_TOKEN)' });
+    }
+
+    const { prompt, aspect_ratio = '1:1' } = req.body || {};
+    if (!prompt || typeof prompt !== 'string') {
+      return res.status(400).json({ error: 'prompt is required' });
+    }
+
+    const allowedRatios = new Set(['1:1', '4:3', '3:2', '16:9', '9:16', '3:4', '2:3']);
+    const ratio = typeof aspect_ratio === 'string' && allowedRatios.has(aspect_ratio) ? aspect_ratio : '1:1';
+
+    const input = {
+      prompt: prompt.trim(),
+      aspect_ratio: ratio,
+    };
+
+    console.log('Replicate Recraft V4 SVG: creating prediction…');
+
+    const predResponse = await fetch(
+      `https://api.replicate.com/v1/models/${REPLICATE_LOGO_MODEL_PATH}/predictions`,
+      {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${token}`,
+          'Content-Type': 'application/json',
+          Prefer: 'wait',
+        },
+        body: JSON.stringify({ input }),
+      }
+    );
+
+    const prediction = await predResponse.json().catch(() => ({}));
+
+    if (!predResponse.ok) {
+      const detail = prediction.detail;
+      const msg =
+        typeof detail === 'string'
+          ? detail
+          : Array.isArray(detail)
+            ? detail.map((d) => d.msg || d).join('; ')
+            : prediction.error || JSON.stringify(prediction);
+      console.error('Replicate API error:', predResponse.status, msg);
+      return res.status(predResponse.status >= 400 ? predResponse.status : 502).json({
+        error: typeof msg === 'string' ? msg : 'Replicate prediction failed',
+      });
+    }
+
+    if (prediction.status === 'failed' || prediction.status === 'canceled') {
+      console.error('Replicate prediction failed:', prediction.error);
+      return res.status(502).json({
+        error: prediction.error || 'Logo generation failed',
+      });
+    }
+
+    const out = prediction.output;
+    let fileUrl = null;
+    if (Array.isArray(out) && out.length > 0) {
+      fileUrl = typeof out[0] === 'string' ? out[0] : out[0]?.url || null;
+    } else if (typeof out === 'string') {
+      fileUrl = out;
+    }
+
+    if (!fileUrl) {
+      console.error('Replicate: no output URL', prediction);
+      return res.status(502).json({ error: 'No file URL returned from logo model' });
+    }
+
+    console.log('Replicate Recraft V4 SVG: success');
+    res.json({ url: fileUrl, format: 'svg' });
+  } catch (error) {
+    console.error('Error in /replicate/logo:', error);
+    res.status(500).json({ error: 'Failed to generate logo' });
+  }
+});
+
 // Image proxy endpoint to bypass CORS for OpenAI images
 app.get('/proxy-image', async (req, res) => {
   try {
@@ -343,9 +427,18 @@ app.get('/proxy-image', async (req, res) => {
       return res.status(400).json({ error: 'Image URL is required' });
     }
 
-    // Only allow proxying OpenAI image URLs for security
-    if (!imageUrl.startsWith('https://oaidalleapiprodscus.blob.core.windows.net/')) {
-      return res.status(403).json({ error: 'Only OpenAI image URLs are allowed' });
+    let allowed = false;
+    try {
+      const u = new URL(imageUrl);
+      if (u.protocol === 'https:') {
+        if (imageUrl.startsWith('https://oaidalleapiprodscus.blob.core.windows.net/')) allowed = true;
+        else if (u.hostname === 'replicate.delivery' || u.hostname.endsWith('.replicate.delivery')) allowed = true;
+      }
+    } catch {
+      allowed = false;
+    }
+    if (!allowed) {
+      return res.status(403).json({ error: 'URL not allowed for proxy' });
     }
 
     const response = await fetch(imageUrl);

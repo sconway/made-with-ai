@@ -11,6 +11,17 @@ const PROXY_SERVER_URL = window.location.hostname === 'localhost'
     ? 'http://localhost:3002'  // Local development
     : '';  // Production - use relative URL (same origin)
 const OPENAI_API_BASE = `${PROXY_SERVER_URL}/openai`;
+const REPLICATE_API_BASE = `${PROXY_SERVER_URL}/replicate`;
+
+/** OpenAI image URLs block canvas without CORS; load via our proxy (same-origin in prod, CORS-enabled in dev). */
+function proxiedImageUrlForCanvas(remoteUrl) {
+    if (!remoteUrl || typeof remoteUrl !== 'string') return remoteUrl;
+    if (remoteUrl.startsWith('https://oaidalleapiprodscus.blob.core.windows.net/')) {
+        const base = PROXY_SERVER_URL || '';
+        return `${base}/proxy-image?url=${encodeURIComponent(remoteUrl)}`;
+    }
+    return remoteUrl;
+}
 
 // Supabase client (initialized after fetching config)
 let supabase = null;
@@ -26,6 +37,9 @@ const brandForm = document.getElementById('brand-form');
 const brandNameInput = document.getElementById('brand-name');
 const brandDescriptionInput = document.getElementById('brand-description');
 const brandUseInput = document.getElementById('brand-use');
+const logoIncludeTextInput = document.getElementById('logo-include-text');
+const logoIncludeTextResultsInput = document.getElementById('logo-include-text-results');
+const logoRegenerateFeedbackInput = document.getElementById('logo-regenerate-feedback');
 const generateBtn = document.getElementById('generate-btn');
 const inputSection = document.getElementById('input-section');
 const resultsSection = document.getElementById('results-section');
@@ -108,8 +122,12 @@ const checkoutBtn = document.getElementById('checkout-btn');
 let currentBrandName = '';
 let currentBrandDescription = '';
 let currentBrandUse = '';
+/** When false, logo prompt forbids lettering (symbol / abstract mark only). */
+let currentLogoIncludeText = false;
 let currentLogoUrl = '';
 let currentLogoBlob = null; // Store the logo as a blob for downloads
+/** 'svg' from Recraft V4 SVG (original download); resized exports are still PNG from canvas */
+let currentLogoFormat = 'png';
 let currentColors = [];
 let currentMoodBoardUrls = [];
 let editingColorIndex = -1; // Track which color is being edited
@@ -217,7 +235,21 @@ async function fetchUserCredits() {
     }
 }
 
-// Use a credit (called before generation)
+// Refresh balance and ensure the user can start a paid generation (does not deduct).
+async function ensureCreditsBeforeGeneration() {
+    if (!currentUser || !currentSession) {
+        showAuthModal('login');
+        return false;
+    }
+    await fetchUserCredits();
+    if (userCredits <= 0) {
+        showBuyCreditsModal();
+        return false;
+    }
+    return true;
+}
+
+// Deduct one credit on the server (call only after a generation completes successfully).
 async function useCredit() {
     try {
         console.log('useCredit: Starting, currentUser:', !!currentUser, 'currentSession:', !!currentSession, 'userCredits:', userCredits);
@@ -265,6 +297,30 @@ async function useCredit() {
         console.error('useCredit: Caught error:', error);
         return false;
     }
+}
+
+const REGENERATE_BTN_IDLE_HTML = {
+    logo: '<i data-feather="refresh-cw"></i><span>Regenerate</span>',
+    colors: '<i data-feather="refresh-cw"></i><span>Regenerate Colors</span>',
+    moodboard: '<i data-feather="refresh-cw"></i><span>Regenerate Mood Board</span>',
+};
+
+function setRegenerateButtonLoading(btn, isLoading, idleInnerHtml) {
+    if (!btn) return;
+    if (isLoading) {
+        btn.disabled = true;
+        btn.innerHTML = '<i data-feather="loader" class="spin"></i><span>Regenerating...</span>';
+    } else {
+        btn.disabled = false;
+        btn.innerHTML = idleInnerHtml;
+    }
+    if (typeof feather !== 'undefined') feather.replace();
+}
+
+function setLogoIncludeTextPreference(checked) {
+    currentLogoIncludeText = !!checked;
+    if (logoIncludeTextInput) logoIncludeTextInput.checked = currentLogoIncludeText;
+    if (logoIncludeTextResultsInput) logoIncludeTextResultsInput.checked = currentLogoIncludeText;
 }
 
 // Update credits display
@@ -552,6 +608,16 @@ document.addEventListener('DOMContentLoaded', async () => {
     // Event listeners
     brandForm.addEventListener('submit', handleFormSubmit);
     backBtn.addEventListener('click', goBackToInput);
+    if (logoIncludeTextInput) {
+        logoIncludeTextInput.addEventListener('change', () => {
+            setLogoIncludeTextPreference(logoIncludeTextInput.checked);
+        });
+    }
+    if (logoIncludeTextResultsInput) {
+        logoIncludeTextResultsInput.addEventListener('change', () => {
+            setLogoIncludeTextPreference(logoIncludeTextResultsInput.checked);
+        });
+    }
     downloadLogoBtn.addEventListener('click', showDownloadModal);
     regenerateLogoBtn.addEventListener('click', () => handleRegenerate('logo'));
     regenerateColorsBtn.addEventListener('click', () => handleRegenerate('colors'));
@@ -654,32 +720,63 @@ document.addEventListener('DOMContentLoaded', async () => {
 // Form submission
 // Handle regeneration with credit check
 async function handleRegenerate(type) {
-    // Check for credits before regenerating
-    const hasCredit = await useCredit();
-    if (!hasCredit) return;
-    
     if (type === 'logo') {
-        await generateLogo(true);
-    } else if (type === 'colors') {
-        // Show loading state
-        resultsDisplay.classList.add('hidden');
-        loadingState.classList.remove('hidden');
-        
+        setRegenerateButtonLoading(regenerateLogoBtn, true, REGENERATE_BTN_IDLE_HTML.logo);
         try {
-            await generateColorPalette(true);
-            await generateLogo(true);
-            await generateMoodBoard(true);
-            
-            loadingState.classList.add('hidden');
-            resultsDisplay.classList.remove('hidden');
+            const canStart = await ensureCreditsBeforeGeneration();
+            if (!canStart) return;
+            await generateLogo(true, true);
+            const deducted = await useCredit();
+            if (!deducted) {
+                showToast('Logo was generated but your credits could not be updated. Please refresh the page.', 'error');
+            }
+        } catch {
+            /* generateLogo already alerted */
+        } finally {
+            setRegenerateButtonLoading(regenerateLogoBtn, false, REGENERATE_BTN_IDLE_HTML.logo);
+        }
+    } else if (type === 'colors') {
+        setRegenerateButtonLoading(regenerateColorsBtn, true, REGENERATE_BTN_IDLE_HTML.colors);
+        setRegenerateButtonLoading(regenerateLogoBtn, true, REGENERATE_BTN_IDLE_HTML.logo);
+        setRegenerateButtonLoading(regenerateMoodBoardBtn, true, REGENERATE_BTN_IDLE_HTML.moodboard);
+        try {
+            const canStart = await ensureCreditsBeforeGeneration();
+            if (!canStart) return;
+
+            resultsDisplay.classList.add('hidden');
+            loadingState.classList.remove('hidden');
+
+            await generateColorPalette(true, false, true);
+            await generateLogo(true, true);
+            await generateMoodBoard(true, true);
+            const deducted = await useCredit();
+            if (!deducted) {
+                showToast('Brand identity was regenerated but your credits could not be updated. Please refresh the page.', 'error');
+            }
         } catch (error) {
             console.error('Error regenerating brand identity:', error);
-            alert('Error regenerating brand identity. Please try again.');
+        } finally {
             loadingState.classList.add('hidden');
             resultsDisplay.classList.remove('hidden');
+            setRegenerateButtonLoading(regenerateColorsBtn, false, REGENERATE_BTN_IDLE_HTML.colors);
+            setRegenerateButtonLoading(regenerateLogoBtn, false, REGENERATE_BTN_IDLE_HTML.logo);
+            setRegenerateButtonLoading(regenerateMoodBoardBtn, false, REGENERATE_BTN_IDLE_HTML.moodboard);
         }
     } else if (type === 'moodboard') {
-        await generateMoodBoard(true);
+        setRegenerateButtonLoading(regenerateMoodBoardBtn, true, REGENERATE_BTN_IDLE_HTML.moodboard);
+        try {
+            const canStart = await ensureCreditsBeforeGeneration();
+            if (!canStart) return;
+            await generateMoodBoard(true, true);
+            const deducted = await useCredit();
+            if (!deducted) {
+                showToast('Mood board was generated but your credits could not be updated. Please refresh the page.', 'error');
+            }
+        } catch {
+            /* generateMoodBoard already alerted */
+        } finally {
+            setRegenerateButtonLoading(regenerateMoodBoardBtn, false, REGENERATE_BTN_IDLE_HTML.moodboard);
+        }
     }
 }
 
@@ -705,11 +802,12 @@ async function handleFormSubmit(e) {
     }
     
     console.log('handleFormSubmit: User authenticated, credits:', userCredits);
-    
-    // Use a credit for the initial generation
-    const hasCredit = await useCredit();
-    console.log('handleFormSubmit: useCredit result:', hasCredit);
-    if (!hasCredit) return;
+
+    const canStart = await ensureCreditsBeforeGeneration();
+    console.log('handleFormSubmit: ensureCreditsBeforeGeneration result:', canStart);
+    if (!canStart) return;
+
+    setLogoIncludeTextPreference(logoIncludeTextInput ? logoIncludeTextInput.checked : false);
 
     currentBrandName = brandName;
     currentBrandDescription = description;
@@ -727,26 +825,31 @@ async function handleFormSubmit(e) {
 
     try {
         // Generate color palette first, then use those colors for logo and mood board
-        await generateColorPalette();
-        
+        await generateColorPalette(false, false);
+
         // Generate logo using the color palette (must happen after colors are generated)
         await generateLogo();
-        
+
         // Generate mood board using the color palette
         await generateMoodBoard();
 
         // Show results
         loadingState.classList.add('hidden');
         resultsDisplay.classList.remove('hidden');
+
+        const deducted = await useCredit();
+        if (!deducted) {
+            showToast('Brand identity was generated but your credits could not be updated. Please refresh the page.', 'error');
+        }
     } catch (error) {
         console.error('Error generating brand identity:', error);
-        alert('Error generating brand identity. Please try again.');
         loadingState.classList.add('hidden');
     }
 }
 
 // Generate Logo
-async function generateLogo(regenerate = false) {
+/** @param {boolean} holdRegenerateButtonState If true, do not re-enable the button in `finally` (caller handles it, e.g. after useCredit). */
+async function generateLogo(regenerate = false, holdRegenerateButtonState = false) {
     if (!currentBrandName || !currentBrandDescription || !currentBrandUse) {
         alert('Please fill in all brand information first');
         return;
@@ -761,35 +864,73 @@ async function generateLogo(regenerate = false) {
     // Show loading state
     if (regenerate) {
         regenerateLogoBtn.disabled = true;
-        regenerateLogoBtn.innerHTML = '<i data-feather="loader"></i><span>Regenerating...</span>';
+        regenerateLogoBtn.innerHTML = '<i data-feather="loader" class="spin"></i><span>Regenerating...</span>';
         if (typeof feather !== 'undefined') feather.replace();
     }
 
     try {
-        // Build explicit color instructions - ALWAYS use current colors from palette
-        const colorHexes = currentColors.map(c => c.hex).join(', ');
-        
-        // Build color description from names instead of hex codes to avoid DALL-E showing swatches
+        const regenerationNotes =
+            regenerate && logoRegenerateFeedbackInput
+                ? logoRegenerateFeedbackInput.value.trim().slice(0, 2000)
+                : '';
+        const revisionBlock = regenerationNotes
+            ? `
+
+USER REVISION NOTES — Apply these changes in the new logo (this generation replaces the previous one). Honor the notes below while keeping the brand identity, palette rules, and “NEVER” constraints unless the user explicitly asks for something compatible (e.g., “bolder” or “more rounded”):
+${regenerationNotes}`
+            : '';
+
+        const paletteHexes = currentColors
+            .map((c) => (c.hex || '').trim().toUpperCase())
+            .filter((h) => /^#[0-9A-F]{6}$/i.test(h));
+        const uniqueHexes = [...new Set(paletteHexes)];
+        const paletteHexList = uniqueHexes.join(', ');
         const colorNames = currentColors.map(c => c.name).filter(n => n && n !== 'Unknown' && n !== 'Color').join(', ');
-        const colorDescription = colorNames ? `using ${colorNames} tones` : '';
-        
-        // Simplified prompt - explicitly forbid any color palette display
-        const prompt = `Create a single professional logo mark for "${currentBrandName}". Brand: ${currentBrandDescription}. 
+        const primaryHex = uniqueHexes[0] || '';
+        const secondaryHex = uniqueHexes[1] || '';
 
-CRITICAL REQUIREMENTS:
-- Output ONLY the logo symbol/icon itself
-- Plain white or transparent background
-- NO color palette, NO color swatches, NO hex codes, NO text labels
-- NO additional design elements below or around the logo
-- Clean, modern, minimalist corporate logo ${colorDescription}
-- Just the logo, nothing else`;
+        const paletteRules = uniqueHexes.length
+            ? `BRAND PALETTE — USE ONLY THESE EXACT HEX COLORS FOR FILLS (no other hues):
+Approved hex codes: ${paletteHexList}.
+${colorNames ? `Named reference: ${colorNames}. ` : ''}Use 1–2 colors from the list above for the entire mark. Prefer primary ${primaryHex}${secondaryHex ? ` with optional accent ${secondaryHex}` : ''} for contrast.
+Every colored shape must use one of the approved hex codes exactly (solid flat fills, no gradients).`
+            : 'Use 1–2 flat solid colors appropriate to the brand.';
 
-        const logoUrl = await generateImage(prompt, 'logo');
+        const textRules = currentLogoIncludeText
+            ? `VECTOR LOGO — MARK WITH TYPOGRAPHY (OPTIONAL COMPOSITION):
+- Either a clean wordmark spelling "${currentBrandName}" exactly, OR an icon with the brand name "${currentBrandName}" beside or below it
+- Typography: simple, legible, minimal letterforms—no slogans, no extra words, no filler text
+- One cohesive mark; bold shapes, few paths, easy to scale`
+            : `VECTOR LOGO — SYMBOL ONLY (NO TEXT):
+- A single abstract icon, pictorial symbol, or geometric mark only—no letters or words
+- Do NOT include any typography, logotype, wordmark, initials, or the brand name "${currentBrandName}" as readable text
+- No alphabet characters from any language in the artwork (decorative non-letter shapes only)`;
+
+        const prompt = `Minimal vector logo for "${currentBrandName}". Brand: ${currentBrandDescription}.
+
+${textRules}
+
+${paletteRules}
+
+- No 3D, textures, photorealism, or fine illustrative clutter (flat vector shapes only)
+
+NEVER:
+- Color palette, swatches, strips of squares, hex labels printed as text, or any “brand kit” layout
+- Decorative frames, mockups, or extra graphics around the mark
+
+BACKGROUND: plain white or transparent.${revisionBlock}`;
+
+        const { url: logoUrl, format: logoFormat } = await generateLogoImage(prompt);
         currentLogoUrl = logoUrl;
+        currentLogoFormat = logoFormat === 'svg' ? 'svg' : 'png';
         
         // Store the logo as a blob for downloads (avoids CORS issues)
         currentLogoBlob = await fetchImageAsBlob(logoUrl);
         
+        if (regenerate && regenerationNotes && logoRegenerateFeedbackInput) {
+            logoRegenerateFeedbackInput.value = '';
+        }
+
         generatedLogo.src = logoUrl;
         generatedLogo.style.cursor = 'pointer';
         generatedLogo.title = 'Click to view larger';
@@ -801,18 +942,18 @@ CRITICAL REQUIREMENTS:
     } catch (error) {
         console.error('Error generating logo:', error);
         alert('Error generating logo. Please try again.');
+        throw error;
     } finally {
-        // Reset button state
-        if (regenerate) {
+        if (regenerate && !holdRegenerateButtonState) {
             regenerateLogoBtn.disabled = false;
-            regenerateLogoBtn.innerHTML = '<i data-feather="refresh-cw"></i><span>Regenerate</span>';
+            regenerateLogoBtn.innerHTML = REGENERATE_BTN_IDLE_HTML.logo;
             if (typeof feather !== 'undefined') feather.replace();
         }
     }
 }
 
 // Generate Color Palette
-async function generateColorPalette(regenerate = false) {
+async function generateColorPalette(regenerate = false, allowFallback = true, holdRegenerateButtonState = false) {
     if (!currentBrandName || !currentBrandDescription || !currentBrandUse) {
         alert('Please fill in all brand information first');
         return;
@@ -822,7 +963,7 @@ async function generateColorPalette(regenerate = false) {
     // Note: The main loading state is now handled by the caller for regenerate
     if (regenerate) {
         regenerateColorsBtn.disabled = true;
-        regenerateColorsBtn.innerHTML = '<i data-feather="loader"></i><span>Regenerating...</span>';
+        regenerateColorsBtn.innerHTML = '<i data-feather="loader" class="spin"></i><span>Regenerating...</span>';
         if (typeof feather !== 'undefined') feather.replace();
     }
 
@@ -846,23 +987,27 @@ async function generateColorPalette(regenerate = false) {
         displayColorPalette(colors);
     } catch (error) {
         console.error('Error generating color palette:', error);
-        // Fallback to generated colors
-        const fallbackColors = generateFallbackColors();
-        currentColors = fallbackColors;
-        displayColorPalette(fallbackColors);
-        alert('Error generating color palette. Using fallback colors.');
+        if (allowFallback) {
+            const fallbackColors = generateFallbackColors();
+            currentColors = fallbackColors;
+            displayColorPalette(fallbackColors);
+            alert('Error generating color palette. Using fallback colors.');
+        } else {
+            alert('Error generating color palette. Please try again.');
+            throw error;
+        }
     } finally {
-        // Reset button state only if regenerating
-        if (regenerate) {
+        if (regenerate && !holdRegenerateButtonState) {
             regenerateColorsBtn.disabled = false;
-            regenerateColorsBtn.innerHTML = '<i data-feather="refresh-cw"></i><span>Regenerate Colors</span>';
+            regenerateColorsBtn.innerHTML = REGENERATE_BTN_IDLE_HTML.colors;
             if (typeof feather !== 'undefined') feather.replace();
         }
     }
 }
 
 // Generate Mood Board
-async function generateMoodBoard(regenerate = false) {
+/** @param {boolean} holdRegenerateButtonState If true, skip re-enabling the regenerate button in `finally` (caller resets). */
+async function generateMoodBoard(regenerate = false, holdRegenerateButtonState = false) {
     if (!currentBrandName || !currentBrandDescription || !currentBrandUse) {
         alert('Please fill in all brand information first');
         return;
@@ -871,7 +1016,7 @@ async function generateMoodBoard(regenerate = false) {
     // Show loading state only if regenerating
     if (regenerate) {
         regenerateMoodBoardBtn.disabled = true;
-        regenerateMoodBoardBtn.innerHTML = '<i data-feather="loader"></i><span>Regenerating...</span>';
+        regenerateMoodBoardBtn.innerHTML = '<i data-feather="loader" class="spin"></i><span>Regenerating...</span>';
         if (typeof feather !== 'undefined') feather.replace();
     }
 
@@ -924,14 +1069,38 @@ async function generateMoodBoard(regenerate = false) {
     } catch (error) {
         console.error('Error generating mood board:', error);
         alert('Error generating mood board. Please try again.');
+        throw error;
     } finally {
-        // Reset button state only if regenerating
-        if (regenerate) {
+        if (regenerate && !holdRegenerateButtonState) {
             regenerateMoodBoardBtn.disabled = false;
-            regenerateMoodBoardBtn.innerHTML = '<i data-feather="refresh-cw"></i><span>Regenerate Mood Board</span>';
+            regenerateMoodBoardBtn.innerHTML = REGENERATE_BTN_IDLE_HTML.moodboard;
             if (typeof feather !== 'undefined') feather.replace();
         }
     }
+}
+
+/** Logo only: Replicate Recraft V4 SVG (native vector; palette & mood board still use DALL-E). */
+async function generateLogoImage(prompt) {
+    const response = await fetch(`${REPLICATE_API_BASE}/logo`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ prompt, aspect_ratio: '1:1' }),
+    });
+    if (!response.ok) {
+        let msg = 'Logo generation failed';
+        try {
+            const err = await response.json();
+            msg = typeof err.error === 'string' ? err.error : msg;
+        } catch {
+            /* ignore */
+        }
+        throw new Error(msg);
+    }
+    const data = await response.json();
+    if (!data.url) {
+        throw new Error('No file URL returned from logo model');
+    }
+    return { url: data.url, format: data.format === 'svg' ? 'svg' : 'png' };
 }
 
 // Generate image using OpenAI DALL-E 3 API
@@ -1141,7 +1310,7 @@ async function extractColorsFromImage(imageUrl) {
             resolve(generateFallbackColors());
         };
 
-        img.src = imageUrl;
+        img.src = proxiedImageUrlForCanvas(imageUrl);
     });
 }
 
@@ -1459,7 +1628,8 @@ function generateFilename(size, category) {
         : 'brandwise';
     
     if (size === 'original') {
-        return `${brandSlug}-logo-original.png`;
+        const ext = currentLogoFormat === 'svg' ? 'svg' : 'png';
+        return `${brandSlug}-logo-original.${ext}`;
     }
     
     const categoryPrefix = {
@@ -1573,6 +1743,7 @@ function goBackToInput() {
     inputSection.classList.remove('hidden');
     loadingState.classList.add('hidden');
     resultsDisplay.classList.add('hidden');
+    setLogoIncludeTextPreference(currentLogoIncludeText);
 }
 
 // Image Lightbox functions
