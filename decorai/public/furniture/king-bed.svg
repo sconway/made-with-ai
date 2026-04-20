@@ -1,4 +1,15 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 65 65" fill="none" stroke="#333" stroke-width="1">
-  <rect x="0" y="0" width="65" height="65" rx="2"/>
-  <rect x="0" y="0" width="65" height="9.75" rx="2"/>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 65 65" fill="none" stroke="#333" stroke-width="1" stroke-linejoin="round">
+  <!-- Bed frame -->
+  <rect x="0" y="0" width="65" height="65" rx="1.5"/>
+  <!-- Headboard -->
+  <rect x="0" y="0" width="65" height="5" rx="1"/>
+  <!-- Mattress inset -->
+  <rect x="2.5" y="7" width="60" height="55" rx="1.5" stroke="#666" stroke-width="0.7"/>
+  <!-- Pillows -->
+  <rect x="5" y="9" width="26" height="9" rx="1.5" stroke="#666" stroke-width="0.7"/>
+  <rect x="34" y="9" width="26" height="9" rx="1.5" stroke="#666" stroke-width="0.7"/>
+  <!-- Duvet fold line -->
+  <line x1="2.5" y1="45" x2="62.5" y2="45" stroke="#666" stroke-width="0.7"/>
+  <!-- Corner fold indicator -->
+  <path d="M45 45 L62.5 62 M55 45 L62.5 52" stroke="#999" stroke-width="0.5"/>
 </svg>

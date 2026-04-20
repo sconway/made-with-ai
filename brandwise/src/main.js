@@ -11,7 +11,6 @@ const PROXY_SERVER_URL = window.location.hostname === 'localhost'
     ? 'http://localhost:3002'  // Local development
     : '';  // Production - use relative URL (same origin)
 const OPENAI_API_BASE = `${PROXY_SERVER_URL}/openai`;
-const REPLICATE_API_BASE = `${PROXY_SERVER_URL}/replicate`;
 
 /** OpenAI image URLs block canvas without CORS; load via our proxy (same-origin in prod, CORS-enabled in dev). */
 function proxiedImageUrlForCanvas(remoteUrl) {
@@ -126,7 +125,7 @@ let currentBrandUse = '';
 let currentLogoIncludeText = false;
 let currentLogoUrl = '';
 let currentLogoBlob = null; // Store the logo as a blob for downloads
-/** 'svg' from Recraft V4 SVG (original download); resized exports are still PNG from canvas */
+/** Original download: `svg` if vector source, else `png` (DALL·E logos are PNG). Resized exports stay PNG from canvas. */
 let currentLogoFormat = 'png';
 let currentColors = [];
 let currentMoodBoardUrls = [];
@@ -897,28 +896,38 @@ Every colored shape must use one of the approved hex codes exactly (solid flat f
             : 'Use 1–2 flat solid colors appropriate to the brand.';
 
         const textRules = currentLogoIncludeText
-            ? `VECTOR LOGO — MARK WITH TYPOGRAPHY (OPTIONAL COMPOSITION):
-- Either a clean wordmark spelling "${currentBrandName}" exactly, OR an icon with the brand name "${currentBrandName}" beside or below it
-- Typography: simple, legible, minimal letterforms—no slogans, no extra words, no filler text
-- One cohesive mark; bold shapes, few paths, easy to scale`
-            : `VECTOR LOGO — SYMBOL ONLY (NO TEXT):
-- A single abstract icon, pictorial symbol, or geometric mark only—no letters or words
-- Do NOT include any typography, logotype, wordmark, initials, or the brand name "${currentBrandName}" as readable text
-- No alphabet characters from any language in the artwork (decorative non-letter shapes only)`;
+            ? `LOGO MARK — TYPOGRAPHY ALLOWED:
+- One clean wordmark spelling "${currentBrandName}" exactly, OR one icon with "${currentBrandName}" immediately beside or below it as a single combined mark
+- Typography: simple, legible—no slogans, taglines, or extra words beyond the brand name`
+            : `LOGO MARK — SYMBOL ONLY (NO TEXT):
+- One abstract icon, pictorial symbol, or geometric mark only
+- No letters, words, logotype, initials, or "${currentBrandName}" as readable text in the image`;
 
-        const prompt = `Minimal vector logo for "${currentBrandName}". Brand: ${currentBrandDescription}.
+        const isolationRules = `COMPOSITION — LOGO AS THE ONLY SUBJECT (CRITICAL):
+- True transparent PNG: every pixel outside the logo mark must be fully transparent (alpha 0). No white, gray, cream, paper, or colored backdrop—only the mark has opaque pixels
+- Exactly ONE mark, centered, with generous transparent margin (the mark uses roughly 35–55% of the frame—do not fill the canvas)
+- The image contains nothing except that mark—no second object, scene, props, device frame, or “presentation”
+- Flat 2D graphic only: no 3D, no photorealism, no drop shadows that read as a card or surface`;
+
+        const prompt = `Create ONE isolated brand logo for "${currentBrandName}". Brand context: ${currentBrandDescription}.
+
+${isolationRules}
 
 ${textRules}
 
 ${paletteRules}
 
-- No 3D, textures, photorealism, or fine illustrative clutter (flat vector shapes only)
+ABSOLUTELY DO NOT INCLUDE (the image fails if any appear):
+- Any solid or gradient background behind the mark (including white or “checker” fake transparency)
+- Business cards, stationery, letterhead, envelopes, documents, or paper stacks
+- Laptops, phones, tablets, screens, office items, buildings, people, hands, or photos
+- Multiple logos, logo grids, “options A/B/C”, before-and-after, or side-by-side variants
+- Brand guidelines layouts, mood boards, color swatches, hex labels, rulers, or UI mockups
+- Merchandise (mugs, shirts, bags), packaging, billboards, or environmental signage
+- Decorative frames, polaroids, device bezels, drop-shadow “floating card” effects, or picture-in-picture
+- Watermarks, “sample”, “your logo here”, or filler text (unless the only text is the approved wordmark per rules above)
 
-NEVER:
-- Color palette, swatches, strips of squares, hex labels printed as text, or any “brand kit” layout
-- Decorative frames, mockups, or extra graphics around the mark
-
-BACKGROUND: plain white or transparent.${revisionBlock}`;
+FINAL CHECK: Only the single logo mark; every non-mark pixel must be fully transparent—nothing else in the image.${revisionBlock}`;
 
         const { url: logoUrl, format: logoFormat } = await generateLogoImage(prompt);
         currentLogoUrl = logoUrl;
@@ -1079,28 +1088,39 @@ async function generateMoodBoard(regenerate = false, holdRegenerateButtonState =
     }
 }
 
-/** Logo only: Replicate Recraft V4 SVG (native vector; palette & mood board still use DALL-E). */
+/** Brand logo: GPT Image API with transparent PNG (`/openai/images/logo` on server). */
 async function generateLogoImage(prompt) {
-    const response = await fetch(`${REPLICATE_API_BASE}/logo`, {
+    let mainPrompt = prompt.trim();
+    if (mainPrompt.length > 8000) {
+        console.warn(`Logo prompt truncated from ${mainPrompt.length} to 8000 chars`);
+        mainPrompt = mainPrompt.substring(0, 8000);
+    }
+
+    const response = await fetch(`${OPENAI_API_BASE}/images/logo`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ prompt, aspect_ratio: '1:1' }),
+        body: JSON.stringify({ prompt: mainPrompt }),
     });
+
     if (!response.ok) {
         let msg = 'Logo generation failed';
         try {
             const err = await response.json();
-            msg = typeof err.error === 'string' ? err.error : msg;
+            msg =
+                typeof err.error === 'string'
+                    ? err.error
+                    : err.error?.message || err.detail || msg;
         } catch {
             /* ignore */
         }
         throw new Error(msg);
     }
+
     const data = await response.json();
     if (!data.url) {
-        throw new Error('No file URL returned from logo model');
+        throw new Error('No image returned from logo API');
     }
-    return { url: data.url, format: data.format === 'svg' ? 'svg' : 'png' };
+    return { url: data.url, format: 'png' };
 }
 
 // Generate image using OpenAI DALL-E 3 API
@@ -1556,9 +1576,15 @@ function hideDownloadModal() {
     downloadModal.classList.add('hidden');
 }
 
-// Fetch image as blob using proxy to bypass CORS
+// Fetch image as blob using proxy to bypass CORS (data URLs fetched directly)
 async function fetchImageAsBlob(url) {
     try {
+        if (url.startsWith('data:')) {
+            const response = await fetch(url);
+            if (!response.ok) throw new Error(`Failed to read data URL: ${response.status}`);
+            return await response.blob();
+        }
+
         // Use the proxy endpoint to fetch the image (same pattern as OPENAI_API_BASE)
         const proxyUrl = `${PROXY_SERVER_URL}/proxy-image?url=${encodeURIComponent(url)}`;
         console.log('Fetching image via proxy:', proxyUrl);
@@ -1597,12 +1623,13 @@ async function resizeLogoToSize(size) {
             const ctx = canvas.getContext('2d');
             canvas.width = size;
             canvas.height = size;
-            
+            ctx.clearRect(0, 0, size, size);
+
             // Enable high quality image rendering
             ctx.imageSmoothingEnabled = true;
             ctx.imageSmoothingQuality = 'high';
-            
-            // Draw image scaled to target size
+
+            // Draw image scaled to target size (preserves alpha from transparent logos)
             ctx.drawImage(img, 0, 0, size, size);
             
             // Convert to blob

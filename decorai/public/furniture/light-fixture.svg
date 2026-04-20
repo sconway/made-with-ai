@@ -1,16 +1,8 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 15 15" fill="none" stroke="#333" stroke-width="1">
-  <!-- Ceiling mount / canopy -->
-  <ellipse cx="7.5" cy="2" rx="3" ry="1.2"/>
-  <!-- Stem -->
-  <line x1="7.5" y1="2" x2="7.5" y2="6"/>
-  <!-- Fixture body (dome/drum) -->
-  <ellipse cx="7.5" cy="9" rx="4" ry="3"/>
-  <!-- Arc for dome underside -->
-  <path d="M3.5,9 Q7.5,12 11.5,9" stroke-width="0.8"/>
-  <!-- Light rays emanating -->
-  <line x1="7.5" y1="12" x2="7.5" y2="14.5" stroke="#999" stroke-width="0.6"/>
-  <line x1="4" y1="10" x2="2" y2="12" stroke="#999" stroke-width="0.5"/>
-  <line x1="11" y1="10" x2="13" y2="12" stroke="#999" stroke-width="0.5"/>
-  <line x1="3" y1="12" x2="1.5" y2="14" stroke="#999" stroke-width="0.4"/>
-  <line x1="12" y1="12" x2="13.5" y2="14" stroke="#999" stroke-width="0.4"/>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 15 15" fill="none" stroke="#333" stroke-width="1" stroke-linejoin="round">
+  <circle cx="7.5" cy="7.5" r="6"/>
+  <circle cx="7.5" cy="7.5" r="3" stroke="#666" stroke-width="0.7"/>
+  <g stroke="#666" stroke-width="0.7">
+    <line x1="3.25" y1="3.25" x2="11.75" y2="11.75"/>
+    <line x1="11.75" y1="3.25" x2="3.25" y2="11.75"/>
+  </g>
 </svg>

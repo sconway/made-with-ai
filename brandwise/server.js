@@ -29,7 +29,7 @@ const supabase = createClient(
 const FREE_CREDITS = parseInt(process.env.FREE_CREDITS) || 2;
 const CREDITS_PER_PURCHASE = parseInt(process.env.CREDITS_PER_PURCHASE) || 5;
 
-/** Replicate: native SVG logos (palette & mood board still use OpenAI DALL-E) */
+/** Optional: `/replicate/logo` for Recraft SVG experiments; the app UI uses OpenAI for logos. */
 const REPLICATE_LOGO_MODEL_PATH = 'recraft-ai/recraft-v4-svg';
 
 // CORS configuration
@@ -335,6 +335,75 @@ app.post('/openai/images/generations', async (req, res) => {
   } catch (error) {
     console.error('Error in /openai/images/generations:', error);
     res.status(500).json({ error: 'Failed to generate image' });
+  }
+});
+
+// Logo: GPT Image family only — supports true transparent PNG (DALL·E 3 does not).
+app.post('/openai/images/logo', async (req, res) => {
+  try {
+    const apiKey = process.env.OPENAI_API_KEY;
+    if (!apiKey) {
+      console.error('OPENAI_API_KEY not configured on server');
+      return res.status(500).json({ error: 'Server API key not configured' });
+    }
+
+    const { prompt } = req.body || {};
+    if (!prompt || typeof prompt !== 'string') {
+      return res.status(400).json({ error: 'prompt is required' });
+    }
+
+    const model = process.env.OPENAI_LOGO_IMAGE_MODEL || 'gpt-image-1.5';
+    const trimmed = prompt.trim().slice(0, 8000);
+
+    const response = await fetch('https://api.openai.com/v1/images/generations', {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        model,
+        prompt: trimmed,
+        n: 1,
+        size: '1024x1024',
+        quality: 'high',
+        background: 'transparent',
+        output_format: 'png',
+      }),
+    });
+
+    const data = await response.json().catch(() => ({}));
+
+    if (!response.ok) {
+      const msg =
+        data.error?.message ||
+        (typeof data.error === 'string' ? data.error : null) ||
+        response.statusText;
+      console.error('OpenAI logo (GPT Image) error:', response.status, data);
+      return res.status(response.status >= 400 ? response.status : 502).json({
+        error: `OpenAI API error (${response.status}): ${msg}`,
+      });
+    }
+
+    const item = Array.isArray(data.data) ? data.data[0] : null;
+    const b64 = item?.b64_json;
+    const url = item?.url;
+
+    if (b64) {
+      return res.json({
+        url: `data:image/png;base64,${b64}`,
+        format: 'png',
+      });
+    }
+    if (url) {
+      return res.json({ url, format: 'png' });
+    }
+
+    console.error('OpenAI logo: unexpected response', data);
+    return res.status(502).json({ error: 'No image data returned from OpenAI' });
+  } catch (error) {
+    console.error('Error in /openai/images/logo:', error);
+    res.status(500).json({ error: 'Failed to generate logo' });
   }
 });
 

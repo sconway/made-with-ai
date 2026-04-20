@@ -32,6 +32,8 @@ const FloorPlanEditor = (() => {
     let currentTool = 'select';
     let isDrawing = false;
     let drawingStartCorner = null;
+    let curvePendingFirstPick = null;
+    let wallDragSnapshot = null;
     /** First wall click on empty space: store {x,y} until second click commits both corners + wall (so undo removes the whole segment). */
     let wallDrawPendingStart = null;
     let previewLine = null;
@@ -66,9 +68,10 @@ const FloorPlanEditor = (() => {
     let snapDistance = 30; // pixels for corner snapping
     let cornerAngleSnapDistance = 25; // pixels: when moving a corner, snap to 90°/180° positions within this
     let snapRelease = 45; // pixels to break free once snapped (hysteresis)
-    let axisSnapThreshold = 14; // pixels: snap to horizontal/vertical when within this
+    let axisSnapThreshold = 25; // pixels: snap to horizontal/vertical when within this
     let angleSnapDegrees = 2.5; // degrees: snap to 90°/180° only when very close (connecting lines)
     let currentSnapTarget = null; // { x, y, type } — tracks the active magnetic snap
+    let alignmentGuides = []; // [{ corner, axis }] — extension lines shown while drawing
     let zoom = 1;
     
     /** Reference image corner resize handles (SVG px) — larger = easier to grab / touch */
@@ -267,7 +270,7 @@ const FloorPlanEditor = (() => {
                 const val = parseInt(e.target.value, 10);
                 snapDistance = val;
                 snapRelease = Math.min(60, Math.max(val + 15, 40));
-                axisSnapThreshold = Math.max(8, Math.round(val * 0.5));
+                axisSnapThreshold = Math.max(14, Math.round(val * 0.9));
                 if (snapThresholdValueEl) snapThresholdValueEl.textContent = val + 'px';
             });
         }
@@ -556,6 +559,9 @@ const FloorPlanEditor = (() => {
                 isDragging = true;
                 dragTarget = { type: 'selection-bbox', element: null };
                 dragOffset = { x: pos.x, y: pos.y };
+                if (selectedElements.some(s => s.type === 'wall')) {
+                    wallDragSnapshot = snapshotWallDragCorners(pos);
+                }
                 svg.style.cursor = 'move';
                 e.preventDefault();
                 return;
@@ -767,6 +773,7 @@ const FloorPlanEditor = (() => {
                     isDragging = true;
                     dragTarget = { type: 'wall', element: wall };
                     dragOffset = { x: pos.x, y: pos.y };
+                    wallDragSnapshot = snapshotWallDragCorners(pos);
                     return;
                 }
             }
@@ -851,12 +858,42 @@ const FloorPlanEditor = (() => {
             removeWallSnapIndicator();
             removeMagneticIndicator();
             
-        } else if (currentTool === 'room') {
+        } else if (currentTool === 'room' || currentTool === 'stairs') {
             const rawPos = getMousePos(e, true);
             isDrawing = true;
             drawingStartCorner = { x: rawPos.x, y: rawPos.y };
-            
-        } else if (currentTool === 'door' || currentTool === 'window') {
+
+        } else if (currentTool === 'curve') {
+            const rawPos = getMousePos(e, true);
+            const pick = pickWallPoint(e.target, rawPos);
+            if (!pick) return;
+
+            if (!curvePendingFirstPick) {
+                curvePendingFirstPick = pick;
+                showCurvePickMarker(pick.point, 'curve-pick-1');
+                return;
+            }
+
+            const wA = curvePendingFirstPick.wall;
+            const wB = pick.wall;
+            if (wA === wB) return;
+
+            const shared = getSharedCorner(wA, wB);
+            if (!shared) {
+                // Not adjacent — cancel and restart from the new pick
+                removeCurvePickMarkers();
+                removePreview();
+                curvePendingFirstPick = pick;
+                showCurvePickMarker(pick.point, 'curve-pick-1');
+                return;
+            }
+
+            applyFillet(wA, curvePendingFirstPick.point, wB, pick.point, shared);
+            curvePendingFirstPick = null;
+            removeCurvePickMarkers();
+            removePreview();
+
+        } else if (currentTool === 'door' || currentTool === 'window' || currentTool === 'garage') {
             const rawPos = getMousePos(e, true);
             
             if (!openingStartPoint) {
@@ -1038,9 +1075,23 @@ const FloorPlanEditor = (() => {
                 }
                 showScaleHandles();
             } else if (dragTarget.type === 'wall' || dragTarget.type === 'selection-bbox') {
-                const dx = pos.x - dragOffset.x;
-                const dy = pos.y - dragOffset.y;
-                moveSelectedElements(dx, dy);
+                if (wallDragSnapshot && snapToGrid) {
+                    const rawDx = pos.x - wallDragSnapshot.mouseStart.x;
+                    const rawDy = pos.y - wallDragSnapshot.mouseStart.y;
+                    const { adjDx, adjDy } = applyWallDragAlignmentSnap(wallDragSnapshot, rawDx, rawDy);
+                    const stepDx = adjDx - wallDragSnapshot.lastDx;
+                    const stepDy = adjDy - wallDragSnapshot.lastDy;
+                    wallDragSnapshot.lastDx = adjDx;
+                    wallDragSnapshot.lastDy = adjDy;
+                    moveSelectedElements(stepDx, stepDy);
+                    drawAlignmentGuides(pos);
+                } else {
+                    const dx = pos.x - dragOffset.x;
+                    const dy = pos.y - dragOffset.y;
+                    moveSelectedElements(dx, dy);
+                    alignmentGuides = [];
+                    removeAlignmentGuides();
+                }
                 dragOffset = { x: pos.x, y: pos.y };
                 showScaleHandles();
             }
@@ -1061,6 +1112,8 @@ const FloorPlanEditor = (() => {
                             drawingStartCorner || { x: wallDrawPendingStart.x, y: wallDrawPendingStart.y, walls: [] },
                             previewEnd
                         );
+                    } else {
+                        alignmentGuides = [];
                     }
                     highlightSnapTarget(rawPos);
                 } else {
@@ -1071,12 +1124,32 @@ const FloorPlanEditor = (() => {
                 drawWallPreview(wallPreviewStart, previewEnd);
             } else if (currentTool === 'room' && drawingStartCorner) {
                 const rawPos = getMousePos(e, true);
-                drawRoomPreview(drawingStartCorner, rawPos);
+                const snappedEnd = snapToGrid ? applyAlignmentSnap(rawPos, drawingStartCorner) : rawPos;
+                if (!snapToGrid) alignmentGuides = [];
+                drawRoomPreview(drawingStartCorner, snappedEnd);
+            } else if (currentTool === 'stairs' && drawingStartCorner) {
+                const rawPos = getMousePos(e, true);
+                const snappedEnd = snapToGrid ? applyAlignmentSnap(rawPos, drawingStartCorner) : rawPos;
+                if (!snapToGrid) alignmentGuides = [];
+                drawRoomPreview(drawingStartCorner, snappedEnd);
             }
+        }
+
+        if (currentTool === 'curve' && curvePendingFirstPick) {
+            const rawPos = getMousePos(e, true);
+            const hover = pickWallPoint(e.target, rawPos);
+            if (hover && hover.wall !== curvePendingFirstPick.wall) {
+                const shared = getSharedCorner(curvePendingFirstPick.wall, hover.wall);
+                if (shared) {
+                    drawCurvePreview(curvePendingFirstPick.point, shared, hover.point);
+                    return;
+                }
+            }
+            removePreview();
         }
         
         // Handle door/window placement preview (snapped endpoints match click behavior)
-        if ((currentTool === 'door' || currentTool === 'window') && openingStartPoint) {
+        if ((currentTool === 'door' || currentTool === 'window' || currentTool === 'garage') && openingStartPoint) {
             const rawPos = getMousePos(e, true);
             const resolvedEnd = resolveWallOpeningEndpoint(rawPos);
             
@@ -1151,8 +1224,16 @@ const FloorPlanEditor = (() => {
         
         if (currentTool === 'room' && isDrawing && drawingStartCorner) {
             const pos = getMousePos(e, true);
-            createRoomFromRect(drawingStartCorner, pos);
+            const finalEnd = snapToGrid ? applyAlignmentSnap(pos, drawingStartCorner) : pos;
+            createRoomFromRect(drawingStartCorner, finalEnd);
         }
+
+        if (currentTool === 'stairs' && isDrawing && drawingStartCorner) {
+            const pos = getMousePos(e, true);
+            const finalEnd = snapToGrid ? applyAlignmentSnap(pos, drawingStartCorner) : pos;
+            createStairFromRect(drawingStartCorner, finalEnd);
+        }
+
         
         // Finalize corner snap if we were dragging a corner (history saved on mousedown)
         if (dragTarget && dragTarget.type === 'corner') {
@@ -1172,9 +1253,15 @@ const FloorPlanEditor = (() => {
             showScaleHandles();
         }
         
+        if (wallDragSnapshot) {
+            wallDragSnapshot = null;
+            alignmentGuides = [];
+            removeAlignmentGuides();
+        }
+
         isDragging = false;
         dragTarget = null;
-        
+
         // Clean up snap and angle indicators
         removeWallSnapIndicator();
         removeAngleIndicators();
@@ -1182,11 +1269,12 @@ const FloorPlanEditor = (() => {
         currentSnapTarget = null;
         cornersLayer.querySelectorAll('.snap-target').forEach(el => el.classList.remove('snap-target'));
         
-        if (currentTool === 'room') {
+        if (currentTool === 'room' || currentTool === 'stairs') {
             isDrawing = false;
             drawingStartCorner = null;
             removePreview();
         }
+
     }
     
     function finalizeCornerSnap(corner) {
@@ -2005,6 +2093,8 @@ const FloorPlanEditor = (() => {
                 selectTool('door');
             } else if (e.key === 'l') {
                 selectTool('label');
+            } else if (e.key === 's') {
+                selectTool('stairs');
             }
         }
     }
@@ -2522,6 +2612,114 @@ const FloorPlanEditor = (() => {
         document.getElementById('wall-snap-indicator')?.remove();
     }
     
+    function snapshotWallDragCorners(mousePos) {
+        const selectedCornerIds = new Set();
+        for (const sel of selectedElements) {
+            if (sel.type === 'wall') {
+                selectedCornerIds.add(sel.element.start.id);
+                selectedCornerIds.add(sel.element.end.id);
+            }
+        }
+        const cornerPositions = new Map();
+        for (const c of corners) {
+            if (selectedCornerIds.has(c.id)) {
+                cornerPositions.set(c.id, { x: c.x, y: c.y });
+            }
+        }
+        return {
+            cornerPositions,
+            mouseStart: { x: mousePos.x, y: mousePos.y },
+            lastDx: 0,
+            lastDy: 0
+        };
+    }
+
+    function applyWallDragAlignmentSnap(snapshot, rawDx, rawDy) {
+        const movingCornerIds = new Set(snapshot.cornerPositions.keys());
+        const movingWallIds = new Set();
+        for (const sel of selectedElements) {
+            if (sel.type === 'wall') movingWallIds.add(sel.element.id);
+        }
+
+        // Phase 1: magnetic snap — endpoint-to-corner or endpoint-to-wall-line.
+        // If any moving endpoint is within snapDistance of an external corner or wall,
+        // snap the whole wall so that endpoint coincides with the target.
+        let bestMag = null;
+        for (const [, orig] of snapshot.cornerPositions) {
+            const newX = orig.x + rawDx;
+            const newY = orig.y + rawDy;
+
+            for (const c of corners) {
+                if (movingCornerIds.has(c.id)) continue;
+                const d = Math.hypot(c.x - newX, c.y - newY);
+                if (d < snapDistance && (!bestMag || d < bestMag.d)) {
+                    bestMag = { d, dx: c.x - newX, dy: c.y - newY };
+                }
+            }
+
+            for (const w of walls) {
+                if (movingWallIds.has(w.id)) continue;
+                if (w.control) continue;
+                // Project onto the wall segment without excluding endpoint regions
+                // (projectPointOntoWallLine rejects t<=0.05/t>=0.95 for corner-merge reasons
+                //  which are not relevant to magnetic drag-snap).
+                const wdx = w.end.x - w.start.x;
+                const wdy = w.end.y - w.start.y;
+                const lenSq = wdx * wdx + wdy * wdy;
+                if (lenSq === 0) continue;
+                let t = ((newX - w.start.x) * wdx + (newY - w.start.y) * wdy) / lenSq;
+                t = Math.max(0, Math.min(1, t));
+                const px = w.start.x + t * wdx;
+                const py = w.start.y + t * wdy;
+                const d = Math.hypot(px - newX, py - newY);
+                if (d < snapDistance && (!bestMag || d < bestMag.d)) {
+                    bestMag = { d, dx: px - newX, dy: py - newY };
+                }
+            }
+        }
+
+        let adjDx = rawDx;
+        let adjDy = rawDy;
+        alignmentGuides = [];
+
+        if (bestMag) {
+            adjDx += bestMag.dx;
+            adjDy += bestMag.dy;
+        }
+
+        // Phase 2: axis alignment guides — for any moving endpoint whose new X or Y
+        // matches a stationary corner within axisSnapThreshold, pull onto that axis
+        // and draw a dashed guide line.
+        const alignTh = axisSnapThreshold;
+        let bestX = null, bestY = null;
+        for (const [, orig] of snapshot.cornerPositions) {
+            const newX = orig.x + adjDx;
+            const newY = orig.y + adjDy;
+            for (const c of corners) {
+                if (movingCornerIds.has(c.id)) continue;
+                const ddx = Math.abs(newX - c.x);
+                const ddy = Math.abs(newY - c.y);
+                if (ddx <= alignTh && (bestX === null || ddx < bestX.d)) {
+                    bestX = { d: ddx, delta: c.x - newX, corner: c };
+                }
+                if (ddy <= alignTh && (bestY === null || ddy < bestY.d)) {
+                    bestY = { d: ddy, delta: c.y - newY, corner: c };
+                }
+            }
+        }
+
+        if (bestX) {
+            adjDx += bestX.delta;
+            alignmentGuides.push({ axis: 'x', corner: bestX.corner });
+        }
+        if (bestY) {
+            adjDy += bestY.delta;
+            alignmentGuides.push({ axis: 'y', corner: bestY.corner });
+        }
+
+        return { adjDx, adjDy };
+    }
+
     // Wall management
     function createWall(startCorner, endCorner, opts = {}) {
         if (!opts.skipHistory) addToHistory();
@@ -2555,28 +2753,164 @@ const FloorPlanEditor = (() => {
     }
     
     function renderWall(wall) {
-        const line = document.createElementNS('http://www.w3.org/2000/svg', 'line');
-        line.setAttribute('x1', wall.start.x);
-        line.setAttribute('y1', wall.start.y);
-        line.setAttribute('x2', wall.end.x);
-        line.setAttribute('y2', wall.end.y);
-        line.setAttribute('stroke-width', wallThickness);
-        line.classList.add('wall-line');
-        line.dataset.wallId = wall.id;
-        wallsLayer.appendChild(line);
-        
-        // Render openings (doors/windows)
-        for (const opening of wall.openings) {
-            renderOpening(wall, opening);
+        let el;
+        if (wall.control) {
+            el = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+            const d = `M ${wall.start.x} ${wall.start.y} Q ${wall.control.x} ${wall.control.y} ${wall.end.x} ${wall.end.y}`;
+            el.setAttribute('d', d);
+            el.setAttribute('fill', 'none');
+        } else {
+            el = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+            el.setAttribute('x1', wall.start.x);
+            el.setAttribute('y1', wall.start.y);
+            el.setAttribute('x2', wall.end.x);
+            el.setAttribute('y2', wall.end.y);
+        }
+        el.setAttribute('stroke-width', wallThickness);
+        el.classList.add('wall-line');
+        el.dataset.wallId = wall.id;
+        wallsLayer.appendChild(el);
+
+        // Render openings (doors/windows) — not yet supported on curved walls
+        if (!wall.control) {
+            for (const opening of wall.openings) {
+                renderOpening(wall, opening);
+            }
         }
     }
+
+    function drawCurvePreview(start, control, end) {
+        removePreview();
+        const floorPlanGroup = document.getElementById('floor-plan-group');
+        const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+        path.setAttribute('d', `M ${start.x} ${start.y} Q ${control.x} ${control.y} ${end.x} ${end.y}`);
+        path.classList.add('drawing-preview');
+        path.id = 'drawing-preview';
+        path.setAttribute('fill', 'none');
+        floorPlanGroup.appendChild(path);
+
+        // Light handle line from start→control→end so the user sees where the control point is
+        const handle = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+        handle.setAttribute('d', `M ${start.x} ${start.y} L ${control.x} ${control.y} L ${end.x} ${end.y}`);
+        handle.setAttribute('stroke', '#4a90e2');
+        handle.setAttribute('stroke-width', 1 / zoom);
+        handle.setAttribute('stroke-dasharray', `${4 / zoom} ${3 / zoom}`);
+        handle.setAttribute('fill', 'none');
+        handle.setAttribute('pointer-events', 'none');
+        handle.id = 'preview-dimension';
+        floorPlanGroup.appendChild(handle);
+    }
+
+    function pickWallPoint(target, pos) {
+        if (!target || !target.classList || !target.classList.contains('wall-line')) return null;
+        const wallId = target.dataset && target.dataset.wallId;
+        const wall = walls.find(w => w.id === wallId);
+        if (!wall || wall.control) return null;
+        const proj = projectPointOntoWallLine(wall, pos);
+        if (!proj) return null;
+        return { wall, point: { x: proj.x, y: proj.y } };
+    }
+
+    function getSharedCorner(wA, wB) {
+        if (wA.start === wB.start || wA.start === wB.end) return wA.start;
+        if (wA.end === wB.start || wA.end === wB.end) return wA.end;
+        return null;
+    }
+
+    function showCurvePickMarker(point, id) {
+        removeCurvePickMarkers();
+        const floorPlanGroup = document.getElementById('floor-plan-group');
+        const dot = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+        dot.setAttribute('cx', point.x);
+        dot.setAttribute('cy', point.y);
+        dot.setAttribute('r', 4 / zoom);
+        dot.setAttribute('fill', '#4a90e2');
+        dot.setAttribute('stroke', 'white');
+        dot.setAttribute('stroke-width', 1.5 / zoom);
+        dot.setAttribute('pointer-events', 'none');
+        dot.classList.add('curve-pick-marker');
+        dot.id = id || 'curve-pick-marker';
+        floorPlanGroup.appendChild(dot);
+    }
+
+    function removeCurvePickMarkers() {
+        document.querySelectorAll('.curve-pick-marker').forEach(el => el.remove());
+    }
+
+    function applyFillet(wA, pA, wB, pB, sharedCorner) {
+        const farA = (wA.start === sharedCorner) ? wA.end : wA.start;
+        const farB = (wB.start === sharedCorner) ? wB.end : wB.start;
+
+        addToHistory();
+
+        // Detach the two original walls from their endpoints
+        walls = walls.filter(w => w !== wA && w !== wB);
+        for (const c of [sharedCorner, farA, farB]) {
+            c.walls = c.walls.filter(w => w !== wA && w !== wB);
+        }
+
+        // Create new corners at the two pick points (the curve's endpoints)
+        const cornerP1 = createCorner(pA, { skipHistory: true });
+        const cornerP2 = createCorner(pB, { skipHistory: true });
+
+        // Straight wall stubs from the far endpoints to the pick points
+        createWall(farA, cornerP1, { skipHistory: true });
+        createWall(farB, cornerP2, { skipHistory: true });
+
+        // Curved wall from pA to pB, using the shared corner as the control point
+        const curved = {
+            id: 'wall-' + Date.now() + '-' + Math.random().toString(36).substr(2, 9),
+            start: cornerP1,
+            end: cornerP2,
+            openings: [],
+            control: { x: sharedCorner.x, y: sharedCorner.y }
+        };
+        walls.push(curved);
+        cornerP1.walls.push(curved);
+        cornerP2.walls.push(curved);
+
+        // Remove the shared corner if it's no longer referenced by any wall
+        if (sharedCorner.walls.length === 0) {
+            corners = corners.filter(c => c.id !== sharedCorner.id);
+        }
+
+        redrawAll();
+    }
     
+    function applyAlignmentSnap(end, excludeStart) {
+        let { x, y } = end;
+        const alignTh = axisSnapThreshold;
+        let bestAlignX = null, bestAlignY = null;
+        for (const c of corners) {
+            if (excludeStart && excludeStart.id && c.id === excludeStart.id) continue;
+            const ddx = Math.abs(x - c.x);
+            const ddy = Math.abs(y - c.y);
+            if (ddx <= alignTh && (bestAlignX === null || ddx < bestAlignX.d)) {
+                bestAlignX = { corner: c, d: ddx };
+            }
+            if (ddy <= alignTh && (bestAlignY === null || ddy < bestAlignY.d)) {
+                bestAlignY = { corner: c, d: ddy };
+            }
+        }
+        // For walls, preserve the start-axis snap (don't overwrite x=start.x or y=start.y)
+        if (bestAlignX && (!excludeStart || x !== excludeStart.x)) x = bestAlignX.corner.x;
+        if (bestAlignY && (!excludeStart || y !== excludeStart.y)) y = bestAlignY.corner.y;
+        alignmentGuides = [];
+        if (bestAlignX && x === bestAlignX.corner.x) {
+            alignmentGuides.push({ corner: bestAlignX.corner, axis: 'x' });
+        }
+        if (bestAlignY && y === bestAlignY.corner.y) {
+            alignmentGuides.push({ corner: bestAlignY.corner, axis: 'y' });
+        }
+        return { x, y };
+    }
+
     function applyDrawingSnaps(start, end) {
         let x = end.x;
         let y = end.y;
         const dx = x - start.x;
         const dy = y - start.y;
-        
+
         // Axis snap: snap to horizontal or vertical when close
         const axisTh = axisSnapThreshold;
         if (Math.abs(dy) <= axisTh && Math.abs(dx) > Math.abs(dy)) {
@@ -2584,6 +2918,11 @@ const FloorPlanEditor = (() => {
         } else if (Math.abs(dx) <= axisTh && Math.abs(dy) > Math.abs(dx)) {
             x = start.x;
         }
+
+        // Alignment snap: snap end to x/y of another existing corner.
+        const aligned = applyAlignmentSnap({ x, y }, start);
+        x = aligned.x;
+        y = aligned.y;
         
         // Angle snap: if this corner has a connecting wall, snap to 90° or 180° relative to it
         if (start.walls && start.walls.length > 0) {
@@ -2625,9 +2964,11 @@ const FloorPlanEditor = (() => {
     
     function drawWallPreview(start, end) {
         removePreview();
-        
+
         const floorPlanGroup = document.getElementById('floor-plan-group');
-        
+
+        drawAlignmentGuides(end);
+
         const line = document.createElementNS('http://www.w3.org/2000/svg', 'line');
         line.setAttribute('x1', start.x);
         line.setAttribute('y1', start.y);
@@ -2662,9 +3003,11 @@ const FloorPlanEditor = (() => {
     
     function drawRoomPreview(start, end) {
         removePreview();
-        
+
         const floorPlanGroup = document.getElementById('floor-plan-group');
-        
+
+        drawAlignmentGuides(end);
+
         const x = Math.min(start.x, end.x);
         const y = Math.min(start.y, end.y);
         const width = Math.abs(end.x - start.x);
@@ -2707,6 +3050,36 @@ const FloorPlanEditor = (() => {
     function removePreview() {
         document.getElementById('drawing-preview')?.remove();
         document.getElementById('preview-dimension')?.remove();
+        removeAlignmentGuides();
+    }
+
+    function removeAlignmentGuides() {
+        document.querySelectorAll('.alignment-guide').forEach(el => el.remove());
+    }
+
+    function drawAlignmentGuides(end) {
+        removeAlignmentGuides();
+        const floorPlanGroup = document.getElementById('floor-plan-group');
+        for (const g of alignmentGuides) {
+            const line = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+            if (g.axis === 'x') {
+                line.setAttribute('x1', g.corner.x);
+                line.setAttribute('y1', g.corner.y);
+                line.setAttribute('x2', g.corner.x);
+                line.setAttribute('y2', end.y);
+            } else {
+                line.setAttribute('x1', g.corner.x);
+                line.setAttribute('y1', g.corner.y);
+                line.setAttribute('x2', end.x);
+                line.setAttribute('y2', g.corner.y);
+            }
+            line.classList.add('alignment-guide');
+            line.setAttribute('stroke', '#4a90e2');
+            line.setAttribute('stroke-width', 1 / zoom);
+            line.setAttribute('stroke-dasharray', `${6 / zoom} ${4 / zoom}`);
+            line.setAttribute('pointer-events', 'none');
+            floorPlanGroup.appendChild(line);
+        }
     }
     
     function cancelDrawing() {
@@ -2728,6 +3101,10 @@ const FloorPlanEditor = (() => {
         // Also cancel door/window placement
         openingStartPoint = null;
         removeOpeningPreview();
+
+        // Cancel curve fillet in progress
+        curvePendingFirstPick = null;
+        removeCurvePickMarkers();
     }
     
     function createRoomFromRect(start, end) {
@@ -2737,22 +3114,52 @@ const FloorPlanEditor = (() => {
         const y2 = Math.max(start.y, end.y);
         
         if (Math.abs(x2 - x1) < 20 || Math.abs(y2 - y1) < 20) return; // Too small
-        
-        // Create 4 corners
-        const tl = findNearbyCorner({ x: x1, y: y1 }) || createCorner({ x: x1, y: y1 });
-        const tr = findNearbyCorner({ x: x2, y: y1 }) || createCorner({ x: x2, y: y1 });
-        const br = findNearbyCorner({ x: x2, y: y2 }) || createCorner({ x: x2, y: y2 });
-        const bl = findNearbyCorner({ x: x1, y: y2 }) || createCorner({ x: x1, y: y2 });
-        
-        // Create 4 walls
-        createWall(tl, tr);
-        createWall(tr, br);
-        createWall(br, bl);
-        createWall(bl, tl);
-        
+
+        // Single history entry for the whole room so undo removes it in one step
+        addToHistory();
+
+        const tl = findNearbyCorner({ x: x1, y: y1 }) || createCorner({ x: x1, y: y1 }, { skipHistory: true });
+        const tr = findNearbyCorner({ x: x2, y: y1 }) || createCorner({ x: x2, y: y1 }, { skipHistory: true });
+        const br = findNearbyCorner({ x: x2, y: y2 }) || createCorner({ x: x2, y: y2 }, { skipHistory: true });
+        const bl = findNearbyCorner({ x: x1, y: y2 }) || createCorner({ x: x1, y: y2 }, { skipHistory: true });
+
+        createWall(tl, tr, { skipHistory: true });
+        createWall(tr, br, { skipHistory: true });
+        createWall(br, bl, { skipHistory: true });
+        createWall(bl, tl, { skipHistory: true });
+
         removePreview();
     }
-    
+
+    function createStairFromRect(start, end) {
+        const x1 = Math.min(start.x, end.x);
+        const y1 = Math.min(start.y, end.y);
+        const x2 = Math.max(start.x, end.x);
+        const y2 = Math.max(start.y, end.y);
+
+        const w = x2 - x1;
+        const h = y2 - y1;
+        if (w < 20 || h < 20) { removePreview(); return; }
+
+        const item = {
+            id: 'furniture-' + Date.now(),
+            typeId: 'stairs',
+            name: 'Stairs',
+            x: x1,
+            y: y1,
+            width: w,
+            height: h,
+            rotation: 0,
+            direction: 'up'
+        };
+
+        addToHistory();
+        furniture.push(item);
+        renderFurniture(item);
+        removePreview();
+        selectElement(item, 'furniture');
+    }
+
     // Openings (doors/windows)
     function findNearestWall(pos) {
         let nearestWall = null;
@@ -2917,6 +3324,12 @@ const FloorPlanEditor = (() => {
         opening.end.y += dy;
     }
     
+    function openingMarkerColor(type) {
+        if (type === 'door') return '#8B4513';
+        if (type === 'garage') return '#607D8B';
+        return '#87CEEB';
+    }
+
     // Show a marker at the start point when placing door/window
     function showOpeningStartMarker(point) {
         removeOpeningPreview();
@@ -2925,7 +3338,7 @@ const FloorPlanEditor = (() => {
         marker.setAttribute('cx', point.x);
         marker.setAttribute('cy', point.y);
         marker.setAttribute('r', 6);
-        marker.setAttribute('fill', currentTool === 'door' ? '#8B4513' : '#87CEEB');
+        marker.setAttribute('fill', openingMarkerColor(currentTool));
         marker.setAttribute('stroke', '#333');
         marker.setAttribute('stroke-width', '2');
         marker.classList.add('opening-preview', 'opening-start-marker');
@@ -2946,7 +3359,7 @@ const FloorPlanEditor = (() => {
         startMarker.setAttribute('cx', startPoint.x);
         startMarker.setAttribute('cy', startPoint.y);
         startMarker.setAttribute('r', 5);
-        startMarker.setAttribute('fill', type === 'door' ? '#8B4513' : '#87CEEB');
+        startMarker.setAttribute('fill', openingMarkerColor(type));
         startMarker.setAttribute('stroke', '#333');
         startMarker.setAttribute('stroke-width', '1');
         group.appendChild(startMarker);
@@ -2956,7 +3369,7 @@ const FloorPlanEditor = (() => {
         endMarker.setAttribute('cx', endPoint.x);
         endMarker.setAttribute('cy', endPoint.y);
         endMarker.setAttribute('r', 5);
-        endMarker.setAttribute('fill', type === 'door' ? '#8B4513' : '#87CEEB');
+        endMarker.setAttribute('fill', openingMarkerColor(type));
         endMarker.setAttribute('stroke', '#333');
         endMarker.setAttribute('stroke-width', '1');
         group.appendChild(endMarker);
@@ -2967,7 +3380,7 @@ const FloorPlanEditor = (() => {
         previewLine.setAttribute('y1', startPoint.y);
         previewLine.setAttribute('x2', endPoint.x);
         previewLine.setAttribute('y2', endPoint.y);
-        previewLine.setAttribute('stroke', type === 'door' ? '#8B4513' : '#87CEEB');
+        previewLine.setAttribute('stroke', openingMarkerColor(type));
         previewLine.setAttribute('stroke-width', wallThickness);
         previewLine.setAttribute('stroke-linecap', 'round');
         previewLine.setAttribute('opacity', '0.7');
@@ -3059,6 +3472,17 @@ const FloorPlanEditor = (() => {
             doorLine.setAttribute('stroke', '#8B4513');
             doorLine.setAttribute('stroke-width', '2');
             group.appendChild(doorLine);
+        } else if (type === 'garage') {
+            const rect = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+            rect.setAttribute('x1', startX);
+            rect.setAttribute('y1', startY);
+            rect.setAttribute('x2', endX);
+            rect.setAttribute('y2', endY);
+            rect.setAttribute('stroke', '#607D8B');
+            rect.setAttribute('stroke-width', wallThickness + 2);
+            rect.setAttribute('stroke-linecap', 'round');
+            rect.setAttribute('stroke-dasharray', '3 2');
+            group.appendChild(rect);
         } else {
             // Window preview
             const rect = document.createElementNS('http://www.w3.org/2000/svg', 'line');
@@ -3106,7 +3530,7 @@ const FloorPlanEditor = (() => {
         startMarker.setAttribute('cx', startX);
         startMarker.setAttribute('cy', startY);
         startMarker.setAttribute('r', 4);
-        startMarker.setAttribute('fill', type === 'door' ? '#8B4513' : '#87CEEB');
+        startMarker.setAttribute('fill', openingMarkerColor(type));
         startMarker.setAttribute('stroke', '#333');
         group.appendChild(startMarker);
         
@@ -3114,7 +3538,7 @@ const FloorPlanEditor = (() => {
         endMarker.setAttribute('cx', endX);
         endMarker.setAttribute('cy', endY);
         endMarker.setAttribute('r', 4);
-        endMarker.setAttribute('fill', type === 'door' ? '#8B4513' : '#87CEEB');
+        endMarker.setAttribute('fill', openingMarkerColor(type));
         endMarker.setAttribute('stroke', '#333');
         group.appendChild(endMarker);
         
@@ -3201,7 +3625,7 @@ const FloorPlanEditor = (() => {
         startMarker.setAttribute('cx', -halfLength);
         startMarker.setAttribute('cy', 0);
         startMarker.setAttribute('r', 4);
-        startMarker.setAttribute('fill', type === 'door' ? '#8B4513' : '#87CEEB');
+        startMarker.setAttribute('fill', openingMarkerColor(type));
         startMarker.setAttribute('stroke', '#333');
         group.appendChild(startMarker);
         
@@ -3209,7 +3633,7 @@ const FloorPlanEditor = (() => {
         endMarker.setAttribute('cx', halfLength);
         endMarker.setAttribute('cy', 0);
         endMarker.setAttribute('r', 4);
-        endMarker.setAttribute('fill', type === 'door' ? '#8B4513' : '#87CEEB');
+        endMarker.setAttribute('fill', openingMarkerColor(type));
         endMarker.setAttribute('stroke', '#333');
         group.appendChild(endMarker);
         
@@ -3323,6 +3747,30 @@ const FloorPlanEditor = (() => {
             }
             swingParentFf.appendChild(arc);
             swingParentFf.appendChild(doorPanel);
+        } else if (opening.type === 'garage') {
+            const frame = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
+            frame.setAttribute('x', -halfLength);
+            frame.setAttribute('y', -wallThickness / 2);
+            frame.setAttribute('width', length);
+            frame.setAttribute('height', wallThickness);
+            frame.setAttribute('fill', 'white');
+            frame.setAttribute('stroke', '#607D8B');
+            frame.setAttribute('stroke-width', 1.5);
+            group.appendChild(frame);
+
+            const panelCount = Math.max(4, Math.round(length / scale));
+            const panelStep = length / panelCount;
+            for (let i = 1; i < panelCount; i++) {
+                const tick = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+                const x = -halfLength + i * panelStep;
+                tick.setAttribute('x1', x);
+                tick.setAttribute('y1', -wallThickness / 2);
+                tick.setAttribute('x2', x);
+                tick.setAttribute('y2', wallThickness / 2);
+                tick.setAttribute('stroke', '#607D8B');
+                tick.setAttribute('stroke-width', 0.8);
+                group.appendChild(tick);
+            }
         } else {
             // Window - double line with glass fill
             const windowRect = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
@@ -3467,6 +3915,50 @@ const FloorPlanEditor = (() => {
             
             wallsLayer.appendChild(group);
             
+        } else if (opening.type === 'garage') {
+            const group = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+            group.classList.add('garage-element');
+            group.dataset.wallId = wall.id;
+            group.dataset.openingId = opening.id;
+            group.setAttribute('transform', `translate(${centerX}, ${centerY}) rotate(${wallAngle})`);
+
+            const hitRect = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
+            hitRect.setAttribute('x', -halfWidth - hitPadding);
+            hitRect.setAttribute('y', -wallThickness / 2 - hitPadding);
+            hitRect.setAttribute('width', opening.width + hitPadding * 2);
+            hitRect.setAttribute('height', wallThickness + hitPadding * 2);
+            hitRect.setAttribute('fill', 'transparent');
+            hitRect.setAttribute('pointer-events', 'all');
+            group.appendChild(hitRect);
+
+            // Frame (cover wall)
+            const frame = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
+            frame.setAttribute('x', -halfWidth);
+            frame.setAttribute('y', -wallThickness / 2);
+            frame.setAttribute('width', opening.width);
+            frame.setAttribute('height', wallThickness);
+            frame.setAttribute('fill', 'white');
+            frame.setAttribute('stroke', '#333');
+            frame.setAttribute('stroke-width', 1);
+            group.appendChild(frame);
+
+            // Segmented panels — vertical tick marks along the opening
+            const panelCount = Math.max(4, Math.round(opening.width / scale));
+            const panelStep = opening.width / panelCount;
+            for (let i = 1; i < panelCount; i++) {
+                const tick = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+                const x = -halfWidth + i * panelStep;
+                tick.setAttribute('x1', x);
+                tick.setAttribute('y1', -wallThickness / 2);
+                tick.setAttribute('x2', x);
+                tick.setAttribute('y2', wallThickness / 2);
+                tick.setAttribute('stroke', '#666');
+                tick.setAttribute('stroke-width', 0.6);
+                group.appendChild(tick);
+            }
+
+            wallsLayer.appendChild(group);
+
         } else if (opening.type === 'window') {
             // Draw window (light blue rectangle)
             const group = document.createElementNS('http://www.w3.org/2000/svg', 'g');
@@ -3519,6 +4011,7 @@ const FloorPlanEditor = (() => {
     }
     
     function renderWallDimension(wall) {
+        if (wall.control) return; // dimensions on curved walls not yet supported
         const length = Math.sqrt((wall.end.x - wall.start.x) ** 2 + (wall.end.y - wall.start.y) ** 2) / scale;
         const midX = (wall.start.x + wall.end.x) / 2;
         const midY = (wall.start.y + wall.end.y) / 2;
@@ -3751,6 +4244,11 @@ const FloorPlanEditor = (() => {
         hitRect.setAttribute('pointer-events', 'all');
         els.push(hitRect);
 
+        if (item.typeId === 'stairs') {
+            els.push(...buildStairsBody(item));
+            return els;
+        }
+
         const cached = furnitureSvgCache[item.typeId];
         if (cached) {
             const nested = document.createElementNS(ns, 'svg');
@@ -3777,6 +4275,98 @@ const FloorPlanEditor = (() => {
             rect.setAttribute('rx', 2);
             els.push(rect);
         }
+        return els;
+    }
+
+    function buildStairsBody(item) {
+        const ns = 'http://www.w3.org/2000/svg';
+        const w = item.width;
+        const h = item.height;
+        const els = [];
+
+        // Treads run perpendicular to the long axis (going "up" along the long axis).
+        const longAlongX = w >= h;
+        const longLen = longAlongX ? w : h;
+        const shortLen = longAlongX ? h : w;
+
+        // Outer outline
+        const outline = document.createElementNS(ns, 'rect');
+        outline.setAttribute('x', 0);
+        outline.setAttribute('y', 0);
+        outline.setAttribute('width', w);
+        outline.setAttribute('height', h);
+        outline.setAttribute('fill', 'white');
+        outline.setAttribute('stroke', '#333');
+        outline.setAttribute('stroke-width', 1);
+        els.push(outline);
+
+        // Tread spacing: ~11 inches per tread at current scale; fall back to divisions if scale unknown.
+        const treadSize = (typeof scale === 'number' && scale > 0) ? (scale * (11 / 12)) : Math.max(12, longLen / 10);
+        const treadCount = Math.max(2, Math.floor(longLen / treadSize));
+        const step = longLen / treadCount;
+
+        for (let i = 1; i < treadCount; i++) {
+            const line = document.createElementNS(ns, 'line');
+            if (longAlongX) {
+                line.setAttribute('x1', i * step);
+                line.setAttribute('y1', 0);
+                line.setAttribute('x2', i * step);
+                line.setAttribute('y2', h);
+            } else {
+                line.setAttribute('x1', 0);
+                line.setAttribute('y1', i * step);
+                line.setAttribute('x2', w);
+                line.setAttribute('y2', i * step);
+            }
+            line.setAttribute('stroke', '#666');
+            line.setAttribute('stroke-width', 0.6);
+            els.push(line);
+        }
+
+        // Direction arrow centered along the long axis, pointing "up".
+        const arrowLen = longLen * 0.6;
+        const arrowHead = Math.min(shortLen * 0.25, step * 0.6, 12);
+        const cx = w / 2;
+        const cy = h / 2;
+
+        const arrow = document.createElementNS(ns, 'path');
+        let d;
+        if (longAlongX) {
+            const x0 = cx - arrowLen / 2;
+            const x1 = cx + arrowLen / 2;
+            d = `M ${x0} ${cy} L ${x1} ${cy} M ${x1 - arrowHead} ${cy - arrowHead * 0.6} L ${x1} ${cy} L ${x1 - arrowHead} ${cy + arrowHead * 0.6}`;
+        } else {
+            const y0 = cy + arrowLen / 2;
+            const y1 = cy - arrowLen / 2;
+            d = `M ${cx} ${y0} L ${cx} ${y1} M ${cx - arrowHead * 0.6} ${y1 + arrowHead} L ${cx} ${y1} L ${cx + arrowHead * 0.6} ${y1 + arrowHead}`;
+        }
+        arrow.setAttribute('d', d);
+        arrow.setAttribute('stroke', '#333');
+        arrow.setAttribute('stroke-width', 1);
+        arrow.setAttribute('fill', 'none');
+        arrow.setAttribute('stroke-linecap', 'round');
+        arrow.setAttribute('stroke-linejoin', 'round');
+        els.push(arrow);
+
+        // UP / DOWN label near the tail of the arrow
+        const label = document.createElementNS(ns, 'text');
+        const labelText = (item.direction === 'down') ? 'DN' : 'UP';
+        const fontSize = Math.max(6, Math.min(shortLen * 0.28, 14));
+        label.setAttribute('font-size', fontSize);
+        label.setAttribute('font-family', 'sans-serif');
+        label.setAttribute('fill', '#333');
+        label.setAttribute('text-anchor', 'middle');
+        label.setAttribute('dominant-baseline', 'middle');
+        if (longAlongX) {
+            label.setAttribute('x', cx - arrowLen / 2 - fontSize * 0.9);
+            label.setAttribute('y', cy);
+        } else {
+            label.setAttribute('x', cx);
+            label.setAttribute('y', cy + arrowLen / 2 + fontSize * 0.9);
+        }
+        label.textContent = labelText;
+        els.push(label);
+
         return els;
     }
 
@@ -5274,7 +5864,8 @@ const FloorPlanEditor = (() => {
                 id: w.id,
                 startId: w.start.id,
                 endId: w.end.id,
-                openings: w.openings
+                openings: w.openings,
+                control: w.control || null
             })))),
             furniture: JSON.parse(JSON.stringify(furniture)),
             labels: JSON.parse(JSON.stringify(labels)),
@@ -5318,7 +5909,8 @@ const FloorPlanEditor = (() => {
                     id: w.id,
                     start: startCorner,
                     end: endCorner,
-                    openings: w.openings || []
+                    openings: w.openings || [],
+                    control: w.control ? { x: w.control.x, y: w.control.y } : undefined
                 };
                 walls.push(wall);
                 startCorner.walls.push(wall);

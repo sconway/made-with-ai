@@ -1,3 +1,15 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 40 20" fill="none" stroke="#333" stroke-width="1">
-  <rect x="0" y="0" width="40" height="20" rx="2"/>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 40 20" fill="none" stroke="#333" stroke-width="1" stroke-linejoin="round">
+  <rect x="0" y="0" width="40" height="20" rx="1"/>
+  <line x1="0" y1="15" x2="40" y2="15" stroke="#666" stroke-width="0.7"/>
+  <line x1="20" y1="15" x2="20" y2="20" stroke="#666" stroke-width="0.7"/>
+  <line x1="2" y1="4" x2="38" y2="4" stroke="#666" stroke-width="0.7" stroke-dasharray="1.5 1"/>
+  <g stroke="#999" stroke-width="0.5">
+    <line x1="6" y1="4" x2="6" y2="10"/>
+    <line x1="12" y1="4" x2="12" y2="10"/>
+    <line x1="18" y1="4" x2="18" y2="10"/>
+    <line x1="22" y1="4" x2="22" y2="10"/>
+    <line x1="28" y1="4" x2="28" y2="10"/>
+    <line x1="34" y1="4" x2="34" y2="10"/>
+    <rect x="18.5" y="17" width="3" height="1" rx="0.2"/>
+  </g>
 </svg>

@@ -456,6 +456,10 @@ main {
   max-height: 400px;
   object-fit: contain;
   border-radius: var(--border-radius);
+  /* So transparent logo pixels are visible against the card */
+  background: repeating-conic-gradient(#3d3d3d 0% 25%, #2a2a2a 0% 50%) 50% / 20px 20px;
+  box-sizing: content-box;
+  padding: 12px;
 }
 
 .logo-actions {

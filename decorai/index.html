@@ -14,8 +14,8 @@
 </head>
 
 <body>
-    <div class="app-container">
-        <header>
+    <header>
+        <div class="header-inner">
             <div class="logo">
                 <h1>DecorAIt</h1>
                 <span class="tagline">Reimagine Your Space</span>
@@ -58,8 +58,10 @@
                     </div>
                 </div>
             </div>
-        </header>
+        </div>
+    </header>
 
+    <div class="app-container">
         <main>
             <section class="upload-section">
                 <div class="upload-container" id="upload-container">
@@ -418,6 +420,18 @@
                             <i data-feather="columns"></i>
                             <span>Window</span>
                         </button>
+                        <button type="button" class="floor-tool" data-tool="garage" data-tooltip="Add garage door" aria-label="Place a garage door—click twice on the same wall, or drag for a free-standing garage door">
+                            <i data-feather="grid"></i>
+                            <span>Garage</span>
+                        </button>
+                        <button type="button" class="floor-tool" data-tool="curve" data-tooltip="Curve wall" aria-label="Curve a corner between two walls by clicking the corner and dragging">
+                            <i data-feather="git-pull-request"></i>
+                            <span>Curve</span>
+                        </button>
+                        <button type="button" class="floor-tool" data-tool="stairs" data-tooltip="Add stairs (S)" aria-label="Draw stairs by dragging a rectangle (S)">
+                            <i data-feather="trending-up"></i>
+                            <span>Stairs</span>
+                        </button>
                         <button type="button" class="floor-tool" data-tool="label" data-tooltip="Add label (L)" aria-label="Add a text label on the plan (L)">
                             <i data-feather="type"></i>
                             <span>Label</span>
@@ -457,13 +471,23 @@
                     </div>
                 </div>
                 <div class="tool-section my-layouts-section">
-                    <button type="button" id="my-layouts-toggle" class="my-layouts-toggle" data-tooltip="My layouts" aria-label="Open My layouts—load or manage floor plans saved to your account">
+                    <button type="button" id="my-layouts-toggle" class="my-layouts-toggle" aria-label="Open My layouts—load or manage floor plans saved to your account">
                         <i data-feather="folder"></i>
                         <span>My layouts</span>
-                        <i data-feather="chevron-down" class="my-layouts-chevron"></i>
                     </button>
-                    <div id="my-layouts-panel" class="my-layouts-panel hidden">
-                        <div id="my-layouts-list" class="my-layouts-list"></div>
+                </div>
+
+                <div id="my-layouts-panel" class="modal my-layouts-modal hidden" role="dialog" aria-modal="true" aria-labelledby="my-layouts-modal-title">
+                    <div class="modal-content">
+                        <div class="modal-header">
+                            <h2 id="my-layouts-modal-title">My Layouts</h2>
+                            <button type="button" id="my-layouts-close" class="close-modal-btn" aria-label="Close">
+                                <i data-feather="x"></i>
+                            </button>
+                        </div>
+                        <div class="modal-body">
+                            <div id="my-layouts-list" class="my-layouts-list"></div>
+                        </div>
                     </div>
                 </div>
             </div>

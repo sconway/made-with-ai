@@ -1,14 +1,16 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 70 30" fill="none" stroke="#333" stroke-width="1">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 70 30" fill="none" stroke="#333" stroke-width="1" stroke-linejoin="round">
+  <!-- Sofa body outer -->
+  <rect x="0" y="0" width="70" height="30" rx="2.5"/>
   <!-- Back rest -->
-  <rect x="0" y="0" width="70" height="6.6" rx="2.2"/>
-  <!-- Left arm -->
-  <rect x="0" y="5.6" width="8.4" height="24.4" rx="2"/>
-  <!-- Right arm -->
-  <rect x="61.6" y="5.6" width="8.4" height="24.4" rx="2"/>
-  <!-- Left cushion -->
-  <rect x="10.8" y="9" width="25.9" height="16.2" rx="2"/>
-  <!-- Right cushion -->
-  <rect x="38.1" y="9" width="25.9" height="16.2" rx="2"/>
-  <!-- Center line between cushions -->
-  <line x1="35" y1="9" x2="35" y2="25.2"/>
+  <path d="M0 6 L70 6" stroke="#666" stroke-width="0.7"/>
+  <!-- Left arm inner -->
+  <line x1="8" y1="6" x2="8" y2="30" stroke="#666" stroke-width="0.7"/>
+  <!-- Right arm inner -->
+  <line x1="62" y1="6" x2="62" y2="30" stroke="#666" stroke-width="0.7"/>
+  <!-- Back cushions -->
+  <rect x="9" y="7" width="25.5" height="5.5" rx="1" stroke="#666" stroke-width="0.7"/>
+  <rect x="35.5" y="7" width="25.5" height="5.5" rx="1" stroke="#666" stroke-width="0.7"/>
+  <!-- Seat cushions -->
+  <rect x="9.5" y="13.5" width="25" height="15" rx="1.5" stroke="#666" stroke-width="0.7"/>
+  <rect x="35.5" y="13.5" width="25" height="15" rx="1.5" stroke="#666" stroke-width="0.7"/>
 </svg>
