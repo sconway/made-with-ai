@@ -18,7 +18,8 @@
     "express": "^4.18.2",
     "feather-icons": "^4.29.2",
     "node-fetch": "^3.3.0",
-    "stripe": "^14.0.0"
+    "stripe": "^14.0.0",
+    "three": "^0.184.0"
   },
   "devDependencies": {
     "concurrently": "^8.0.1",

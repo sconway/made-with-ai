@@ -1,0 +1,320 @@
+/* Woodworking Editor — scoped styles. All selectors live under #woodworking-editor-screen
+   so they can't bleed into the main app. */
+
+#woodworking-editor-screen {
+    position: fixed;
+    inset: 0;
+    z-index: 9000;
+    background: #f8fafc;
+    display: flex;
+    flex-direction: column;
+}
+
+#woodworking-editor-screen.hidden {
+    display: none;
+}
+
+#woodworking-editor-screen .ww-toolbar {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 10px 16px;
+    background: #ffffff;
+    border-bottom: 1px solid #e5e7eb;
+    flex-shrink: 0;
+}
+
+#woodworking-editor-screen .ww-toolbar h2 {
+    margin: 0;
+    font-size: 16px;
+    font-weight: 600;
+    color: #111827;
+}
+
+#woodworking-editor-screen .ww-toolbar .ww-spacer { flex: 1; }
+
+#woodworking-editor-screen .ww-btn {
+    appearance: none;
+    border: 1px solid #d1d5db;
+    background: #ffffff;
+    color: #111827;
+    padding: 6px 12px;
+    border-radius: 6px;
+    font-size: 13px;
+    cursor: pointer;
+    line-height: 1.2;
+}
+#woodworking-editor-screen .ww-btn:hover { background: #f3f4f6; }
+#woodworking-editor-screen .ww-btn--primary {
+    background: #4f46e5;
+    color: #ffffff;
+    border-color: #4f46e5;
+}
+#woodworking-editor-screen .ww-btn--primary:hover { background: #4338ca; }
+#woodworking-editor-screen .ww-btn--danger {
+    border-color: #fca5a5;
+    color: #b91c1c;
+}
+#woodworking-editor-screen .ww-btn--danger:hover { background: #fef2f2; }
+#woodworking-editor-screen .ww-btn--ghost {
+    border-color: #e5e7eb;
+    color: #6b7280;
+    background: #ffffff;
+}
+#woodworking-editor-screen .ww-btn--ghost:hover { background: #f9fafb; color: #111827; }
+#woodworking-editor-screen .ww-btn--ghost[aria-pressed="true"] {
+    background: #eef2ff;
+    border-color: #c7d2fe;
+    color: #4338ca;
+}
+#woodworking-editor-screen .ww-selected-actions {
+    display: flex;
+    gap: 8px;
+    margin-top: 12px;
+}
+
+#woodworking-editor-screen .ww-library-categories {
+    display: flex;
+    gap: 4px;
+    margin-bottom: 8px;
+}
+#woodworking-editor-screen .ww-library-cat {
+    appearance: none;
+    flex: 1;
+    border: 1px solid #e5e7eb;
+    background: #ffffff;
+    color: #6b7280;
+    padding: 5px 6px;
+    font-size: 11px;
+    font-weight: 500;
+    border-radius: 4px;
+    cursor: pointer;
+}
+#woodworking-editor-screen .ww-library-cat:hover { background: #f9fafb; color: #111827; }
+#woodworking-editor-screen .ww-library-cat[aria-selected="true"] {
+    background: #eef2ff;
+    border-color: #c7d2fe;
+    color: #4338ca;
+}
+#woodworking-editor-screen .ww-library-grid {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 6px;
+    max-height: 260px;
+    overflow-y: auto;
+    padding-right: 2px;
+}
+#woodworking-editor-screen .ww-library-item {
+    appearance: none;
+    border: 1px solid #e5e7eb;
+    background: #ffffff;
+    color: #111827;
+    padding: 8px;
+    border-radius: 6px;
+    cursor: pointer;
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 2px;
+    text-align: left;
+}
+#woodworking-editor-screen .ww-library-item:hover {
+    border-color: #4f46e5;
+    background: #f5f3ff;
+}
+#woodworking-editor-screen .ww-library-item-name {
+    font-size: 13px;
+    font-weight: 600;
+}
+#woodworking-editor-screen .ww-library-item-dims {
+    font-size: 10px;
+    color: #6b7280;
+}
+
+#woodworking-editor-screen .ww-rotation-badge {
+    position: absolute;
+    transform: translate(-50%, 0);
+    background: rgba(17, 24, 39, 0.85);
+    color: #ffffff;
+    font-size: 12px;
+    font-weight: 600;
+    font-variant-numeric: tabular-nums;
+    padding: 4px 8px;
+    border-radius: 4px;
+    pointer-events: none;
+    z-index: 11;
+    white-space: nowrap;
+}
+#woodworking-editor-screen .ww-rotation-badge[hidden] { display: none; }
+
+#woodworking-editor-screen .ww-board-toolbar {
+    position: absolute;
+    transform: translate(-50%, -100%);
+    display: flex;
+    gap: 2px;
+    padding: 3px;
+    background: rgba(255, 255, 255, 0.96);
+    border: 1px solid #e5e7eb;
+    border-radius: 6px;
+    box-shadow: 0 2px 6px rgba(15, 23, 42, 0.12);
+    pointer-events: auto;
+    z-index: 10;
+}
+#woodworking-editor-screen .ww-board-toolbar[hidden] { display: none; }
+#woodworking-editor-screen .ww-board-tool {
+    appearance: none;
+    border: none;
+    background: transparent;
+    color: #475569;
+    width: 26px;
+    height: 26px;
+    border-radius: 4px;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+}
+#woodworking-editor-screen .ww-board-tool:hover { background: #f1f5f9; color: #0f172a; }
+#woodworking-editor-screen .ww-board-tool[aria-pressed="true"] {
+    background: #4f46e5;
+    color: #ffffff;
+}
+
+#woodworking-editor-screen .ww-body {
+    flex: 1;
+    display: grid;
+    grid-template-columns: 1fr 320px;
+    overflow: hidden;
+}
+
+#woodworking-editor-screen .ww-canvas {
+    position: relative;
+    background: #eef2f7;
+    overflow: hidden;
+}
+#woodworking-editor-screen .ww-canvas canvas { display: block; }
+
+#woodworking-editor-screen .ww-side {
+    border-left: 1px solid #e5e7eb;
+    background: #ffffff;
+    overflow-y: auto;
+    padding: 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 20px;
+}
+
+#woodworking-editor-screen .ww-side h3 {
+    margin: 0 0 8px;
+    font-size: 13px;
+    font-weight: 600;
+    color: #6b7280;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+}
+
+#woodworking-editor-screen .ww-selected-panel--empty .ww-selected-fields,
+#woodworking-editor-screen .ww-selected-panel--empty .ww-selected-actions {
+    display: none;
+}
+#woodworking-editor-screen .ww-selected-panel--empty::after {
+    content: 'Click a board to edit it.';
+    display: block;
+    color: #9ca3af;
+    font-size: 13px;
+    font-style: italic;
+}
+
+#woodworking-editor-screen .ww-selected-fields {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 8px 12px;
+}
+#woodworking-editor-screen .ww-selected-fields label {
+    display: flex;
+    flex-direction: column;
+    font-size: 11px;
+    color: #6b7280;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    gap: 4px;
+}
+#woodworking-editor-screen .ww-selected-fields input {
+    appearance: none;
+    border: 1px solid #d1d5db;
+    border-radius: 4px;
+    padding: 6px 8px;
+    font-size: 13px;
+    color: #111827;
+    background: #ffffff;
+}
+#woodworking-editor-screen .ww-selected-fields input:focus {
+    outline: none;
+    border-color: #4f46e5;
+    box-shadow: 0 0 0 2px rgba(79, 70, 229, 0.15);
+}
+#woodworking-editor-screen .ww-selected-actions {
+    margin-top: 10px;
+}
+
+#woodworking-editor-screen .ww-cutlist-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 12px;
+}
+#woodworking-editor-screen .ww-cutlist-table th,
+#woodworking-editor-screen .ww-cutlist-table td {
+    padding: 6px 8px;
+    border-bottom: 1px solid #f3f4f6;
+    text-align: left;
+}
+#woodworking-editor-screen .ww-cutlist-table th {
+    color: #6b7280;
+    font-weight: 600;
+}
+#woodworking-editor-screen .ww-cutlist-table .ww-empty {
+    color: #9ca3af;
+    font-style: italic;
+    text-align: center;
+}
+#woodworking-editor-screen .ww-cutlist-footer {
+    margin-top: 8px;
+    padding-top: 8px;
+    border-top: 1px solid #e5e7eb;
+    font-size: 13px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+#woodworking-editor-screen .ww-cutlist-footer strong {
+    color: #111827;
+}
+
+/* Hint overlay on the 3D viewport */
+#woodworking-editor-screen .ww-hint {
+    position: absolute;
+    bottom: 12px;
+    left: 12px;
+    background: rgba(17, 24, 39, 0.7);
+    color: #ffffff;
+    font-size: 11px;
+    padding: 6px 10px;
+    border-radius: 4px;
+    pointer-events: none;
+}
+
+/* Top-nav button (lives in <header>) */
+.woodworking-editor-btn {
+    appearance: none;
+    background: #ffffff;
+    color: #111827;
+    border: 1px solid #d1d5db;
+    border-radius: 6px;
+    padding: 6px 12px;
+    font-size: 13px;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+}
+.woodworking-editor-btn:hover { background: #f3f4f6; }

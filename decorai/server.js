@@ -428,6 +428,65 @@ app.post('/replicate/predictions', async (req, res) => {
   }
 });
 
+// OpenAI image edit (gpt-image-1) — image-to-image generation
+app.post('/openai/image-edit', async (req, res) => {
+  try {
+    const apiKey = process.env.OPENAI_API_KEY;
+    if (!apiKey) {
+      console.error('OPENAI_API_KEY not configured on server');
+      return res.status(500).json({ error: 'Server OpenAI key not configured' });
+    }
+
+    const { imageBase64, prompt, size, quality } = req.body || {};
+    if (!imageBase64 || !prompt) {
+      return res.status(400).json({ error: 'imageBase64 and prompt are required' });
+    }
+
+    // Strip data URI prefix if present
+    const match = String(imageBase64).match(/^data:(image\/[a-zA-Z+.-]+);base64,(.*)$/);
+    const mime = match ? match[1] : 'image/png';
+    const b64 = match ? match[2] : imageBase64;
+    const buf = Buffer.from(b64, 'base64');
+    const ext = mime.includes('jpeg') ? 'jpg' : mime.split('/')[1] || 'png';
+
+    const form = new FormData();
+    form.append('model', 'gpt-image-1');
+    form.append('prompt', prompt);
+    form.append('n', '1');
+    form.append('size', size || 'auto');
+    form.append('input_fidelity', 'high');
+    if (quality) form.append('quality', quality);
+    form.append('image', new Blob([buf], { type: mime }), `input.${ext}`);
+
+    console.log(`OpenAI image-edit: prompt="${prompt.slice(0, 80)}..." size=${size || '1024x1024'}`);
+
+    const response = await fetch('https://api.openai.com/v1/images/edits', {
+      method: 'POST',
+      headers: { 'Authorization': `Bearer ${apiKey}` },
+      body: form
+    });
+
+    if (!response.ok) {
+      const errorData = await response.json().catch(() => ({}));
+      console.error('OpenAI image-edit error:', { status: response.status, error: errorData });
+      return res.status(response.status).json({
+        error: `OpenAI image edit error (${response.status}): ${errorData.error?.message || 'Unknown error'}`
+      });
+    }
+
+    const data = await response.json();
+    const b64Out = data?.data?.[0]?.b64_json;
+    if (!b64Out) {
+      console.error('OpenAI image-edit: no b64_json in response', data);
+      return res.status(500).json({ error: 'OpenAI returned no image data' });
+    }
+    res.json({ imageUrls: [`data:image/png;base64,${b64Out}`] });
+  } catch (error) {
+    console.error('Error in /openai/image-edit:', error);
+    res.status(500).json({ error: 'Failed to generate image edit' });
+  }
+});
+
 app.post('/replicate/poll', async (req, res) => {
   try {
     const apiKey = process.env.REPLICATE_API_KEY;
@@ -875,6 +934,73 @@ async function getAuthUser(req, res) {
   }
   return user;
 }
+
+// ── Woodworking projects (simple single-project-per-user persistence for v1) ──
+// Requires table user_woodworking_projects (see migration note in src/woodworking/editor.js).
+app.get('/api/woodworking-project', async (req, res) => {
+  try {
+    const user = await getAuthUser(req, res);
+    if (!user) return;
+    const { data, error } = await supabase
+      .from('user_woodworking_projects')
+      .select('id, state, name, updated_at')
+      .eq('user_id', user.id)
+      .order('updated_at', { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    if (error) {
+      console.error('Error fetching woodworking project:', error);
+      return res.status(500).json({ error: 'Failed to fetch project' });
+    }
+    if (!data) return res.json({ state: null });
+    res.json({ state: data.state, id: data.id, name: data.name || 'Untitled project' });
+  } catch (err) {
+    console.error('Error in GET /api/woodworking-project:', err);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+app.put('/api/woodworking-project', async (req, res) => {
+  try {
+    const user = await getAuthUser(req, res);
+    if (!user) return;
+    const { state, name } = req.body || {};
+    if (state === undefined) return res.status(400).json({ error: 'state is required' });
+    const projectName = (name && String(name).trim()) || 'Untitled project';
+    const now = new Date().toISOString();
+    const { data: existing } = await supabase
+      .from('user_woodworking_projects')
+      .select('id')
+      .eq('user_id', user.id)
+      .order('updated_at', { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    if (existing) {
+      const { error } = await supabase
+        .from('user_woodworking_projects')
+        .update({ state, name: projectName, updated_at: now })
+        .eq('id', existing.id);
+      if (error) {
+        console.error('Error saving woodworking project:', error);
+        return res.status(500).json({ error: 'Failed to save project' });
+      }
+      return res.json({ success: true, id: existing.id });
+    }
+    const { data: inserted, error: insertError } = await supabase
+      .from('user_woodworking_projects')
+      .insert({ user_id: user.id, name: projectName, state, updated_at: now })
+      .select('id')
+      .single();
+    if (insertError) {
+      console.error('Error inserting woodworking project:', insertError);
+      return res.status(500).json({ error: 'Failed to save project' });
+    }
+    res.json({ success: true, id: inserted.id });
+  } catch (err) {
+    console.error('Error in PUT /api/woodworking-project:', err);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
 
 // Get saved layout for the current user (returns latest from user_saved_layouts, or legacy user_layouts)
 app.get('/api/layout', async (req, res) => {

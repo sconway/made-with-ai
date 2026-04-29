@@ -1,5 +1,7 @@
 import feather from 'feather-icons';
 import FloorPlanEditor from './floorPlanEditor.js';
+import WoodworkingEditor from './woodworking/editor.js';
+import './woodworking/styles.css';
 
 // Supabase loaded at runtime from CDN so the build does not depend on node_modules resolution (avoids Render CI issues)
 async function loadSupabase() {
@@ -147,7 +149,7 @@ let currentRoomType = null;
 let generatedDesigns = [];
 let selectedRoomItems = new Set(); // Track selected room items
 let furnishedOption = null; // Track furnished room option - no default selection
-let selectedDesignStyle = 'modern-minimalist'; // Track selected interior design style
+let selectedDesignStyle = null; // Track selected interior design style (null = no style change requested)
 let isRoomActuallyEmpty = true; // Track if the uploaded room is actually empty
 
 // Confirm dialog state
@@ -311,6 +313,7 @@ const fallbackImages = {
 // Replicate API constants (PROXY_SERVER_URL defined at top)
 const REPLICATE_API_URL = `${PROXY_SERVER_URL}/replicate/predictions`;
 const REPLICATE_POLL_URL = `${PROXY_SERVER_URL}/replicate/poll`;
+const OPENAI_IMAGE_EDIT_URL = `${PROXY_SERVER_URL}/openai/image-edit`;
 const REPLICATE_MODEL_VERSION = 'stability-ai/stable-diffusion-3.5-large'; // Example version, check replicate for latest/best
 
 // Initialize app: fetch config, Supabase client, and auth state (same pattern as Brandwise)
@@ -330,6 +333,8 @@ async function initializeApp() {
         if (appConfig.supabaseUrl && appConfig.supabaseAnonKey) {
             const createClient = await loadSupabase();
             supabase = createClient(appConfig.supabaseUrl, appConfig.supabaseAnonKey);
+            // Expose for isolated modules (e.g. woodworking editor) that need auth without coupling to main.js internals.
+            window.__decoraiSupabase = supabase;
             const { data: { session } } = await supabase.auth.getSession();
             if (session) {
                 currentUser = session.user;
@@ -841,8 +846,9 @@ function formatLayoutDate(iso) {
 function refreshLayoutsList(bustCache = false) {
     const listEl = document.getElementById('my-layouts-list');
     if (!listEl) return;
-    listEl.innerHTML = '';
+    listEl.innerHTML = '<p class="my-layouts-loading" role="status" aria-live="polite"><span class="my-layouts-spinner" aria-hidden="true"></span>Loading your layouts…</p>';
     fetchLayouts(bustCache).then(layouts => {
+        listEl.innerHTML = '';
         if (layouts.length === 0) {
             listEl.innerHTML = '<p class="my-layouts-empty">No saved layouts yet. Use Save to create one.</p>';
             return;
@@ -897,6 +903,8 @@ function refreshLayoutsList(bustCache = false) {
             listEl.appendChild(row);
         });
         if (typeof feather !== 'undefined') feather.replace();
+    }).catch(() => {
+        listEl.innerHTML = '<p class="my-layouts-empty">Couldn\u2019t load your layouts. Try again in a moment.</p>';
     });
 }
 
@@ -2340,8 +2348,18 @@ function generatePromptsWithItems(basePrompt, style) {
     const ARCHITECTURAL_PRESERVATION_PREFIX = "DO NOT change walls, floor, ceiling, windows, or doors. Only add furniture.";
     const ARCHITECTURAL_PRESERVATION_SUFFIX = "Same style as the original room.";
 
+    // When the user hasn't picked a style, force the model to preserve the room's existing style/materials/colors.
+    // When they have picked one, append it as an explicit "Style: ..." instruction.
+    const hasStyle = !!(style && String(style).trim());
+    const styleClause = hasStyle
+        ? ` Style: ${style}.`
+        : ' Preserve the existing style, materials, colors, and finishes of the room exactly as they appear in the original image. Do not restyle.';
+    const styleNegatives = hasStyle
+        ? ''
+        : ', restyled, different style, changed style, different materials, different colors, different finishes, repainted, redecorated';
+
     // Simplified base negative prompt - focused on architectural preservation
-    const baseNegativePrompt = "blurry, distorted, out of frame, unrealistic shadows, text, watermark, signature, low quality, pixelated, artifacts, change walls, change windows, change floor, change ceiling, change doors, architectural changes, structural modifications";
+    const baseNegativePrompt = "blurry, distorted, out of frame, unrealistic shadows, text, watermark, signature, low quality, pixelated, artifacts, change walls, change windows, change floor, change ceiling, change doors, architectural changes, structural modifications" + styleNegatives;
 
     // If the image looks empty but the user picked "furnished", we usually treat it like an empty room
     // (pick items, etc.) — except for "keep existing items", which has its own prompt and no item grid.
@@ -2351,7 +2369,7 @@ function generatePromptsWithItems(basePrompt, style) {
     // Special case: "start fresh" should always generate, even with no items
     if (currentRoomType === 'furnished' && furnishedOption === 'start-fresh') {
         if (selectedRoomItems.size === 0) {
-            result.positivePrompt = `Given this image of a furnished room, remove all furniture, leaving an empty room. DO NOT change walls, floor, ceiling, windows, or doors. Style: ${style}.`;
+            result.positivePrompt = `Given this image of a furnished room, remove all furniture, leaving an empty room. DO NOT change walls, floor, ceiling, windows, or doors.${styleClause}`;
             result.negativePrompt = `${baseNegativePrompt}, furniture, decor, items, objects`;
         } else {
             // Get selected and unselected items
@@ -2360,7 +2378,7 @@ function generatePromptsWithItems(basePrompt, style) {
 
             // Build positive prompt with selected items
             const selectedItemNames = selectedItems.map(item => item.name.toLowerCase()).join(', ');
-            result.positivePrompt = `DO NOT change walls, floor, ceiling, windows, or doors. Remove all existing furniture, then add ONLY: ${selectedItemNames}. ${ARCHITECTURAL_PRESERVATION_SUFFIX} Style: ${style}.`;
+            result.positivePrompt = `DO NOT change walls, floor, ceiling, windows, or doors. Remove all existing furniture, then add ONLY: ${selectedItemNames}. ${ARCHITECTURAL_PRESERVATION_SUFFIX}${styleClause}`;
 
             // Build negative prompt with unselected items
             const unselectedItemNames = unselectedItems.map(item => item.name.toLowerCase()).join(', ');
@@ -2386,8 +2404,8 @@ function generatePromptsWithItems(basePrompt, style) {
             const allOtherItems = roomItems.filter(item => !selectedRoomItems.has(item.id));
             const allOtherItemNames = allOtherItems.map(item => item.name.toLowerCase()).join(', ');
 
-            // Lead with the object(s) so the model prioritizes adding them; then stress room unchanged
-            result.positivePrompt = `A room with ${promptItemNames} visible. Add ${promptItemNames} to this room. Keep the room exactly as it is: same walls, floor, ceiling, windows, doors, same lighting, same colors, same perspective. No other changes. Style: ${style}.`;
+            // Edit-style instruction: lead with the action, then explicit preservation. Works better with gpt-image-1.
+            result.positivePrompt = `Edit the image: add ${promptItemNames} to the room, placed naturally on the floor. Do not change anything else. Keep every wall, the floor, the ceiling, the windows, the doors, the lighting, the wall colors, the floor color, the materials, and the camera perspective exactly as they appear in the original image. The only difference between the input and output should be the newly added ${promptItemNames}.${styleClause}`;
 
             // Strong negative: no room/lighting changes, no other furniture or decor
             result.negativePrompt = `${baseNegativePrompt}, modified walls, modified floor, modified ceiling, modified windows, modified doors, changed lighting, different lighting, altered lighting, brighter, darker, shadow change, different shadows, changed perspective, changed colors, different materials, architectural change, structural change, ${allOtherItemNames}, other furniture, decor, plants, art, rugs, curtains, accessories, extra objects, style change, different room, empty room without furniture`;
@@ -2395,7 +2413,7 @@ function generatePromptsWithItems(basePrompt, style) {
     } else {
         // Furnished room logic (and room is actually furnished)
         if (furnishedOption === 'keep-existing') {
-            result.positivePrompt = `Given this image of a furnished room, rearrange the furniture to a different layout. Do not change anything about the structural parts of the room like the walls, floors, ceiling, windows, etc. ${ARCHITECTURAL_PRESERVATION_SUFFIX} Style: ${style}.`;
+            result.positivePrompt = `Given this image of a furnished room, rearrange the furniture to a different layout. Do not change anything about the structural parts of the room like the walls, floors, ceiling, windows, etc. ${ARCHITECTURAL_PRESERVATION_SUFFIX}${styleClause}`;
             result.negativePrompt = baseNegativePrompt;
         } else if (furnishedOption === 'add-new') {
             if (selectedRoomItems.size === 0) {
@@ -2408,19 +2426,19 @@ function generatePromptsWithItems(basePrompt, style) {
                 const selectedItems = roomItems.filter(item => selectedRoomItems.has(item.id));
                 const selectedItemNames = selectedItems.map(item => item.name.toLowerCase()).join(', ');
 
-                result.positivePrompt = `Given this image of a furnished room, add ONLY the following items: ${selectedItemNames}. Do not change anything about the structural parts of the room like the walls, floors, ceiling, windows, etc. ${ARCHITECTURAL_PRESERVATION_SUFFIX} Style: ${style}.`;
+                result.positivePrompt = `Given this image of a furnished room, add ONLY the following items: ${selectedItemNames}. Do not change anything about the structural parts of the room like the walls, floors, ceiling, windows, etc. ${ARCHITECTURAL_PRESERVATION_SUFFIX}${styleClause}`;
                 result.negativePrompt = baseNegativePrompt;
             }
         } else if (furnishedOption === 'start-fresh') {
             if (selectedRoomItems.size === 0) {
-                result.positivePrompt = `Given this image of a furnished room, remove all furniture before adding ONLY the following items: (empty room). Do not change anything about the structural parts of the room like the walls, floors, ceiling, windows, etc. ${ARCHITECTURAL_PRESERVATION_SUFFIX} Style: ${style}.`;
+                result.positivePrompt = `Given this image of a furnished room, remove all furniture before adding ONLY the following items: (empty room). Do not change anything about the structural parts of the room like the walls, floors, ceiling, windows, etc. ${ARCHITECTURAL_PRESERVATION_SUFFIX}${styleClause}`;
                 result.negativePrompt = `${baseNegativePrompt}, furniture, decor, items, objects`;
             } else {
                 // Get selected items to add
                 const selectedItems = roomItems.filter(item => selectedRoomItems.has(item.id));
                 const selectedItemNames = selectedItems.map(item => item.name.toLowerCase()).join(', ');
 
-                result.positivePrompt = `Given this image of a furnished room, remove all furniture before adding ONLY the following items: ${selectedItemNames}. Do not change anything about the structural parts of the room like the walls, floors, ceiling, windows, etc. ${ARCHITECTURAL_PRESERVATION_SUFFIX} Style: ${style}.`;
+                result.positivePrompt = `Given this image of a furnished room, remove all furniture before adding ONLY the following items: ${selectedItemNames}. Do not change anything about the structural parts of the room like the walls, floors, ceiling, windows, etc. ${ARCHITECTURAL_PRESERVATION_SUFFIX}${styleClause}`;
                 result.negativePrompt = `${baseNegativePrompt}, furniture, decor, items, objects`;
             }
         }
@@ -2695,6 +2713,10 @@ async function generateImageWithControlNet(imageBase64, prompt, negativePrompt) 
     // Multiple model options with fallbacks
     const modelOptions = [
         {
+            name: "OpenAI gpt-image-1",
+            type: "openai-edit"
+        },
+        {
             version: "adirik/interior-design:76604baddc85b1b4616e1c6475eca080da339c8875bd4996705440484a6eac38",
             name: "Interior Design",
             type: "interior-design"
@@ -2718,6 +2740,55 @@ async function generateImageWithControlNet(imageBase64, prompt, negativePrompt) 
         console.log(`Attempting generation with model: ${model.name}`);
 
         try {
+            if (model.type === 'openai-edit') {
+                const imageInput = imageBase64.startsWith('data:image')
+                    ? imageBase64
+                    : `data:image/jpeg;base64,${imageBase64}`;
+                // gpt-image-1 high-quality edits take 30–90s. Use a long timeout and DO NOT retry —
+                // each retry triggers a duplicate billable generation on OpenAI's side.
+                const controller = new AbortController();
+                const timeout = setTimeout(() => controller.abort(), 180000);
+                let openaiResp;
+                try {
+                    openaiResp = await fetch(OPENAI_IMAGE_EDIT_URL, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            imageBase64: imageInput,
+                            prompt: prompt,
+                            size: 'auto',
+                            quality: 'high'
+                        }),
+                        signal: controller.signal
+                    });
+                } finally {
+                    clearTimeout(timeout);
+                }
+
+                if (!openaiResp.ok) {
+                    const rawText = await openaiResp.text().catch(() => '');
+                    let parsed = null;
+                    try { parsed = JSON.parse(rawText); } catch (_) {}
+                    console.error(`[OpenAI gpt-image-1] FAILED at ${OPENAI_IMAGE_EDIT_URL}`, {
+                        status: openaiResp.status,
+                        statusText: openaiResp.statusText,
+                        contentType: openaiResp.headers.get('content-type'),
+                        body: parsed || rawText.slice(0, 500)
+                    });
+                    const error = `Model ${model.name} failed: ${(parsed && parsed.error) || openaiResp.status}`;
+                    lastError = new Error(error);
+                    continue;
+                }
+                const openaiData = await openaiResp.json();
+                if (!openaiData.imageUrls || !openaiData.imageUrls.length) {
+                    console.error(`[OpenAI gpt-image-1] returned no images`, openaiData);
+                    lastError = new Error(`Model ${model.name} returned no images`);
+                    continue;
+                }
+                console.log(`[OpenAI gpt-image-1] SUCCESS — image generated`);
+                return openaiData.imageUrls;
+            }
+
             const inputData = {
                 image: imageBase64,
                 prompt: prompt,
@@ -2792,7 +2863,7 @@ async function generateImageWithControlNet(imageBase64, prompt, negativePrompt) 
             console.log(`Polling for results from ${model.name}...`);
             const result = await pollReplicatePrediction(prediction.urls.get);
             console.log(`Successfully generated with ${model.name}`);
-            return result.imageUrls; // Return the array of image URLs
+            return result.imageUrls;
 
         } catch (error) {
             console.warn(`Model ${model.name} failed:`, error.message);
@@ -2925,8 +2996,8 @@ async function generateDesigns() {
     }
 
     const basePrompt = aiPrompts[currentRoomType];
-    const styleObj = interiorDesignStyles.find(s => s.id === selectedDesignStyle) || interiorDesignStyles[0];
-    const style = styleObj.promptText;
+    const styleObj = selectedDesignStyle ? interiorDesignStyles.find(s => s.id === selectedDesignStyle) : null;
+    const style = styleObj ? styleObj.promptText : '';
     const description = designDescriptions[currentRoomType][0]; // Use first description
     const prompts = generatePromptsWithItems(basePrompt, style);
 
@@ -3175,8 +3246,8 @@ async function retryImageGeneration() {
     try {
         // Generate new prompts for retry
         const basePrompt = aiPrompts[currentRoomType];
-        const styleObj = interiorDesignStyles.find(s => s.id === selectedDesignStyle) || interiorDesignStyles[0];
-        const style = styleObj.promptText;
+        const styleObj = selectedDesignStyle ? interiorDesignStyles.find(s => s.id === selectedDesignStyle) : null;
+        const style = styleObj ? styleObj.promptText : '';
         const prompts = generatePromptsWithItems(basePrompt, style);
 
         // Check if we should generate an image
@@ -3227,6 +3298,9 @@ function updateDesignCard(cardData, index) {
     const card = designCarousel.querySelector(`[data-design-id="design-${index}"]`);
     console.log(`Updating card ${index}, found card: ${!!card}`);
     if (!card) return;
+    // Hide the in-progress status banner now that generation is done.
+    const statusBanner = card.querySelector('.model-status');
+    if (statusBanner) statusBanner.classList.add('hidden');
     // Fade out whiteboard, fade in image
     const whiteboard = card.querySelector('.whiteboard-container');
     const img = card.querySelector('.generated-image'); // Select the generated image specifically
@@ -3406,6 +3480,7 @@ function displayDesigns(designs) {
                 </div>
                 ${disclaimer}
             </div>
+            <div class="model-status${design.loading ? '' : ' hidden'}" aria-live="polite">Generating your design — this usually takes 30–60 seconds.</div>
             ${showRevealSlider ? `
                 <div class="reveal-checkbox-container">
                     <label class="reveal-checkbox-label">
