@@ -84,7 +84,7 @@ const WoodworkingEditor = (() => {
     let raycaster, pointer;
     let boards = [];                  // { id, mesh, length, width, thickness, color }
     let nextBoardId = 1;
-    let selectedBoardId = null;
+    let selectedBoardIds = new Set(); // multi-select; size 0 = nothing selected
     let initialized = false;
     let animationId = null;
     let resizeObserver = null;
@@ -95,7 +95,16 @@ const WoodworkingEditor = (() => {
     let isApplyingSnap = false;
     let gizmoMode = 'off'; // 'off' | 'translate' | 'rotate'
     let libraryCategoryId = BOARD_CATEGORIES[0].id;
-    let pointerDragState = null; // { boardId, planeY, offsetX, offsetZ } during direct drag
+    let pointerDragState = null;      // active during freestyle XZ drag
+    let groupDragOffsets = null;      // Map<boardId, {dx, dz}> for moving the whole selection
+    let gizmoPivot = null;            // proxy Object3D the TransformControls attaches to for multi-select
+    let gizmoLastPos = new THREE.Vector3();
+    let gizmoLastQuat = new THREE.Quaternion();
+    let historyPast = [];             // each entry is a getState() snapshot
+    let historyFuture = [];
+    const HISTORY_LIMIT = 100;
+    let clipboard = [];               // last copy/paste payload
+    let keydownListener = null;
     const SNAP_DISTANCE_INCHES = 6.0;
     const dragPlane = { plane: null }; // lazy-init THREE.Plane
 
@@ -107,7 +116,7 @@ const WoodworkingEditor = (() => {
         openBtn.addEventListener('click', show);
         screenEl.querySelector('[data-action="back"]')?.addEventListener('click', hide);
         renderLibrary();
-        screenEl.querySelector('[data-action="delete-board"]')?.addEventListener('click', deleteSelectedBoard);
+        screenEl.querySelector('[data-action="delete-board"]')?.addEventListener('click', deleteSelected);
         screenEl.querySelector('[data-action="reset-view"]')?.addEventListener('click', resetCamera);
         screenEl.querySelector('[data-action="save"]')?.addEventListener('click', handleSave);
         screenEl.querySelectorAll('[data-gizmo-mode]').forEach(btn => {
@@ -129,6 +138,10 @@ const WoodworkingEditor = (() => {
         if (!scene) buildScene();
         startRenderLoop();
         setTimeout(handleResize, 0);
+        if (!keydownListener) {
+            keydownListener = handleKeydown;
+            document.addEventListener('keydown', keydownListener);
+        }
         // First time the editor opens for a logged-in user, try loading their saved project.
         if (!hasLoadedFromServer) {
             hasLoadedFromServer = true;
@@ -140,6 +153,10 @@ const WoodworkingEditor = (() => {
         screenEl.classList.add('hidden');
         document.body.classList.remove('woodworking-active');
         stopRenderLoop();
+        if (keydownListener) {
+            document.removeEventListener('keydown', keydownListener);
+            keydownListener = null;
+        }
     }
 
     function buildScene() {
@@ -192,8 +209,18 @@ const WoodworkingEditor = (() => {
         transformControls = new TransformControls(camera, renderer.domElement);
         transformControls.setTranslationSnap(0.25);
         transformControls.setRotationSnap(THREE.MathUtils.degToRad(15));
+        let gizmoSnapshotPushed = false;
         transformControls.addEventListener('dragging-changed', (e) => {
             orbitControls.enabled = !e.value;
+            if (e.value) gizmoSnapshotPushed = false; // arm: push on first objectChange below
+            // Reset the pivot baseline whenever a drag starts/ends so multi-select deltas are
+            // computed against the correct origin.
+            if (gizmoPivot && transformControls.object === gizmoPivot) {
+                gizmoLastPos.copy(gizmoPivot.position);
+                gizmoLastQuat.copy(gizmoPivot.quaternion);
+            }
+            // After a multi-select drag ends, re-center the pivot at the new centroid.
+            if (!e.value && selectedBoardIds.size > 1) refreshGizmoAttachment();
             updateGizmoCursor();
             updateRotationBadge();
         });
@@ -202,11 +229,19 @@ const WoodworkingEditor = (() => {
             updateGizmoCursor();
         });
         transformControls.addEventListener('objectChange', () => {
-            // Live face-snap while translating with the gizmo.
-            if (gizmoMode === 'translate' && transformControls.dragging && selectedBoardId !== null) {
-                applyBoardSnap(selectedBoardId);
+            // First actual change since drag start — record a snapshot so undo restores pre-drag state.
+            if (transformControls.dragging && !gizmoSnapshotPushed) {
+                recordHistorySnapshot();
+                gizmoSnapshotPushed = true;
             }
-            if (selectedBoardId !== null) syncSelectedBoardInputsFromMesh();
+            // Multi-select: apply the gizmo's incremental delta to every selected board.
+            if (transformControls.dragging && selectedBoardIds.size > 1 && transformControls.object === gizmoPivot) {
+                applyGroupDelta();
+            } else if (gizmoMode === 'translate' && transformControls.dragging && selectedBoardIds.size === 1) {
+                // Single-select: live face-snap while translating with the gizmo.
+                applyBoardSnap([...selectedBoardIds][0]);
+            }
+            if (selectedBoardIds.size === 1) syncSelectedBoardInputsFromMesh();
             updateRotationBadge();
         });
         scene.add(transformControls.getHelper ? transformControls.getHelper() : transformControls);
@@ -306,11 +341,14 @@ const WoodworkingEditor = (() => {
     function updateBoardToolbarPosition() {
         const toolbar = screenEl?.querySelector('.ww-board-toolbar');
         if (!toolbar || toolbar.hidden) return;
-        const b = getSelectedBoard();
-        if (!b) return;
-        // Project the top-center of the board's bounding box to canvas-local screen space.
-        const box = new THREE.Box3().setFromObject(b.mesh);
-        const top = new THREE.Vector3((box.min.x + box.max.x) / 2, box.max.y, (box.min.z + box.max.z) / 2);
+        if (selectedBoardIds.size === 0) return;
+        // Anchor: top-center of the union AABB of all selected boards.
+        const union = new THREE.Box3();
+        for (const b of getSelectedBoards()) {
+            b.mesh.updateMatrixWorld(true);
+            union.union(new THREE.Box3().setFromObject(b.mesh));
+        }
+        const top = new THREE.Vector3((union.min.x + union.max.x) / 2, union.max.y, (union.min.z + union.max.z) / 2);
         top.project(camera);
         const rect = renderer.domElement.getBoundingClientRect();
         const containerRect = canvasContainer.getBoundingClientRect();
@@ -349,11 +387,17 @@ const WoodworkingEditor = (() => {
     function updateRotationBadge() {
         const badge = screenEl?.querySelector('.ww-rotation-badge');
         if (!badge) return;
-        const b = getSelectedBoard();
-        const rotating = gizmoMode === 'rotate' && transformControls?.dragging && b;
+        const rotating = gizmoMode === 'rotate' && transformControls?.dragging && selectedBoardIds.size > 0;
         if (!rotating) { badge.hidden = true; return; }
-        // Normalize to (-180, 180] for a friendlier display.
-        let deg = THREE.MathUtils.radToDeg(b.mesh.rotation.y) % 360;
+        // Single selection: show that board's actual Y rotation.
+        // Multi-selection: show the gizmo pivot's accumulated Y rotation since the drag started.
+        let rad;
+        if (selectedBoardIds.size === 1) {
+            rad = getSelectedBoard()?.mesh.rotation.y ?? 0;
+        } else {
+            rad = new THREE.Euler().setFromQuaternion(gizmoPivot.quaternion, 'YXZ').y;
+        }
+        let deg = THREE.MathUtils.radToDeg(rad) % 360;
         if (deg > 180) deg -= 360;
         if (deg <= -180) deg += 360;
         badge.textContent = `${Math.round(deg)}°`;
@@ -383,25 +427,37 @@ const WoodworkingEditor = (() => {
 
     function handlePointerDown(event) {
         if (event.button !== 0) return; // only left-click starts a board drag
-        // If the rotate gizmo is active and grabbed it, let TransformControls handle this event.
         if (gizmoMode !== 'off' && transformControls.dragging) return;
         updatePointerNDC(event);
         raycaster.setFromCamera(pointer, camera);
         const meshes = boards.map(b => b.mesh);
         const hits = raycaster.intersectObjects(meshes, false);
+        const additive = event.shiftKey || event.metaKey || event.ctrlKey;
+
         if (hits.length > 0) {
             const hit = hits[0];
             const hitId = hit.object.userData.boardId;
-            selectBoard(hitId);
-            // Begin direct XZ drag on a plane through the hit point.
+
+            // Shift/Cmd/Ctrl-click toggles membership without starting a drag.
+            if (additive) {
+                toggleInSelection(hitId);
+                return;
+            }
+
+            // If the user clicked an unselected board, replace the selection with just it.
+            // If they clicked into an existing multi-selection, keep the selection and drag the group.
+            if (!selectedBoardIds.has(hitId)) setSelection(hitId);
+
+            // Capture per-board offsets relative to the hit point so the whole selection drags as one.
             dragPlane.plane.set(new THREE.Vector3(0, 1, 0), -hit.point.y);
-            const board = boards.find(b => b.id === hitId);
-            pointerDragState = {
-                boardId: hitId,
-                planeY: hit.point.y,
-                offsetX: board.mesh.position.x - hit.point.x,
-                offsetZ: board.mesh.position.z - hit.point.z
-            };
+            groupDragOffsets = new Map();
+            for (const b of getSelectedBoards()) {
+                groupDragOffsets.set(b.id, {
+                    dx: b.mesh.position.x - hit.point.x,
+                    dz: b.mesh.position.z - hit.point.z
+                });
+            }
+            pointerDragState = { hitX: hit.point.x, hitZ: hit.point.z, planeY: hit.point.y, snapshotPushed: false };
             isDraggingBoard = true;
             draggedBoardId = hitId;
             orbitControls.enabled = false;
@@ -409,28 +465,45 @@ const WoodworkingEditor = (() => {
             event.preventDefault();
         } else {
             const ground = raycaster.intersectObject(groundMesh, false);
-            if (ground.length > 0) selectBoard(null);
+            if (ground.length > 0 && !additive) clearSelection();
         }
     }
 
     function handlePointerMove(event) {
-        if (!pointerDragState) return;
+        if (!pointerDragState || !groupDragOffsets) return;
         updatePointerNDC(event);
         raycaster.setFromCamera(pointer, camera);
         const hitPoint = new THREE.Vector3();
         if (!raycaster.ray.intersectPlane(dragPlane.plane, hitPoint)) return;
-        const board = boards.find(b => b.id === pointerDragState.boardId);
-        if (!board) return;
-        board.mesh.position.x = hitPoint.x + pointerDragState.offsetX;
-        board.mesh.position.z = hitPoint.z + pointerDragState.offsetZ;
-        applyBoardSnap(board.id);
+        // Defer the undo snapshot until actual movement occurs, so a bare click doesn't pollute history.
+        if (!pointerDragState.snapshotPushed) {
+            recordHistorySnapshot();
+            pointerDragState.snapshotPushed = true;
+        }
+        for (const [id, off] of groupDragOffsets) {
+            const b = boards.find(x => x.id === id);
+            if (!b) continue;
+            b.mesh.position.x = hitPoint.x + off.dx;
+            b.mesh.position.z = hitPoint.z + off.dz;
+        }
+        // Face-snapping is meaningful for single-board drags; skip for groups (which would fight each other).
+        if (selectedBoardIds.size === 1) {
+            applyBoardSnap([...selectedBoardIds][0]);
+        }
         syncSelectedBoardInputsFromMesh();
+        // Keep the gizmo pivot riding the centroid during multi-board drags.
+        if (selectedBoardIds.size > 1 && gizmoPivot) {
+            const c = computeSelectionCentroid();
+            gizmoPivot.position.copy(c);
+            gizmoLastPos.copy(c);
+        }
     }
 
     function handlePointerUp(event) {
         if (!pointerDragState) return;
         renderer.domElement.releasePointerCapture?.(event.pointerId);
         pointerDragState = null;
+        groupDragOffsets = null;
         isDraggingBoard = false;
         draggedBoardId = null;
         orbitControls.enabled = true;
@@ -442,12 +515,6 @@ const WoodworkingEditor = (() => {
         screenEl.querySelectorAll('[data-gizmo-mode]').forEach(btn => {
             btn.setAttribute('aria-pressed', String(btn.dataset.gizmoMode === mode));
         });
-        const helper = transformControls.getHelper ? transformControls.getHelper() : transformControls;
-        if (mode === 'off') {
-            transformControls.detach();
-            helper.visible = false;
-            return;
-        }
         if (mode === 'translate') {
             transformControls.setMode('translate');
             transformControls.showX = true;
@@ -460,13 +527,7 @@ const WoodworkingEditor = (() => {
             transformControls.showY = true;
             transformControls.showZ = false;
         }
-        const b = getSelectedBoard();
-        if (b) {
-            transformControls.attach(b.mesh);
-            helper.visible = true;
-        } else {
-            helper.visible = false;
-        }
+        refreshGizmoAttachment();
     }
 
     function addBoard(opts = {}) {
@@ -479,59 +540,156 @@ const WoodworkingEditor = (() => {
         const geom = new THREE.BoxGeometry(length, thickness, width);
         const mat = new THREE.MeshStandardMaterial({ color, roughness: 0.7, metalness: 0.05 });
         const mesh = new THREE.Mesh(geom, mat);
-        // Sit on the ground; stack new boards slightly so they don't z-fight if added repeatedly
-        const stackOffset = boards.length * (thickness + 0.1);
+        // Default position: stack a little so newly-added duplicates don't z-fight.
+        const stackOffset = (opts.x === undefined && opts.z === undefined)
+            ? boards.length * (thickness + 0.1)
+            : 0;
         mesh.position.set(opts.x ?? 0, (opts.y ?? thickness / 2) + stackOffset, opts.z ?? 0);
         if (opts.rotationY) mesh.rotation.y = opts.rotationY;
 
-        const id = nextBoardId++;
+        const id = opts.id ?? nextBoardId++;
+        if (id >= nextBoardId) nextBoardId = id + 1;
         mesh.userData.boardId = id;
         scene.add(mesh);
         const board = { id, mesh, length, width, thickness, color };
         boards.push(board);
-        selectBoard(id);
+        if (opts.select !== false) setSelection(id);
         renderCutList();
+        return id;
     }
 
-    function deleteSelectedBoard() {
-        if (selectedBoardId === null) return;
-        const idx = boards.findIndex(b => b.id === selectedBoardId);
-        if (idx < 0) return;
-        const b = boards[idx];
+    // Removes every board in the current selection. Records an undo snapshot before mutating.
+    function deleteSelected() {
+        if (selectedBoardIds.size === 0) return;
+        recordHistorySnapshot();
         transformControls.detach();
-        scene.remove(b.mesh);
-        b.mesh.geometry.dispose();
-        b.mesh.material.dispose();
-        boards.splice(idx, 1);
-        selectedBoardId = null;
+        for (const id of [...selectedBoardIds]) {
+            const idx = boards.findIndex(b => b.id === id);
+            if (idx < 0) continue;
+            const b = boards[idx];
+            scene.remove(b.mesh);
+            b.mesh.geometry.dispose();
+            b.mesh.material.dispose();
+            boards.splice(idx, 1);
+        }
+        selectedBoardIds.clear();
+        refreshSelectionVisuals();
+        refreshGizmoAttachment();
         renderCutList();
         renderSelectedPanel();
     }
 
-    function selectBoard(id) {
-        selectedBoardId = id;
-        const helper = transformControls.getHelper ? transformControls.getHelper() : transformControls;
-        const toolbar = screenEl?.querySelector('.ww-board-toolbar');
-        if (id === null) {
-            transformControls.detach();
-            helper.visible = false;
-            if (toolbar) toolbar.hidden = true;
-        } else {
-            if (toolbar) toolbar.hidden = false;
-            if (gizmoMode !== 'off') {
-                const b = boards.find(x => x.id === id);
-                if (b) {
-                    transformControls.attach(b.mesh);
-                    helper.visible = true;
-                }
+    // Replaces the current selection with `ids` (number, number[], Set, or null/undefined to clear).
+    function setSelection(ids) {
+        let next;
+        if (ids === null || ids === undefined) next = new Set();
+        else if (typeof ids === 'number') next = new Set([ids]);
+        else if (ids instanceof Set) next = new Set(ids);
+        else next = new Set(ids);
+        // Drop ids that no longer exist.
+        for (const id of [...next]) {
+            if (!boards.find(b => b.id === id)) next.delete(id);
+        }
+        selectedBoardIds = next;
+        refreshSelectionVisuals();
+        refreshGizmoAttachment();
+        renderCutList();
+        renderSelectedPanel();
+    }
+
+    // Adds/removes one id without disturbing the rest of the selection (shift-click semantics).
+    function toggleInSelection(id) {
+        if (!boards.find(b => b.id === id)) return;
+        if (selectedBoardIds.has(id)) selectedBoardIds.delete(id);
+        else selectedBoardIds.add(id);
+        refreshSelectionVisuals();
+        refreshGizmoAttachment();
+        renderCutList();
+        renderSelectedPanel();
+    }
+
+    function clearSelection() { setSelection(null); }
+
+    // Highlights selected boards via material emissive — cheap, no extra geometry.
+    function refreshSelectionVisuals() {
+        for (const b of boards) {
+            const sel = selectedBoardIds.has(b.id);
+            const mat = b.mesh.material;
+            if (mat?.emissive) {
+                mat.emissive.setHex(sel ? 0x4f46e5 : 0x000000);
+                mat.emissiveIntensity = sel ? 0.35 : 0;
             }
         }
-        renderCutList();
-        renderSelectedPanel();
+        const toolbar = screenEl?.querySelector('.ww-board-toolbar');
+        if (toolbar) toolbar.hidden = selectedBoardIds.size === 0;
     }
 
+    // Decides whether the gizmo attaches to a single mesh or to a centroid pivot for the group.
+    function refreshGizmoAttachment() {
+        const helper = transformControls.getHelper ? transformControls.getHelper() : transformControls;
+        if (selectedBoardIds.size === 0 || gizmoMode === 'off') {
+            transformControls.detach();
+            helper.visible = false;
+            return;
+        }
+        if (selectedBoardIds.size === 1) {
+            const id = [...selectedBoardIds][0];
+            const b = boards.find(x => x.id === id);
+            if (!b) { transformControls.detach(); helper.visible = false; return; }
+            transformControls.attach(b.mesh);
+            helper.visible = true;
+            return;
+        }
+        // Multi-select: position a non-rendered pivot at the centroid and gizmo-target it.
+        if (!gizmoPivot) {
+            gizmoPivot = new THREE.Object3D();
+            scene.add(gizmoPivot);
+        }
+        const centroid = computeSelectionCentroid();
+        gizmoPivot.position.copy(centroid);
+        gizmoPivot.quaternion.identity();
+        gizmoLastPos.copy(gizmoPivot.position);
+        gizmoLastQuat.copy(gizmoPivot.quaternion);
+        transformControls.attach(gizmoPivot);
+        helper.visible = true;
+    }
+
+    function computeSelectionCentroid() {
+        const sum = new THREE.Vector3();
+        let n = 0;
+        for (const b of getSelectedBoards()) { sum.add(b.mesh.position); n++; }
+        if (n) sum.divideScalar(n);
+        return sum;
+    }
+
+    // Per-frame application of the gizmo pivot's incremental delta to every selected board,
+    // so translating/rotating the pivot translates/rotates the whole group around the pivot.
+    function applyGroupDelta() {
+        if (!gizmoPivot) return;
+        const dPos = new THREE.Vector3().subVectors(gizmoPivot.position, gizmoLastPos);
+        const invLast = gizmoLastQuat.clone().invert();
+        const dQuat = new THREE.Quaternion().multiplyQuaternions(gizmoPivot.quaternion, invLast);
+        for (const b of getSelectedBoards()) {
+            // Translate first, then rotate around the new pivot position.
+            b.mesh.position.add(dPos);
+            const offset = b.mesh.position.clone().sub(gizmoPivot.position);
+            offset.applyQuaternion(dQuat);
+            b.mesh.position.copy(gizmoPivot.position).add(offset);
+            b.mesh.quaternion.premultiply(dQuat);
+        }
+        gizmoLastPos.copy(gizmoPivot.position);
+        gizmoLastQuat.copy(gizmoPivot.quaternion);
+    }
+
+    function getSelectedBoards() {
+        return boards.filter(b => selectedBoardIds.has(b.id));
+    }
+
+    // Convenience for code that only makes sense for a single-board selection (side panel inputs).
     function getSelectedBoard() {
-        return boards.find(b => b.id === selectedBoardId) || null;
+        if (selectedBoardIds.size !== 1) return null;
+        const id = [...selectedBoardIds][0];
+        return boards.find(b => b.id === id) || null;
     }
 
     function syncSelectedBoardInputsFromMesh() {
@@ -613,20 +771,39 @@ const WoodworkingEditor = (() => {
             dims.className = 'ww-library-item-dims';
             dims.textContent = `${formatDim(type.length)} × ${formatDim(type.width)} × ${formatDim(type.thickness)}″`;
             item.append(name, dims);
-            item.addEventListener('click', () => addBoard({
-                length: type.length,
-                width: type.width,
-                thickness: type.thickness,
-                color: type.color
-            }));
+            item.addEventListener('click', () => {
+                recordHistorySnapshot();
+                addBoard({
+                    length: type.length,
+                    width: type.width,
+                    thickness: type.thickness,
+                    color: type.color
+                });
+            });
             gridEl.appendChild(item);
         });
     }
 
     function renderSelectedPanel() {
         const panel = screenEl.querySelector('.ww-selected-panel');
-        const b = getSelectedBoard();
         if (!panel) return;
+        // Multi-select: show a summary badge instead of single-board property inputs.
+        if (selectedBoardIds.size > 1) {
+            panel.classList.remove('ww-selected-panel--empty');
+            panel.classList.add('ww-selected-panel--multi');
+            let badge = panel.querySelector('.ww-selected-multi-badge');
+            if (!badge) {
+                badge = document.createElement('div');
+                badge.className = 'ww-selected-multi-badge';
+                panel.appendChild(badge);
+            }
+            badge.textContent = `${selectedBoardIds.size} boards selected`;
+            return;
+        }
+        panel.classList.remove('ww-selected-panel--multi');
+        const badge = panel.querySelector('.ww-selected-multi-badge');
+        if (badge) badge.remove();
+        const b = getSelectedBoard();
         if (!b) {
             panel.classList.add('ww-selected-panel--empty');
             return;
@@ -783,21 +960,31 @@ const WoodworkingEditor = (() => {
         if (data && data.state) loadState(data.state);
     }
 
-    // Future: persistence helpers for main-app save flow. Not wired yet.
+    // Snapshot of everything an undo/redo or save needs to reconstruct the scene.
     function getState() {
         return {
-            version: 1,
+            version: 2,
             boards: boards.map(b => ({
+                id: b.id,
                 length: b.length, width: b.width, thickness: b.thickness,
                 color: b.color,
                 x: b.mesh.position.x, y: b.mesh.position.y, z: b.mesh.position.z,
                 rotationY: b.mesh.rotation.y
-            }))
+            })),
+            selectedIds: [...selectedBoardIds]
         };
     }
+
     function loadState(state) {
         if (!state || !Array.isArray(state.boards)) return;
-        // Clear existing
+        applySnapshot(state);
+        // Loading from disk discards any in-memory undo history.
+        historyPast = [];
+        historyFuture = [];
+    }
+
+    // Tear down current boards and rebuild from a snapshot. Used by both load and undo/redo.
+    function applySnapshot(state) {
         boards.slice().forEach(b => {
             scene.remove(b.mesh);
             b.mesh.geometry.dispose();
@@ -805,9 +992,80 @@ const WoodworkingEditor = (() => {
         });
         boards = [];
         nextBoardId = 1;
-        selectedBoardId = null;
+        selectedBoardIds.clear();
         transformControls.detach();
-        state.boards.forEach(addBoard);
+        if (gizmoPivot) { scene.remove(gizmoPivot); gizmoPivot = null; }
+        for (const b of state.boards) addBoard({ ...b, select: false });
+        setSelection(state.selectedIds || []);
+        renderCutList();
+        renderSelectedPanel();
+    }
+
+    // Undo/redo --------------------------------------------------------------
+
+    function recordHistorySnapshot() {
+        historyPast.push(getState());
+        if (historyPast.length > HISTORY_LIMIT) historyPast.shift();
+        historyFuture.length = 0;
+    }
+
+    function undo() {
+        if (historyPast.length === 0) return;
+        historyFuture.push(getState());
+        applySnapshot(historyPast.pop());
+    }
+
+    function redo() {
+        if (historyFuture.length === 0) return;
+        historyPast.push(getState());
+        applySnapshot(historyFuture.pop());
+    }
+
+    // Copy/paste -------------------------------------------------------------
+
+    function copySelection() {
+        if (selectedBoardIds.size === 0) return;
+        clipboard = getSelectedBoards().map(b => ({
+            length: b.length, width: b.width, thickness: b.thickness,
+            color: b.color,
+            x: b.mesh.position.x, y: b.mesh.position.y, z: b.mesh.position.z,
+            rotationY: b.mesh.rotation.y
+        }));
+    }
+
+    function pasteClipboard() {
+        if (clipboard.length === 0) return;
+        recordHistorySnapshot();
+        const offset = 6; // inches
+        const newIds = [];
+        for (const item of clipboard) {
+            const id = addBoard({
+                length: item.length, width: item.width, thickness: item.thickness,
+                color: item.color,
+                x: item.x + offset, y: item.y, z: item.z + offset,
+                rotationY: item.rotationY,
+                select: false
+            });
+            newIds.push(id);
+        }
+        setSelection(newIds);
+    }
+
+    // Keyboard ---------------------------------------------------------------
+
+    function handleKeydown(e) {
+        if (!screenEl || screenEl.classList.contains('hidden')) return;
+        // Don't intercept while the user is editing a text/number field.
+        const t = e.target;
+        if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return;
+        const meta = e.metaKey || e.ctrlKey;
+        const k = e.key.toLowerCase();
+        if (meta && k === 'z' && !e.shiftKey)            { e.preventDefault(); undo(); return; }
+        if (meta && (k === 'y' || (e.shiftKey && k === 'z'))) { e.preventDefault(); redo(); return; }
+        if (meta && k === 'c')                            { e.preventDefault(); copySelection(); return; }
+        if (meta && k === 'v')                            { e.preventDefault(); pasteClipboard(); return; }
+        if (e.key === 'Delete' || e.key === 'Backspace')  { e.preventDefault(); deleteSelected(); return; }
+        if (e.key === 'Escape')                            { e.preventDefault(); clearSelection(); return; }
     }
 
     return { init, show, hide, getState, loadState };

@@ -45,6 +45,7 @@ const designCarousel = document.getElementById('design-carousel');
 const backToOptionsBtn = document.getElementById('back-to-options-btn');
 const regenerateBtn = document.getElementById('regenerate-btn');
 const saveDesignBtn = document.getElementById('save-design-btn');
+const refinementInput = document.getElementById('refinement-input');
 const itemsSelectionError = document.getElementById('items-selection-error');
 
 // Mobile-specific DOM elements
@@ -3031,7 +3032,11 @@ async function generateDesigns() {
         backToOptionsBtn.classList.remove('hidden');
     }
 
-    const fullPrompt = prompts.positivePrompt;
+    // Append any user-supplied refinement text to the prompt
+    const refinementText = refinementInput?.value?.trim();
+    const fullPrompt = refinementText
+        ? `${prompts.positivePrompt} Additional instructions: ${refinementText}.`
+        : prompts.positivePrompt;
     const negativePrompt = prompts.negativePrompt;
 
     // Create initial design with loading state
@@ -3259,7 +3264,13 @@ async function retryImageGeneration() {
             return;
         }
 
-        let imageUrls = await generateImageWithControlNet(currentUploadedImage, prompts.positivePrompt, prompts.negativePrompt);
+        // Append any user-supplied refinement text on retry too
+        const retryRefinementText = refinementInput?.value?.trim();
+        const retryPrompt = retryRefinementText
+            ? `${prompts.positivePrompt} Additional instructions: ${retryRefinementText}.`
+            : prompts.positivePrompt;
+
+        let imageUrls = await generateImageWithControlNet(currentUploadedImage, retryPrompt, prompts.negativePrompt);
         let imageUrl;
         if (Array.isArray(imageUrls)) {
             imageUrl = imageUrls[0];
@@ -3708,6 +3719,9 @@ function setupRevealCheckbox(card, index) {
 function goBackToPreview() {
     resultsSection.classList.add('hidden');
     previewContainer.classList.remove('hidden');
+
+    // Clear refinement text so it doesn't bleed into a fresh generation
+    if (refinementInput) refinementInput.value = '';
 
     // Wipe the previous prompt's selections so the next generation starts
     // fresh. Re-apply the detected room type so the user doesn't have to

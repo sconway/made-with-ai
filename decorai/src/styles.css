@@ -659,6 +659,56 @@ main {
   color: var(--text-light);
 }
 
+/* ── Refinement area (between carousel and action buttons) ── */
+.refinement-area {
+  margin-top: 1.25rem;
+  padding: 1rem;
+  background: var(--secondary-color);
+  border: 1px solid var(--border-color);
+  border-radius: 10px;
+}
+
+.refinement-label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-weight: 500;
+  font-size: 0.9rem;
+  color: var(--text-light);
+  margin-bottom: 0.5rem;
+}
+
+.refinement-label svg {
+  width: 14px;
+  height: 14px;
+  flex-shrink: 0;
+}
+
+.refinement-textarea {
+  width: 100%;
+  padding: 0.65rem 0.875rem;
+  border: 1px solid var(--border-color);
+  border-radius: var(--border-radius);
+  font-family: inherit;
+  font-size: 0.9rem;
+  line-height: 1.45;
+  color: var(--text-color);
+  background: var(--background-color);
+  resize: vertical;
+  transition: border-color 0.2s ease, box-shadow 0.2s ease;
+  box-sizing: border-box;
+}
+
+.refinement-textarea:focus {
+  outline: none;
+  border-color: var(--primary-color);
+  box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.1);
+}
+
+.refinement-textarea::placeholder {
+  color: #9ca3af;
+}
+
 .results-actions {
   display: flex;
   flex-direction: column;
@@ -1000,13 +1050,22 @@ main {
     height: 200px;
   }
 
+  .refinement-area {
+    margin-top: 0.75rem;
+    padding: 0.75rem;
+  }
+
+  .refinement-textarea {
+    font-size: 0.875rem;
+  }
+
   .results-actions {
     position: sticky;
     bottom: 0;
     background-color: var(--background-color);
     padding-top: 1rem;
     border-top: 1px solid var(--border-color);
-    margin-top: 0;
+    margin-top: 0.75rem;
     flex-direction: column;
     gap: 0.75rem;
   }

@@ -214,8 +214,20 @@
 }
 
 #woodworking-editor-screen .ww-selected-panel--empty .ww-selected-fields,
-#woodworking-editor-screen .ww-selected-panel--empty .ww-selected-actions {
+#woodworking-editor-screen .ww-selected-panel--empty .ww-selected-actions,
+#woodworking-editor-screen .ww-selected-panel--multi .ww-selected-fields {
     display: none;
+}
+#woodworking-editor-screen .ww-selected-multi-badge {
+    margin-top: 8px;
+    padding: 8px 10px;
+    border-radius: 6px;
+    background: #eef2ff;
+    border: 1px solid #c7d2fe;
+    color: #4338ca;
+    font-size: 13px;
+    font-weight: 600;
+    text-align: center;
 }
 #woodworking-editor-screen .ww-selected-panel--empty::after {
     content: 'Click a board to edit it.';
