@@ -24,6 +24,8 @@ let currentSession = null;
 let userTokens = 0;
 // Subscription state
 let userHasSubscription = false;
+// Subscriber monthly image-generation usage: { used, limit, remaining }
+let subscriptionUsage = { used: 0, limit: 50, remaining: 50 };
 // Fetched layout state: restored once when user opens the layout editor after sign-in/load
 let savedLayoutState = null;
 let savedLayoutId = null;
@@ -33,7 +35,7 @@ let currentLayoutId = null;
 
 // DOM Elements
 const uploadContainer = document.getElementById('upload-container');
-const previewContainer = document.getElementById('preview-container');
+const wizardContainer = document.getElementById('wizard-container');
 const roomPreview = document.getElementById('room-preview');
 const roomUpload = document.getElementById('room-upload');
 const cameraBtn = document.getElementById('camera-btn');
@@ -48,20 +50,27 @@ const saveDesignBtn = document.getElementById('save-design-btn');
 const refinementInput = document.getElementById('refinement-input');
 const itemsSelectionError = document.getElementById('items-selection-error');
 
-// Mobile-specific DOM elements
-const mobileOptionsScreen = document.getElementById('mobile-options-screen');
-const mobileOptionsBackBtn = document.getElementById('mobile-options-back-btn');
-const mobileOptionsTitle = document.getElementById('mobile-options-title');
-const mobileRoomItemsSelection = document.getElementById('mobile-room-items-selection');
-const mobileFurnishedOptions = document.getElementById('mobile-furnished-options');
-const mobileItemsGrid = document.getElementById('mobile-items-grid');
-const mobileItemsSelectionTitle = document.getElementById('mobile-items-selection-title');
-const mobileItemsSelectionHint = document.getElementById('mobile-items-selection-hint');
-const mobileItemsSelectionError = document.getElementById('mobile-items-selection-error');
-const mobileGenerateBtn = document.getElementById('mobile-generate-btn');
+// Refinement suggestion chips: append (or set) the chip text into the textarea.
+document.querySelectorAll('.refinement-chip').forEach((chip) => {
+    chip.addEventListener('click', () => {
+        if (!refinementInput) return;
+        const phrase = chip.getAttribute('data-chip') || chip.textContent.trim();
+        const current = refinementInput.value.trim();
+        refinementInput.value = current
+            ? `${current.replace(/[.\s]+$/, '')}. ${phrase}.`
+            : `${phrase}.`;
+        refinementInput.focus();
+        refinementInput.setSelectionRange(refinementInput.value.length, refinementInput.value.length);
+    });
+});
 
-// Back to upload button
-const backToUploadBtn = document.getElementById('back-to-upload-btn');
+// Wizard navigation buttons
+const step1NextBtn = document.getElementById('step1-next-btn');
+const step2BackBtn = document.getElementById('step2-back-btn');
+const step2NextBtn = document.getElementById('step2-next-btn');
+const step3BackBtn = document.getElementById('step3-back-btn');
+const step3NextBtn = document.getElementById('step3-next-btn');
+const step4BackBtn = document.getElementById('step4-back-btn');
 
 // Auth elements
 const loginBtn = document.getElementById('login-btn');
@@ -103,6 +112,9 @@ const logoutBtn = document.getElementById('logout-btn');
 // Token / payment elements
 const tokensDisplay = document.getElementById('tokens-display');
 const tokensCount = document.getElementById('tokens-count');
+const subscriptionUsageDisplay = document.getElementById('subscription-usage-display');
+const subscriptionUsageRemaining = document.getElementById('subscription-usage-remaining');
+const subscriptionUsageLimit = document.getElementById('subscription-usage-limit');
 const buyTokensBtn = document.getElementById('buy-tokens-btn');
 const buyTokensModal = document.getElementById('buy-tokens-modal');
 const closeBuyTokensModalBtn = document.getElementById('close-buy-tokens-modal-btn');
@@ -146,8 +158,17 @@ const authActionBtn = document.getElementById('auth-action-btn');
 
 // State variables
 let currentUploadedImage = null;
+let lastGeneratedImageUrl = null; // Most recently successfully generated image
 let currentRoomType = null;
 let generatedDesigns = [];
+
+// Design history: ordered list of every image the user has seen as a "design"
+// in the current session — starting with the original upload, then each
+// successful generation. Users click a thumbnail to revisit one and use it
+// as the source for the next regenerate.
+//   { id, imageUrl, label, isOriginal }
+let designHistory = [];
+let selectedHistoryId = null; // explicit user pick; null = use the latest entry
 let selectedRoomItems = new Set(); // Track selected room items
 let furnishedOption = null; // Track furnished room option - no default selection
 let selectedDesignStyle = null; // Track selected interior design style (null = no style change requested)
@@ -155,7 +176,8 @@ let isRoomActuallyEmpty = true; // Track if the uploaded room is actually empty
 
 // Confirm dialog state
 let confirmResolve = null;
-let isMobile = window.innerWidth <= 768; // Track if we're on mobile
+// Wizard step (1–4). Step 0 = upload screen (no image yet).
+let currentWizardStep = 0;
 
 // API is now handled server-side - no client keys needed
 
@@ -460,6 +482,34 @@ async function fetchUserSubscription() {
     }
     // Expose to the floor plan editor via the window bridge
     window.__decoraiHasSubscription = userHasSubscription;
+
+    // Pull monthly usage so the badge can render up-to-date counts.
+    if (userHasSubscription) {
+        await fetchSubscriptionUsage();
+    } else {
+        updateSubscriptionUsageDisplay();
+    }
+}
+
+/** Fetch the current month's image-generation usage for subscribers. */
+async function fetchSubscriptionUsage() {
+    if (!currentUser || !currentSession) return;
+    try {
+        const res = await fetch(`${PROXY_SERVER_URL}/api/subscription/usage`, {
+            headers: { Authorization: `Bearer ${currentSession.access_token}` }
+        });
+        if (res.ok) {
+            const data = await res.json();
+            subscriptionUsage = {
+                used: data.used ?? 0,
+                limit: data.limit ?? 50,
+                remaining: data.remaining ?? 0,
+            };
+            updateSubscriptionUsageDisplay();
+        }
+    } catch (err) {
+        console.error('fetchSubscriptionUsage error:', err);
+    }
 }
 
 function updateTokensDisplay() {
@@ -469,6 +519,22 @@ function updateTokensDisplay() {
     if (tokensDisplay) {
         tokensDisplay.classList.toggle('tokens-low', userTokens === 0);
     }
+}
+
+/** Render the subscriber monthly usage badge. Hidden for non-subscribers. */
+function updateSubscriptionUsageDisplay() {
+    if (!subscriptionUsageDisplay) return;
+    if (!userHasSubscription) {
+        subscriptionUsageDisplay.classList.add('hidden');
+        return;
+    }
+    subscriptionUsageDisplay.classList.remove('hidden');
+    const { used, limit, remaining } = subscriptionUsage;
+    if (subscriptionUsageRemaining) subscriptionUsageRemaining.textContent = remaining;
+    if (subscriptionUsageLimit) subscriptionUsageLimit.textContent = limit;
+    subscriptionUsageDisplay.classList.toggle('subscription-usage-empty', remaining <= 0);
+    subscriptionUsageDisplay.classList.toggle('subscription-usage-low', remaining > 0 && remaining < 10);
+    subscriptionUsageDisplay.title = `${used} of ${limit} image generations used this month`;
 }
 
 /**
@@ -481,6 +547,13 @@ function hasTokensAvailable() {
         return false;
     }
     if (userHasSubscription) {
+        // Subscribers are capped at SUBSCRIPTION_MONTHLY_LIMIT (default 50)
+        // generations per calendar month. Block early when none remain so we
+        // don't make the user wait for a server 429.
+        if (subscriptionUsage.remaining <= 0) {
+            showSubscriptionLimitMessage();
+            return false;
+        }
         return true;
     }
     if (userTokens <= 0) {
@@ -490,11 +563,22 @@ function hasTokensAvailable() {
     return true;
 }
 
+function showSubscriptionLimitMessage() {
+    const limit = subscriptionUsage.limit || 50;
+    alert(
+        `You've reached your monthly limit of ${limit} image generations.\n\n` +
+        `Your quota will reset at the start of next month.`
+    );
+}
+
 /**
  * Deduct one token after a SUCCESSFUL image generation.
  * Only called on success — failed generations do not consume a token.
  */
 async function useTokenAfterSuccess() {
+    // Quota is now reserved server-side at the start of each generation
+    // request (with refund on failure), so this is a refresh-only call: the
+    // server returns the latest counts and the UI updates the badges.
     if (!currentUser || !currentSession) return;
     try {
         const res = await fetch(`${PROXY_SERVER_URL}/api/credits/use`, {
@@ -506,15 +590,26 @@ async function useTokenAfterSuccess() {
         });
         if (res.ok) {
             const data = await res.json();
-            userTokens = data.credits;
-            updateTokensDisplay();
+            if (data.subscription) {
+                subscriptionUsage = {
+                    used: data.monthlyUsage ?? 0,
+                    limit: data.monthlyLimit ?? 50,
+                    remaining: data.remaining ?? 0,
+                };
+                updateSubscriptionUsageDisplay();
+            } else {
+                userTokens = data.credits;
+                updateTokensDisplay();
+            }
         } else {
-            // Token count may be stale — refresh from server
+            // Stale local state — refresh both from server.
             await fetchUserTokens();
+            if (userHasSubscription) await fetchSubscriptionUsage();
         }
     } catch (err) {
         console.error('useTokenAfterSuccess error:', err);
         await fetchUserTokens();
+        if (userHasSubscription) await fetchSubscriptionUsage();
     }
 }
 
@@ -959,13 +1054,16 @@ function updateAuthUI() {
     if (currentUser) {
         authButtons.classList.add('hidden');
         userMenu.classList.remove('hidden');
+        // Subscribers see the monthly-usage badge; everyone else sees tokens.
         if (tokensDisplay) tokensDisplay.classList.toggle('hidden', userHasSubscription);
         if (userEmailDisplay) userEmailDisplay.textContent = currentUser.email?.split('@')[0] || 'Account';
         updateTokensDisplay();
+        updateSubscriptionUsageDisplay();
     } else {
         authButtons.classList.remove('hidden');
         userMenu.classList.add('hidden');
         if (tokensDisplay) tokensDisplay.classList.add('hidden');
+        if (subscriptionUsageDisplay) subscriptionUsageDisplay.classList.add('hidden');
     }
     if (typeof feather !== 'undefined') feather.replace();
 }
@@ -1527,94 +1625,55 @@ document.addEventListener('DOMContentLoaded', async () => {
         }
     });
 
-    // Room type selection
+    // Room type selection — enable step 1 "Next" when a type is chosen
     const roomTypeRadios = document.querySelectorAll('input[name="room-type"]');
-    if (roomTypeRadios) {
-        roomTypeRadios.forEach(radio => {
-            radio.addEventListener('change', (e) => {
-                currentRoomType = e.target.value;
-                console.log(`Room type selected: ${currentRoomType}`);
-                handleRoomTypeChange();
-
-                // On mobile, show options screen after room type selection
-                if (isMobile) {
-                    showMobileOptionsScreen();
-                }
-            });
+    roomTypeRadios.forEach(radio => {
+        radio.addEventListener('change', (e) => {
+            currentRoomType = e.target.value;
+            if (step1NextBtn) step1NextBtn.disabled = false;
         });
-    }
+    });
 
-    // Mobile-specific event listeners
-    if (mobileOptionsBackBtn) {
-        mobileOptionsBackBtn.addEventListener('click', hideMobileOptionsScreen);
-    }
-
-    if (mobileGenerateBtn) {
-        mobileGenerateBtn.addEventListener('click', generateDesigns);
-    }
-
-    // Back to upload button
-    if (backToUploadBtn) {
-        backToUploadBtn.addEventListener('click', goBackToUpload);
-    }
-
-    // Mobile furnished option selection
-    const mobileFurnishedOptionRadios = document.querySelectorAll('input[name="mobile-furnished-option"]');
-    if (mobileFurnishedOptionRadios) {
-        mobileFurnishedOptionRadios.forEach(radio => {
-            radio.addEventListener('change', (e) => {
-                furnishedOption = e.target.value;
-                console.log(`Mobile furnished option selected: ${furnishedOption}`);
-                handleMobileFurnishedOptionChange();
-            });
-        });
-    }
-
-    // Furnished room options selection
+    // Furnished option selection — enable step 2 "Next" when an option is chosen
     const furnishedOptionRadios = document.querySelectorAll('input[name="furnished-option"]');
-    if (furnishedOptionRadios) {
-        furnishedOptionRadios.forEach(radio => {
-            radio.addEventListener('change', (e) => {
-                furnishedOption = e.target.value;
-                console.log(`Furnished option selected: ${furnishedOption}`);
-                handleFurnishedOptionChange();
-            });
+    furnishedOptionRadios.forEach(radio => {
+        radio.addEventListener('change', (e) => {
+            furnishedOption = e.target.value;
+            if (step2NextBtn) step2NextBtn.disabled = false;
         });
-    }
+    });
 
-    // Add support for drag-and-drop file upload
+    // Wizard navigation buttons
+    if (step1NextBtn) step1NextBtn.addEventListener('click', () => wizardNext(1));
+    if (step2BackBtn) step2BackBtn.addEventListener('click', () => wizardNext(2, true));
+    if (step2NextBtn) step2NextBtn.addEventListener('click', () => wizardNext(2));
+    if (step3BackBtn) step3BackBtn.addEventListener('click', () => wizardNext(3, true));
+    if (step3NextBtn) step3NextBtn.addEventListener('click', () => wizardNext(3));
+    if (step4BackBtn) step4BackBtn.addEventListener('click', () => wizardNext(4, true));
+
+    // Drag-and-drop file upload
     if (uploadContainer) {
         uploadContainer.addEventListener('dragover', (e) => {
             e.preventDefault();
             uploadContainer.classList.add('drag-over');
         });
-
         uploadContainer.addEventListener('dragleave', () => {
             uploadContainer.classList.remove('drag-over');
         });
-
         uploadContainer.addEventListener('drop', (e) => {
             e.preventDefault();
             uploadContainer.classList.remove('drag-over');
-
             if (e.dataTransfer.files.length) {
                 const file = e.dataTransfer.files[0];
                 if (isValidImage(file)) {
                     const reader = new FileReader();
-
                     reader.onload = async function (event) {
                         currentUploadedImage = event.target.result;
                         if (roomPreview) roomPreview.src = currentUploadedImage;
-
-                        // Detect if the room is empty
                         isRoomActuallyEmpty = await detectEmptyRoom(currentUploadedImage);
-                        console.log(`Uploaded room is ${isRoomActuallyEmpty ? 'empty' : 'furnished'}`);
                         applyDetectedRoomType();
-
-                        if (uploadContainer) uploadContainer.classList.add('hidden');
-                        if (previewContainer) previewContainer.classList.remove('hidden');
+                        showWizard();
                     };
-
                     reader.readAsDataURL(file);
                 } else {
                     showAlertDialog('Please upload a valid image file (JPEG, PNG, etc.)');
@@ -1623,9 +1682,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         });
     }
 
-
-
-    // Initialize the app UI (feather icons, resize, room type state)
+    // Initialize the app UI (feather icons)
     initializeAppUI();
 });
 
@@ -1633,298 +1690,170 @@ document.addEventListener('DOMContentLoaded', async () => {
 function initializeAppUI() {
     feather.replace();
 
-    // Update mobile detection on resize
-    window.addEventListener('resize', () => {
-        isMobile = window.innerWidth <= 768;
+    // Step clicks: navigate back to any completed or active step
+    document.querySelectorAll('.wizard-progress .wizard-step').forEach(stepEl => {
+        stepEl.addEventListener('click', () => {
+            const target = parseInt(stepEl.dataset.step, 10);
+            if (stepEl.classList.contains('completed') || stepEl.classList.contains('active')) {
+                goToWizardStep(target);
+            }
+        });
     });
-
-    // Initialize the generate button state
-    handleRoomTypeChange();
-
-    // No room type is selected initially - user must make a choice
 }
 
-// Mobile-specific functions
-function showMobileOptionsScreen() {
-    if (!mobileOptionsScreen) return;
+// ── Wizard navigation ────────────────────────────────────────────────────────
 
-    // Don't show options screen if no room type is selected
-    if (!currentRoomType) {
+const wizardProgress = document.getElementById('wizard-progress');
+
+/** Show the wizard container and go to step 1, hiding the upload drop zone. */
+function showWizard() {
+    if (uploadContainer) uploadContainer.classList.add('hidden');
+    if (wizardContainer) wizardContainer.classList.remove('hidden');
+    if (wizardProgress) wizardProgress.classList.remove('hidden');
+    goToWizardStep(1);
+}
+
+/** Hide the wizard, show the upload drop zone, and fully reset state. */
+function hideWizard() {
+    if (wizardContainer) wizardContainer.classList.add('hidden');
+    if (wizardProgress) wizardProgress.classList.add('hidden');
+    if (uploadContainer) uploadContainer.classList.remove('hidden');
+    resetWizardState();
+}
+
+/**
+ * Advance or retreat the wizard from a given pane.
+ * @param {number} fromStep – the pane currently visible
+ * @param {boolean} goBack  – true when the Back button was pressed
+ */
+function wizardNext(fromStep, goBack = false) {
+    if (goBack) {
+        // Back routes
+        if (fromStep === 2) { goToWizardStep(1); return; }
+        if (fromStep === 3) {
+            goToWizardStep(currentRoomType === 'empty' ? 1 : 2);
+            return;
+        }
+        if (fromStep === 4) {
+            // Skip step 3 if keep-existing (no items needed) or empty+keep-existing N/A
+            const skipItems = furnishedOption === 'keep-existing';
+            goToWizardStep(skipItems ? 2 : 3);
+            return;
+        }
         return;
     }
 
-    // Update the title based on room type
-    if (mobileOptionsTitle) {
-        mobileOptionsTitle.textContent = currentRoomType === 'empty' ? 'Select Items' : 'Redesign Options';
+    // Forward routes
+    if (fromStep === 1) {
+        // Empty rooms skip the "how to redesign" step
+        if (currentRoomType === 'empty') {
+            updateItemsSelectionUI('empty');
+            populateRoomItems();
+            goToWizardStep(3);
+        } else {
+            goToWizardStep(2);
+        }
+        return;
     }
-
-    // Show/hide appropriate sections
-    if (currentRoomType === 'empty') {
-        if (mobileRoomItemsSelection) {
-            mobileRoomItemsSelection.classList.remove('hidden');
-            updateMobileItemsSelectionUI('empty');
-            populateMobileRoomItems();
+    if (fromStep === 2) {
+        if (furnishedOption === 'keep-existing') {
+            // No items needed — jump straight to style
+            selectedRoomItems.clear();
+            goToWizardStep(4);
+        } else {
+            const ctx = furnishedOption === 'add-new' ? 'add-new' : 'start-fresh';
+            updateItemsSelectionUI(ctx);
+            populateRoomItems();
+            goToWizardStep(3);
         }
-        if (mobileFurnishedOptions) {
-            mobileFurnishedOptions.classList.add('hidden');
-        }
-    } else {
-        if (mobileFurnishedOptions) {
-            mobileFurnishedOptions.classList.remove('hidden');
-        }
-        if (mobileRoomItemsSelection) {
-            mobileRoomItemsSelection.classList.add('hidden');
-        }
-        handleMobileFurnishedOptionChange();
+        return;
     }
-
-    // Show the mobile options screen
-    mobileOptionsScreen.classList.add('show');
-
-    // Hide the generate button initially - it will be shown by handleMobileFurnishedOptionChange if needed
-    if (mobileGenerateBtn) {
-        mobileGenerateBtn.style.display = 'none';
+    if (fromStep === 3) {
+        // For empty rooms, at least one item is required
+        if (currentRoomType === 'empty' && selectedRoomItems.size === 0) {
+            if (itemsSelectionError) itemsSelectionError.classList.remove('hidden');
+            return;
+        }
+        if (itemsSelectionError) itemsSelectionError.classList.add('hidden');
+        goToWizardStep(4);
+        return;
     }
 }
 
-function hideMobileOptionsScreen(shouldResetSelection = true) {
-    if (mobileOptionsScreen) {
-        mobileOptionsScreen.classList.remove('show');
-    }
-    // Reset generate button visibility when hiding the screen
-    if (mobileGenerateBtn) {
-        mobileGenerateBtn.style.display = 'none';
+/** Activate a specific wizard pane and update the progress indicator. */
+function goToWizardStep(step) {
+    currentWizardStep = step;
+
+    // Show/hide panes
+    for (let i = 1; i <= 4; i++) {
+        const pane = document.getElementById(`wizard-pane-${i}`);
+        if (pane) pane.classList.toggle('hidden', i !== step);
     }
 
-    // Only reset room type selection if explicitly requested and we're on the preview screen
-    // Don't reset if we're transitioning to results or regenerating
-    const isOnPreview = resultsSection && resultsSection.classList.contains('hidden');
-    const isOnResults = resultsSection && !resultsSection.classList.contains('hidden');
+    // Update progress steps and connecting lines
+    const steps = document.querySelectorAll('.wizard-progress .wizard-step');
+    const lines = document.querySelectorAll('.wizard-progress .wizard-step-line');
+    steps.forEach(stepEl => {
+        const s = parseInt(stepEl.dataset.step, 10);
+        stepEl.classList.toggle('active', s === step);
+        stepEl.classList.toggle('completed', s < step);
+    });
+    lines.forEach((line, idx) => {
+        // Line idx connects step (idx+1) to step (idx+2)
+        line.classList.toggle('completed', idx + 2 <= step);
+    });
 
-    if (shouldResetSelection && isOnPreview && !isOnResults) {
-        // Reset room type selection and hide main generate button
-        resetRoomTypeSelection();
-    }
+    // Scroll wizard back to top on step change
+    if (wizardContainer) wizardContainer.scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+
+function showMobileOptionsScreen() { /* no-op — replaced by wizard */ }
+function hideMobileOptionsScreen() { /* no-op — replaced by wizard */ }
+
+/** Reset all wizard selections (room type, furnished option, items). */
+function resetWizardState() {
+    currentRoomType = null;
+    furnishedOption = null;
+    selectedRoomItems.clear();
+    currentWizardStep = 0;
+
+    // Uncheck all room-type radios
+    document.querySelectorAll('input[name="room-type"]').forEach(r => { r.checked = false; });
+    // Uncheck all furnished-option radios
+    document.querySelectorAll('input[name="furnished-option"]').forEach(r => { r.checked = false; });
+    // Reset step 1 Next button
+    if (step1NextBtn) step1NextBtn.disabled = true;
+    if (step2NextBtn) step2NextBtn.disabled = true;
+    // Hide items error
+    hideItemsSelectionError();
 }
 
 function resetRoomTypeSelection() {
-    // Reset the current room type
-    currentRoomType = null;
-
-    // Uncheck all room type radio buttons
-    const roomTypeRadios = document.querySelectorAll('input[name="room-type"]');
-    roomTypeRadios.forEach(radio => {
-        radio.checked = false;
-    });
-
-    // Uncheck all furnished option radio buttons
-    const furnishedOptionRadios = document.querySelectorAll('input[name="furnished-option"]');
-    furnishedOptionRadios.forEach(radio => {
-        radio.checked = false;
-    });
-
-    // Uncheck all mobile furnished option radio buttons
-    const mobileFurnishedOptionRadios = document.querySelectorAll('input[name="mobile-furnished-option"]');
-    mobileFurnishedOptionRadios.forEach(radio => {
-        radio.checked = false;
-    });
-
-    // Reset furnished option to default
-    furnishedOption = null;
-
-    // Clear selected room items
-    selectedRoomItems.clear();
-
-    // Hide all option sections
-    const roomItemsSelection = document.getElementById('room-items-selection');
-    const furnishedOptions = document.getElementById('furnished-options');
-
-    if (roomItemsSelection) {
-        roomItemsSelection.classList.add('hidden');
-    }
-    if (furnishedOptions) {
-        furnishedOptions.classList.add('hidden');
-    }
-
-    // Hide the main generate button
-    if (generateBtn) {
-        generateBtn.style.display = 'none';
-    }
-
-    // Hide error messages
-    hideItemsSelectionError();
-    hideMobileItemsSelectionError();
+    // Alias kept for callers in the results / goBackToPreview flow
+    resetWizardState();
 }
 
 function goBackToUpload() {
-    // Reset room type selection
-    resetRoomTypeSelection();
-
-    // Hide preview container and show upload container
-    if (previewContainer) {
-        previewContainer.classList.add('hidden');
-    }
-    if (uploadContainer) {
-        uploadContainer.classList.remove('hidden');
-    }
-
-    // Reset image upload state
+    hideWizard();
     resetImageUpload();
 }
 
-function handleMobileFurnishedOptionChange() {
-    if (!mobileRoomItemsSelection) return;
-
-    // Hide error message when furnished option changes
-    hideMobileItemsSelectionError();
-
-    // Hide generate button if no option is selected
-    if (!furnishedOption) {
-        if (mobileGenerateBtn) {
-            mobileGenerateBtn.style.display = 'none';
-        }
-        return;
-    }
-
-    if (furnishedOption === 'keep-existing') {
-        // Hide room items selection - keep existing items only
-        mobileRoomItemsSelection.classList.add('hidden');
-        selectedRoomItems.clear();
-        // Show generate button for keep existing option
-        if (mobileGenerateBtn) {
-            mobileGenerateBtn.style.display = 'flex';
-        }
-    } else if (furnishedOption === 'add-new') {
-        // Show room items selection for adding new items
-        mobileRoomItemsSelection.classList.remove('hidden');
-        updateMobileItemsSelectionUI('add-new');
-        populateMobileRoomItems();
-        // Show generate button for add new option
-        if (mobileGenerateBtn) {
-            mobileGenerateBtn.style.display = 'flex';
-        }
-    } else if (furnishedOption === 'start-fresh') {
-        // Show room items selection for starting fresh
-        mobileRoomItemsSelection.classList.remove('hidden');
-        updateMobileItemsSelectionUI('start-fresh');
-        populateMobileRoomItems();
-        // Show generate button for start fresh option
-        if (mobileGenerateBtn) {
-            mobileGenerateBtn.style.display = 'flex';
-        }
-    }
-}
-
-function updateMobileItemsSelectionUI(context) {
-    if (!mobileItemsSelectionTitle || !mobileItemsSelectionHint) return;
-
-    if (context === 'empty') {
-        mobileItemsSelectionTitle.textContent = 'What would you like to add?';
-        mobileItemsSelectionHint.textContent = 'Select items you\'d like to include in your room design';
-    } else if (context === 'add-new') {
-        mobileItemsSelectionTitle.textContent = 'What additional items would you like?';
-        mobileItemsSelectionHint.textContent = 'Select new items to add to your existing furniture';
-    } else if (context === 'start-fresh') {
-        mobileItemsSelectionTitle.textContent = 'What would you like in your new room?';
-        mobileItemsSelectionHint.textContent = 'Select items to replace your existing furniture';
-    }
-}
-
-function populateMobileRoomItems() {
-    if (!mobileItemsGrid) return;
-
-    mobileItemsGrid.innerHTML = '';
-
-    roomItems.forEach(item => {
-        const itemElement = document.createElement('div');
-        itemElement.className = 'item-option';
-        itemElement.setAttribute('data-item-id', item.id);
-
-        itemElement.innerHTML = `
-            <input type="checkbox" id="mobile-item-${item.id}" class="item-checkbox">
-            <label for="mobile-item-${item.id}" class="item-label">
-                <div class="item-icon">
-                    <i data-feather="${item.icon}"></i>
-                </div>
-                <span class="item-name">${item.name}</span>
-            </label>
-        `;
-
-        // Add event listener for item selection
-        const checkbox = itemElement.querySelector('.item-checkbox');
-        checkbox.addEventListener('change', (e) => {
-            if (e.target.checked) {
-                selectedRoomItems.add(item.id);
-            } else {
-                selectedRoomItems.delete(item.id);
-            }
-            console.log('Selected items:', Array.from(selectedRoomItems));
-
-            // Hide error message when items are selected
-            if (selectedRoomItems.size > 0) {
-                hideMobileItemsSelectionError();
-                // Show generate button when items are selected
-                if (mobileGenerateBtn) {
-                    mobileGenerateBtn.style.display = 'flex';
-                }
-            } else {
-                // Hide generate button when no items are selected
-                if (mobileGenerateBtn) {
-                    mobileGenerateBtn.style.display = 'none';
-                }
-            }
-        });
-
-        mobileItemsGrid.appendChild(itemElement);
-    });
-
-    // Replace feather icons
-    feather.replace();
-}
-
-function showMobileItemsSelectionError() {
-    if (mobileItemsSelectionError) {
-        mobileItemsSelectionError.classList.remove('hidden');
-    }
-}
-
-function hideMobileItemsSelectionError() {
-    if (mobileItemsSelectionError) {
-        mobileItemsSelectionError.classList.add('hidden');
-    }
-}
-
-
-function toggleKeyVisibility() {
-    // No longer needed - API handled server-side
-}
-
-function toggleReplicateKeyVisibility() {
-    // No longer needed - API handled server-side
-}
-
-function saveApiKeys() {
-    // No longer needed - API handled server-side
-}
+function toggleKeyVisibility() { /* no-op */ }
+function toggleReplicateKeyVisibility() { /* no-op */ }
+function saveApiKeys() { /* no-op */ }
 
 async function handleImageUpload(e) {
     const file = e.target.files[0];
     if (file && isValidImage(file)) {
         const reader = new FileReader();
-
         reader.onload = async function (event) {
             currentUploadedImage = event.target.result;
-            roomPreview.src = currentUploadedImage;
-
-            // Detect if the room is empty
+            if (roomPreview) roomPreview.src = currentUploadedImage;
             isRoomActuallyEmpty = await detectEmptyRoom(currentUploadedImage);
             console.log(`Uploaded room is ${isRoomActuallyEmpty ? 'empty' : 'furnished'}`);
             applyDetectedRoomType();
-
-            uploadContainer.classList.add('hidden');
-            previewContainer.classList.remove('hidden');
+            showWizard();
         };
-
         reader.readAsDataURL(file);
     } else if (file) {
         showAlertDialog('Please upload a valid image file (JPEG, PNG, etc.)');
@@ -1976,15 +1905,13 @@ function openCamera() {
                     ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
 
                     currentUploadedImage = canvas.toDataURL('image/jpeg');
-                    roomPreview.src = currentUploadedImage;
+                    if (roomPreview) roomPreview.src = currentUploadedImage;
 
                     // Detect if the room is empty
                     isRoomActuallyEmpty = await detectEmptyRoom(currentUploadedImage);
                     console.log(`Captured room is ${isRoomActuallyEmpty ? 'empty' : 'furnished'}`);
                     applyDetectedRoomType();
-
-                    uploadContainer.classList.add('hidden');
-                    previewContainer.classList.remove('hidden');
+                    showWizard();
 
                     // Stop the camera stream
                     stream.getTracks().forEach(track => track.stop());
@@ -2016,11 +1943,12 @@ function openFileSelector() {
 
 function resetImageUpload() {
     currentUploadedImage = null;
+    lastGeneratedImageUrl = null;
     isRoomActuallyEmpty = true;
+    resetDesignHistory();
     if (roomPreview) roomPreview.src = '';
     if (roomUpload) roomUpload.value = '';
-    if (previewContainer) previewContainer.classList.add('hidden');
-    if (uploadContainer) uploadContainer.classList.remove('hidden');
+    // wizardContainer is hidden by hideWizard(); uploadContainer shown there too
 }
 
 // Detect if a room is empty by measuring center-weighted edge density.
@@ -2096,81 +2024,20 @@ async function detectEmptyRoom(imageSrc) {
     });
 }
 
-// Default the room type radio based on empty/furnished detection
+// Pre-check the detected room type radio and enable "Next" in step 1
 function applyDetectedRoomType() {
     const detectedType = isRoomActuallyEmpty ? 'empty' : 'furnished';
     const radio = document.getElementById(detectedType === 'empty' ? 'empty-room' : 'furnished-room');
     if (radio) radio.checked = true;
     currentRoomType = detectedType;
-    handleRoomTypeChange();
-    if (isMobile) showMobileOptionsScreen();
+    // Enable step 1 "Next" since we auto-detected a type
+    if (step1NextBtn) step1NextBtn.disabled = false;
 }
 
-// Handle room type change and show/hide appropriate options
-function handleRoomTypeChange() {
-    const roomItemsSelection = document.getElementById('room-items-selection');
-    const furnishedOptions = document.getElementById('furnished-options');
+// Stub — wizard controls section visibility, not this function
+function handleRoomTypeChange() { /* handled by wizard nav */ }
 
-    // If no room type is selected, hide everything and return
-    if (!currentRoomType) {
-        if (roomItemsSelection) {
-            roomItemsSelection.classList.add('hidden');
-        }
-        if (furnishedOptions) {
-            furnishedOptions.classList.add('hidden');
-        }
-        if (generateBtn) {
-            generateBtn.style.display = 'none';
-        }
-        return;
-    }
-
-    // On mobile, hide additional options in the main preview container
-    if (isMobile) {
-        if (roomItemsSelection) {
-            roomItemsSelection.classList.add('hidden');
-        }
-        if (furnishedOptions) {
-            furnishedOptions.classList.add('hidden');
-        }
-        // Hide the main generate button on mobile - it will be shown in the mobile options screen
-        if (generateBtn) {
-            generateBtn.style.display = 'none';
-        }
-        return; // Mobile flow will be handled by showMobileOptionsScreen
-    }
-
-    // Desktop flow
-    if (currentRoomType === 'empty') {
-        // Show room items selection for empty rooms
-        if (roomItemsSelection) {
-            roomItemsSelection.classList.remove('hidden');
-            updateItemsSelectionUI('empty');
-            populateRoomItems();
-        }
-        // Hide furnished options
-        if (furnishedOptions) {
-            furnishedOptions.classList.add('hidden');
-        }
-        // Hide generate button initially for empty rooms - will show when items are selected
-        if (!isMobile && generateBtn) {
-            generateBtn.style.display = 'none';
-        }
-    } else {
-        // Show furnished options for furnished rooms
-        if (furnishedOptions) {
-            furnishedOptions.classList.remove('hidden');
-        }
-        // Hide generate button initially since no furnished option is selected yet
-        if (!isMobile && generateBtn) {
-            generateBtn.style.display = 'none';
-        }
-        // Handle furnished option change - this will show/hide button based on selection
-        handleFurnishedOptionChange();
-    }
-}
-
-// Populate the room items grid
+// Populate the room items grid (wizard-pane-3)
 function populateRoomItems() {
     const itemsGrid = document.getElementById('items-grid');
     if (!itemsGrid) return;
@@ -2183,7 +2050,7 @@ function populateRoomItems() {
         itemElement.setAttribute('data-item-id', item.id);
 
         itemElement.innerHTML = `
-            <input type="checkbox" id="item-${item.id}" class="item-checkbox">
+            <input type="checkbox" id="item-${item.id}" class="item-checkbox" ${selectedRoomItems.has(item.id) ? 'checked' : ''}>
             <label for="item-${item.id}" class="item-label">
                 <div class="item-icon">
                     <i data-feather="${item.icon}"></i>
@@ -2192,7 +2059,6 @@ function populateRoomItems() {
             </label>
         `;
 
-        // Add event listener for item selection
         const checkbox = itemElement.querySelector('.item-checkbox');
         checkbox.addEventListener('change', (e) => {
             if (e.target.checked) {
@@ -2200,125 +2066,50 @@ function populateRoomItems() {
             } else {
                 selectedRoomItems.delete(item.id);
             }
-            console.log('Selected items:', Array.from(selectedRoomItems));
-
-            // Hide error message when items are selected
-            if (selectedRoomItems.size > 0) {
-                hideItemsSelectionError();
-                // Show generate button when items are selected (desktop)
-                if (!isMobile && generateBtn) {
-                    generateBtn.style.display = 'flex';
-                }
-            } else {
-                // Hide generate button when no items are selected (desktop)
-                if (!isMobile && generateBtn && currentRoomType === 'empty') {
-                    generateBtn.style.display = 'none';
-                }
-            }
+            // Hide validation error as soon as user picks something
+            if (selectedRoomItems.size > 0) hideItemsSelectionError();
         });
 
         itemsGrid.appendChild(itemElement);
     });
 
-    // Replace feather icons
     feather.replace();
 }
 
-// Populate the design style grids (desktop + mobile)
+// Populate the design style grid (wizard-pane-4)
 function populateDesignStyles() {
-    const gridConfigs = [
-        { gridId: 'style-options-grid', radioName: 'design-style', idPrefix: '' },
-        { gridId: 'mobile-style-options-grid', radioName: 'mobile-design-style', idPrefix: 'mobile-' }
-    ];
+    const grid = document.getElementById('style-options-grid');
+    if (!grid) return;
 
-    gridConfigs.forEach(({ gridId, radioName, idPrefix }) => {
-        const grid = document.getElementById(gridId);
-        if (!grid) return;
+    grid.innerHTML = '';
 
-        grid.innerHTML = '';
+    interiorDesignStyles.forEach(style => {
+        const inputId = `style-${style.id}`;
+        const el = document.createElement('div');
+        el.className = 'style-option';
 
-        interiorDesignStyles.forEach(style => {
-            const inputId = `${idPrefix}style-${style.id}`;
-            const el = document.createElement('div');
-            el.className = 'style-option';
+        el.innerHTML = `
+            <input type="radio" id="${inputId}" name="design-style" value="${style.id}" ${style.id === selectedDesignStyle ? 'checked' : ''}>
+            <label for="${inputId}" class="style-label">
+                <div class="style-thumbnail">
+                    <i data-feather="${style.icon}"></i>
+                </div>
+                <span class="style-name">${style.name}</span>
+            </label>
+        `;
 
-            el.innerHTML = `
-                <input type="radio" id="${inputId}" name="${radioName}" value="${style.id}" ${style.id === selectedDesignStyle ? 'checked' : ''}>
-                <label for="${inputId}" class="style-label">
-                    <div class="style-thumbnail">
-                        <i data-feather="${style.icon}"></i>
-                    </div>
-                    <span class="style-name">${style.name}</span>
-                </label>
-            `;
-
-            const radio = el.querySelector('input[type="radio"]');
-            radio.addEventListener('change', (e) => {
-                if (e.target.checked) {
-                    selectedDesignStyle = style.id;
-                    // Sync the other grid
-                    const otherName = radioName === 'design-style' ? 'mobile-design-style' : 'design-style';
-                    const otherRadio = document.querySelector(`input[name="${otherName}"][value="${style.id}"]`);
-                    if (otherRadio) otherRadio.checked = true;
-                }
-            });
-
-            grid.appendChild(el);
+        el.querySelector('input[type="radio"]').addEventListener('change', (e) => {
+            if (e.target.checked) selectedDesignStyle = style.id;
         });
+
+        grid.appendChild(el);
     });
 
     feather.replace();
 }
 
-// Handle furnished room option changes
-function handleFurnishedOptionChange() {
-    const roomItemsSelection = document.getElementById('room-items-selection');
-
-    // Hide error message when furnished option changes
-    hideItemsSelectionError();
-
-    // Hide generate button if no option is selected
-    if (!furnishedOption) {
-        if (!isMobile && generateBtn) {
-            generateBtn.style.display = 'none';
-        }
-        return;
-    }
-
-    if (furnishedOption === 'keep-existing') {
-        // Hide room items selection - keep existing items only
-        if (roomItemsSelection) {
-            roomItemsSelection.classList.add('hidden');
-        }
-        selectedRoomItems.clear();
-        // Show generate button for keep-existing option (desktop)
-        if (!isMobile && generateBtn) {
-            generateBtn.style.display = 'flex';
-        }
-    } else if (furnishedOption === 'add-new') {
-        // Show room items selection for adding new items
-        if (roomItemsSelection) {
-            roomItemsSelection.classList.remove('hidden');
-            updateItemsSelectionUI('add-new');
-            populateRoomItems();
-        }
-        // Show generate button for add-new option (desktop) - will be hidden if no items selected
-        if (!isMobile && generateBtn) {
-            generateBtn.style.display = 'flex';
-        }
-    } else if (furnishedOption === 'start-fresh') {
-        // Show room items selection for starting fresh
-        if (roomItemsSelection) {
-            roomItemsSelection.classList.remove('hidden');
-            updateItemsSelectionUI('start-fresh');
-            populateRoomItems();
-        }
-        // Show generate button for start-fresh option (desktop) - will be hidden if no items selected
-        if (!isMobile && generateBtn) {
-            generateBtn.style.display = 'flex';
-        }
-    }
-}
+// Stub — section visibility managed by wizard navigation
+function handleFurnishedOptionChange() { /* handled by wizard nav */ }
 
 // Update the UI text based on the context
 function updateItemsSelectionUI(context) {
@@ -2753,7 +2544,10 @@ async function generateImageWithControlNet(imageBase64, prompt, negativePrompt) 
                 try {
                     openaiResp = await fetch(OPENAI_IMAGE_EDIT_URL, {
                         method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
+                        headers: {
+                            'Content-Type': 'application/json',
+                            ...(currentSession ? { 'Authorization': `Bearer ${currentSession.access_token}` } : {})
+                        },
                         body: JSON.stringify({
                             imageBase64: imageInput,
                             prompt: prompt,
@@ -2764,6 +2558,15 @@ async function generateImageWithControlNet(imageBase64, prompt, negativePrompt) 
                     });
                 } finally {
                     clearTimeout(timeout);
+                }
+
+                // Quota exceeded — stop the fallback chain and propagate.
+                if (openaiResp.status === 429) {
+                    const data = await openaiResp.json().catch(() => ({}));
+                    const err = new Error(data.error || 'Monthly generation limit reached');
+                    err.code = 'QUOTA_EXCEEDED';
+                    err.quota = data;
+                    throw err;
                 }
 
                 if (!openaiResp.ok) {
@@ -2836,13 +2639,23 @@ async function generateImageWithControlNet(imageBase64, prompt, negativePrompt) 
             const response = await fetchWithRetry(REPLICATE_API_URL, {
                 method: 'POST',
                 headers: {
-                    'Content-Type': 'application/json'
+                    'Content-Type': 'application/json',
+                    ...(currentSession ? { 'Authorization': `Bearer ${currentSession.access_token}` } : {})
                 },
                 body: JSON.stringify({
                     version: model.version,
                     input: inputData
                 })
             }, 3, 3000); // Increased retries and timeout for initial request
+
+            // Quota exceeded — stop the fallback chain and propagate.
+            if (response.status === 429) {
+                const data = await response.json().catch(() => ({}));
+                const err = new Error(data.error || 'Monthly generation limit reached');
+                err.code = 'QUOTA_EXCEEDED';
+                err.quota = data;
+                throw err;
+            }
 
             if (!response.ok) {
                 const errorData = await response.json().catch(() => ({}));
@@ -2867,6 +2680,13 @@ async function generateImageWithControlNet(imageBase64, prompt, negativePrompt) 
             return result.imageUrls;
 
         } catch (error) {
+            // Quota errors are terminal — don't try other models, surface
+            // immediately so the UI can show a clear "monthly limit reached"
+            // message and refresh the badge.
+            if (error.code === 'QUOTA_EXCEEDED') {
+                throw error;
+            }
+
             console.warn(`Model ${model.name} failed:`, error.message);
             lastError = error;
 
@@ -3004,26 +2824,15 @@ async function generateDesigns() {
 
     // Check if we should generate an image
     if (!prompts.shouldGenerate) {
-        // Show error for empty room scenarios or furnished room with "add new" but no items selected
         if (currentRoomType === 'empty' || (currentRoomType === 'furnished' && furnishedOption === 'add-new')) {
-            if (isMobile) {
-                showMobileItemsSelectionError();
-            } else {
-                showItemsSelectionError();
-            }
+            showItemsSelectionError();
         }
         return;
     }
 
-    // Hide mobile options screen if it's open (but not when we're already on results screen)
-    // Only hide if we're transitioning from preview to results, not when regenerating
-    // Pass false to prevent resetting the room type selection during generation
-    if (isMobile && mobileOptionsScreen && mobileOptionsScreen.classList.contains('show') && !isCurrentlyOnResults) {
-        hideMobileOptionsScreen(false);
-    }
-
-    // Only proceed to next screen if validation passes
-    previewContainer.classList.add('hidden');
+    // Transition: hide wizard (and its progress bar), show results
+    if (wizardContainer) wizardContainer.classList.add('hidden');
+    if (wizardProgress) wizardProgress.classList.add('hidden');
     resultsSection.classList.remove('hidden');
     designCarousel.innerHTML = '';
 
@@ -3034,9 +2843,7 @@ async function generateDesigns() {
 
     // Append any user-supplied refinement text to the prompt
     const refinementText = refinementInput?.value?.trim();
-    const fullPrompt = refinementText
-        ? `${prompts.positivePrompt} Additional instructions: ${refinementText}.`
-        : prompts.positivePrompt;
+    const fullPrompt = refinementText || prompts.positivePrompt;
     const negativePrompt = prompts.negativePrompt;
 
     // Create initial design with loading state
@@ -3056,12 +2863,24 @@ async function generateDesigns() {
     generatedDesigns = [initialDesign];
     displayDesigns(generatedDesigns);
 
+    // Seed history with the original upload on the first run, so the user can
+    // always navigate back to it from the strip.
+    seedDesignHistoryWithOriginal();
+
+    // When regenerating from the results screen, chain off whichever history
+    // entry the user has selected (defaults to the most recent generation).
+    // On the first run, the strip is empty and we use the original upload.
+    const sourceImage = isCurrentlyOnResults
+        ? getBaseImageForNextGeneration()
+        : currentUploadedImage;
+
     // Generate the image
     try {
         console.log('Starting image generation with prompt:', fullPrompt);
         console.log('Negative prompt:', negativePrompt);
+        console.log('Source image:', isCurrentlyOnResults && lastGeneratedImageUrl ? 'last generated' : 'original upload');
 
-        let imageUrls = await generateImageWithControlNet(currentUploadedImage, fullPrompt, negativePrompt);
+        let imageUrls = await generateImageWithControlNet(sourceImage, fullPrompt, negativePrompt);
         let imageUrl;
         if (Array.isArray(imageUrls)) {
             imageUrl = imageUrls[0];
@@ -3075,6 +2894,12 @@ async function generateDesigns() {
         initialDesign.loading = false;
         initialDesign.isFallback = false;
 
+        // Remember this image for subsequent regenerations
+        if (imageUrl) {
+            lastGeneratedImageUrl = imageUrl;
+            pushDesignHistory(imageUrl);
+        }
+
         // Deduct one token now that generation succeeded
         await useTokenAfterSuccess();
 
@@ -3085,7 +2910,14 @@ async function generateDesigns() {
         // Provide user-friendly error messages
         let userFriendlyMessage = 'Image generation failed. Please try again.';
 
-        if (error.message.includes('timed out')) {
+        if (error.code === 'QUOTA_EXCEEDED') {
+            const limit = error.quota?.limit ?? subscriptionUsage.limit ?? 50;
+            userFriendlyMessage =
+                `You've reached your monthly limit of ${limit} image generations. ` +
+                `Your quota will reset at the start of next month.`;
+            // Sync the badge to reflect the server-authoritative state.
+            if (userHasSubscription) await fetchSubscriptionUsage();
+        } else if (error.message.includes('timed out')) {
             userFriendlyMessage = 'Generation took too long and timed out. This can happen during peak usage. Please try again.';
         } else if (error.message.includes('All models failed')) {
             userFriendlyMessage = 'All available models are currently busy. Please try again in a few minutes.';
@@ -3267,10 +3099,14 @@ async function retryImageGeneration() {
         // Append any user-supplied refinement text on retry too
         const retryRefinementText = refinementInput?.value?.trim();
         const retryPrompt = retryRefinementText
-            ? `${prompts.positivePrompt} Additional instructions: ${retryRefinementText}.`
+            ? retryRefinementText
             : prompts.positivePrompt;
 
-        let imageUrls = await generateImageWithControlNet(currentUploadedImage, retryPrompt, prompts.negativePrompt);
+        // Chain off the user-selected history entry (defaults to the latest
+        // generation, falls back to the original upload).
+        const retrySourceImage = getBaseImageForNextGeneration();
+
+        let imageUrls = await generateImageWithControlNet(retrySourceImage, retryPrompt, prompts.negativePrompt);
         let imageUrl;
         if (Array.isArray(imageUrls)) {
             imageUrl = imageUrls[0];
@@ -3284,6 +3120,12 @@ async function retryImageGeneration() {
         design.loading = false;
         design.needsRetry = false;
         design.isFallback = false;
+
+        // Remember this image for subsequent regenerations
+        if (imageUrl) {
+            lastGeneratedImageUrl = imageUrl;
+            pushDesignHistory(imageUrl);
+        }
 
         console.log('Retry successful');
 
@@ -3528,6 +3370,122 @@ function displayDesigns(designs) {
     }
 }
 
+// ===== DESIGN HISTORY =====
+
+/** Reset history when starting a fresh upload. */
+function resetDesignHistory() {
+    designHistory = [];
+    selectedHistoryId = null;
+    renderDesignHistory();
+}
+
+/** Seed history with the original upload (idempotent — won't duplicate). */
+function seedDesignHistoryWithOriginal() {
+    if (!currentUploadedImage) return;
+    const hasOriginal = designHistory.some(h => h.isOriginal);
+    if (hasOriginal) return;
+    designHistory.unshift({
+        id: 'history-original',
+        imageUrl: currentUploadedImage,
+        label: 'Original',
+        isOriginal: true,
+    });
+}
+
+/** Push a successful generation onto the history and select it as latest. */
+function pushDesignHistory(imageUrl) {
+    if (!imageUrl) return;
+    // Skip if the same URL is already the most recent entry (e.g. re-render).
+    const last = designHistory[designHistory.length - 1];
+    if (last && last.imageUrl === imageUrl) {
+        selectedHistoryId = last.id;
+        renderDesignHistory();
+        return;
+    }
+    const generationCount = designHistory.filter(h => !h.isOriginal).length + 1;
+    const entry = {
+        id: `history-${Date.now()}-${generationCount}`,
+        imageUrl,
+        label: `v${generationCount}`,
+        isOriginal: false,
+    };
+    designHistory.push(entry);
+    selectedHistoryId = entry.id;
+    renderDesignHistory();
+}
+
+/** Returns the user-selected history entry, or the latest if none picked. */
+function getSelectedHistoryEntry() {
+    if (!designHistory.length) return null;
+    if (selectedHistoryId) {
+        const found = designHistory.find(h => h.id === selectedHistoryId);
+        if (found) return found;
+    }
+    return designHistory[designHistory.length - 1];
+}
+
+/** Source image for the NEXT generation: user pick > latest > original upload. */
+function getBaseImageForNextGeneration() {
+    const sel = getSelectedHistoryEntry();
+    return sel?.imageUrl || lastGeneratedImageUrl || currentUploadedImage;
+}
+
+/** Render the history strip; hide it until there's at least one generation. */
+function renderDesignHistory() {
+    const container = document.getElementById('design-history');
+    const strip = document.getElementById('design-history-strip');
+    if (!container || !strip) return;
+
+    // Hide until the user has at least one generated design (original + 1 gen = 2 entries).
+    if (designHistory.length < 2) {
+        container.classList.add('hidden');
+        strip.innerHTML = '';
+        return;
+    }
+
+    container.classList.remove('hidden');
+    const activeId = getSelectedHistoryEntry()?.id;
+
+    strip.innerHTML = designHistory.map(entry => `
+        <button type="button"
+                class="design-history-thumb${entry.id === activeId ? ' active' : ''}"
+                data-history-id="${entry.id}"
+                role="listitem"
+                aria-pressed="${entry.id === activeId}"
+                aria-label="${entry.isOriginal ? 'Original photo' : 'Version ' + entry.label.replace('v', '')}">
+            <img src="${entry.imageUrl}" alt="">
+            <span class="design-history-thumb-label">${entry.label}</span>
+        </button>
+    `).join('');
+
+    strip.querySelectorAll('.design-history-thumb').forEach(btn => {
+        btn.addEventListener('click', () => {
+            const id = btn.getAttribute('data-history-id');
+            selectHistoryEntry(id);
+        });
+    });
+}
+
+/** User clicked a thumbnail: swap the visible design + remember as next base. */
+function selectHistoryEntry(id) {
+    const entry = designHistory.find(h => h.id === id);
+    if (!entry) return;
+    selectedHistoryId = id;
+
+    // Swap the currently displayed generated image to this entry.
+    const generatedImg = document.querySelector('.design-card .design-image.generated-image');
+    if (generatedImg) {
+        generatedImg.src = entry.imageUrl;
+    }
+    // Update model-status copy to reflect what's shown.
+    const modelStatus = document.querySelector('.design-card .model-status');
+    if (modelStatus) {
+        modelStatus.classList.add('hidden');
+    }
+
+    renderDesignHistory();
+}
+
 // ===== WHITEBOARD MODULE =====
 // This module can be easily extracted to a separate file (e.g., whiteboard.js)
 // and imported as needed to keep the main file clean and modular.
@@ -3718,16 +3676,13 @@ function setupRevealCheckbox(card, index) {
 
 function goBackToPreview() {
     resultsSection.classList.add('hidden');
-    previewContainer.classList.remove('hidden');
+    // Return to style selection (step 4) — the last wizard step before generation
+    if (wizardContainer) wizardContainer.classList.remove('hidden');
+    if (wizardProgress) wizardProgress.classList.remove('hidden');
+    goToWizardStep(4);
 
-    // Clear refinement text so it doesn't bleed into a fresh generation
+    // Clear refinement text so it doesn't bleed into the next generation
     if (refinementInput) refinementInput.value = '';
-
-    // Wipe the previous prompt's selections so the next generation starts
-    // fresh. Re-apply the detected room type so the user doesn't have to
-    // pick empty/furnished again for the image they already uploaded.
-    resetRoomTypeSelection();
-    applyDetectedRoomType();
 }
 
 function regenerateDesigns() {

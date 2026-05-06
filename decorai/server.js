@@ -28,13 +28,189 @@ const supabase = createClient(
 // Token configuration
 const FREE_TOKENS = parseInt(process.env.FREE_TOKENS) || 2;
 const TOKENS_PER_PURCHASE = parseInt(process.env.TOKENS_PER_PURCHASE) || 5;
-const SUBSCRIPTION_DAILY_LIMIT = parseInt(process.env.SUBSCRIPTION_DAILY_LIMIT) || 50;
-
-// In-memory daily generation tracker for subscription users: userId -> { count, date }
-const subscriptionDailyUsage = new Map();
+// Subscribers get up to this many image generations per calendar month.
+const SUBSCRIPTION_MONTHLY_LIMIT = parseInt(process.env.SUBSCRIPTION_MONTHLY_LIMIT) || 50;
 
 // Subscription configuration
 const SUBSCRIPTION_PRICE_ID = process.env.STRIPE_SUBSCRIPTION_PRICE_ID || '';
+
+// ── Generation quota helpers ──────────────────────────────────────────────
+// First day of the current month in UTC (e.g. 2026-05-01). Used as the bucket
+// key for subscriber monthly usage so the count auto-resets each calendar
+// month without a cron job.
+function currentMonthStart() {
+  const d = new Date();
+  return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}-01`;
+}
+
+// Look up active-subscription state for a user.
+async function getActiveSubscription(userId) {
+  const { data } = await supabase
+    .from('user_subscriptions')
+    .select('is_active, current_period_end, monthly_count, monthly_period_start')
+    .eq('user_id', userId)
+    .single();
+  if (!data) return null;
+  const isActive = data.is_active === true &&
+    data.current_period_end &&
+    new Date(data.current_period_end) > new Date();
+  return isActive ? data : null;
+}
+
+// Reserve one generation against the subscriber's monthly quota.
+// Returns { ok: true, used, limit } or { ok: false, reason, used, limit }.
+// Resets the counter when monthly_period_start has rolled over.
+async function reserveSubscriptionMonthlyGeneration(userId) {
+  const sub = await getActiveSubscription(userId);
+  if (!sub) return { ok: false, reason: 'no_subscription' };
+
+  const period = currentMonthStart();
+  const isNewMonth = sub.monthly_period_start !== period;
+  const usedSoFar = isNewMonth ? 0 : (sub.monthly_count || 0);
+
+  if (usedSoFar >= SUBSCRIPTION_MONTHLY_LIMIT) {
+    return {
+      ok: false,
+      reason: 'limit_reached',
+      used: usedSoFar,
+      limit: SUBSCRIPTION_MONTHLY_LIMIT,
+    };
+  }
+
+  const { error } = await supabase
+    .from('user_subscriptions')
+    .update({
+      monthly_count: usedSoFar + 1,
+      monthly_period_start: period,
+    })
+    .eq('user_id', userId);
+
+  if (error) {
+    console.error('Failed to reserve monthly quota:', error);
+    return { ok: false, reason: 'db_error' };
+  }
+
+  return {
+    ok: true,
+    used: usedSoFar + 1,
+    limit: SUBSCRIPTION_MONTHLY_LIMIT,
+  };
+}
+
+// Refund a previously-reserved generation when the AI call fails so the user
+// isn't charged a slot for nothing. Only decrements within the same period.
+async function refundSubscriptionMonthlyGeneration(userId) {
+  const sub = await getActiveSubscription(userId);
+  if (!sub) return;
+  const period = currentMonthStart();
+  if (sub.monthly_period_start !== period) return; // period rolled over; nothing to refund
+  const next = Math.max(0, (sub.monthly_count || 0) - 1);
+  await supabase
+    .from('user_subscriptions')
+    .update({ monthly_count: next })
+    .eq('user_id', userId);
+}
+
+// Reserve a free-tier credit. Returns { ok, credits } or { ok:false, reason }.
+async function reserveFreeCredit(userId) {
+  const { data: row, error } = await supabase
+    .from('user_credits')
+    .select('credits')
+    .eq('user_id', userId)
+    .single();
+  if (error || !row) return { ok: false, reason: 'db_error' };
+  if (row.credits <= 0) return { ok: false, reason: 'no_credits', credits: 0 };
+  const { error: upErr } = await supabase
+    .from('user_credits')
+    .update({ credits: row.credits - 1 })
+    .eq('user_id', userId);
+  if (upErr) return { ok: false, reason: 'db_error' };
+  return { ok: true, credits: row.credits - 1 };
+}
+
+async function refundFreeCredit(userId) {
+  const { data: row } = await supabase
+    .from('user_credits')
+    .select('credits')
+    .eq('user_id', userId)
+    .single();
+  if (!row) return;
+  await supabase
+    .from('user_credits')
+    .update({ credits: row.credits + 1 })
+    .eq('user_id', userId);
+}
+
+// Bump the lifetime `total_generations` counter (analytics only).
+async function incrementLifetimeGenerations(userId) {
+  const { data: row } = await supabase
+    .from('user_credits')
+    .select('total_generations')
+    .eq('user_id', userId)
+    .single();
+  if (!row) return;
+  await supabase
+    .from('user_credits')
+    .update({ total_generations: (row.total_generations || 0) + 1 })
+    .eq('user_id', userId);
+}
+
+// Reserve a generation slot before forwarding to a paid AI provider.
+// Returns { ok, kind, used?, limit?, credits?, refund() } where:
+//   - kind === 'subscription' for monthly-quota subscribers
+//   - kind === 'credits'      for free / paid-token users
+//   - refund() reverses the reservation if the AI call fails downstream
+// Sends an HTTP error response on failure and returns { ok: false }.
+async function reserveGenerationSlot(req, res) {
+  const user = await getAuthUser(req, res);
+  if (!user) return { ok: false };
+
+  // Subscribers first: monthly cap.
+  const sub = await getActiveSubscription(user.id);
+  if (sub) {
+    const r = await reserveSubscriptionMonthlyGeneration(user.id);
+    if (!r.ok) {
+      if (r.reason === 'limit_reached') {
+        res.status(429).json({
+          error: 'Monthly generation limit reached',
+          limit: r.limit,
+          used: r.used,
+          remaining: 0,
+          resets: 'next month',
+        });
+      } else {
+        res.status(500).json({ error: 'Failed to reserve monthly quota' });
+      }
+      return { ok: false };
+    }
+    return {
+      ok: true,
+      kind: 'subscription',
+      userId: user.id,
+      used: r.used,
+      limit: r.limit,
+      refund: () => refundSubscriptionMonthlyGeneration(user.id),
+    };
+  }
+
+  // Otherwise: free / purchased tokens.
+  const r = await reserveFreeCredit(user.id);
+  if (!r.ok) {
+    if (r.reason === 'no_credits') {
+      res.status(402).json({ error: 'No tokens remaining', credits: 0 });
+    } else {
+      res.status(500).json({ error: 'Failed to reserve credit' });
+    }
+    return { ok: false };
+  }
+  return {
+    ok: true,
+    kind: 'credits',
+    userId: user.id,
+    credits: r.credits,
+    refund: () => refundFreeCredit(user.id),
+  };
+}
 
 // CORS configuration
 const corsOptions = {
@@ -204,96 +380,74 @@ app.get('/api/credits', async (req, res) => {
   }
 });
 
-// POST /api/credits/use — deduct one token (called AFTER a successful generation)
+// POST /api/credits/use — deprecated no-op for backwards compatibility.
+// Quota reservation is now done atomically inside each generation endpoint
+// before forwarding to the AI provider, with refund on failure. The client
+// still pings this after a successful generation; we just return the latest
+// counts so the UI can refresh.
 app.post('/api/credits/use', async (req, res) => {
   try {
     const user = await getAuthUser(req, res);
     if (!user) return;
 
-    // Check if user has an active subscription
-    const { data: subData } = await supabase
-      .from('user_subscriptions')
-      .select('is_active, current_period_end')
-      .eq('user_id', user.id)
-      .single();
-
-    const hasActiveSubscription = subData?.is_active === true &&
-      subData?.current_period_end &&
-      new Date(subData.current_period_end) > new Date();
-
-    if (hasActiveSubscription) {
-      // Enforce daily generation limit for subscription users
-      const today = new Date().toISOString().slice(0, 10);
-      const usage = subscriptionDailyUsage.get(user.id);
-      const todayCount = (usage?.date === today) ? usage.count : 0;
-
-      if (todayCount >= SUBSCRIPTION_DAILY_LIMIT) {
-        return res.status(429).json({
-          error: 'Daily generation limit reached',
-          limit: SUBSCRIPTION_DAILY_LIMIT,
-          resets: 'tomorrow'
-        });
-      }
-
-      subscriptionDailyUsage.set(user.id, { count: todayCount + 1, date: today });
-
-      // Increment total_generations for analytics without touching credits
-      const { data: creditsData } = await supabase
-        .from('user_credits')
-        .select('total_generations')
-        .eq('user_id', user.id)
-        .single();
-
-      if (creditsData) {
-        await supabase
-          .from('user_credits')
-          .update({ total_generations: creditsData.total_generations + 1 })
-          .eq('user_id', user.id);
-      }
-
+    const sub = await getActiveSubscription(user.id);
+    if (sub) {
+      const period = currentMonthStart();
+      const used = sub.monthly_period_start === period ? (sub.monthly_count || 0) : 0;
       return res.json({
         success: true,
         subscription: true,
-        dailyUsage: todayCount + 1,
-        dailyLimit: SUBSCRIPTION_DAILY_LIMIT
+        monthlyUsage: used,
+        monthlyLimit: SUBSCRIPTION_MONTHLY_LIMIT,
+        remaining: Math.max(0, SUBSCRIPTION_MONTHLY_LIMIT - used),
       });
     }
 
-    const { data: credits, error: creditsError } = await supabase
+    const { data: credits } = await supabase
       .from('user_credits')
       .select('credits, total_generations')
       .eq('user_id', user.id)
       .single();
 
-    if (creditsError) {
-      console.error('Error fetching credits:', creditsError);
-      return res.status(500).json({ error: 'Failed to fetch credits' });
-    }
-
-    if (credits.credits <= 0) {
-      return res.status(403).json({ error: 'No tokens remaining', credits: 0 });
-    }
-
-    const { error: updateError } = await supabase
-      .from('user_credits')
-      .update({
-        credits: credits.credits - 1,
-        total_generations: credits.total_generations + 1
-      })
-      .eq('user_id', user.id);
-
-    if (updateError) {
-      console.error('Error updating credits:', updateError);
-      return res.status(500).json({ error: 'Failed to update credits' });
-    }
-
     res.json({
       success: true,
-      credits: credits.credits - 1,
-      total_generations: credits.total_generations + 1
+      credits: credits?.credits ?? 0,
+      total_generations: credits?.total_generations ?? 0,
     });
   } catch (error) {
     console.error('Error in POST /api/credits/use:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// GET /api/subscription/usage — current month's image-generation usage for
+// active subscribers. Returns { used, limit, remaining, periodStart, active }.
+app.get('/api/subscription/usage', async (req, res) => {
+  try {
+    const user = await getAuthUser(req, res);
+    if (!user) return;
+
+    const sub = await getActiveSubscription(user.id);
+    if (!sub) {
+      return res.json({
+        active: false,
+        used: 0,
+        limit: SUBSCRIPTION_MONTHLY_LIMIT,
+        remaining: 0,
+      });
+    }
+
+    const period = currentMonthStart();
+    const used = sub.monthly_period_start === period ? (sub.monthly_count || 0) : 0;
+    res.json({
+      active: true,
+      used,
+      limit: SUBSCRIPTION_MONTHLY_LIMIT,
+      remaining: Math.max(0, SUBSCRIPTION_MONTHLY_LIMIT - used),
+      periodStart: period,
+    });
+  } catch (error) {
+    console.error('Error in GET /api/subscription/usage:', error);
     res.status(500).json({ error: 'Internal server error' });
   }
 });
@@ -388,16 +542,23 @@ if (process.env.NODE_ENV === 'production') {
 }
 
 // API Routes
+// All paid AI-call endpoints require auth AND a successful quota reservation
+// before the request is forwarded. The reservation is refunded if the
+// downstream AI call fails so the user isn't charged for a no-op.
 app.post('/replicate/predictions', async (req, res) => {
+  const slot = await reserveGenerationSlot(req, res);
+  if (!slot.ok) return; // response already sent
+
   try {
     const apiKey = process.env.REPLICATE_API_KEY;
     if (!apiKey) {
       console.error('REPLICATE_API_KEY not configured on server');
+      await slot.refund();
       return res.status(500).json({ error: 'Server API key not configured' });
     }
 
     console.log('Making request to Replicate API with body:', JSON.stringify(req.body, null, 2));
-    
+
     const response = await fetch('https://api.replicate.com/v1/predictions', {
       method: 'POST',
       headers: {
@@ -414,31 +575,39 @@ app.post('/replicate/predictions', async (req, res) => {
         statusText: response.statusText,
         error: errorData
       });
-      return res.status(response.status).json({ 
-        error: `Replicate API error (${response.status}): ${errorData.detail || 'Unknown error'}` 
+      await slot.refund();
+      return res.status(response.status).json({
+        error: `Replicate API error (${response.status}): ${errorData.detail || 'Unknown error'}`
       });
     }
 
     const data = await response.json();
     console.log('Replicate API response:', data);
+    await incrementLifetimeGenerations(slot.userId);
     res.json(data);
   } catch (error) {
     console.error('Error in /replicate/predictions:', error);
+    await slot.refund();
     res.status(500).json({ error: 'Failed to start prediction' });
   }
 });
 
 // OpenAI image edit (gpt-image-1) — image-to-image generation
 app.post('/openai/image-edit', async (req, res) => {
+  const slot = await reserveGenerationSlot(req, res);
+  if (!slot.ok) return;
+
   try {
     const apiKey = process.env.OPENAI_API_KEY;
     if (!apiKey) {
       console.error('OPENAI_API_KEY not configured on server');
+      await slot.refund();
       return res.status(500).json({ error: 'Server OpenAI key not configured' });
     }
 
     const { imageBase64, prompt, size, quality } = req.body || {};
     if (!imageBase64 || !prompt) {
+      await slot.refund();
       return res.status(400).json({ error: 'imageBase64 and prompt are required' });
     }
 
@@ -469,6 +638,7 @@ app.post('/openai/image-edit', async (req, res) => {
     if (!response.ok) {
       const errorData = await response.json().catch(() => ({}));
       console.error('OpenAI image-edit error:', { status: response.status, error: errorData });
+      await slot.refund();
       return res.status(response.status).json({
         error: `OpenAI image edit error (${response.status}): ${errorData.error?.message || 'Unknown error'}`
       });
@@ -478,11 +648,14 @@ app.post('/openai/image-edit', async (req, res) => {
     const b64Out = data?.data?.[0]?.b64_json;
     if (!b64Out) {
       console.error('OpenAI image-edit: no b64_json in response', data);
+      await slot.refund();
       return res.status(500).json({ error: 'OpenAI returned no image data' });
     }
+    await incrementLifetimeGenerations(slot.userId);
     res.json({ imageUrls: [`data:image/png;base64,${b64Out}`] });
   } catch (error) {
     console.error('Error in /openai/image-edit:', error);
+    await slot.refund();
     res.status(500).json({ error: 'Failed to generate image edit' });
   }
 });
@@ -532,8 +705,14 @@ app.post('/replicate/poll', async (req, res) => {
 });
 
 // Image to SVG conversion endpoint
+// Auth-only: prevents anonymous calls from abusing the paid Replicate
+// vectorizer. Does not count against the monthly image-generation cap
+// (this is a floor-plan vectorization, not a design generation).
 app.post('/api/image-to-svg', async (req, res) => {
   try {
+    const user = await getAuthUser(req, res);
+    if (!user) return; // 401 already sent
+
     const apiKey = process.env.REPLICATE_API_KEY;
     if (!apiKey) {
       console.error('REPLICATE_API_KEY not configured on server');

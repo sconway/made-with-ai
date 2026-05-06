@@ -457,7 +457,11 @@ const WoodworkingEditor = (() => {
                     dz: b.mesh.position.z - hit.point.z
                 });
             }
-            pointerDragState = { hitX: hit.point.x, hitZ: hit.point.z, planeY: hit.point.y, snapshotPushed: false };
+            pointerDragState = {
+                hitX: hit.point.x, hitZ: hit.point.z, planeY: hit.point.y,
+                lastHitX: hit.point.x, lastHitZ: hit.point.z,
+                snapshotPushed: false,
+            };
             isDraggingBoard = true;
             draggedBoardId = hitId;
             orbitControls.enabled = false;
@@ -480,11 +484,20 @@ const WoodworkingEditor = (() => {
             recordHistorySnapshot();
             pointerDragState.snapshotPushed = true;
         }
-        for (const [id, off] of groupDragOffsets) {
+        // Frame-to-frame delta on the drag plane. Shift halves the cursor's
+        // effective speed for fine-grained positioning (board drifts behind
+        // the cursor while held; tracking re-anchors when released).
+        const FINE_SCALE = 0.2;
+        const scale = event.shiftKey ? FINE_SCALE : 1.0;
+        const dx = (hitPoint.x - pointerDragState.lastHitX) * scale;
+        const dz = (hitPoint.z - pointerDragState.lastHitZ) * scale;
+        pointerDragState.lastHitX = hitPoint.x;
+        pointerDragState.lastHitZ = hitPoint.z;
+        for (const id of groupDragOffsets.keys()) {
             const b = boards.find(x => x.id === id);
             if (!b) continue;
-            b.mesh.position.x = hitPoint.x + off.dx;
-            b.mesh.position.z = hitPoint.z + off.dz;
+            b.mesh.position.x += dx;
+            b.mesh.position.z += dz;
         }
         // Face-snapping is meaningful for single-board drags; skip for groups (which would fight each other).
         if (selectedBoardIds.size === 1) {

@@ -148,9 +148,20 @@ CREATE TABLE IF NOT EXISTS user_subscriptions (
     status TEXT DEFAULT 'none' NOT NULL, -- active | trialing | past_due | canceled | none
     is_active BOOLEAN DEFAULT FALSE NOT NULL,
     current_period_end TIMESTAMP WITH TIME ZONE,
+    -- Monthly generation cap (subscribers): persistent counters that survive
+    -- server restarts. monthly_period_start is the first day of the month the
+    -- counter applies to (UTC); when the helper detects a newer month, the
+    -- count is reset before incrementing. Using row-level fields lets us do
+    -- atomic check-and-increment via a single UPDATE ... RETURNING.
+    monthly_count INTEGER DEFAULT 0 NOT NULL,
+    monthly_period_start DATE,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
+
+-- Migration for existing deployments (re-running this file is safe):
+ALTER TABLE user_subscriptions ADD COLUMN IF NOT EXISTS monthly_count INTEGER DEFAULT 0 NOT NULL;
+ALTER TABLE user_subscriptions ADD COLUMN IF NOT EXISTS monthly_period_start DATE;
 
 CREATE INDEX IF NOT EXISTS idx_user_subscriptions_user_id ON user_subscriptions(user_id);
 CREATE INDEX IF NOT EXISTS idx_user_subscriptions_stripe_id ON user_subscriptions(stripe_subscription_id);
