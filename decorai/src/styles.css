@@ -3162,7 +3162,8 @@ main {
   flex: 0 1 auto;
 }
 
-.layout-editor-btn {
+.layout-editor-btn,
+.woodworking-editor-btn {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -3181,12 +3182,14 @@ main {
   width: auto;
 }
 
-.layout-editor-btn:hover {
+.layout-editor-btn:hover,
+.woodworking-editor-btn:hover {
   transform: translateY(-2px);
   box-shadow: 0 4px 15px rgba(99, 102, 241, 0.4);
 }
 
-.layout-editor-btn svg {
+.layout-editor-btn svg,
+.woodworking-editor-btn svg {
   width: 18px;
   height: 18px;
 }
@@ -5613,7 +5616,7 @@ main {
   background: transparent;
   border: 1px solid var(--border-color);
   color: var(--text-color);
-  padding: 8px 12px;
+  padding: 10px 12px;
   border-radius: var(--button-border-radius);
   cursor: pointer;
   font-size: 14px;

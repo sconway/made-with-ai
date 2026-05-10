@@ -905,7 +905,7 @@ Every colored shape must use one of the approved hex codes exactly (solid flat f
 
         const isolationRules = `COMPOSITION — LOGO AS THE ONLY SUBJECT (CRITICAL):
 - True transparent PNG: every pixel outside the logo mark must be fully transparent (alpha 0). No white, gray, cream, paper, or colored backdrop—only the mark has opaque pixels
-- Exactly ONE mark, centered, with generous transparent margin (the mark uses roughly 35–55% of the frame—do not fill the canvas)
+- Exactly ONE mark, centered and tightly fitted to the frame so it occupies roughly 90–100% of the canvas with only a minimal transparent margin (the mark must touch or come very close to all four edges)
 - The image contains nothing except that mark—no second object, scene, props, device frame, or “presentation”
 - Flat 2D graphic only: no 3D, no photorealism, no drop shadows that read as a card or surface`;
 
@@ -1605,46 +1605,111 @@ async function fetchImageAsBlob(url) {
     }
 }
 
-// Resize logo to specific size and return as blob
+// Find the bounding box of the actual logo content on a canvas.
+// Walks inward from each edge while the row/column is "mostly background."
+// A pixel is treated as foreground only if it's reasonably opaque AND not light.
+// Tolerant to scattered noise pixels so faint halos / off-white bg are ignored.
+function findContentBBox(ctx, w, h) {
+    let data;
+    try {
+        data = ctx.getImageData(0, 0, w, h).data;
+    } catch (e) {
+        console.warn('findContentBBox: getImageData failed', e);
+        return null;
+    }
+
+    const isFg = (i) => {
+        const a = data[i + 3];
+        if (a < 80) return false;
+        const r = data[i], g = data[i + 1], b = data[i + 2];
+        return !(r >= 220 && g >= 220 && b >= 220);
+    };
+
+    const rowFgFrac = (y) => {
+        let count = 0;
+        const base = y * w * 4;
+        for (let x = 0; x < w; x++) if (isFg(base + x * 4)) count++;
+        return count / w;
+    };
+    const colFgFrac = (x) => {
+        let count = 0;
+        for (let y = 0; y < h; y++) if (isFg((y * w + x) * 4)) count++;
+        return count / h;
+    };
+
+    const FG_THRESHOLD = 0.005;
+    let top = 0;
+    while (top < h && rowFgFrac(top) < FG_THRESHOLD) top++;
+    let bottom = h - 1;
+    while (bottom > top && rowFgFrac(bottom) < FG_THRESHOLD) bottom--;
+    let left = 0;
+    while (left < w && colFgFrac(left) < FG_THRESHOLD) left++;
+    let right = w - 1;
+    while (right > left && colFgFrac(right) < FG_THRESHOLD) right--;
+
+    if (top >= h || bottom < top || left >= w || right < left) return null;
+
+    const bbox = { left, top, width: right - left + 1, height: bottom - top + 1 };
+    console.log(`findContentBBox: source ${w}x${h} -> bbox`, bbox,
+        `(${Math.round(100 * bbox.width / w)}% x ${Math.round(100 * bbox.height / h)}%)`);
+    return bbox;
+}
+
+// Resize logo to specific size and return as blob.
+// Detects the logo's actual content bbox in the source so the mark fills the
+// target square even if the DALL-E output has surrounding whitespace/transparency.
 async function resizeLogoToSize(size) {
+    console.log('resizeLogoToSize: called for size', size);
     return new Promise((resolve, reject) => {
-        // Use the stored blob if available
         if (!currentLogoBlob) {
             reject(new Error('No logo blob available'));
             return;
         }
-        
-        // Create image element from the stored blob
+
         const img = new Image();
-        
+        const objectUrl = URL.createObjectURL(currentLogoBlob);
+
         img.onload = () => {
-            // Create canvas at target size
+            const sw = img.naturalWidth;
+            const sh = img.naturalHeight;
+            console.log('resizeLogoToSize: img loaded', sw, 'x', sh);
+
+            const src = document.createElement('canvas');
+            src.width = sw;
+            src.height = sh;
+            const sctx = src.getContext('2d');
+            sctx.drawImage(img, 0, 0);
+
+            const bbox = findContentBBox(sctx, sw, sh) || { left: 0, top: 0, width: sw, height: sh };
+
             const canvas = document.createElement('canvas');
             const ctx = canvas.getContext('2d');
             canvas.width = size;
             canvas.height = size;
             ctx.clearRect(0, 0, size, size);
-
-            // Enable high quality image rendering
             ctx.imageSmoothingEnabled = true;
             ctx.imageSmoothingQuality = 'high';
 
-            // Draw image scaled to target size (preserves alpha from transparent logos)
-            ctx.drawImage(img, 0, 0, size, size);
-            
-            // Convert to blob
+            // Fit content bbox into target square, preserving aspect ratio
+            const scale = size / Math.max(bbox.width, bbox.height);
+            const dw = Math.round(bbox.width * scale);
+            const dh = Math.round(bbox.height * scale);
+            const dx = Math.floor((size - dw) / 2);
+            const dy = Math.floor((size - dh) / 2);
+            ctx.drawImage(src, bbox.left, bbox.top, bbox.width, bbox.height, dx, dy, dw, dh);
+
             canvas.toBlob((resizedBlob) => {
-                URL.revokeObjectURL(img.src); // Clean up
+                URL.revokeObjectURL(objectUrl);
                 resolve(resizedBlob);
             }, 'image/png');
         };
-        
+
         img.onerror = () => {
-            URL.revokeObjectURL(img.src); // Clean up
+            URL.revokeObjectURL(objectUrl);
             reject(new Error('Failed to load image'));
         };
-        
-        img.src = URL.createObjectURL(currentLogoBlob);
+
+        img.src = objectUrl;
     });
 }
 

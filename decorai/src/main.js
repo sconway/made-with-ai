@@ -2151,7 +2151,7 @@ function generatePromptsWithItems(basePrompt, style) {
         : ', restyled, different style, changed style, different materials, different colors, different finishes, repainted, redecorated';
 
     // Simplified base negative prompt - focused on architectural preservation
-    const baseNegativePrompt = "blurry, distorted, out of frame, unrealistic shadows, text, watermark, signature, low quality, pixelated, artifacts, change walls, change windows, change floor, change ceiling, change doors, architectural changes, structural modifications" + styleNegatives;
+    const baseNegativePrompt = "blurry, distorted, out of frame, unrealistic shadows, text, watermark, signature, low quality, pixelated, artifacts, change walls, change windows, change floor, change ceiling, change doors, architectural changes, structural modifications, zoomed in, cropped, close-up, tighter framing, recomposed, cut off, parts of room missing, narrower field of view, different camera distance" + styleNegatives;
 
     // If the image looks empty but the user picked "furnished", we usually treat it like an empty room
     // (pick items, etc.) — except for "keep existing items", which has its own prompt and no item grid.
@@ -2495,6 +2495,41 @@ async function generateEmptyRoomWithTextToImage(prompt, negativePrompt) {
     throw lastError || new Error('All model attempts failed');
 }
 
+// Pick a gpt-image-1 output size that matches the input image's aspect ratio.
+// gpt-image-1 only supports 1024x1024, 1024x1536 (portrait), and 1536x1024 (landscape).
+// Using 'auto' lets the model pick — which often results in a square crop that zooms
+// into part of the source image. Matching aspect ratio keeps the full original framing.
+function pickGptImageSize(imageBase64) {
+    return new Promise((resolve) => {
+        try {
+            const img = new Image();
+            img.onload = () => {
+                const w = img.naturalWidth || 1;
+                const h = img.naturalHeight || 1;
+                const ratio = w / h;
+                // Square supported sizes have ratios: 1.0, 1.5 (landscape), 0.667 (portrait).
+                // Pick whichever is closest in log-space to the input ratio.
+                const candidates = [
+                    { size: '1024x1024', ratio: 1.0 },
+                    { size: '1536x1024', ratio: 1536 / 1024 },
+                    { size: '1024x1536', ratio: 1024 / 1536 }
+                ];
+                let best = candidates[0];
+                let bestDist = Math.abs(Math.log(ratio / best.ratio));
+                for (const c of candidates.slice(1)) {
+                    const d = Math.abs(Math.log(ratio / c.ratio));
+                    if (d < bestDist) { best = c; bestDist = d; }
+                }
+                resolve(best.size);
+            };
+            img.onerror = () => resolve('1024x1024');
+            img.src = imageBase64.startsWith('data:image') ? imageBase64 : `data:image/jpeg;base64,${imageBase64}`;
+        } catch (_) {
+            resolve('1024x1024');
+        }
+    });
+}
+
 // Helper: Generate image with SDXL+ControlNet using Replicate with fallback models
 async function generateImageWithControlNet(imageBase64, prompt, negativePrompt) {
     // Check if this is a "start fresh" scenario (empty room generation)
@@ -2536,6 +2571,12 @@ async function generateImageWithControlNet(imageBase64, prompt, negativePrompt) 
                 const imageInput = imageBase64.startsWith('data:image')
                     ? imageBase64
                     : `data:image/jpeg;base64,${imageBase64}`;
+                // Match the output aspect ratio to the input so the model doesn't
+                // square-crop and "zoom into" part of the source image.
+                const outputSize = await pickGptImageSize(imageInput);
+                // Reinforce framing preservation in the prompt itself — gpt-image-1
+                // still sometimes recomposes even when the canvas matches.
+                const framedPrompt = `${prompt} Keep the exact same camera framing, field of view, zoom level, and composition as the input image — do not crop, zoom in, or recompose. The output must show the entire original scene with no parts of the room cut off.`;
                 // gpt-image-1 high-quality edits take 30–90s. Use a long timeout and DO NOT retry —
                 // each retry triggers a duplicate billable generation on OpenAI's side.
                 const controller = new AbortController();
@@ -2550,8 +2591,8 @@ async function generateImageWithControlNet(imageBase64, prompt, negativePrompt) 
                         },
                         body: JSON.stringify({
                             imageBase64: imageInput,
-                            prompt: prompt,
-                            size: 'auto',
+                            prompt: framedPrompt,
+                            size: outputSize,
                             quality: 'high'
                         }),
                         signal: controller.signal
