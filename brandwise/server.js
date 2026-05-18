@@ -299,9 +299,13 @@ app.post('/openai/images/generations', async (req, res) => {
     }
 
     const { prompt, size = '1024x1024', quality = 'standard', n = 1 } = req.body;
-    
-    console.log('Making request to OpenAI DALL-E 3 API');
-    
+
+    const model = process.env.OPENAI_IMAGE_MODEL || 'gpt-image-1';
+    const qualityMap = { standard: 'medium', hd: 'high' };
+    const mappedQuality = qualityMap[quality] || quality;
+
+    console.log(`Making request to OpenAI image API (${model})`);
+
     const response = await fetch('https://api.openai.com/v1/images/generations', {
       method: 'POST',
       headers: {
@@ -309,10 +313,10 @@ app.post('/openai/images/generations', async (req, res) => {
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
-        model: 'dall-e-3',
+        model,
         prompt: prompt,
         size: size,
-        quality: quality,
+        quality: mappedQuality,
         n: n
       }),
     });
@@ -331,6 +335,12 @@ app.post('/openai/images/generations', async (req, res) => {
 
     const data = await response.json();
     console.log('OpenAI API response received');
+
+    const item = Array.isArray(data.data) ? data.data[0] : null;
+    if (item && !item.url && item.b64_json) {
+      item.url = `data:image/png;base64,${item.b64_json}`;
+    }
+
     res.json(data);
   } catch (error) {
     console.error('Error in /openai/images/generations:', error);

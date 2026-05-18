@@ -218,7 +218,7 @@ const corsOptions = {
     ? process.env.ALLOWED_ORIGIN || '*'
     : ['http://localhost:5173', 'http://localhost:4173', 'http://localhost:4174'],
   methods: ['GET', 'POST', 'PUT', 'DELETE'],
-  allowedHeaders: ['Content-Type', 'Authorization'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-Fallback'],
   credentials: true
 };
 
@@ -339,6 +339,10 @@ app.post('/webhook/stripe', express.raw({ type: 'application/json' }), async (re
 });
 
 app.use(express.json({ limit: '50mb' }));
+
+// Lightweight liveness probe used by the client to verify connectivity
+// before retrying a failed request. Intentionally cheap — no DB, no auth.
+app.get('/health', (req, res) => res.json({ ok: true }));
 
 // ── Token / credits routes ─────────────────────────────────────────────────────
 
@@ -546,18 +550,30 @@ if (process.env.NODE_ENV === 'production') {
 // before the request is forwarded. The reservation is refunded if the
 // downstream AI call fails so the user isn't charged for a no-op.
 app.post('/replicate/predictions', async (req, res) => {
-  const slot = await reserveGenerationSlot(req, res);
-  if (!slot.ok) return; // response already sent
+  // Replicate (free model) calls never count against the user's monthly
+  // quota — only premium OpenAI generations do. We still require auth so
+  // anonymous traffic can't abuse the proxy.
+  const user = await getAuthUser(req, res);
+  if (!user) return;
 
   try {
     const apiKey = process.env.REPLICATE_API_KEY;
     if (!apiKey) {
       console.error('REPLICATE_API_KEY not configured on server');
-      await slot.refund();
       return res.status(500).json({ error: 'Server API key not configured' });
     }
 
-    console.log('Making request to Replicate API with body:', JSON.stringify(req.body, null, 2));
+    // Some models (e.g. proplabs/virtual-staging) require the Replicate API
+    // key as an input field so they can make sub-calls. Inject it server-side
+    // — never expose it to the browser.
+    const forwardBody = { ...req.body };
+    if (typeof forwardBody.version === 'string' &&
+        forwardBody.version.startsWith('proplabs/virtual-staging') &&
+        forwardBody.input && typeof forwardBody.input === 'object') {
+      forwardBody.input = { ...forwardBody.input, replicate_api_key: apiKey };
+    }
+
+    console.log('Making request to Replicate API (free) with body:', JSON.stringify(forwardBody, (k, v) => k === 'replicate_api_key' ? '***' : v, 2));
 
     const response = await fetch('https://api.replicate.com/v1/predictions', {
       method: 'POST',
@@ -565,7 +581,7 @@ app.post('/replicate/predictions', async (req, res) => {
         'Authorization': `Token ${apiKey}`,
         'Content-Type': 'application/json',
       },
-      body: JSON.stringify(req.body),
+      body: JSON.stringify(forwardBody),
     });
 
     if (!response.ok) {
@@ -575,7 +591,6 @@ app.post('/replicate/predictions', async (req, res) => {
         statusText: response.statusText,
         error: errorData
       });
-      await slot.refund();
       return res.status(response.status).json({
         error: `Replicate API error (${response.status}): ${errorData.detail || 'Unknown error'}`
       });
@@ -583,16 +598,14 @@ app.post('/replicate/predictions', async (req, res) => {
 
     const data = await response.json();
     console.log('Replicate API response:', data);
-    await incrementLifetimeGenerations(slot.userId);
     res.json(data);
   } catch (error) {
     console.error('Error in /replicate/predictions:', error);
-    await slot.refund();
     res.status(500).json({ error: 'Failed to start prediction' });
   }
 });
 
-// OpenAI image edit (gpt-image-1) — image-to-image generation
+// OpenAI image edit (gpt-image-2) — image-to-image generation
 app.post('/openai/image-edit', async (req, res) => {
   const slot = await reserveGenerationSlot(req, res);
   if (!slot.ok) return;
@@ -619,11 +632,10 @@ app.post('/openai/image-edit', async (req, res) => {
     const ext = mime.includes('jpeg') ? 'jpg' : mime.split('/')[1] || 'png';
 
     const form = new FormData();
-    form.append('model', 'gpt-image-1');
+    form.append('model', 'gpt-image-2');
     form.append('prompt', prompt);
     form.append('n', '1');
     form.append('size', size || 'auto');
-    form.append('input_fidelity', 'high');
     if (quality) form.append('quality', quality);
     form.append('image', new Blob([buf], { type: mime }), `input.${ext}`);
 

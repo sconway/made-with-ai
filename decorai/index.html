@@ -16,10 +16,10 @@
 <body>
     <header>
         <div class="header-inner">
-            <div class="logo">
+            <a href="/" class="logo" id="logo-home-link" aria-label="DecorAIt home">
                 <h1>DecorAIt</h1>
                 <span class="tagline">Reimagine Your Space</span>
-            </div>
+            </a>
             <div class="header-actions">
                 <button type="button" id="layout-editor-btn" class="layout-editor-btn" title="Open the floor plan editor—draw walls, add furniture, and export your layout">
                     <i data-feather="layout"></i>
@@ -99,7 +99,7 @@
 
     <div class="app-container">
         <main>
-            <section class="upload-section">
+            <section class="upload-section" id="upload-section">
                 <!-- Upload drop zone (shown before an image is selected) -->
                 <div class="upload-container" id="upload-container">
                     <div class="upload-content">
@@ -251,6 +251,16 @@
                         <div class="style-options-grid" id="style-options-grid">
                             <!-- Populated by JavaScript -->
                         </div>
+                        <div class="model-pref-row">
+                            <label class="model-pref-toggle">
+                                <input type="checkbox" id="default-model-toggle">
+                                <span class="model-pref-track"><span class="model-pref-thumb"></span></span>
+                                <span class="model-pref-text">
+                                    <span class="model-pref-label">Use premium model</span>
+                                    <span class="model-pref-hint">Higher fidelity. Each generation counts against your monthly limit.</span>
+                                </span>
+                            </label>
+                        </div>
                         <div class="wizard-nav">
                             <button class="secondary-btn" id="step4-back-btn">
                                 <i data-feather="arrow-left"></i>
@@ -269,6 +279,12 @@
 
 
             <section class="results-section hidden" id="results-section">
+                <div class="design-history hidden" id="design-history" aria-label="Design history">
+                    <div class="design-history-label">History</div>
+                    <div class="design-history-strip" id="design-history-strip" role="list">
+                        <!-- Thumbnails inserted by JavaScript -->
+                    </div>
+                </div>
                 <div class="results-header">
                     <h2>Your design</h2>
                     <p>Toggle the original to compare, or refine the result below.</p>
@@ -281,12 +297,6 @@
                     </div>
                     <div class="design-carousel" id="design-carousel">
                         <!-- Design variants will be inserted here by JavaScript -->
-                    </div>
-                </div>
-                <div class="design-history hidden" id="design-history" aria-label="Design history">
-                    <div class="design-history-label">History</div>
-                    <div class="design-history-strip" id="design-history-strip" role="list">
-                        <!-- Thumbnails inserted by JavaScript -->
                     </div>
                 </div>
                 <div class="refinement-area">
@@ -309,6 +319,16 @@
                         <button type="button" class="refinement-chip" data-chip="Use warmer, cozier lighting">Warmer lighting</button>
                         <button type="button" class="refinement-chip" data-chip="Make the space feel more minimal and uncluttered">More minimal</button>
                         <button type="button" class="refinement-chip" data-chip="Add textured natural materials like wood and linen">Natural textures</button>
+                    </div>
+                    <div class="model-pref-row">
+                        <label class="model-pref-toggle">
+                            <input type="checkbox" id="default-model-toggle-results">
+                            <span class="model-pref-track"><span class="model-pref-thumb"></span></span>
+                            <span class="model-pref-text">
+                                <span class="model-pref-label">Use premium model</span>
+                                <span class="model-pref-hint">Higher fidelity. Each generation counts against your monthly limit.</span>
+                            </span>
+                        </label>
                     </div>
                     <div class="refinement-footer">
                         <button id="regenerate-btn" class="primary-btn">

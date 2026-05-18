@@ -41,6 +41,8 @@ const roomUpload = document.getElementById('room-upload');
 const cameraBtn = document.getElementById('camera-btn');
 const changeImageBtn = document.getElementById('change-image-btn');
 const generateBtn = document.getElementById('generate-btn');
+const defaultModelToggle = document.getElementById('default-model-toggle');
+const defaultModelToggleResults = document.getElementById('default-model-toggle-results');
 const resultsSection = document.getElementById('results-section');
 const loadingIndicator = document.getElementById('loading-indicator');
 const designCarousel = document.getElementById('design-carousel');
@@ -225,24 +227,35 @@ const designDescriptions = {
     ]
 };
 
+// Custom inline SVG icons for items that don't have a good Feather equivalent.
+// Each is a 24x24 stroke-based icon (matches Feather's visual weight).
+const customItemSvgs = {
+    sofa: `<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 14v-3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v3"/><path d="M17 14v-3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v3"/><path d="M3 14h18v4a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1z"/><path d="M7 14v-3a2 2 0 0 1 2-2h6a2 2 0 0 1 2 2v3"/><path d="M5 19v2"/><path d="M19 19v2"/></svg>`,
+    chairs: `<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M7 4v10"/><path d="M17 4v10"/><path d="M5 14h14"/><path d="M7 18l-1 3"/><path d="M17 18l1 3"/><path d="M7 14v4h10v-4"/></svg>`,
+    bed: `<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 18V8"/><path d="M21 18v-5a3 3 0 0 0-3-3H9v6"/><path d="M3 14h18"/><path d="M3 18h18"/><rect x="5" y="10" width="3" height="3" rx="1"/></svg>`,
+    rug: `<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="6" width="18" height="12" rx="2"/><path d="M3 9h18"/><path d="M3 15h18"/><path d="M6 6v-2"/><path d="M18 6v-2"/><path d="M6 20v-2"/><path d="M18 20v-2"/></svg>`,
+    plants: `<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22v-9"/><path d="M12 13c0-3 2-6 5-6-1 3-2 6-5 6z"/><path d="M12 13c0-3-2-6-5-6 1 3 2 6 5 6z"/><path d="M12 9c0-2 1-4 3-4-0 2-1 4-3 4z"/><path d="M7 22h10l-1-5H8z"/></svg>`,
+    pillows: `<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 7c0-1 1-2 2-2h10c1 0 2 1 2 2v10c0 1-1 2-2 2H7c-1 0-2-1-2-2z"/><path d="M7 5l-1-1"/><path d="M17 5l1-1"/><path d="M7 19l-1 1"/><path d="M17 19l1 1"/></svg>`
+};
+
 // Room items that can be added to empty rooms
 const roomItems = [
-    { id: 'sofa', name: 'Sofa', icon: 'square', category: 'furniture' },
+    { id: 'sofa', name: 'Sofa', icon: 'sofa', category: 'furniture' },
     { id: 'coffee-table', name: 'Coffee Table', icon: 'table', category: 'furniture' },
     { id: 'dining-table', name: 'Dining Table', icon: 'table', category: 'furniture' },
-    { id: 'chairs', name: 'Chairs', icon: 'square', category: 'furniture' },
-    { id: 'bed', name: 'Bed', icon: 'square', category: 'furniture' },
+    { id: 'chairs', name: 'Chairs', icon: 'chairs', category: 'furniture' },
+    { id: 'bed', name: 'Bed', icon: 'bed', category: 'furniture' },
     { id: 'desk', name: 'Desk', icon: 'monitor', category: 'furniture' },
     { id: 'bookshelf', name: 'Bookshelf', icon: 'book-open', category: 'furniture' },
     { id: 'tv', name: 'TV', icon: 'tv', category: 'electronics' },
     { id: 'lamp', name: 'Lamp', icon: 'zap', category: 'lighting' },
     { id: 'floor-lamp', name: 'Floor Lamp', icon: 'zap', category: 'lighting' },
-    { id: 'rug', name: 'Rug', icon: 'square', category: 'decor' },
+    { id: 'rug', name: 'Rug', icon: 'rug', category: 'decor' },
     { id: 'curtains', name: 'Curtains', icon: 'maximize-2', category: 'decor' },
     { id: 'art', name: 'Art', icon: 'image', category: 'decor' },
     { id: 'mirror', name: 'Mirror', icon: 'eye', category: 'decor' },
-    { id: 'plants', name: 'Plants', icon: 'circle', category: 'decor' },
-    { id: 'pillows', name: 'Pillows', icon: 'square', category: 'decor' },
+    { id: 'plants', name: 'Plants', icon: 'plants', category: 'decor' },
+    { id: 'pillows', name: 'Pillows', icon: 'pillows', category: 'decor' },
     { id: 'throw-blanket', name: 'Throw Blanket', icon: 'square', category: 'decor' },
     { id: 'vase', name: 'Vase', icon: 'droplet', category: 'decor' },
     { id: 'candles', name: 'Candles', icon: 'zap', category: 'decor' },
@@ -541,6 +554,16 @@ function updateSubscriptionUsageDisplay() {
  * Check whether the user has tokens available before starting generation.
  * Returns true if generation may proceed, false otherwise (shows buy modal).
  */
+// Lightweight gate for free-model runs: just verify the user is signed in.
+// Free generations don't touch the monthly limit so we don't check tokens.
+function ensureLoggedIn() {
+    if (!currentUser || !currentSession) {
+        showAuthModal('login');
+        return false;
+    }
+    return true;
+}
+
 function hasTokensAvailable() {
     if (!currentUser || !currentSession) {
         showAuthModal('login');
@@ -1803,8 +1826,8 @@ function goToWizardStep(step) {
         line.classList.toggle('completed', idx + 2 <= step);
     });
 
-    // Scroll wizard back to top on step change
-    if (wizardContainer) wizardContainer.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    // Scroll page back to top on step change
+    window.scrollTo({ top: 0, behavior: 'smooth' });
 }
 
 function showMobileOptionsScreen() { /* no-op — replaced by wizard */ }
@@ -2053,7 +2076,7 @@ function populateRoomItems() {
             <input type="checkbox" id="item-${item.id}" class="item-checkbox" ${selectedRoomItems.has(item.id) ? 'checked' : ''}>
             <label for="item-${item.id}" class="item-label">
                 <div class="item-icon">
-                    <i data-feather="${item.icon}"></i>
+                    ${customItemSvgs[item.icon] || `<i data-feather="${item.icon}"></i>`}
                 </div>
                 <span class="item-name">${item.name}</span>
             </label>
@@ -2274,20 +2297,29 @@ async function getDepthMapWithReplicate(imageBase64) {
     return result.imageUrl; // URL to depth map
 }
 
-// Helper: Check if we have a stable internet connection
+// Helper: Check if we have a stable internet connection.
+// Uses the browser's online signal first, then a lightweight HEAD against our
+// own proxy. Calling api.replicate.com directly from the browser fails CORS
+// and requires auth, so we can't use it as a health probe.
 async function checkConnectionHealth() {
+    if (typeof navigator !== 'undefined' && navigator.onLine === false) {
+        return false;
+    }
     try {
         const controller = new AbortController();
         const timeout = setTimeout(() => controller.abort(), 5000);
-        const response = await fetch('https://api.replicate.com/v1/models', {
+        const response = await fetch(`${PROXY_SERVER_URL}/health`, {
             method: 'GET',
-            signal: controller.signal
+            signal: controller.signal,
+            cache: 'no-store'
         });
         clearTimeout(timeout);
         return response.ok;
     } catch (error) {
         console.warn('Connection health check failed:', error.message);
-        return false;
+        // Assume healthy rather than blocking retries — the actual request
+        // will surface a real error if the network is truly down.
+        return true;
     }
 }
 
@@ -2379,11 +2411,17 @@ async function pollReplicatePrediction(predictionUrl) {
                 }
                 return { imageUrls: prediction.output };
             } else if (prediction.status === 'failed') {
+                // Terminal — the model rejected the input. Mark the error so
+                // the outer retry loop bails out instead of polling forever.
                 console.error('Replicate prediction failed:', prediction.error);
-                throw new Error(`Replicate prediction failed: ${prediction.error}`);
+                const err = new Error(`Replicate prediction failed: ${prediction.error}`);
+                err.terminal = true;
+                throw err;
             } else if (prediction.status === 'canceled') {
                 console.warn('Replicate prediction canceled:', prediction);
-                throw new Error('Replicate prediction was canceled.');
+                const err = new Error('Replicate prediction was canceled.');
+                err.terminal = true;
+                throw err;
             }
 
             // Adaptive delay based on status
@@ -2396,6 +2434,13 @@ async function pollReplicatePrediction(predictionUrl) {
             await new Promise(resolve => setTimeout(resolve, delay));
 
         } catch (error) {
+            // Terminal errors (model rejected the input, prediction canceled)
+            // must not be retried — surface immediately so the caller can
+            // show the user a choice dialog.
+            if (error.terminal) {
+                throw error;
+            }
+
             consecutiveErrors++;
             console.error(`Polling attempt ${attempts} failed: ${error.message}`);
 
@@ -2530,28 +2575,67 @@ function pickGptImageSize(imageBase64) {
     });
 }
 
-// Helper: Generate image with SDXL+ControlNet using Replicate with fallback models
-async function generateImageWithControlNet(imageBase64, prompt, negativePrompt) {
+// Map free-form prompt text to proplabs/virtual-staging's `room` enum.
+// Order matters — check the most specific names first (e.g. "dining room"
+// before "room") so "dining room" doesn't get swallowed by a generic match.
+function mapPromptToProplabsRoom(prompt) {
+    const text = (prompt || '').toLowerCase();
+    if (/\bdining\b/.test(text)) return 'Dining Room';
+    if (/\bbedroom\b|\bbed room\b/.test(text)) return 'Bedroom';
+    if (/\bkitchen\b/.test(text)) return 'Kitchen';
+    if (/\bbathroom\b|\bbath room\b/.test(text)) return 'Bathroom';
+    if (/\boffice\b|\bstudy\b|\bworkspace\b/.test(text)) return 'Office';
+    if (/\bbalcony\b/.test(text)) return 'Balcony';
+    if (/\bgarden\b|\bbackyard\b|\bpatio\b/.test(text)) return 'Garden';
+    if (/\bpool\b/.test(text)) return 'Swimming Pool';
+    return 'Living Room';
+}
+
+// Map free-form prompt text to proplabs/virtual-staging's `furniture_style`
+// enum. Anything unrecognised falls through to the model's default.
+function mapPromptToProplabsStyle(prompt) {
+    const text = (prompt || '').toLowerCase();
+    // Order matters — longer/more-specific names first.
+    if (/mid-?century/.test(text)) return 'Mid-Century Modern';
+    if (/scandinavian oasis/.test(text)) return 'Scandinavian Oasis';
+    if (/scandinavian/.test(text)) return 'Scandinavian';
+    if (/transitional luxury/.test(text)) return 'Transitional Luxury';
+    if (/transitional/.test(text)) return 'Transitional';
+    if (/modern organic/.test(text)) return 'Modern Organic';
+    if (/b&w modern|black and white modern/.test(text)) return 'B&W Modern';
+    if (/nyc modern|new york modern/.test(text)) return 'NYC Modern';
+    if (/farmhouse hacienda/.test(text)) return 'Farmhouse Hacienda';
+    if (/farmhouse/.test(text)) return 'Farmhouse';
+    if (/metro industrial/.test(text)) return 'Metro Industrial';
+    if (/urban industrial|industrial/.test(text)) return 'Urban Industrial';
+    if (/coastal|beach/.test(text)) return 'Coastal';
+    if (/traditional/.test(text)) return 'Traditional';
+    if (/rustic/.test(text)) return 'Rustic';
+    if (/modern/.test(text)) return 'Modern';
+    return 'Default (AI decides)';
+}
+
+// Helper: Generate image with a Replicate model.
+// By default it runs ONLY the proplabs default model — no auto-fallback,
+// because we want to surface the failure and let the user decide whether
+// to try the free backup or the premium model. Callers can pass
+// `options.modelType` to pick a different model from the available list
+// (e.g. 'img2img' for the SD 3.5 free backup), and `options.forceFallback`
+// to mark the run as free (server skips quota tracking).
+async function generateImageWithControlNet(imageBase64, prompt, negativePrompt, options = {}) {
     // Check if this is a "start fresh" scenario (empty room generation)
     const isStartFresh = prompt.includes("completely empty space") || prompt.includes("Remove all furniture") || prompt.includes("empty room") || prompt.includes("COMPLETELY EMPTY ROOM") || prompt.includes("REMOVE ALL EXISTING FURNITURE") || prompt.includes("EMPTY ROOM ONLY");
     // Empty room + add furniture only: add specified items while preserving room structure
     const isEmptyRoomAddFurniture = (/keep the room exactly|add .+ to this room|a room with .+ visible|empty room/i.test(prompt)) && (/add .+(to this room|these items|the following)/i.test(prompt));
 
-    // Multiple model options with fallbacks
+    // Catalog of models we can run. Default behavior runs only the first
+    // entry (proplabs); the user's choice after a failure determines
+    // whether we run the SD 3.5 backup or the OpenAI premium upgrade.
     const modelOptions = [
         {
-            name: "OpenAI gpt-image-1",
-            type: "openai-edit"
-        },
-        {
-            version: "adirik/interior-design:76604baddc85b1b4616e1c6475eca080da339c8875bd4996705440484a6eac38",
-            name: "Interior Design",
-            type: "interior-design"
-        },
-        {
-            version: "adirik/t2i-adapter-sdxl-depth-midas:8a89b0ab59a050244a751b6475d91041a8582ba33692ae6fab65e0c51b700328",
-            name: "SDXL Depth Midas",
-            type: "controlnet"
+            version: "proplabs/virtual-staging:635d607efc6e3a6016ef6d655327cd35f3d792e84b8f110688b04498c6e94cfb",
+            name: "PropLabs Virtual Staging",
+            type: "proplabs-staging"
         },
         {
             version: "stability-ai/stable-diffusion-3.5-large",
@@ -2561,119 +2645,57 @@ async function generateImageWithControlNet(imageBase64, prompt, negativePrompt) 
     ];
 
     let lastError = null;
+    // True when this run is a free fallback (after the default failed and
+    // the user chose to try a backup). Tells the server to skip quota
+    // tracking and surfaces the "free run" banner.
+    let usedFallback = !!options.forceFallback;
 
-    for (let i = 0; i < modelOptions.length; i++) {
-        const model = modelOptions[i];
+    // Pick which model to run. Default is JUST proplabs — we do NOT
+    // auto-chain. Failures bubble up so the caller can ask the user
+    // whether to try the free backup or the premium upgrade.
+    const requestedType = options.modelType || 'proplabs-staging';
+    const selected = modelOptions.filter(m => m.type === requestedType);
+    if (selected.length === 0) {
+        throw new Error(`Unknown modelType: ${requestedType}`);
+    }
+
+    for (let i = 0; i < selected.length; i++) {
+        const model = selected[i];
         console.log(`Attempting generation with model: ${model.name}`);
 
         try {
-            if (model.type === 'openai-edit') {
-                const imageInput = imageBase64.startsWith('data:image')
-                    ? imageBase64
-                    : `data:image/jpeg;base64,${imageBase64}`;
-                // Match the output aspect ratio to the input so the model doesn't
-                // square-crop and "zoom into" part of the source image.
-                const outputSize = await pickGptImageSize(imageInput);
-                // Reinforce framing preservation in the prompt itself — gpt-image-1
-                // still sometimes recomposes even when the canvas matches.
-                const framedPrompt = `${prompt} Keep the exact same camera framing, field of view, zoom level, and composition as the input image — do not crop, zoom in, or recompose. The output must show the entire original scene with no parts of the room cut off.`;
-                // gpt-image-1 high-quality edits take 30–90s. Use a long timeout and DO NOT retry —
-                // each retry triggers a duplicate billable generation on OpenAI's side.
-                const controller = new AbortController();
-                const timeout = setTimeout(() => controller.abort(), 180000);
-                let openaiResp;
-                try {
-                    openaiResp = await fetch(OPENAI_IMAGE_EDIT_URL, {
-                        method: 'POST',
-                        headers: {
-                            'Content-Type': 'application/json',
-                            ...(currentSession ? { 'Authorization': `Bearer ${currentSession.access_token}` } : {})
-                        },
-                        body: JSON.stringify({
-                            imageBase64: imageInput,
-                            prompt: framedPrompt,
-                            size: outputSize,
-                            quality: 'high'
-                        }),
-                        signal: controller.signal
-                    });
-                } finally {
-                    clearTimeout(timeout);
-                }
 
-                // Quota exceeded — stop the fallback chain and propagate.
-                if (openaiResp.status === 429) {
-                    const data = await openaiResp.json().catch(() => ({}));
-                    const err = new Error(data.error || 'Monthly generation limit reached');
-                    err.code = 'QUOTA_EXCEEDED';
-                    err.quota = data;
-                    throw err;
+            let inputData;
+            if (model.type === 'proplabs-staging') {
+                // proplabs/virtual-staging has no free-form prompt — it
+                // takes a room enum and a furniture-style enum. Map the
+                // prompt text to the closest enum value; fall back to the
+                // model's own "Default (AI decides)" if nothing matches.
+                // The `replicate_api_key` field is injected server-side
+                // from env so it never touches the browser.
+                inputData = {
+                    image: imageBase64,
+                    room: mapPromptToProplabsRoom(prompt),
+                    furniture_style: mapPromptToProplabsStyle(prompt),
+                };
+            } else {
+                inputData = {
+                    image: imageBase64,
+                    prompt: prompt,
+                };
+                if (negativePrompt && negativePrompt.trim()) {
+                    inputData.negative_prompt = negativePrompt;
                 }
-
-                if (!openaiResp.ok) {
-                    const rawText = await openaiResp.text().catch(() => '');
-                    let parsed = null;
-                    try { parsed = JSON.parse(rawText); } catch (_) {}
-                    console.error(`[OpenAI gpt-image-1] FAILED at ${OPENAI_IMAGE_EDIT_URL}`, {
-                        status: openaiResp.status,
-                        statusText: openaiResp.statusText,
-                        contentType: openaiResp.headers.get('content-type'),
-                        body: parsed || rawText.slice(0, 500)
-                    });
-                    const error = `Model ${model.name} failed: ${(parsed && parsed.error) || openaiResp.status}`;
-                    lastError = new Error(error);
-                    continue;
-                }
-                const openaiData = await openaiResp.json();
-                if (!openaiData.imageUrls || !openaiData.imageUrls.length) {
-                    console.error(`[OpenAI gpt-image-1] returned no images`, openaiData);
-                    lastError = new Error(`Model ${model.name} returned no images`);
-                    continue;
-                }
-                console.log(`[OpenAI gpt-image-1] SUCCESS — image generated`);
-                return openaiData.imageUrls;
             }
 
-            const inputData = {
-                image: imageBase64,
-                prompt: prompt,
-            };
-
-            if (negativePrompt && negativePrompt.trim()) {
-                inputData.negative_prompt = negativePrompt;
-            }
-
-            if (model.type === 'interior-design') {
-                if (isEmptyRoomAddFurniture) {
-                    // Add furniture to empty room: higher strength so model actually adds the object(s)
-                    inputData.guidance_scale = 16;
-                    inputData.num_inference_steps = 55;
-                    inputData.prompt_strength = 0.82;
-                } else {
-                    inputData.guidance_scale = 15;
-                    inputData.num_inference_steps = 50;
-                    inputData.prompt_strength = 0.5;
-                }
-                inputData.seed = Math.floor(Math.random() * 1000000);
-            } else if (model.type === 'controlnet') {
-                inputData.guidance_scale = 12.0;
-                inputData.num_inference_steps = 30;
-                if (isStartFresh) {
-                    inputData.controlnet_conditioning_scale = 0.01;
-                } else {
-                    inputData.controlnet_conditioning_scale = 0.8;
-                }
-            } else if (model.type === 'img2img') {
-                if (isStartFresh) {
-                    inputData.denoising_strength = 0.95;
-                    inputData.guidance_scale = 20.0;
-                    inputData.num_inference_steps = 50;
-                } else {
-                    inputData.denoising_strength = 0.7;
-                    inputData.guidance_scale = 12.0;
-                    inputData.num_inference_steps = 30;
-                }
-                inputData.scheduler = "K_EULER";
+            if (model.type === 'img2img') {
+                // stability-ai/stable-diffusion-3.5-large schema uses `cfg`
+                // and `prompt_strength` — NOT the SDXL-style param names.
+                // Anything else is rejected with 422 "additional property
+                // not allowed".
+                inputData.cfg = 5;
+                inputData.prompt_strength = isStartFresh ? 0.95 : 0.75;
+                inputData.output_format = 'png';
                 inputData.seed = Math.floor(Math.random() * 1000000);
             }
 
@@ -2681,6 +2703,10 @@ async function generateImageWithControlNet(imageBase64, prompt, negativePrompt) 
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
+                    // Fallback signal travels in a header so the JSON body
+                    // stays a pure Replicate payload (Replicate rejects
+                    // unknown top-level properties).
+                    ...(usedFallback ? { 'X-Fallback': '1' } : {}),
                     ...(currentSession ? { 'Authorization': `Bearer ${currentSession.access_token}` } : {})
                 },
                 body: JSON.stringify({
@@ -2718,7 +2744,14 @@ async function generateImageWithControlNet(imageBase64, prompt, negativePrompt) 
             console.log(`Polling for results from ${model.name}...`);
             const result = await pollReplicatePrediction(prediction.urls.get);
             console.log(`Successfully generated with ${model.name}`);
-            return result.imageUrls;
+            // pollReplicatePrediction returns either a string or an array
+            // depending on the model — normalize to an array so we can attach
+            // the usedFallback flag.
+            const raw = result.imageUrls;
+            const imageUrls = Array.isArray(raw) ? raw.slice() : (raw ? [raw] : []);
+            imageUrls.usedFallback = usedFallback;
+            imageUrls.modelUsed = model.type;
+            return imageUrls;
 
         } catch (error) {
             // Quota errors are terminal — don't try other models, surface
@@ -2731,12 +2764,17 @@ async function generateImageWithControlNet(imageBase64, prompt, negativePrompt) 
             console.warn(`Model ${model.name} failed:`, error.message);
             lastError = error;
 
-            // If this is the last model, throw the error
-            if (i === modelOptions.length - 1) {
-                throw new Error(`All models failed. Last error: ${error.message}`);
+            // If this is the last model in the selected set, throw a
+            // distinct error so the caller can recognise it and surface
+            // the right choice dialog.
+            if (i === selected.length - 1) {
+                const err = new Error(`Model failed: ${error.message}`);
+                err.code = 'MODEL_FAILED';
+                err.modelType = requestedType;
+                err.detail = error.message;
+                throw err;
             }
 
-            // Continue to next model
             continue;
         }
     }
@@ -2829,9 +2867,14 @@ async function generateDesigns() {
         return;
     }
 
-    // Check token availability BEFORE starting generation.
-    // Tokens are only deducted after a SUCCESSFUL generation.
-    if (!hasTokensAvailable()) return;
+    // Only premium generations consume tokens. Free runs are unlimited for
+    // signed-in users — we gate on auth so anonymous traffic can't abuse it.
+    const willUsePremium = getDefaultModelPref() === 'premium';
+    if (willUsePremium) {
+        if (!hasTokensAvailable()) return;
+    } else {
+        if (!ensureLoggedIn()) return;
+    }
 
 
     // Check if we're regenerating (already on results screen)
@@ -2874,6 +2917,8 @@ async function generateDesigns() {
     // Transition: hide wizard (and its progress bar), show results
     if (wizardContainer) wizardContainer.classList.add('hidden');
     if (wizardProgress) wizardProgress.classList.add('hidden');
+    const uploadSection = document.getElementById('upload-section');
+    if (uploadSection) uploadSection.classList.add('hidden');
     resultsSection.classList.remove('hidden');
     designCarousel.innerHTML = '';
 
@@ -2895,6 +2940,7 @@ async function generateDesigns() {
         imageUrl: '',
         originalImageUrl: currentUploadedImage,
         prompt: fullPrompt,
+        negativePrompt: negativePrompt,
         isFallback: false,
         loading: true,
         needsRetry: false,
@@ -2915,25 +2961,49 @@ async function generateDesigns() {
         ? getBaseImageForNextGeneration()
         : currentUploadedImage;
 
+    // Stash inputs on the design up front so the premium fallback handler
+    // can reuse them even if the default chain throws before we'd normally
+    // attach them on success.
+    initialDesign.sourceImage = sourceImage;
+
+    initialDesign.negativePrompt = negativePrompt;
+
+    // Read the user's preferred default model from localStorage. 'premium'
+    // means we go straight to OpenAI; 'free' uses the proplabs default chain.
+    const prefersPremium = getDefaultModelPref() === 'premium';
+
     // Generate the image
     try {
         console.log('Starting image generation with prompt:', fullPrompt);
         console.log('Negative prompt:', negativePrompt);
         console.log('Source image:', isCurrentlyOnResults && lastGeneratedImageUrl ? 'last generated' : 'original upload');
+        console.log('Default model preference:', prefersPremium ? 'premium' : 'free');
 
-        let imageUrls = await generateImageWithControlNet(sourceImage, fullPrompt, negativePrompt);
-        let imageUrl;
-        if (Array.isArray(imageUrls)) {
-            imageUrl = imageUrls[0];
-        } else if (typeof imageUrls === 'string') {
-            imageUrl = imageUrls;
+        let imageUrl = '';
+        let usedFallback = false;
+        let modelUsed = null;
+
+        if (prefersPremium) {
+            // Premium path — counts against quota. Endpoint reserves a slot.
+            imageUrl = await callPremiumImageEdit(sourceImage, fullPrompt);
+            modelUsed = 'openai';
         } else {
-            imageUrl = '';
+            const imageUrls = await generateImageWithControlNet(sourceImage, fullPrompt, negativePrompt);
+            if (Array.isArray(imageUrls)) {
+                imageUrl = imageUrls[0];
+                usedFallback = !!imageUrls.usedFallback;
+                modelUsed = imageUrls.modelUsed || null;
+            } else if (typeof imageUrls === 'string') {
+                imageUrl = imageUrls;
+            }
         }
 
         initialDesign.imageUrl = imageUrl;
         initialDesign.loading = false;
         initialDesign.isFallback = false;
+        initialDesign.modelUsed = modelUsed;
+        initialDesign.sourceImage = sourceImage;
+        initialDesign.negativePrompt = negativePrompt;
 
         // Remember this image for subsequent regenerations
         if (imageUrl) {
@@ -2941,27 +3011,73 @@ async function generateDesigns() {
             pushDesignHistory(imageUrl);
         }
 
-        // Deduct one token now that generation succeeded
-        await useTokenAfterSuccess();
+        // Only premium runs consume a generation slot — refresh the badge.
+        // Free models (proplabs / SD 3.5) never count against the limit.
+        if (modelUsed === 'openai') {
+            await useTokenAfterSuccess();
+        }
 
     } catch (error) {
         console.error(`Error in image generation for design (${style}):`, error);
         // Token is NOT deducted on failure
 
-        // Provide user-friendly error messages
-        let userFriendlyMessage = 'Image generation failed. Please try again.';
-
+        // Quota errors are terminal — no fallback offer makes sense.
         if (error.code === 'QUOTA_EXCEEDED') {
             const limit = error.quota?.limit ?? subscriptionUsage.limit ?? 50;
-            userFriendlyMessage =
+            initialDesign.imageUrl = '';
+            initialDesign.loading = false;
+            initialDesign.isFallback = false;
+            initialDesign.needsRetry = true;
+            initialDesign.errorMessage =
                 `You've reached your monthly limit of ${limit} image generations. ` +
                 `Your quota will reset at the start of next month.`;
-            // Sync the badge to reflect the server-authoritative state.
             if (userHasSubscription) await fetchSubscriptionUsage();
-        } else if (error.message.includes('timed out')) {
+            updateDesignCard(initialDesign, 0);
+            return;
+        }
+
+        // Premium model failed when used as default — surface the failure and
+        // offer the user a free fallback.
+        if (error.code === 'PREMIUM_FAILED') {
+            initialDesign.imageUrl = '';
+            initialDesign.loading = false;
+            initialDesign.isFallback = false;
+            initialDesign.needsRetry = true;
+            initialDesign.errorMessage = `The premium model couldn't process your image: ${error.detail || 'unknown error'}.`;
+            updateDesignCard(initialDesign, 0);
+
+            const tryFree = await showConfirmDialog(
+                `Our premium image model couldn't process this image.\n\n` +
+                `Details: ${error.detail || 'unknown error'}\n\n` +
+                `Would you like to try our free default model instead? It won't count against your limits.`,
+                'Premium model failed',
+                'Try free model',
+                'Cancel'
+            );
+            if (tryFree) {
+                await runFallbackOnDesign(0, initialDesign, 'proplabs-staging');
+            }
+            return;
+        }
+
+        // Default (free) model failed — surface the failure and offer the
+        // user a choice: free backup model OR premium upgrade OR cancel.
+        if (error.code === 'MODEL_FAILED') {
+            initialDesign.imageUrl = '';
+            initialDesign.loading = false;
+            initialDesign.isFallback = false;
+            initialDesign.needsRetry = true;
+            initialDesign.errorMessage = `The default model couldn't process your image: ${error.detail || 'unknown error'}.`;
+            updateDesignCard(initialDesign, 0);
+
+            await offerFallbackChoice(0, initialDesign, error.detail);
+            return;
+        }
+
+        // Everything else — generic error path.
+        let userFriendlyMessage = 'Image generation failed. Please try again.';
+        if (error.message.includes('timed out')) {
             userFriendlyMessage = 'Generation took too long and timed out. This can happen during peak usage. Please try again.';
-        } else if (error.message.includes('All models failed')) {
-            userFriendlyMessage = 'All available models are currently busy. Please try again in a few minutes.';
         } else if (error.message.includes('network') || error.message.includes('fetch')) {
             userFriendlyMessage = 'Network connection issue. Please check your internet connection and try again.';
         } else if (error.message.includes('401') || error.message.includes('unauthorized')) {
@@ -2973,6 +3089,8 @@ async function generateDesigns() {
         initialDesign.isFallback = false;
         initialDesign.needsRetry = true;
         initialDesign.errorMessage = userFriendlyMessage;
+        updateDesignCard(initialDesign, 0);
+        return;
     }
 
     // Update the card in the DOM
@@ -3033,8 +3151,8 @@ function showRetryButton(card, cardData, index) {
 async function retryImageGeneration() {
     console.log('Retrying image generation');
 
-    // Check token availability before retrying — retries also cost a token on success
-    if (!hasTokensAvailable()) return;
+    // Retry runs the free default chain — only an auth check is needed.
+    if (!ensureLoggedIn()) return;
 
     // Get the current design data
     const design = generatedDesigns[0];
@@ -3056,35 +3174,18 @@ async function retryImageGeneration() {
         if (revealContainer) {
             revealContainer.classList.add('reveal-loading');
 
-            // Add whiteboard back for this card
-            const whiteboardContainer = document.createElement('div');
-            whiteboardContainer.className = 'whiteboard-container';
-            whiteboardContainer.innerHTML = `
-                <canvas class="whiteboard-canvas"></canvas>
-                <div class="whiteboard-controls">
-                    <button class="whiteboard-clear" title="Clear drawing">
-                        <i data-feather="trash-2"></i>
-                    </button>
-                    <div class="whiteboard-colors">
-                        <div class="color-option active" data-color="#6366f1"></div>
-                        <div class="color-option" data-color="#ef4444"></div>
-                        <div class="color-option" data-color="#10b981"></div>
-                        <div class="color-option" data-color="#f59e0b"></div>
-                        <div class="color-option" data-color="#8b5cf6"></div>
-                        <div class="color-option" data-color="#000000"></div>
-                    </div>
-                    <div class="whiteboard-hint">Retrying... Draw while waiting!</div>
-                </div>
-            `;
-
-            // Replace retry container with whiteboard
+            // Replace the previous content (retry button or stale images)
+            // with fresh image elements for the new generation to populate.
             revealContainer.innerHTML = `
                 <img class="design-image original-image" src="${design.originalImageUrl}" alt="Original Room">
                 <img class="design-image generated-image" src="" alt="${design.title}" style="opacity: 0; z-index: 3;">
             `;
 
-            // Add checkbox after the image container (outside design-image-container)
+            ensureLoadingSpinner(card);
+
+            // Add reveal checkbox if it's missing.
             const designCard = revealContainer.closest('.design-card');
+            const imageContainer = card.querySelector('.design-image-container');
             if (designCard && !designCard.querySelector('.reveal-checkbox-container')) {
                 const checkboxContainer = document.createElement('div');
                 checkboxContainer.className = 'reveal-checkbox-container';
@@ -3094,20 +3195,11 @@ async function retryImageGeneration() {
                         <span class="reveal-checkbox-text">Show Original Image</span>
                     </label>
                 `;
-                // Insert after the design-image-container
-                const imageContainer = designCard.querySelector('.design-image-container');
                 if (imageContainer && imageContainer.nextSibling) {
                     designCard.insertBefore(checkboxContainer, imageContainer.nextSibling);
                 } else {
                     designCard.appendChild(checkboxContainer);
                 }
-            }
-            revealContainer.insertBefore(whiteboardContainer, revealContainer.firstChild);
-
-            // Initialize whiteboard
-            const whiteboardCanvas = whiteboardContainer.querySelector('.whiteboard-canvas');
-            if (whiteboardCanvas) {
-                initializeWhiteboard(whiteboardCanvas, card);
             }
 
             feather.replace();
@@ -3149,8 +3241,12 @@ async function retryImageGeneration() {
 
         let imageUrls = await generateImageWithControlNet(retrySourceImage, retryPrompt, prompts.negativePrompt);
         let imageUrl;
+        let usedFallback = false;
+        let modelUsed = null;
         if (Array.isArray(imageUrls)) {
             imageUrl = imageUrls[0];
+            usedFallback = !!imageUrls.usedFallback;
+            modelUsed = imageUrls.modelUsed || null;
         } else if (typeof imageUrls === 'string') {
             imageUrl = imageUrls;
         } else {
@@ -3161,6 +3257,10 @@ async function retryImageGeneration() {
         design.loading = false;
         design.needsRetry = false;
         design.isFallback = false;
+        design.modelUsed = modelUsed;
+        design.sourceImage = retrySourceImage;
+        design.prompt = retryPrompt;
+        design.negativePrompt = prompts.negativePrompt;
 
         // Remember this image for subsequent regenerations
         if (imageUrl) {
@@ -3170,8 +3270,7 @@ async function retryImageGeneration() {
 
         console.log('Retry successful');
 
-        // Deduct one token on successful retry
-        await useTokenAfterSuccess();
+        // Retry runs the free chain — never counts against the quota.
 
     } catch (error) {
         console.error('Retry failed:', error);
@@ -3180,7 +3279,19 @@ async function retryImageGeneration() {
         design.loading = false;
         design.needsRetry = true;
         design.isFallback = false;
-        design.errorMessage = error.message;
+        design.errorMessage = error.code === 'MODEL_FAILED'
+            ? `The default model couldn't process your image: ${error.detail || 'unknown error'}.`
+            : error.message;
+        // Make sure the source/prompt are persisted so the user can fall
+        // back to the free backup or premium model from here.
+        design.sourceImage = design.sourceImage || getBaseImageForNextGeneration();
+
+        updateDesignCard(design, 0);
+
+        if (error.code === 'MODEL_FAILED') {
+            await offerFallbackChoice(0, design, error.detail);
+        }
+        return;
     }
 
     // Update the card
@@ -3195,119 +3306,449 @@ function updateDesignCard(cardData, index) {
     // Hide the in-progress status banner now that generation is done.
     const statusBanner = card.querySelector('.model-status');
     if (statusBanner) statusBanner.classList.add('hidden');
-    // Fade out whiteboard, fade in image
-    const whiteboard = card.querySelector('.whiteboard-container');
-    const img = card.querySelector('.generated-image'); // Select the generated image specifically
-    if (whiteboard) {
-        whiteboard.classList.add('fade-out');
-        setTimeout(() => {
-            whiteboard.remove();
+    // Apply the new image + reveal/checkbox/state UI.
+    const applyImageUpdate = () => {
+        // Check if we need to show retry button instead of image
+        if (cardData.needsRetry) {
+            showRetryButton(card, cardData, index);
+            return;
+        }
 
-            // Check if we need to show retry button instead of image
-            if (cardData.needsRetry) {
-                showRetryButton(card, cardData, index);
-                return;
-            }
-
-            if (img) {
-                img.onload = () => {
-                    console.log(`Image ${index} loaded successfully`);
-                    img.style.opacity = 1;
-                    img.style.display = 'block';
-                    img.style.zIndex = 3;
-
-                    // Remove the reveal-loading class to show the image container
-                    const revealContainer = card.querySelector('.image-reveal-container');
-                    if (revealContainer) {
-                        revealContainer.classList.remove('reveal-loading');
-                    }
-
-                    // Ensure back button is visible when image is shown
-                    if (backToOptionsBtn) {
-                        backToOptionsBtn.classList.remove('hidden');
-                    }
-
-                    // Re-setup the reveal slider after image loads
-                    setupRevealCheckbox(card, index);
-                };
-                img.onerror = () => {
-                    console.error(`Image ${index} failed to load: ${cardData.imageUrl}`);
-                    // Still remove the loading class even if image fails to load
-                    const revealContainer = card.querySelector('.image-reveal-container');
-                    if (revealContainer) {
-                        revealContainer.classList.remove('reveal-loading');
-                    }
-                };
-                img.src = cardData.imageUrl;
-                img.classList.add('fade-in');
+        const img = card.querySelector('.generated-image');
+        if (img) {
+            img.onload = () => {
+                console.log(`Image ${index} loaded successfully`);
                 img.style.opacity = 1;
-                img.style.zIndex = 3; // Ensure it's on top
+                img.style.display = 'block';
+                img.style.zIndex = 3;
 
-                // Add reveal checkbox if it doesn't exist (outside design-image-container)
-                if (card && !card.querySelector('.reveal-checkbox')) {
-                    console.log(`Adding reveal checkbox to card ${index}`);
-                    const checkboxContainer = document.createElement('div');
-                    checkboxContainer.className = 'reveal-checkbox-container';
-                    checkboxContainer.innerHTML = `
-                            <label class="reveal-checkbox-label">
-                                <input type="checkbox" class="reveal-checkbox" aria-label="Show original image">
-                                <span class="reveal-checkbox-text">Show Original Image</span>
-                            </label>
-                        `;
-                    // Insert after the design-image-container
-                    const imageContainer = card.querySelector('.design-image-container');
-                    if (imageContainer && imageContainer.nextSibling) {
-                        card.insertBefore(checkboxContainer, imageContainer.nextSibling);
-                    } else {
-                        card.appendChild(checkboxContainer);
-                    }
-
-                    // Set up reveal checkbox functionality for this card
-                    setupRevealCheckbox(card, index);
+                const revealContainer = card.querySelector('.image-reveal-container');
+                if (revealContainer) {
+                    revealContainer.classList.remove('reveal-loading');
                 }
 
-                // Ensure the generated image is fully visible after loading
-                setTimeout(() => {
-                    img.style.opacity = 1;
-                    img.style.display = 'block';
-                    img.style.zIndex = 3;
+                if (backToOptionsBtn) {
+                    backToOptionsBtn.classList.remove('hidden');
+                }
 
-                    // Remove the reveal-loading class to show the image container
-                    const revealContainer = card.querySelector('.image-reveal-container');
-                    if (revealContainer) {
-                        revealContainer.classList.remove('reveal-loading');
-                    }
+                setupRevealCheckbox(card, index);
+            };
+            img.onerror = () => {
+                console.error(`Image ${index} failed to load: ${cardData.imageUrl}`);
+                const revealContainer = card.querySelector('.image-reveal-container');
+                if (revealContainer) {
+                    revealContainer.classList.remove('reveal-loading');
+                }
+            };
+            img.src = cardData.imageUrl;
+            img.classList.add('fade-in');
+            img.style.opacity = 1;
+            img.style.zIndex = 3;
 
-                    console.log(`Image ${index} should be visible now. Opacity: ${img.style.opacity}, Display: ${img.style.display}`);
-                    // Re-setup the reveal slider to ensure it's working
-                    setupRevealCheckbox(card, index);
-                }, 100);
-            }
-            // Update disclaimer and description if fallback
-            const disclaimer = card.querySelector('.design-disclaimer');
-            if (cardData.isFallback && disclaimer) {
-                disclaimer.innerHTML = `<p><strong>Note:</strong> API Error/Failed. Showing sample image. Please check API key or try again.</p>`;
-                disclaimer.classList.add('error');
-            }
-            const desc = card.querySelector('.design-description');
-            if (desc) desc.textContent = cardData.description;
-            // Update compare button state
-            const btn = card.querySelector('.compare-btn');
-            if (btn) {
-                if (cardData.isFallback) {
-                    btn.disabled = true;
-                    btn.style.opacity = '0.5';
-                    btn.style.cursor = 'not-allowed';
-                    btn.querySelector('span').textContent = "Compare N/A";
+            if (card && !card.querySelector('.reveal-checkbox')) {
+                console.log(`Adding reveal checkbox to card ${index}`);
+                const checkboxContainer = document.createElement('div');
+                checkboxContainer.className = 'reveal-checkbox-container';
+                checkboxContainer.innerHTML = `
+                        <label class="reveal-checkbox-label">
+                            <input type="checkbox" class="reveal-checkbox" aria-label="Show original image">
+                            <span class="reveal-checkbox-text">Show Original Image</span>
+                        </label>
+                    `;
+                const imageContainer = card.querySelector('.design-image-container');
+                if (imageContainer && imageContainer.nextSibling) {
+                    card.insertBefore(checkboxContainer, imageContainer.nextSibling);
                 } else {
-                    btn.disabled = false;
-                    btn.style.opacity = '';
-                    btn.style.cursor = '';
-                    btn.querySelector('span').textContent = "Compare with Original";
+                    card.appendChild(checkboxContainer);
                 }
+
+                setupRevealCheckbox(card, index);
             }
-        }, 400); // match fade-out duration
+
+            setTimeout(() => {
+                img.style.opacity = 1;
+                img.style.display = 'block';
+                img.style.zIndex = 3;
+
+                const revealContainer = card.querySelector('.image-reveal-container');
+                if (revealContainer) {
+                    revealContainer.classList.remove('reveal-loading');
+                }
+
+                console.log(`Image ${index} should be visible now. Opacity: ${img.style.opacity}, Display: ${img.style.display}`);
+                setupRevealCheckbox(card, index);
+            }, 100);
+        }
+
+        const disclaimer = card.querySelector('.design-disclaimer');
+        if (cardData.isFallback && disclaimer) {
+            disclaimer.innerHTML = `<p><strong>Note:</strong> API Error/Failed. Showing sample image. Please check API key or try again.</p>`;
+            disclaimer.classList.add('error');
+        }
+        const desc = card.querySelector('.design-description');
+        if (desc) desc.textContent = cardData.description;
+        const btn = card.querySelector('.compare-btn');
+        if (btn) {
+            if (cardData.isFallback) {
+                btn.disabled = true;
+                btn.style.opacity = '0.5';
+                btn.style.cursor = 'not-allowed';
+                btn.querySelector('span').textContent = "Compare N/A";
+            } else {
+                btn.disabled = false;
+                btn.style.opacity = '';
+                btn.style.cursor = '';
+                btn.querySelector('span').textContent = "Compare with Original";
+            }
+        }
+    };
+
+    // Remove the loading spinner if present (first generation only) and
+    // then wire up the new image.
+    const loader = card.querySelector('.image-loader');
+    if (loader) loader.remove();
+    applyImageUpdate();
+}
+
+// ── Default-model preference ───────────────────────────────────────────────
+// Stored per-device in localStorage. Values: 'free' (proplabs) or 'premium'
+// (OpenAI gpt-image-1). Free is the conservative default for new users.
+const DEFAULT_MODEL_PREF_KEY = 'decorai.defaultModel';
+
+function getDefaultModelPref() {
+    try {
+        return localStorage.getItem(DEFAULT_MODEL_PREF_KEY) === 'premium' ? 'premium' : 'free';
+    } catch (_) {
+        return 'free';
     }
+}
+
+function setDefaultModelPref(value) {
+    try {
+        localStorage.setItem(DEFAULT_MODEL_PREF_KEY, value === 'premium' ? 'premium' : 'free');
+    } catch (_) { /* ignore quota / privacy-mode errors */ }
+}
+
+// Keep all default-model toggles (wizard step 4 + results page refinement
+// area) in sync with the persisted preference. A change on either updates
+// localStorage AND mirrors the new state on the other.
+const defaultModelToggles = [defaultModelToggle, defaultModelToggleResults].filter(Boolean);
+function syncDefaultModelToggles() {
+    const checked = getDefaultModelPref() === 'premium';
+    defaultModelToggles.forEach((el) => { el.checked = checked; });
+}
+syncDefaultModelToggles();
+defaultModelToggles.forEach((el) => {
+    el.addEventListener('change', () => {
+        setDefaultModelPref(el.checked ? 'premium' : 'free');
+        syncDefaultModelToggles();
+    });
+});
+
+// Normalize any image reference (data URI, http(s) URL, or raw base64) into
+// a data: URI. Replicate output is a regular http(s) URL, so when the user
+// regenerates from a previous result we have to fetch it before we can
+// hand it to gpt-image-1 (which only takes inline image data).
+async function toDataUri(source) {
+    if (!source) return source;
+    if (source.startsWith('data:')) return source;
+    if (/^https?:\/\//i.test(source)) {
+        const resp = await fetch(source);
+        if (!resp.ok) {
+            throw new Error(`Failed to fetch source image (${resp.status})`);
+        }
+        const blob = await resp.blob();
+        return await new Promise((resolve, reject) => {
+            const reader = new FileReader();
+            reader.onload = () => resolve(reader.result);
+            reader.onerror = () => reject(reader.error || new Error('FileReader failed'));
+            reader.readAsDataURL(blob);
+        });
+    }
+    // Assume raw base64 (no prefix) — default to jpeg.
+    return `data:image/jpeg;base64,${source}`;
+}
+
+// Call the server-side OpenAI image-edit endpoint (gpt-image-1). Returns
+// the resulting image URL or throws — on a 429 the thrown error carries
+// `code: 'QUOTA_EXCEEDED'` so the caller can show the right messaging.
+// The endpoint reserves a generation slot, so a successful call counts
+// against the user's monthly quota.
+async function callPremiumImageEdit(sourceImage, prompt) {
+    const imageInput = await toDataUri(sourceImage);
+    const outputSize = await pickGptImageSize(imageInput);
+    const framedPrompt = `${prompt} Keep the exact same camera framing, field of view, zoom level, and composition as the input image — do not crop, zoom in, or recompose. The output must show the entire original scene with no parts of the room cut off.`;
+
+    // gpt-image-1 high-quality edits take 30–90s — never retry, each
+    // retry would be a duplicate billable call.
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 180000);
+    let resp;
+    try {
+        resp = await fetch(OPENAI_IMAGE_EDIT_URL, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                ...(currentSession ? { 'Authorization': `Bearer ${currentSession.access_token}` } : {})
+            },
+            body: JSON.stringify({
+                imageBase64: imageInput,
+                prompt: framedPrompt,
+                size: outputSize,
+                quality: 'high'
+            }),
+            signal: controller.signal
+        });
+    } finally {
+        clearTimeout(timeout);
+    }
+
+    if (resp.status === 429) {
+        const data = await resp.json().catch(() => ({}));
+        const err = new Error(data.error || 'Monthly generation limit reached');
+        err.code = 'QUOTA_EXCEEDED';
+        err.quota = data;
+        throw err;
+    }
+    if (!resp.ok) {
+        const rawText = await resp.text().catch(() => '');
+        let parsed = null;
+        try { parsed = JSON.parse(rawText); } catch (_) {}
+        const err = new Error(`Premium model failed: ${(parsed && parsed.error) || resp.status}`);
+        err.code = 'PREMIUM_FAILED';
+        err.detail = (parsed && parsed.error) || resp.statusText;
+        throw err;
+    }
+    const data = await resp.json();
+    if (!data.imageUrls || !data.imageUrls.length) {
+        const err = new Error('Premium model returned no images.');
+        err.code = 'PREMIUM_FAILED';
+        err.detail = 'no images returned';
+        throw err;
+    }
+    return data.imageUrls[0];
+}
+
+// After the default model fails, ask the user how to proceed:
+//   1) Try our free backup model (SD 3.5)
+//   2) Try the premium model (counts as one generation)
+//   3) Cancel — leave the failure card with its retry button
+// Implemented as two chained confirms so we can reuse the existing modal.
+async function offerFallbackChoice(designIndex, design, failureDetail) {
+    const detail = failureDetail ? `\n\nDetails: ${failureDetail}` : '';
+    const tryFree = await showConfirmDialog(
+        `Our default image model couldn't process this image.${detail}\n\n` +
+        `Would you like to try our free backup model? It uses a different ` +
+        `AI engine and may handle this image. This won't count against your limits.`,
+        'Default model failed',
+        'Try free backup',
+        'No, try something else'
+    );
+
+    if (tryFree) {
+        // 'img2img' is the SD 3.5 backup — different engine from the
+        // proplabs default that just failed.
+        await runFallbackOnDesign(designIndex, design, 'img2img');
+        return;
+    }
+
+    // Only offer premium if the user actually has a generation slot left.
+    if (!hasTokensAvailable()) return;
+
+    const tryPremium = await showConfirmDialog(
+        `Would you like to try our premium image model instead?\n\n` +
+        `This counts as one image generation against your monthly limit.`,
+        'Try premium model?',
+        'Use premium model',
+        'Cancel'
+    );
+
+    if (tryPremium) {
+        await regenerateWithPremiumModel(designIndex);
+    }
+}
+
+// Insert the loading spinner into a card's image container if it's not
+// already present.
+function ensureLoadingSpinner(card) {
+    const imageContainer = card?.querySelector('.design-image-container');
+    if (!imageContainer || imageContainer.querySelector('.image-loader')) return;
+    const loader = document.createElement('div');
+    loader.className = 'image-loader';
+    loader.setAttribute('aria-label', 'Generating image');
+    loader.innerHTML = '<div class="image-loader-spinner"></div>';
+    imageContainer.insertBefore(loader, imageContainer.firstChild);
+}
+
+// Run a free Replicate model on an existing design. The request is flagged
+// as a fallback so the server skips quota tracking. `modelType` selects
+// the engine — 'proplabs-staging' (the default free model) or 'img2img'
+// (the SD 3.5 backup).
+async function runFallbackOnDesign(designIndex, design, modelType = 'img2img') {
+    if (!design || !design.sourceImage || !design.prompt) {
+        console.warn('Cannot run free model — design missing inputs', design);
+        return;
+    }
+
+    const card = designCarousel.querySelector(`[data-design-id="${design.id}"]`);
+    if (card) {
+        const revealContainer = card.querySelector('.image-reveal-container');
+        if (revealContainer) {
+            if (!revealContainer.querySelector('.generated-image')) {
+                revealContainer.innerHTML = `
+                    <img class="design-image original-image" src="${design.originalImageUrl}" alt="Original Room">
+                    <img class="design-image generated-image" src="" alt="${design.title}" style="opacity:0; z-index: 3;">
+                `;
+            }
+            revealContainer.classList.add('reveal-loading');
+        }
+        ensureLoadingSpinner(card);
+        const disclaimer = card.querySelector('.design-disclaimer');
+        if (disclaimer) {
+            disclaimer.innerHTML = '';
+            disclaimer.classList.remove('error');
+            disclaimer.style.display = 'none';
+        }
+        const statusBanner = card.querySelector('.model-status');
+        if (statusBanner) {
+            statusBanner.textContent = 'Running our free model — this won\'t count against your limits.';
+            statusBanner.classList.remove('hidden');
+        }
+    }
+    design.needsRetry = false;
+    design.errorMessage = '';
+    design.loading = true;
+
+    try {
+        const imageUrls = await generateImageWithControlNet(
+            design.sourceImage,
+            design.prompt,
+            design.negativePrompt || '',
+            { modelType, forceFallback: true }
+        );
+
+        let imageUrl = '';
+        let modelUsed = null;
+        if (Array.isArray(imageUrls)) {
+            imageUrl = imageUrls[0];
+            modelUsed = imageUrls.modelUsed || null;
+        } else if (typeof imageUrls === 'string') {
+            imageUrl = imageUrls;
+        }
+
+        design.imageUrl = imageUrl;
+        design.loading = false;
+        design.modelUsed = modelUsed;
+
+        if (imageUrl) {
+            lastGeneratedImageUrl = imageUrl;
+            pushDesignHistory(imageUrl);
+        }
+    } catch (error) {
+        console.error('Free model failed:', error);
+        design.loading = false;
+        design.needsRetry = true;
+        design.errorMessage = `The free model also failed: ${error.detail || error.message || 'unknown error'}.`;
+    }
+
+    updateDesignCard(design, designIndex);
+
+    // If the free model also failed, offer the premium upgrade as a last
+    // resort (only if the user has a generation slot left).
+    if (design.needsRetry && hasTokensAvailable()) {
+        const tryPremium = await showConfirmDialog(
+            'Our free model also failed. Would you like to try our premium model?\n\n' +
+            'This counts as one image generation against your monthly limit.',
+            'Free model also failed',
+            'Use premium model',
+            'Cancel'
+        );
+        if (tryPremium) {
+            await regenerateWithPremiumModel(designIndex);
+        }
+    }
+}
+
+// Regenerate a design using the premium OpenAI gpt-image-1 model. This is
+// the user's upgrade path from the default proplabs result — it counts as
+// one image generation against the user's monthly limit / token balance.
+async function regenerateWithPremiumModel(designIndex) {
+    const design = generatedDesigns?.[designIndex];
+    if (!design || !design.sourceImage || !design.prompt) {
+        console.warn('Cannot regenerate — design missing source image or prompt', design);
+        return;
+    }
+
+    // Check token availability up front — the premium run consumes a slot.
+    if (!hasTokensAvailable()) return;
+
+    const card = designCarousel.querySelector(`[data-design-id="${design.id}"]`);
+    if (card) {
+        const revealContainer = card.querySelector('.image-reveal-container');
+        if (revealContainer) {
+            // If the chain failed earlier, showRetryButton wiped this
+            // container of its <img> elements. Rebuild them so the
+            // post-success render in updateDesignCard has something to
+            // assign the new URL to.
+            if (!revealContainer.querySelector('.generated-image')) {
+                revealContainer.innerHTML = `
+                    <img class="design-image original-image" src="${design.originalImageUrl}" alt="Original Room">
+                    <img class="design-image generated-image" src="" alt="${design.title}" style="opacity:0; z-index: 3;">
+                `;
+            }
+            revealContainer.classList.add('reveal-loading');
+        }
+        ensureLoadingSpinner(card);
+        // Clear any error disclaimer left over from the prior failure.
+        const disclaimer = card.querySelector('.design-disclaimer');
+        if (disclaimer) {
+            disclaimer.innerHTML = '';
+            disclaimer.classList.remove('error');
+            disclaimer.style.display = 'none';
+        }
+        const generatedImg = card.querySelector('.generated-image');
+        if (generatedImg) {
+            generatedImg.style.opacity = 0;
+            generatedImg.classList.remove('fade-in');
+        }
+        const statusBanner = card.querySelector('.model-status');
+        if (statusBanner) {
+            statusBanner.textContent = 'Regenerating with premium model — this typically takes 30–90 seconds.';
+            statusBanner.classList.remove('hidden');
+        }
+    }
+    // Clear failure flags from any earlier attempt so updateDesignCard runs
+    // the normal success-render path.
+    design.needsRetry = false;
+    design.errorMessage = '';
+    design.loading = true;
+
+    try {
+        const imageUrl = await callPremiumImageEdit(design.sourceImage, design.prompt);
+        design.imageUrl = imageUrl;
+        design.loading = false;
+        design.modelUsed = 'openai';
+
+        if (imageUrl) {
+            lastGeneratedImageUrl = imageUrl;
+            pushDesignHistory(imageUrl);
+        }
+
+        // Premium run consumed a generation slot — refresh the badge.
+        await useTokenAfterSuccess();
+    } catch (error) {
+        console.error('Premium-model regeneration failed:', error);
+        design.loading = false;
+        design.needsRetry = true;
+        if (error.code === 'QUOTA_EXCEEDED') {
+            const limit = error.quota?.limit ?? subscriptionUsage.limit ?? 50;
+            design.errorMessage = `You've reached your monthly limit of ${limit} image generations. Your quota will reset at the start of next month.`;
+        } else {
+            design.errorMessage = error.message || 'Premium model regeneration failed. Please try again.';
+        }
+    }
+
+    updateDesignCard(design, designIndex);
 }
 
 function createFallbackDesigns() {
@@ -3346,28 +3787,13 @@ function displayDesigns(designs) {
             disclaimer = `<div class="design-disclaimer" style="display:none"></div>`;
         }
 
+
         // Only show reveal slider if not loading
         const showRevealSlider = !design.loading;
 
         designCard.innerHTML = `
             <div class="design-image-container">
-                <div class="whiteboard-container${design.loading ? '' : ' fade-out'}">
-                    <canvas class="whiteboard-canvas"></canvas>
-                    <div class="whiteboard-controls">
-                        <button class="whiteboard-clear" title="Clear drawing">
-                            <i data-feather="trash-2"></i>
-                        </button>
-                        <div class="whiteboard-colors">
-                            <div class="color-option active" data-color="#6366f1"></div>
-                            <div class="color-option" data-color="#ef4444"></div>
-                            <div class="color-option" data-color="#10b981"></div>
-                            <div class="color-option" data-color="#f59e0b"></div>
-                            <div class="color-option" data-color="#8b5cf6"></div>
-                            <div class="color-option" data-color="#000000"></div>
-                        </div>
-                        <div class="whiteboard-hint">Draw while waiting...</div>
-                    </div>
-                </div>
+                ${design.loading ? '<div class="image-loader" aria-label="Generating image"><div class="image-loader-spinner"></div></div>' : ''}
                 <div class="image-reveal-container${design.loading ? ' reveal-loading' : ''}">
                     <img class="design-image original-image" src="${design.originalImageUrl}" alt="Original Room">
                     <img class="design-image generated-image${design.loading ? '' : ' fade-in'}" src="${design.loading ? '' : design.imageUrl}" alt="${design.title}" style="opacity:${design.loading ? 0 : 1}; z-index: 3;">
@@ -3394,21 +3820,17 @@ function displayDesigns(designs) {
 
     feather.replace();
 
-    // Initialize whiteboard for loading card
-    const loadingCard = designCarousel.querySelector('.design-card[data-design-id]');
-    if (loadingCard) {
-        const whiteboardCanvas = loadingCard.querySelector('.whiteboard-canvas');
-        if (whiteboardCanvas) {
-            initializeWhiteboard(whiteboardCanvas, loadingCard);
-        }
-    }
-
     // Add reveal checkbox functionality to the card
     const card = designCarousel.querySelector('.design-card');
     if (card) {
         console.log('Setting up reveal checkbox for design card');
         setupRevealCheckbox(card, 0);
     }
+
+    // The "Regenerate with premium model" buttons are bound lazily inside
+    // updateDesignCard (which sets `dataset.bound` to prevent duplicates).
+    // Don't bind here — doing so would double-fire the handler on click,
+    // triggering two billable premium generations per click.
 }
 
 // ===== DESIGN HISTORY =====
@@ -3527,123 +3949,6 @@ function selectHistoryEntry(id) {
     renderDesignHistory();
 }
 
-// ===== WHITEBOARD MODULE =====
-// This module can be easily extracted to a separate file (e.g., whiteboard.js)
-// and imported as needed to keep the main file clean and modular.
-function initializeWhiteboard(canvas, card) {
-    const ctx = canvas.getContext('2d');
-    const controls = card.querySelector('.whiteboard-controls');
-    const clearBtn = card.querySelector('.whiteboard-clear');
-    const colorOptions = card.querySelectorAll('.color-option');
-
-    // Whiteboard state
-    let isDrawing = false;
-    let lastX = 0;
-    let lastY = 0;
-    let currentColor = '#6366f1';
-    let lineWidth = 3;
-
-    // Set up canvas with proper sizing
-    const rect = canvas.getBoundingClientRect();
-    const dpr = window.devicePixelRatio || 1;
-    canvas.width = rect.width * dpr;
-    canvas.height = rect.height * dpr;
-    canvas.style.width = rect.width + 'px';
-    canvas.style.height = rect.height + 'px';
-    ctx.scale(dpr, dpr);
-
-    // Configure drawing style
-    ctx.lineCap = 'round';
-    ctx.lineJoin = 'round';
-    ctx.lineWidth = lineWidth;
-    ctx.strokeStyle = currentColor;
-
-    // Clear canvas with white background
-    function clearCanvas() {
-        ctx.fillStyle = '#ffffff';
-        ctx.fillRect(0, 0, canvas.width, canvas.height);
-    }
-
-    // Initialize with white background
-    clearCanvas();
-
-    // Get drawing coordinates
-    function getDrawingCoords(e) {
-        const rect = canvas.getBoundingClientRect();
-        const clientX = e.touches ? e.touches[0].clientX : e.clientX;
-        const clientY = e.touches ? e.touches[0].clientY : e.clientY;
-        return {
-            x: clientX - rect.left,
-            y: clientY - rect.top
-        };
-    }
-
-    // Drawing functions
-    function startDrawing(e) {
-        isDrawing = true;
-        const coords = getDrawingCoords(e);
-        lastX = coords.x;
-        lastY = coords.y;
-
-        // Prevent scrolling on mobile
-        e.preventDefault();
-    }
-
-    function draw(e) {
-        if (!isDrawing) return;
-
-        const coords = getDrawingCoords(e);
-
-        ctx.beginPath();
-        ctx.moveTo(lastX, lastY);
-        ctx.lineTo(coords.x, coords.y);
-        ctx.stroke();
-
-        lastX = coords.x;
-        lastY = coords.y;
-
-        // Prevent scrolling on mobile
-        e.preventDefault();
-    }
-
-    function stopDrawing() {
-        isDrawing = false;
-    }
-
-    // Mouse events
-    canvas.addEventListener('mousedown', startDrawing);
-    canvas.addEventListener('mousemove', draw);
-    canvas.addEventListener('mouseup', stopDrawing);
-    canvas.addEventListener('mouseout', stopDrawing);
-
-    // Touch events
-    canvas.addEventListener('touchstart', startDrawing);
-    canvas.addEventListener('touchmove', draw);
-    canvas.addEventListener('touchend', stopDrawing);
-    canvas.addEventListener('touchcancel', stopDrawing);
-
-    // Clear button
-    clearBtn.addEventListener('click', clearCanvas);
-
-    // Color selection
-    colorOptions.forEach(option => {
-        option.addEventListener('click', () => {
-            // Remove active class from all options
-            colorOptions.forEach(opt => opt.classList.remove('active'));
-            // Add active class to clicked option
-            option.classList.add('active');
-            // Update drawing color
-            currentColor = option.dataset.color;
-            ctx.strokeStyle = currentColor;
-        });
-    });
-
-    // Add color styles
-    colorOptions.forEach(option => {
-        option.style.backgroundColor = option.dataset.color;
-    });
-}
-
 function hideHintArrows(card) {
     const hintArrows = card.querySelector('.slider-hint-arrows');
     if (hintArrows) {
@@ -3718,6 +4023,8 @@ function setupRevealCheckbox(card, index) {
 function goBackToPreview() {
     resultsSection.classList.add('hidden');
     // Return to style selection (step 4) — the last wizard step before generation
+    const uploadSection = document.getElementById('upload-section');
+    if (uploadSection) uploadSection.classList.remove('hidden');
     if (wizardContainer) wizardContainer.classList.remove('hidden');
     if (wizardProgress) wizardProgress.classList.remove('hidden');
     goToWizardStep(4);

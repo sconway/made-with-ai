@@ -319,7 +319,8 @@
 }
 
 /* Top-nav button (lives in <header>) */
-.woodworking-editor-btn {
+.woodworking-editor-btn,
+.layout-editor-btn {
     appearance: none;
     background: #ffffff;
     color: #111827;
@@ -331,5 +332,12 @@
     display: inline-flex;
     align-items: center;
     gap: 6px;
+    box-shadow: none;
+    transform: none;
 }
-.woodworking-editor-btn:hover { background: #f3f4f6; }
+.woodworking-editor-btn:hover,
+.layout-editor-btn:hover {
+    background: #f3f4f6;
+    box-shadow: none;
+    transform: none;
+}
