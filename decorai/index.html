@@ -125,6 +125,10 @@
                         <div class="image-preview-wrapper">
                             <img id="room-preview" src="" alt="Room preview">
                             <div class="image-overlay">
+                                <button type="button" id="wizard-feng-shui-btn" class="change-image-overlay-btn feng-shui-overlay-btn">
+                                    <i data-feather="compass"></i>
+                                    <span>Feng Shui Analysis</span>
+                                </button>
                                 <button id="change-image-btn" class="change-image-overlay-btn">
                                     <i data-feather="refresh-cw"></i>
                                     <span>Change Image</span>
@@ -286,8 +290,14 @@
                     </div>
                 </div>
                 <div class="results-header">
-                    <h2>Your design</h2>
-                    <p>Toggle the original to compare, or refine the result below.</p>
+                    <div class="results-header-text">
+                        <h2>Your design</h2>
+                        <p>Toggle the original to compare, or refine the result below.</p>
+                    </div>
+                    <button type="button" id="results-feng-shui-btn" class="secondary-btn feng-shui-action-btn" disabled>
+                        <i data-feather="compass"></i>
+                        <span>Feng Shui Analysis</span>
+                    </button>
                 </div>
                 <div class="results-display">
                     <div class="loading-indicator hidden" id="loading-indicator">
@@ -773,6 +783,22 @@
                     </div>
                 </div>
             </div>
+        </div>
+    </div>
+
+    <!-- Room Feng Shui Analysis Modal -->
+    <div class="modal" id="room-feng-shui-modal">
+        <div class="modal-content room-feng-shui-modal">
+            <div class="feng-shui-header">
+                <div class="feng-shui-title">
+                    <i data-feather="compass"></i>
+                    <span id="room-feng-shui-title">Feng Shui Analysis</span>
+                </div>
+                <button type="button" id="room-feng-shui-close" class="feng-shui-close" aria-label="Close">
+                    <i data-feather="x"></i>
+                </button>
+            </div>
+            <div class="feng-shui-body" id="room-feng-shui-body"></div>
         </div>
     </div>
 

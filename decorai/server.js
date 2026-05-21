@@ -985,20 +985,53 @@ function removeWhiteBackground(svgString) {
   return processed;
 }
 
-// Feng Shui Analysis endpoint (structured data)
+// Feng Shui Analysis endpoint — floor-plan layout (layout editor) or room photo (design flow)
 app.post('/api/feng-shui', async (req, res) => {
   try {
+    const user = await getAuthUser(req, res);
+    if (!user) return;
+
     const apiKey = process.env.OPENAI_API_KEY;
     if (!apiKey) {
       return res.status(500).json({ error: 'OpenAI API key not configured' });
     }
 
-    const { floorPlanData, imageBase64 } = req.body;
+    const { floorPlanData, imageBase64, analysisType } = req.body;
+    const isRoomPhoto = analysisType === 'room-photo' || (!floorPlanData && imageBase64);
 
-    const messages = [
-      {
-        role: 'system',
-        content: `You are an expert feng shui consultant analyzing floor plans. You MUST return ONLY valid JSON (no markdown, no code fences, no explanation text outside the JSON).
+    if (!imageBase64 && !floorPlanData) {
+      return res.status(400).json({ error: 'imageBase64 or floorPlanData is required' });
+    }
+
+    const systemPrompt = isRoomPhoto
+      ? `You are an expert feng shui consultant analyzing interior room photographs. You MUST return ONLY valid JSON (no markdown, no code fences, no explanation text outside the JSON).
+
+Analyze what you can see in the photo: furniture placement, energy flow (qi), command position, door/window alignment, clutter, natural light, color balance, and the five elements (wood, fire, earth, metal, water).
+
+Return this exact JSON structure:
+{
+  "overallScore": <number 1-10>,
+  "summary": "<brief feng shui assessment of the room>",
+  "strengths": ["<positive aspect already working well>", ...],
+  "suggestions": [
+    {
+      "category": "furniture" | "color" | "lighting" | "clutter" | "flow" | "decor" | "other",
+      "principle": "<feng shui principle being applied>",
+      "description": "<specific, actionable recommendation the homeowner can apply>",
+      "priority": "high" | "medium" | "low"
+    }
+  ],
+  "elements": {
+    "wood": "<brief assessment>",
+    "fire": "<brief assessment>",
+    "earth": "<brief assessment>",
+    "metal": "<brief assessment>",
+    "water": "<brief assessment>"
+  }
+}
+
+Keep suggestions practical and specific to what is visible. Do not invent furniture or architectural features that are not in the image.`
+      : `You are an expert feng shui consultant analyzing floor plans. You MUST return ONLY valid JSON (no markdown, no code fences, no explanation text outside the JSON).
 
 LAYOUT DATA:
 - Each furniture item includes its current "position" description (e.g. "top-left corner", "bottom side"), distance to the nearest wall, and distances/directions to the nearest doors and windows.
@@ -1039,10 +1072,9 @@ Return this exact JSON structure:
       "newRotation": <0 | 90 | 180 | 270>
     }
   ]
-}`
-      }
-    ];
+}`;
 
+    const messages = [{ role: 'system', content: systemPrompt }];
     const userContent = [];
 
     if (imageBase64) {
@@ -1052,10 +1084,17 @@ Return this exact JSON structure:
       });
     }
 
-    userContent.push({
-      type: 'text',
-      text: `Analyze this floor plan for feng shui.${imageBase64 ? ' The image above shows the current layout.' : ''} Here is the structured layout data with pre-computed spatial relationships:\n\n${JSON.stringify(floorPlanData, null, 2)}\n\nProvide feng shui furniture rearrangement suggestions using placement descriptions (wall, alignX, alignY, offsetFeet) — NOT pixel coordinates. Only rearrange existing furniture. Use the exact furniture IDs from the data.`
-    });
+    if (isRoomPhoto) {
+      userContent.push({
+        type: 'text',
+        text: 'Analyze this room photograph for feng shui. Evaluate furniture placement, energy flow, command position, balance of the five elements, clutter, natural light, and door/window alignment. Provide practical recommendations the homeowner can apply based on what you see.'
+      });
+    } else {
+      userContent.push({
+        type: 'text',
+        text: `Analyze this floor plan for feng shui.${imageBase64 ? ' The image above shows the current layout.' : ''} Here is the structured layout data with pre-computed spatial relationships:\n\n${JSON.stringify(floorPlanData, null, 2)}\n\nProvide feng shui furniture rearrangement suggestions using placement descriptions (wall, alignX, alignY, offsetFeet) — NOT pixel coordinates. Only rearrange existing furniture. Use the exact furniture IDs from the data.`
+      });
+    }
 
     messages.push({ role: 'user', content: userContent });
 

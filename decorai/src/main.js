@@ -51,6 +51,12 @@ const regenerateBtn = document.getElementById('regenerate-btn');
 const saveDesignBtn = document.getElementById('save-design-btn');
 const refinementInput = document.getElementById('refinement-input');
 const itemsSelectionError = document.getElementById('items-selection-error');
+const wizardFengShuiBtn = document.getElementById('wizard-feng-shui-btn');
+const resultsFengShuiBtn = document.getElementById('results-feng-shui-btn');
+const roomFengShuiModal = document.getElementById('room-feng-shui-modal');
+const roomFengShuiBody = document.getElementById('room-feng-shui-body');
+const roomFengShuiTitle = document.getElementById('room-feng-shui-title');
+const roomFengShuiCloseBtn = document.getElementById('room-feng-shui-close');
 
 // Refinement suggestion chips: append (or set) the chip text into the textarea.
 document.querySelectorAll('.refinement-chip').forEach((chip) => {
@@ -350,6 +356,7 @@ const fallbackImages = {
 const REPLICATE_API_URL = `${PROXY_SERVER_URL}/replicate/predictions`;
 const REPLICATE_POLL_URL = `${PROXY_SERVER_URL}/replicate/poll`;
 const OPENAI_IMAGE_EDIT_URL = `${PROXY_SERVER_URL}/openai/image-edit`;
+const FENG_SHUI_API_URL = `${PROXY_SERVER_URL}/api/feng-shui`;
 const REPLICATE_MODEL_VERSION = 'stability-ai/stable-diffusion-3.5-large'; // Example version, check replicate for latest/best
 
 // Initialize app: fetch config, Supabase client, and auth state (same pattern as Brandwise)
@@ -1507,6 +1514,25 @@ document.addEventListener('DOMContentLoaded', async () => {
     if (backToOptionsBtn) backToOptionsBtn.addEventListener('click', goBackToPreview);
     if (regenerateBtn) regenerateBtn.addEventListener('click', regenerateDesigns);
     if (saveDesignBtn) saveDesignBtn.addEventListener('click', saveCurrentDesign);
+    if (wizardFengShuiBtn) {
+        wizardFengShuiBtn.addEventListener('click', () => {
+            if (!currentUploadedImage) return;
+            startRoomFengShuiAnalysis(currentUploadedImage, { label: 'Uploaded photo' });
+        });
+    }
+    if (resultsFengShuiBtn) {
+        resultsFengShuiBtn.addEventListener('click', () => {
+            const target = getFengShuiAnalysisTarget();
+            if (!target) return;
+            startRoomFengShuiAnalysis(target.src, { label: target.label });
+        });
+    }
+    if (roomFengShuiCloseBtn) roomFengShuiCloseBtn.addEventListener('click', hideRoomFengShuiModal);
+    if (roomFengShuiModal) {
+        roomFengShuiModal.addEventListener('click', (e) => {
+            if (e.target === roomFengShuiModal) hideRoomFengShuiModal();
+        });
+    }
 
     // Token / payment listeners
     if (buyTokensBtn) buyTokensBtn.addEventListener('click', showBuyTokensModal);
@@ -2967,6 +2993,7 @@ async function generateDesigns() {
 
     generatedDesigns = [initialDesign];
     displayDesigns(generatedDesigns);
+    updateResultsFengShuiButtonState();
 
     if (isCurrentlyOnResults) {
         scrollToDesignLoader(0);
@@ -3328,6 +3355,7 @@ function updateDesignCard(cardData, index) {
     const card = designCarousel.querySelector(`[data-design-id="design-${index}"]`);
     console.log(`Updating card ${index}, found card: ${!!card}`);
     if (!card) return;
+    updateResultsFengShuiButtonState();
     // Hide the in-progress status banner now that generation is done.
     const statusBanner = card.querySelector('.model-status');
     if (statusBanner) statusBanner.classList.add('hidden');
@@ -4063,6 +4091,187 @@ function goBackToPreview() {
 function regenerateDesigns() {
     // Simply call the generate designs function again
     generateDesigns();
+}
+
+// ── Room photo Feng Shui analysis ───────────────────────────────────────────
+
+function getFengShuiAnalysisTarget() {
+    const design = generatedDesigns?.[0];
+    if (design?.imageUrl && !design.loading && !design.needsRetry) {
+        return { src: design.imageUrl, label: 'Generated design' };
+    }
+    if (currentUploadedImage) {
+        return { src: currentUploadedImage, label: 'Uploaded photo' };
+    }
+    return null;
+}
+
+function updateResultsFengShuiButtonState() {
+    if (!resultsFengShuiBtn) return;
+    const target = getFengShuiAnalysisTarget();
+    resultsFengShuiBtn.disabled = !target;
+    if (target) {
+        resultsFengShuiBtn.title = `Analyze feng shui for your ${target.label.toLowerCase()}`;
+    } else {
+        resultsFengShuiBtn.title = 'Generate a design first to analyze feng shui';
+    }
+}
+
+function showRoomFengShuiModal(label) {
+    if (!roomFengShuiModal) return;
+    if (roomFengShuiTitle) {
+        roomFengShuiTitle.textContent = label ? `Feng Shui — ${label}` : 'Feng Shui Analysis';
+    }
+    roomFengShuiModal.classList.add('show');
+    roomFengShuiModal.style.opacity = '1';
+    roomFengShuiModal.style.visibility = 'visible';
+    if (typeof feather !== 'undefined') feather.replace();
+}
+
+function hideRoomFengShuiModal() {
+    if (!roomFengShuiModal) return;
+    roomFengShuiModal.classList.remove('show');
+    roomFengShuiModal.style.opacity = '';
+    roomFengShuiModal.style.visibility = '';
+}
+
+function showRoomFengShuiLoading() {
+    if (!roomFengShuiBody) return;
+    roomFengShuiBody.innerHTML = `
+        <div class="feng-shui-loading">
+            <div class="feng-shui-spinner"></div>
+            <p>Analyzing your room…</p>
+            <small>This usually takes 15–30 seconds.</small>
+        </div>
+    `;
+}
+
+function showRoomFengShuiError(message) {
+    if (!roomFengShuiBody) return;
+    roomFengShuiBody.innerHTML = `
+        <div class="feng-shui-error">
+            <p>${message}</p>
+        </div>
+    `;
+}
+
+function formatFengShuiCategory(category) {
+    if (!category) return 'Recommendation';
+    return category.charAt(0).toUpperCase() + category.slice(1);
+}
+
+function displayRoomFengShuiResults(result, imageSrc, label) {
+    if (!roomFengShuiBody) return;
+
+    const score = Number(result.overallScore) || 0;
+    const scoreColor = score >= 7 ? '#22c55e' : score >= 4 ? '#f59e0b' : '#ef4444';
+    let html = '';
+
+    if (imageSrc) {
+        html += `<img class="room-feng-shui-photo" src="${imageSrc}" alt="${label || 'Room'}">`;
+    }
+
+    html += `
+        <div class="feng-shui-score">
+            <div class="score-circle" style="border-color: ${scoreColor}">
+                <span class="score-number" style="color: ${scoreColor}">${score}</span>
+                <span class="score-label">/ 10</span>
+            </div>
+            <p class="score-summary">${result.summary || 'Analysis complete.'}</p>
+        </div>
+    `;
+
+    if (Array.isArray(result.strengths) && result.strengths.length > 0) {
+        html += `
+            <div class="room-feng-shui-strengths">
+                <h4>What's working well</h4>
+                <ul>${result.strengths.map((item) => `<li>${item}</li>`).join('')}</ul>
+            </div>
+        `;
+    }
+
+    if (result.elements && typeof result.elements === 'object') {
+        const elementEntries = Object.entries(result.elements).filter(([, value]) => value);
+        if (elementEntries.length > 0) {
+            html += `<div class="room-feng-shui-elements"><h4>Five elements</h4>`;
+            elementEntries.forEach(([name, value]) => {
+                html += `
+                    <div class="fs-element-card">
+                        <div class="fs-element-name">${name}</div>
+                        <p class="fs-element-value">${value}</p>
+                    </div>
+                `;
+            });
+            html += `</div>`;
+        }
+    }
+
+    if (Array.isArray(result.suggestions) && result.suggestions.length > 0) {
+        html += `<div class="feng-shui-suggestions"><div class="fs-suggestions-title">Recommendations</div>`;
+        result.suggestions.forEach((suggestion) => {
+            const priority = suggestion.priority || 'medium';
+            const priorityColor = priority === 'high' ? '#ef4444' : priority === 'medium' ? '#f59e0b' : '#22c55e';
+            const name = suggestion.furnitureName || formatFengShuiCategory(suggestion.category);
+            html += `
+                <div class="feng-shui-suggestion">
+                    <div class="suggestion-header">
+                        <span class="suggestion-priority" style="background: ${priorityColor}">${priority}</span>
+                        <span class="suggestion-name">${name}</span>
+                    </div>
+                    ${suggestion.category ? `<p class="suggestion-category">${formatFengShuiCategory(suggestion.category)}</p>` : ''}
+                    <p class="suggestion-principle">${suggestion.principle || ''}</p>
+                    <p class="suggestion-desc">${suggestion.description || ''}</p>
+                </div>
+            `;
+        });
+        html += `</div>`;
+    } else if (score >= 8) {
+        html += `<p class="feng-shui-no-suggestions">Your room has good feng shui! No major changes suggested.</p>`;
+    }
+
+    roomFengShuiBody.innerHTML = html;
+    if (typeof feather !== 'undefined') feather.replace();
+}
+
+async function startRoomFengShuiAnalysis(imageSource, { label = 'Room' } = {}) {
+    if (!requireEmailConfirmedForFeature('feng shui analysis')) return;
+    if (!imageSource) {
+        showAlertDialog('No image available to analyze.');
+        return;
+    }
+
+    showRoomFengShuiModal(label);
+    showRoomFengShuiLoading();
+
+    try {
+        const imageBase64 = await toDataUri(imageSource);
+        if (!currentSession?.access_token) {
+            showAuthModal('login');
+            hideRoomFengShuiModal();
+            return;
+        }
+        const resp = await fetch(FENG_SHUI_API_URL, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                Authorization: `Bearer ${currentSession.access_token}`,
+            },
+            body: JSON.stringify({
+                imageBase64,
+                analysisType: 'room-photo',
+            }),
+        });
+
+        const data = await resp.json().catch(() => ({}));
+        if (!resp.ok) {
+            throw new Error(data.error || `Analysis failed (${resp.status})`);
+        }
+
+        displayRoomFengShuiResults(data, imageBase64, label);
+    } catch (error) {
+        console.error('Feng shui analysis failed:', error);
+        showRoomFengShuiError(error.message || 'Unable to analyze this room. Please try again.');
+    }
 }
 
 function saveCurrentDesign() {

@@ -961,8 +961,17 @@ main {
 }
 
 .results-header {
-  text-align: center;
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-4);
+  text-align: left;
   margin-bottom: var(--space-6);
+}
+
+.results-header-text {
+  flex: 1;
+  min-width: 0;
 }
 
 .results-header h2 {
@@ -976,6 +985,23 @@ main {
   color: var(--text-secondary);
   font-size: var(--text-sm);
   margin-bottom: 0;
+}
+
+.feng-shui-action-btn {
+  flex-shrink: 0;
+  color: #166534;
+  border-color: #bbf7d0;
+  background: #f0fdf4;
+}
+
+.feng-shui-action-btn:hover:not(:disabled) {
+  background: #dcfce7;
+  border-color: #86efac;
+}
+
+.feng-shui-action-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
 }
 
 .results-display {
@@ -1651,6 +1677,12 @@ main {
     background-color: var(--background-color);
     padding-bottom: 0.75rem;
     margin-bottom: 0;
+    flex-wrap: wrap;
+  }
+
+  .feng-shui-action-btn {
+    width: 100%;
+    justify-content: center;
   }
 
   .results-display {
@@ -2544,8 +2576,10 @@ main {
   bottom: 0;
   background: rgba(0, 0, 0, 0.5);
   display: flex;
+  flex-direction: column;
   align-items: center;
   justify-content: center;
+  gap: 12px;
   opacity: 0;
   transition: opacity 0.3s ease;
   border-radius: var(--border-radius);
@@ -2587,6 +2621,98 @@ main {
 
 .change-image-overlay-btn i {
   font-size: 1.1rem;
+}
+
+.feng-shui-overlay-btn {
+  color: #166534;
+  border-color: rgba(187, 247, 208, 0.8);
+}
+
+.feng-shui-overlay-btn:hover {
+  background: #f0fdf4;
+  border-color: #86efac;
+}
+
+/* Room photo feng shui modal (main design flow) */
+.room-feng-shui-modal {
+  width: min(560px, calc(100vw - 2rem));
+  max-height: calc(100vh - 2rem);
+  padding: 0;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+.room-feng-shui-modal .feng-shui-body {
+  max-height: calc(100vh - 8rem);
+}
+
+.room-feng-shui-photo {
+  width: 100%;
+  max-height: 180px;
+  object-fit: cover;
+  border-radius: 8px;
+  border: 1px solid #e5e7eb;
+  margin-bottom: 16px;
+}
+
+.room-feng-shui-strengths {
+  margin-bottom: 16px;
+}
+
+.room-feng-shui-strengths h4,
+.room-feng-shui-elements h4 {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: #6b7280;
+  margin: 0 0 8px;
+}
+
+.room-feng-shui-strengths ul {
+  margin: 0;
+  padding-left: 1.1rem;
+  color: #4b5563;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.room-feng-shui-elements {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  margin-bottom: 16px;
+}
+
+.fs-element-card {
+  background: #f9fafb;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  padding: 8px 10px;
+}
+
+.fs-element-name {
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  color: #6b7280;
+  margin-bottom: 4px;
+}
+
+.fs-element-value {
+  font-size: 11px;
+  color: #374151;
+  line-height: 1.4;
+  margin: 0;
+}
+
+.suggestion-category {
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  color: #6b7280;
+  letter-spacing: 0.04em;
 }
 
 .preview-container {
