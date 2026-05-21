@@ -1826,8 +1826,26 @@ function goToWizardStep(step) {
         line.classList.toggle('completed', idx + 2 <= step);
     });
 
-    // Scroll page back to top on step change
+    scrollPageToTop();
+}
+
+function scrollPageToTop() {
     window.scrollTo({ top: 0, behavior: 'smooth' });
+}
+
+/** Scroll the viewport to a design card's loading placeholder. */
+function scrollToDesignLoader(cardOrIndex) {
+    requestAnimationFrame(() => {
+        let card = cardOrIndex;
+        if (typeof cardOrIndex === 'number') {
+            card = designCarousel.querySelector(`[data-design-id="design-${cardOrIndex}"]`);
+        } else if (typeof cardOrIndex === 'string') {
+            card = designCarousel.querySelector(`[data-design-id="${cardOrIndex}"]`);
+        }
+        if (!card) return;
+        const target = card.querySelector('.image-loader') || card.querySelector('.design-image-container');
+        target?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    });
 }
 
 function showMobileOptionsScreen() { /* no-op — replaced by wizard */ }
@@ -2950,6 +2968,12 @@ async function generateDesigns() {
     generatedDesigns = [initialDesign];
     displayDesigns(generatedDesigns);
 
+    if (isCurrentlyOnResults) {
+        scrollToDesignLoader(0);
+    } else {
+        scrollPageToTop();
+    }
+
     // Seed history with the original upload on the first run, so the user can
     // always navigate back to it from the strip.
     seedDesignHistoryWithOriginal();
@@ -3182,6 +3206,7 @@ async function retryImageGeneration() {
             `;
 
             ensureLoadingSpinner(card);
+            scrollToDesignLoader(card);
 
             // Add reveal checkbox if it's missing.
             const designCard = revealContainer.closest('.design-card');
@@ -3614,6 +3639,7 @@ async function runFallbackOnDesign(designIndex, design, modelType = 'img2img') {
             statusBanner.textContent = 'Running our free model — this won\'t count against your limits.';
             statusBanner.classList.remove('hidden');
         }
+        scrollToDesignLoader(card);
     }
     design.needsRetry = false;
     design.errorMessage = '';
@@ -3716,6 +3742,7 @@ async function regenerateWithPremiumModel(designIndex) {
             statusBanner.textContent = 'Regenerating with premium model — this typically takes 30–90 seconds.';
             statusBanner.classList.remove('hidden');
         }
+        scrollToDesignLoader(card);
     }
     // Clear failure flags from any earlier attempt so updateDesignCard runs
     // the normal success-render path.
