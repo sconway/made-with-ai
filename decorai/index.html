@@ -119,16 +119,18 @@
 
                 <!-- Multi-step wizard (shown after image is selected) -->
                 <div class="wizard-container hidden" id="wizard-container">
+                    <div class="wizard-upload-actions">
+                        <button type="button" id="wizard-feng-shui-btn" class="secondary-btn feng-shui-action-btn">
+                            <i data-feather="compass"></i>
+                            <span>Feng Shui Analysis</span>
+                        </button>
+                    </div>
 
                     <!-- Step 1: Photo + room type -->
                     <div class="wizard-pane" id="wizard-pane-1">
                         <div class="image-preview-wrapper">
                             <img id="room-preview" src="" alt="Room preview">
                             <div class="image-overlay">
-                                <button type="button" id="wizard-feng-shui-btn" class="change-image-overlay-btn feng-shui-overlay-btn">
-                                    <i data-feather="compass"></i>
-                                    <span>Feng Shui Analysis</span>
-                                </button>
                                 <button id="change-image-btn" class="change-image-overlay-btn">
                                     <i data-feather="refresh-cw"></i>
                                     <span>Change Image</span>
@@ -341,7 +343,7 @@
                         </label>
                     </div>
                     <div class="refinement-footer">
-                        <button id="regenerate-btn" class="primary-btn">
+                        <button type="button" id="regenerate-btn" class="primary-btn">
                             <i data-feather="refresh-cw"></i>
                             <span>Regenerate</span>
                         </button>
@@ -639,13 +641,13 @@
                     <input type="text" id="furniture-search" placeholder="Search..." aria-label="Search furniture by name" title="Search furniture by name">
                 </div>
                 <div class="furniture-categories">
-                    <button type="button" class="category-btn" data-category="living" data-tooltip="Living room" aria-label="Show living room furniture">Living</button>
-                    <button type="button" class="category-btn" data-category="bedroom" data-tooltip="Bedroom" aria-label="Show bedroom furniture">Bedroom</button>
-                    <button type="button" class="category-btn" data-category="dining" data-tooltip="Dining" aria-label="Show dining furniture">Dining</button>
-                    <button type="button" class="category-btn" data-category="kitchen" data-tooltip="Kitchen" aria-label="Show kitchen furniture">Kitchen</button>
-                    <button type="button" class="category-btn" data-category="bathroom" data-tooltip="Bathroom" aria-label="Show bathroom fixtures">Bathroom</button>
-                    <button type="button" class="category-btn" data-category="lighting" data-tooltip="Lighting" aria-label="Show light fixtures">Lighting</button>
-                    <button type="button" class="category-btn" data-category="office" data-tooltip="Office" aria-label="Show office furniture">Office</button>
+                    <button type="button" class="category-btn" data-category="living" aria-label="Show living room furniture">Living</button>
+                    <button type="button" class="category-btn" data-category="bedroom" aria-label="Show bedroom furniture">Bedroom</button>
+                    <button type="button" class="category-btn" data-category="dining" aria-label="Show dining furniture">Dining</button>
+                    <button type="button" class="category-btn" data-category="kitchen" aria-label="Show kitchen furniture">Kitchen</button>
+                    <button type="button" class="category-btn" data-category="bathroom" aria-label="Show bathroom fixtures">Bathroom</button>
+                    <button type="button" class="category-btn" data-category="lighting" aria-label="Show light fixtures">Lighting</button>
+                    <button type="button" class="category-btn" data-category="office" aria-label="Show office furniture">Office</button>
                 </div>
                 <div class="furniture-grid" id="furniture-grid">
                     <!-- Furniture items will be populated by JavaScript -->
@@ -799,6 +801,26 @@
                 </button>
             </div>
             <div class="feng-shui-body" id="room-feng-shui-body"></div>
+            <div class="room-feng-shui-footer hidden" id="room-feng-shui-footer">
+                <div class="model-pref-row">
+                    <label class="model-pref-toggle">
+                        <input type="checkbox" id="feng-shui-apply-premium-toggle">
+                        <span class="model-pref-track"><span class="model-pref-thumb"></span></span>
+                        <span class="model-pref-text">
+                            <span class="model-pref-label">Use premium model</span>
+                            <span class="model-pref-hint">Higher fidelity. Each generation counts against your monthly limit.</span>
+                        </span>
+                    </label>
+                </div>
+                <button type="button" id="feng-shui-apply-btn" class="primary-btn">
+                    <i data-feather="zap"></i>
+                    <span>Apply feng shui to my room</span>
+                </button>
+                <button type="button" id="feng-shui-continue-wizard-btn" class="secondary-btn">
+                    <span>Continue with design wizard</span>
+                    <i data-feather="arrow-right"></i>
+                </button>
+            </div>
         </div>
     </div>
 

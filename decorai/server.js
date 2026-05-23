@@ -1021,14 +1021,23 @@ Return this exact JSON structure:
       "priority": "high" | "medium" | "low"
     }
   ],
+  "elementsSummary": "<one sentence overview of elemental balance, e.g. which elements are low or dominant>",
   "elements": {
-    "wood": "<brief assessment>",
-    "fire": "<brief assessment>",
-    "earth": "<brief assessment>",
-    "metal": "<brief assessment>",
-    "water": "<brief assessment>"
+    "wood": {
+      "level": "low" | "balanced" | "strong",
+      "score": <number 1-10, where 5-6 is balanced>,
+      "summary": "<brief assessment of this element in the room>",
+      "present": ["<specific item or color visible in the photo>", ...],
+      "add": ["<actionable way to strengthen this element>", ...]
+    },
+    "fire": { "level": "...", "score": <1-10>, "summary": "...", "present": [...], "add": [...] },
+    "earth": { "level": "...", "score": <1-10>, "summary": "...", "present": [...], "add": [...] },
+    "metal": { "level": "...", "score": <1-10>, "summary": "...", "present": [...], "add": [...] },
+    "water": { "level": "...", "score": <1-10>, "summary": "...", "present": [...], "add": [...] }
   }
 }
+
+For each element, base level and score on what is visible: wood = plants/wood/green; fire = lighting/warm colors/red-orange; earth = ceramics/stone/beige-brown; metal = metal/white-gray/round shapes; water = mirrors/glass/blue-black/flowing forms. Always include all five elements. Keep present/add arrays short (0-3 items each).
 
 Keep suggestions practical and specific to what is visible. Do not invent furniture or architectural features that are not in the image.`
       : `You are an expert feng shui consultant analyzing floor plans. You MUST return ONLY valid JSON (no markdown, no code fences, no explanation text outside the JSON).
@@ -1108,7 +1117,7 @@ Return this exact JSON structure:
         model: 'gpt-4o',
         messages,
         max_tokens: 4096,
-        temperature: 0.3
+        temperature: 0.6
       })
     });
 

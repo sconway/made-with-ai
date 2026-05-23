@@ -4118,7 +4118,7 @@ const FloorPlanEditor = (() => {
                 <div class="furniture-preview">${getFurnitureIcon(item)}</div>
                 <span>${item.name}</span>
             `;
-            div.dataset.tooltip = `Add ${item.name} — click or drag`;
+            div.dataset.tooltip = 'Click or drag';
             div.setAttribute('aria-label', `Add ${item.name} to the plan—click to place at center, or drag onto the canvas`);
             
             div.addEventListener('dragstart', (e) => {

@@ -57,6 +57,10 @@ const roomFengShuiModal = document.getElementById('room-feng-shui-modal');
 const roomFengShuiBody = document.getElementById('room-feng-shui-body');
 const roomFengShuiTitle = document.getElementById('room-feng-shui-title');
 const roomFengShuiCloseBtn = document.getElementById('room-feng-shui-close');
+const roomFengShuiFooter = document.getElementById('room-feng-shui-footer');
+const fengShuiApplyBtn = document.getElementById('feng-shui-apply-btn');
+const fengShuiContinueWizardBtn = document.getElementById('feng-shui-continue-wizard-btn');
+const fengShuiApplyPremiumToggle = document.getElementById('feng-shui-apply-premium-toggle');
 
 // Refinement suggestion chips: append (or set) the chip text into the textarea.
 document.querySelectorAll('.refinement-chip').forEach((chip) => {
@@ -181,6 +185,11 @@ let selectedRoomItems = new Set(); // Track selected room items
 let furnishedOption = null; // Track furnished room option - no default selection
 let selectedDesignStyle = null; // Track selected interior design style (null = no style change requested)
 let isRoomActuallyEmpty = true; // Track if the uploaded room is actually empty
+
+// Cached feng shui analyses keyed by image source (data URI or URL).
+const fengShuiAnalysisCache = new Map();
+// Active analysis shown in the modal (for apply action).
+let currentFengShuiContext = null;
 
 // Confirm dialog state
 let confirmResolve = null;
@@ -539,6 +548,7 @@ function updateTokensDisplay() {
     if (tokensDisplay) {
         tokensDisplay.classList.toggle('tokens-low', userTokens === 0);
     }
+    syncDefaultModelToggles();
 }
 
 /** Render the subscriber monthly usage badge. Hidden for non-subscribers. */
@@ -555,6 +565,7 @@ function updateSubscriptionUsageDisplay() {
     subscriptionUsageDisplay.classList.toggle('subscription-usage-empty', remaining <= 0);
     subscriptionUsageDisplay.classList.toggle('subscription-usage-low', remaining > 0 && remaining < 10);
     subscriptionUsageDisplay.title = `${used} of ${limit} image generations used this month`;
+    syncDefaultModelToggles();
 }
 
 /**
@@ -591,6 +602,13 @@ function hasTokensAvailable() {
         return false;
     }
     return true;
+}
+
+/** Whether the user can still run a premium (OpenAI) image generation. */
+function hasPremiumGenerationsAvailable() {
+    if (!currentUser || !currentSession) return false;
+    if (userHasSubscription) return subscriptionUsage.remaining > 0;
+    return userTokens > 0;
 }
 
 function showSubscriptionLimitMessage() {
@@ -953,7 +971,7 @@ function getLayoutPreviewPlaceholder() {
     ctx.fillStyle = '#e5e7eb';
     ctx.fillRect(0, 0, w, h);
     ctx.fillStyle = '#9ca3af';
-    ctx.font = '11px sans-serif';
+    ctx.font = '14px sans-serif';
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
     ctx.fillText('Preview', w / 2, h / 2);
@@ -1094,6 +1112,7 @@ function updateAuthUI() {
         userMenu.classList.add('hidden');
         if (tokensDisplay) tokensDisplay.classList.add('hidden');
         if (subscriptionUsageDisplay) subscriptionUsageDisplay.classList.add('hidden');
+        syncDefaultModelToggles();
     }
     if (typeof feather !== 'undefined') feather.replace();
 }
@@ -1528,6 +1547,20 @@ document.addEventListener('DOMContentLoaded', async () => {
         });
     }
     if (roomFengShuiCloseBtn) roomFengShuiCloseBtn.addEventListener('click', hideRoomFengShuiModal);
+    if (fengShuiApplyBtn) fengShuiApplyBtn.addEventListener('click', applyFengShuiFromAnalysis);
+    if (fengShuiContinueWizardBtn) {
+        fengShuiContinueWizardBtn.addEventListener('click', hideRoomFengShuiModal);
+    }
+    if (fengShuiApplyPremiumToggle) {
+        fengShuiApplyPremiumToggle.addEventListener('change', () => {
+            if (fengShuiApplyPremiumToggle.checked && !hasPremiumGenerationsAvailable()) {
+                fengShuiApplyPremiumToggle.checked = false;
+                if (userHasSubscription) showSubscriptionLimitMessage();
+                else showBuyTokensModal();
+                syncDefaultModelToggles();
+            }
+        });
+    }
     if (roomFengShuiModal) {
         roomFengShuiModal.addEventListener('click', (e) => {
             if (e.target === roomFengShuiModal) hideRoomFengShuiModal();
@@ -1717,6 +1750,7 @@ document.addEventListener('DOMContentLoaded', async () => {
                 if (isValidImage(file)) {
                     const reader = new FileReader();
                     reader.onload = async function (event) {
+                        clearFengShuiCache();
                         currentUploadedImage = event.target.result;
                         if (roomPreview) roomPreview.src = currentUploadedImage;
                         isRoomActuallyEmpty = await detectEmptyRoom(currentUploadedImage);
@@ -1852,11 +1886,25 @@ function goToWizardStep(step) {
         line.classList.toggle('completed', idx + 2 <= step);
     });
 
+    // Feng shui is tied to the uploaded photo — show on the photo step only.
+    const wizardUploadActions = wizardFengShuiBtn?.closest('.wizard-upload-actions');
+    if (wizardUploadActions) {
+        wizardUploadActions.classList.toggle('hidden', step !== 1);
+    }
+
     scrollPageToTop();
 }
 
 function scrollPageToTop() {
     window.scrollTo({ top: 0, behavior: 'smooth' });
+}
+
+function buildRefinementPrompt(basePrompt, refinementText) {
+    const base = (basePrompt || '').trim();
+    const refinement = (refinementText || '').trim();
+    if (!refinement) return base;
+    if (!base) return refinement;
+    return `${base} Apply these refinements: ${refinement}`;
 }
 
 /** Scroll the viewport to a design card's loading placeholder. */
@@ -1914,6 +1962,7 @@ async function handleImageUpload(e) {
     if (file && isValidImage(file)) {
         const reader = new FileReader();
         reader.onload = async function (event) {
+            clearFengShuiCache();
             currentUploadedImage = event.target.result;
             if (roomPreview) roomPreview.src = currentUploadedImage;
             isRoomActuallyEmpty = await detectEmptyRoom(currentUploadedImage);
@@ -1971,6 +2020,7 @@ function openCamera() {
                     const ctx = canvas.getContext('2d');
                     ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
 
+                    clearFengShuiCache();
                     currentUploadedImage = canvas.toDataURL('image/jpeg');
                     if (roomPreview) roomPreview.src = currentUploadedImage;
 
@@ -2012,6 +2062,7 @@ function resetImageUpload() {
     currentUploadedImage = null;
     lastGeneratedImageUrl = null;
     isRoomActuallyEmpty = true;
+    clearFengShuiCache();
     resetDesignHistory();
     if (roomPreview) roomPreview.src = '';
     if (roomUpload) roomUpload.value = '';
@@ -2659,6 +2710,10 @@ function mapPromptToProplabsStyle(prompt) {
     return 'Default (AI decides)';
 }
 
+const DEFAULT_MODEL_FAILED_USER_MESSAGE =
+    "Our default image model couldn't process this image. Would you like to try our free backup model? " +
+    'It uses a different AI engine and may handle this image. This won\'t count against your limits.';
+
 // Helper: Generate image with a Replicate model.
 // By default it runs ONLY the proplabs default model — no auto-fallback,
 // because we want to surface the failure and let the user decide whether
@@ -2904,17 +2959,22 @@ async function generateImageWithReplicate(imageBase64, prompt) {
 }
 
 // Generate a single design image
-async function generateDesigns() {
+async function generateDesigns(options = {}) {
+    const fengShuiApply = options.fengShuiResult && options.imageSource;
+
     if (!requireEmailConfirmedForFeature('design generation')) return;
-    if (!currentUploadedImage) {
+    if (!currentUploadedImage && !fengShuiApply) {
         showAlertDialog('Please upload an image first');
         return;
     }
 
+    const usePremium = fengShuiApply
+        ? !!options.usePremium
+        : getEffectiveDefaultModelPref() === 'premium';
+
     // Only premium generations consume tokens. Free runs are unlimited for
     // signed-in users — we gate on auth so anonymous traffic can't abuse it.
-    const willUsePremium = getDefaultModelPref() === 'premium';
-    if (willUsePremium) {
+    if (usePremium) {
         if (!hasTokensAvailable()) return;
     } else {
         if (!ensureLoggedIn()) return;
@@ -2924,38 +2984,72 @@ async function generateDesigns() {
     // Check if we're regenerating (already on results screen)
     const isCurrentlyOnResults = resultsSection && !resultsSection.classList.contains('hidden');
 
-    // Try to determine the room type if not already set
-    if (!currentRoomType) {
-        // First time generation - read from radio buttons
-        const emptyRadio = document.getElementById('empty-room');
-        const furnishedRadio = document.getElementById('furnished-room');
+    let basePrompt;
+    let style;
+    let description;
+    let prompts;
+    let fullPrompt;
+    let negativePrompt;
 
-        if (emptyRadio && emptyRadio.checked) {
-            currentRoomType = 'empty';
-        } else if (furnishedRadio && furnishedRadio.checked) {
-            currentRoomType = 'furnished';
+    if (fengShuiApply) {
+        ensureRoomTypeFromWizard();
+        basePrompt = aiPrompts[currentRoomType] || aiPrompts.furnished;
+        style = 'Feng shui layout';
+        description = 'Applying feng shui recommendations to your room…';
+        fullPrompt = buildFengShuiGenerationPrompt(options.fengShuiResult);
+        negativePrompt = getFengShuiNegativePrompt();
+        prompts = { shouldGenerate: true };
+    } else {
+        // Try to determine the room type if not already set
+        if (!currentRoomType) {
+            // First time generation - read from radio buttons
+            const emptyRadio = document.getElementById('empty-room');
+            const furnishedRadio = document.getElementById('furnished-room');
+
+            if (emptyRadio && emptyRadio.checked) {
+                currentRoomType = 'empty';
+            } else if (furnishedRadio && furnishedRadio.checked) {
+                currentRoomType = 'furnished';
+            }
         }
-    }
 
-    // Validate that we have a valid room type
-    if (!currentRoomType || !designStyles[currentRoomType]) {
-        console.error('Invalid room type:', currentRoomType, 'isCurrentlyOnResults:', isCurrentlyOnResults);
-        showAlertDialog('Please select a room type first');
-        return;
-    }
-
-    const basePrompt = aiPrompts[currentRoomType];
-    const styleObj = selectedDesignStyle ? interiorDesignStyles.find(s => s.id === selectedDesignStyle) : null;
-    const style = styleObj ? styleObj.promptText : '';
-    const description = designDescriptions[currentRoomType][0]; // Use first description
-    const prompts = generatePromptsWithItems(basePrompt, style);
-
-    // Check if we should generate an image
-    if (!prompts.shouldGenerate) {
-        if (currentRoomType === 'empty' || (currentRoomType === 'furnished' && furnishedOption === 'add-new')) {
-            showItemsSelectionError();
+        // Validate that we have a valid room type
+        if (!currentRoomType || !designStyles[currentRoomType]) {
+            console.error('Invalid room type:', currentRoomType, 'isCurrentlyOnResults:', isCurrentlyOnResults);
+            showAlertDialog('Please select a room type first');
+            return;
         }
-        return;
+
+        basePrompt = aiPrompts[currentRoomType];
+        const styleObj = selectedDesignStyle ? interiorDesignStyles.find(s => s.id === selectedDesignStyle) : null;
+        style = styleObj ? styleObj.promptText : '';
+        description = designDescriptions[currentRoomType][0]; // Use first description
+        prompts = generatePromptsWithItems(basePrompt, style);
+
+        const refinementText = refinementInput?.value?.trim();
+        const priorDesign = generatedDesigns?.[0];
+        const isResultsRegenerate = isCurrentlyOnResults && priorDesign && !priorDesign.loading;
+        const canBypassItemValidation = isResultsRegenerate
+            && (refinementText || priorDesign.prompt || priorDesign.imageUrl);
+
+        // Check if we should generate an image (skip wizard item validation when refining a result)
+        if (!prompts.shouldGenerate && !canBypassItemValidation) {
+            if (currentRoomType === 'empty' || (currentRoomType === 'furnished' && furnishedOption === 'add-new')) {
+                showItemsSelectionError();
+            }
+            return;
+        }
+
+        if (isResultsRegenerate) {
+            const baseForRefinement = priorDesign.prompt || prompts.positivePrompt;
+            fullPrompt = buildRefinementPrompt(baseForRefinement, refinementText);
+            negativePrompt = priorDesign.negativePrompt || prompts.negativePrompt;
+        } else {
+            fullPrompt = refinementText
+                ? buildRefinementPrompt(prompts.positivePrompt, refinementText)
+                : prompts.positivePrompt;
+            negativePrompt = prompts.negativePrompt;
+        }
     }
 
     // Transition: hide wizard (and its progress bar), show results
@@ -2970,11 +3064,6 @@ async function generateDesigns() {
     if (backToOptionsBtn) {
         backToOptionsBtn.classList.remove('hidden');
     }
-
-    // Append any user-supplied refinement text to the prompt
-    const refinementText = refinementInput?.value?.trim();
-    const fullPrompt = refinementText || prompts.positivePrompt;
-    const negativePrompt = prompts.negativePrompt;
 
     // Create initial design with loading state
     const initialDesign = {
@@ -2995,10 +3084,9 @@ async function generateDesigns() {
     displayDesigns(generatedDesigns);
     updateResultsFengShuiButtonState();
 
+    scrollPageToTop();
     if (isCurrentlyOnResults) {
         scrollToDesignLoader(0);
-    } else {
-        scrollPageToTop();
     }
 
     // Seed history with the original upload on the first run, so the user can
@@ -3008,9 +3096,9 @@ async function generateDesigns() {
     // When regenerating from the results screen, chain off whichever history
     // entry the user has selected (defaults to the most recent generation).
     // On the first run, the strip is empty and we use the original upload.
-    const sourceImage = isCurrentlyOnResults
-        ? getBaseImageForNextGeneration()
-        : currentUploadedImage;
+    const sourceImage = fengShuiApply
+        ? options.imageSource
+        : (isCurrentlyOnResults ? getBaseImageForNextGeneration() : currentUploadedImage);
 
     // Stash inputs on the design up front so the premium fallback handler
     // can reuse them even if the default chain throws before we'd normally
@@ -3019,22 +3107,18 @@ async function generateDesigns() {
 
     initialDesign.negativePrompt = negativePrompt;
 
-    // Read the user's preferred default model from localStorage. 'premium'
-    // means we go straight to OpenAI; 'free' uses the proplabs default chain.
-    const prefersPremium = getDefaultModelPref() === 'premium';
-
     // Generate the image
     try {
         console.log('Starting image generation with prompt:', fullPrompt);
         console.log('Negative prompt:', negativePrompt);
-        console.log('Source image:', isCurrentlyOnResults && lastGeneratedImageUrl ? 'last generated' : 'original upload');
-        console.log('Default model preference:', prefersPremium ? 'premium' : 'free');
+        console.log('Source image:', fengShuiApply ? 'feng shui apply' : (isCurrentlyOnResults && lastGeneratedImageUrl ? 'last generated' : 'original upload'));
+        console.log('Model preference:', usePremium ? 'premium' : 'free');
 
         let imageUrl = '';
         let usedFallback = false;
         let modelUsed = null;
 
-        if (prefersPremium) {
+        if (usePremium) {
             // Premium path — counts against quota. Endpoint reserves a slot.
             imageUrl = await callPremiumImageEdit(sourceImage, fullPrompt);
             modelUsed = 'openai';
@@ -3055,6 +3139,10 @@ async function generateDesigns() {
         initialDesign.modelUsed = modelUsed;
         initialDesign.sourceImage = sourceImage;
         initialDesign.negativePrompt = negativePrompt;
+
+        if (fengShuiApply) {
+            initialDesign.description = buildFengShuiAppliedDescription(options.fengShuiResult);
+        }
 
         // Remember this image for subsequent regenerations
         if (imageUrl) {
@@ -3083,6 +3171,7 @@ async function generateDesigns() {
                 `You've reached your monthly limit of ${limit} image generations. ` +
                 `Your quota will reset at the start of next month.`;
             if (userHasSubscription) await fetchSubscriptionUsage();
+            syncDefaultModelToggles();
             updateDesignCard(initialDesign, 0);
             return;
         }
@@ -3118,10 +3207,10 @@ async function generateDesigns() {
             initialDesign.loading = false;
             initialDesign.isFallback = false;
             initialDesign.needsRetry = true;
-            initialDesign.errorMessage = `The default model couldn't process your image: ${error.detail || 'unknown error'}.`;
+            initialDesign.errorMessage = DEFAULT_MODEL_FAILED_USER_MESSAGE;
             updateDesignCard(initialDesign, 0);
 
-            await offerFallbackChoice(0, initialDesign, error.detail);
+            await offerFallbackChoice(0, initialDesign);
             return;
         }
 
@@ -3217,6 +3306,7 @@ async function retryImageGeneration() {
     design.needsRetry = false;
     design.errorMessage = '';
     design.imageUrl = '';
+    updateResultsFengShuiButtonState();
 
     // Find the card and show loading state
     const card = designCarousel.querySelector('[data-design-id="design-0"]');
@@ -3272,26 +3362,33 @@ async function retryImageGeneration() {
         const style = styleObj ? styleObj.promptText : '';
         const prompts = generatePromptsWithItems(basePrompt, style);
 
+        const retryRefinementText = refinementInput?.value?.trim();
+        const canBypassItemValidation = !!(retryRefinementText || design.prompt || design.imageUrl);
+
         // Check if we should generate an image
-        if (!prompts.shouldGenerate) {
-            // Show error for empty room scenarios or furnished room with "add new" but no items selected
+        if (!prompts.shouldGenerate && !canBypassItemValidation) {
             if (currentRoomType === 'empty' || (currentRoomType === 'furnished' && furnishedOption === 'add-new')) {
                 showItemsSelectionError();
             }
+            design.loading = false;
+            updateResultsFengShuiButtonState();
             return;
         }
 
-        // Append any user-supplied refinement text on retry too
-        const retryRefinementText = refinementInput?.value?.trim();
-        const retryPrompt = retryRefinementText
-            ? retryRefinementText
-            : prompts.positivePrompt;
+        const retryPrompt = buildRefinementPrompt(
+            design.prompt || prompts.positivePrompt,
+            retryRefinementText
+        );
 
         // Chain off the user-selected history entry (defaults to the latest
         // generation, falls back to the original upload).
         const retrySourceImage = getBaseImageForNextGeneration();
 
-        let imageUrls = await generateImageWithControlNet(retrySourceImage, retryPrompt, prompts.negativePrompt);
+        let imageUrls = await generateImageWithControlNet(
+            retrySourceImage,
+            retryPrompt,
+            design.negativePrompt || prompts.negativePrompt
+        );
         let imageUrl;
         let usedFallback = false;
         let modelUsed = null;
@@ -3332,7 +3429,7 @@ async function retryImageGeneration() {
         design.needsRetry = true;
         design.isFallback = false;
         design.errorMessage = error.code === 'MODEL_FAILED'
-            ? `The default model couldn't process your image: ${error.detail || 'unknown error'}.`
+            ? DEFAULT_MODEL_FAILED_USER_MESSAGE
             : error.message;
         // Make sure the source/prompt are persisted so the user can fall
         // back to the free backup or premium model from here.
@@ -3341,7 +3438,7 @@ async function retryImageGeneration() {
         updateDesignCard(design, 0);
 
         if (error.code === 'MODEL_FAILED') {
-            await offerFallbackChoice(0, design, error.detail);
+            await offerFallbackChoice(0, design);
         }
         return;
     }
@@ -3482,17 +3579,38 @@ function setDefaultModelPref(value) {
     } catch (_) { /* ignore quota / privacy-mode errors */ }
 }
 
+function getEffectiveDefaultModelPref() {
+    if (!hasPremiumGenerationsAvailable()) return 'free';
+    return getDefaultModelPref();
+}
+
 // Keep all default-model toggles (wizard step 4 + results page refinement
 // area) in sync with the persisted preference. A change on either updates
 // localStorage AND mirrors the new state on the other.
 const defaultModelToggles = [defaultModelToggle, defaultModelToggleResults].filter(Boolean);
 function syncDefaultModelToggles() {
-    const checked = getDefaultModelPref() === 'premium';
-    defaultModelToggles.forEach((el) => { el.checked = checked; });
+    const canUsePremium = hasPremiumGenerationsAvailable();
+    const preferPremium = getDefaultModelPref() === 'premium';
+    const checked = canUsePremium && preferPremium;
+
+    const toggles = [...defaultModelToggles];
+    if (fengShuiApplyPremiumToggle) toggles.push(fengShuiApplyPremiumToggle);
+
+    toggles.forEach((el) => {
+        el.checked = checked;
+        el.closest('.model-pref-row')?.classList.toggle('hidden', !canUsePremium);
+    });
 }
 syncDefaultModelToggles();
 defaultModelToggles.forEach((el) => {
     el.addEventListener('change', () => {
+        if (el.checked && !hasPremiumGenerationsAvailable()) {
+            el.checked = false;
+            if (userHasSubscription) showSubscriptionLimitMessage();
+            else showBuyTokensModal();
+            syncDefaultModelToggles();
+            return;
+        }
         setDefaultModelPref(el.checked ? 'premium' : 'free');
         syncDefaultModelToggles();
     });
@@ -3587,12 +3705,9 @@ async function callPremiumImageEdit(sourceImage, prompt) {
 //   2) Try the premium model (counts as one generation)
 //   3) Cancel — leave the failure card with its retry button
 // Implemented as two chained confirms so we can reuse the existing modal.
-async function offerFallbackChoice(designIndex, design, failureDetail) {
-    const detail = failureDetail ? `\n\nDetails: ${failureDetail}` : '';
+async function offerFallbackChoice(designIndex, design) {
     const tryFree = await showConfirmDialog(
-        `Our default image model couldn't process this image.${detail}\n\n` +
-        `Would you like to try our free backup model? It uses a different ` +
-        `AI engine and may handle this image. This won't count against your limits.`,
+        DEFAULT_MODEL_FAILED_USER_MESSAGE,
         'Default model failed',
         'Try free backup',
         'No, try something else'
@@ -3672,6 +3787,7 @@ async function runFallbackOnDesign(designIndex, design, modelType = 'img2img') {
     design.needsRetry = false;
     design.errorMessage = '';
     design.loading = true;
+    updateResultsFengShuiButtonState();
 
     try {
         const imageUrls = await generateImageWithControlNet(
@@ -3777,6 +3893,7 @@ async function regenerateWithPremiumModel(designIndex) {
     design.needsRetry = false;
     design.errorMessage = '';
     design.loading = true;
+    updateResultsFengShuiButtonState();
 
     try {
         const imageUrl = await callPremiumImageEdit(design.sourceImage, design.prompt);
@@ -4095,6 +4212,20 @@ function regenerateDesigns() {
 
 // ── Room photo Feng Shui analysis ───────────────────────────────────────────
 
+function clearFengShuiCache() {
+    fengShuiAnalysisCache.clear();
+}
+
+function getCachedFengShuiAnalysis(imageSource) {
+    if (!imageSource) return null;
+    return fengShuiAnalysisCache.get(imageSource) || null;
+}
+
+function setCachedFengShuiAnalysis(imageSource, entry) {
+    if (!imageSource) return;
+    fengShuiAnalysisCache.set(imageSource, entry);
+}
+
 function getFengShuiAnalysisTarget() {
     const design = generatedDesigns?.[0];
     if (design?.imageUrl && !design.loading && !design.needsRetry) {
@@ -4106,11 +4237,30 @@ function getFengShuiAnalysisTarget() {
     return null;
 }
 
+function isDesignGenerationInProgress() {
+    return generatedDesigns.some((d) => d.loading);
+}
+
 function updateResultsFengShuiButtonState() {
+    const generating = isDesignGenerationInProgress();
+
+    if (wizardFengShuiBtn) {
+        wizardFengShuiBtn.disabled = generating;
+        wizardFengShuiBtn.title = generating ? 'Wait for image generation to finish' : '';
+    }
+
+    if (regenerateBtn) {
+        regenerateBtn.disabled = generating;
+        regenerateBtn.title = generating ? 'Wait for image generation to finish' : '';
+    }
+
     if (!resultsFengShuiBtn) return;
     const target = getFengShuiAnalysisTarget();
-    resultsFengShuiBtn.disabled = !target;
-    if (target) {
+    const canAnalyze = !generating && !!target;
+    resultsFengShuiBtn.disabled = !canAnalyze;
+    if (generating) {
+        resultsFengShuiBtn.title = 'Wait for image generation to finish';
+    } else if (target) {
         resultsFengShuiBtn.title = `Analyze feng shui for your ${target.label.toLowerCase()}`;
     } else {
         resultsFengShuiBtn.title = 'Generate a design first to analyze feng shui';
@@ -4133,21 +4283,26 @@ function hideRoomFengShuiModal() {
     roomFengShuiModal.classList.remove('show');
     roomFengShuiModal.style.opacity = '';
     roomFengShuiModal.style.visibility = '';
+    if (roomFengShuiFooter) roomFengShuiFooter.classList.add('hidden');
 }
 
 function showRoomFengShuiLoading() {
     if (!roomFengShuiBody) return;
+    if (roomFengShuiFooter) roomFengShuiFooter.classList.add('hidden');
+    currentFengShuiContext = null;
     roomFengShuiBody.innerHTML = `
         <div class="feng-shui-loading">
             <div class="feng-shui-spinner"></div>
             <p>Analyzing your room…</p>
-            <small>This usually takes 15–30 seconds.</small>
+            <small>This usually takes 5-10 seconds.</small>
         </div>
     `;
 }
 
 function showRoomFengShuiError(message) {
     if (!roomFengShuiBody) return;
+    if (roomFengShuiFooter) roomFengShuiFooter.classList.add('hidden');
+    currentFengShuiContext = null;
     roomFengShuiBody.innerHTML = `
         <div class="feng-shui-error">
             <p>${message}</p>
@@ -4160,15 +4315,276 @@ function formatFengShuiCategory(category) {
     return category.charAt(0).toUpperCase() + category.slice(1);
 }
 
-function displayRoomFengShuiResults(result, imageSrc, label) {
+function ensureRoomTypeFromWizard() {
+    if (currentRoomType && designStyles[currentRoomType]) return;
+
+    const emptyRadio = document.getElementById('empty-room');
+    const furnishedRadio = document.getElementById('furnished-room');
+    if (emptyRadio?.checked) {
+        currentRoomType = 'empty';
+    } else if (furnishedRadio?.checked) {
+        currentRoomType = 'furnished';
+    } else {
+        currentRoomType = isRoomActuallyEmpty ? 'empty' : 'furnished';
+    }
+}
+
+function getFengShuiNegativePrompt() {
+    return 'blurry, distorted, out of frame, unrealistic shadows, text, watermark, signature, low quality, pixelated, artifacts, change walls, change windows, change floor, change ceiling, change doors, architectural changes, structural modifications, zoomed in, cropped, close-up, tighter framing, recomposed, cut off, parts of room missing, narrower field of view, different camera distance';
+}
+
+function buildFengShuiGenerationPrompt(result) {
+    const priorityOrder = { high: 0, medium: 1, low: 2 };
+    const suggestions = (result?.suggestions || [])
+        .slice()
+        .sort((a, b) => (priorityOrder[a.priority] ?? 2) - (priorityOrder[b.priority] ?? 2))
+        .slice(0, 5)
+        .map((s) => s.description)
+        .filter(Boolean);
+
+    const goals = suggestions.length > 0
+        ? suggestions.join(' ')
+        : (result?.summary || 'Improve overall feng shui balance and energy flow in the room.');
+
+    return (
+        'DO NOT change walls, floor, ceiling, windows, or doors. ' +
+        'Rearrange furniture, decor, and styling to improve feng shui while keeping the same room architecture. ' +
+        `${goals} ` +
+        'Preserve existing materials and colors where possible. ' +
+        'Keep the exact same camera framing, field of view, zoom level, and composition as the input image.'
+    );
+}
+
+/** User-facing copy for the results card after a feng shui apply generation completes. */
+function buildFengShuiAppliedDescription(result) {
+    const priorityOrder = { high: 0, medium: 1, low: 2 };
+    const applied = (result?.suggestions || [])
+        .slice()
+        .sort((a, b) => (priorityOrder[a.priority] ?? 2) - (priorityOrder[b.priority] ?? 2))
+        .slice(0, 3)
+        .map((s) => s.description)
+        .filter(Boolean);
+
+    if (applied.length > 0) {
+        return `This layout reflects your feng shui updates: ${applied.join(' ')}`;
+    }
+
+    const strengths = (result?.strengths || []).filter(Boolean);
+    if (strengths.length > 0) {
+        return `This layout preserves ${strengths[0].charAt(0).toLowerCase()}${strengths[0].slice(1)} while improving overall balance and energy flow.`;
+    }
+
+    const score = Number(result?.overallScore);
+    if (score >= 8) {
+        return 'This layout maintains strong feng shui harmony with open flow and balanced energy throughout the space.';
+    }
+
+    return 'This layout has been updated to improve feng shui balance, energy flow, and harmony in the room.';
+}
+
+function isWizardVisible() {
+    return wizardContainer && !wizardContainer.classList.contains('hidden');
+}
+
+function updateFengShuiApplyFooter() {
+    if (!roomFengShuiFooter) return;
+
+    const wizardVisible = isWizardVisible();
+    if (fengShuiContinueWizardBtn) {
+        fengShuiContinueWizardBtn.classList.toggle('hidden', !wizardVisible);
+    }
+
+    if (fengShuiApplyPremiumToggle) {
+        fengShuiApplyPremiumToggle.checked = getEffectiveDefaultModelPref() === 'premium';
+    }
+
+    roomFengShuiFooter.classList.remove('hidden');
+    if (typeof feather !== 'undefined') feather.replace();
+}
+
+const FIVE_ELEMENTS = ['wood', 'fire', 'earth', 'metal', 'water'];
+
+const ELEMENT_META = {
+    wood: {
+        label: 'Wood',
+        color: '#16a34a',
+        bg: '#dcfce7',
+        icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22V12"/><path d="M12 12C12 8 8 4 4 4c0 4 4 8 8 8z"/><path d="M12 12c0-4 4-8 8-8 0 4-4 8-8 8z"/></svg>',
+    },
+    fire: {
+        label: 'Fire',
+        color: '#ea580c',
+        bg: '#ffedd5',
+        icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8.5 14.5A2.5 2.5 0 0 0 11 12c0-1.5-1.5-3-3-5-1.5 2-3 4-3 6a6 6 0 1 0 12 0c0-2-1.5-4-3-6-1.5 2-3 3.5-3 5a2.5 2.5 0 0 0 2.5 2.5z"/></svg>',
+    },
+    earth: {
+        label: 'Earth',
+        color: '#a16207',
+        bg: '#fef9c3',
+        icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 20h20"/><path d="M5 20V10l7-6 7 6v10"/><path d="M9 20v-6h6v6"/></svg>',
+    },
+    metal: {
+        label: 'Metal',
+        color: '#64748b',
+        bg: '#f1f5f9',
+        icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="4"/></svg>',
+    },
+    water: {
+        label: 'Water',
+        color: '#2563eb',
+        bg: '#dbeafe',
+        icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2.69l5.66 5.66a8 8 0 1 1-11.31 0L12 2.69z"/></svg>',
+    },
+};
+
+const ELEMENT_LEVEL_LABELS = {
+    low: 'Low',
+    balanced: 'Balanced',
+    strong: 'Strong',
+};
+
+function inferElementLevelFromText(text) {
+    const t = String(text).toLowerCase();
+    if (/\b(low|lacking|weak|missing|deficient|insufficient|absent|underrepresented)\b/.test(t)) return 'low';
+    if (/\b(strong|excessive|dominant|abundant|overpowering|heavy|overrepresented)\b/.test(t)) return 'strong';
+    return 'balanced';
+}
+
+function normalizeFengShuiElement(raw) {
+    if (!raw) return null;
+    if (typeof raw === 'string') {
+        const summary = raw.trim();
+        if (!summary) return null;
+        const level = inferElementLevelFromText(summary);
+        const score = level === 'low' ? 3 : level === 'strong' ? 9 : 6;
+        return { level, score, summary, present: [], add: [] };
+    }
+    if (typeof raw === 'object') {
+        const summary = (raw.summary || '').trim();
+        const level = raw.level || (summary ? inferElementLevelFromText(summary) : 'balanced');
+        let score = Number(raw.score);
+        if (!Number.isFinite(score) || score < 1 || score > 10) {
+            score = level === 'low' ? 3 : level === 'strong' ? 9 : 6;
+        }
+        return {
+            level,
+            score,
+            summary,
+            present: Array.isArray(raw.present) ? raw.present.filter(Boolean) : [],
+            add: Array.isArray(raw.add) ? raw.add.filter(Boolean) : [],
+        };
+    }
+    return null;
+}
+
+function normalizeFengShuiElements(rawElements) {
+    if (!rawElements || typeof rawElements !== 'object') return {};
+    const normalized = {};
+    FIVE_ELEMENTS.forEach((key) => {
+        const entry = normalizeFengShuiElement(rawElements[key]);
+        if (entry) normalized[key] = entry;
+    });
+    return normalized;
+}
+
+function buildElementsBalanceSummary(elements, apiSummary) {
+    if (apiSummary && String(apiSummary).trim()) return String(apiSummary).trim();
+
+    const low = [];
+    const strong = [];
+    FIVE_ELEMENTS.forEach((key) => {
+        const el = elements[key];
+        if (!el) return;
+        if (el.level === 'low') low.push(ELEMENT_META[key].label);
+        if (el.level === 'strong') strong.push(ELEMENT_META[key].label);
+    });
+
+    const parts = [];
+    if (low.length > 0) parts.push(`${formatElementList(low)} could use more support`);
+    if (strong.length > 0) parts.push(`${formatElementList(strong)} ${strong.length === 1 ? 'is' : 'are'} well represented`);
+    if (parts.length === 0) return 'The five elements appear reasonably balanced in this room.';
+    return `${parts.join('; ')}.`;
+}
+
+function formatElementList(items) {
+    if (items.length === 1) return items[0];
+    if (items.length === 2) return `${items[0]} and ${items[1]}`;
+    return `${items.slice(0, -1).join(', ')}, and ${items[items.length - 1]}`;
+}
+
+function renderRoomFengShuiElementsSection(result) {
+    const elements = normalizeFengShuiElements(result.elements);
+    if (Object.keys(elements).length === 0) return '';
+
+    const summary = buildElementsBalanceSummary(elements, result.elementsSummary);
+    let html = `
+        <div class="room-feng-shui-elements">
+            <h4>Five elements</h4>
+            <p class="fs-elements-summary">${summary}</p>
+            <div class="fs-elements-list">
+    `;
+
+    FIVE_ELEMENTS.forEach((key) => {
+        const el = elements[key];
+        if (!el) return;
+        const meta = ELEMENT_META[key];
+        const level = el.level || 'balanced';
+        const levelLabel = ELEMENT_LEVEL_LABELS[level] || ELEMENT_LEVEL_LABELS.balanced;
+        const meterPct = Math.max(10, Math.min(100, el.score * 10));
+
+        html += `
+            <div class="fs-element-row fs-element-row--${level}">
+                <div class="fs-element-header">
+                    <span class="fs-element-icon" style="background:${meta.bg};color:${meta.color}">${meta.icon}</span>
+                    <span class="fs-element-name">${meta.label}</span>
+                    <span class="fs-element-level fs-element-level--${level}">${levelLabel}</span>
+                    <span class="fs-element-score">${el.score}/10</span>
+                </div>
+                <div class="fs-element-meter" aria-hidden="true">
+                    <div class="fs-element-meter-fill" style="width:${meterPct}%;background:${meta.color}"></div>
+                </div>
+        `;
+
+        if (el.summary) {
+            html += `<p class="fs-element-summary">${el.summary}</p>`;
+        }
+
+        if (el.present.length > 0) {
+            html += `
+                <div class="fs-element-detail">
+                    <span class="fs-element-detail-label">Present</span>
+                    <span class="fs-element-detail-value">${el.present.join(', ')}</span>
+                </div>
+            `;
+        }
+
+        if (el.add.length > 0) {
+            html += `
+                <div class="fs-element-detail fs-element-detail--add">
+                    <span class="fs-element-detail-label">To strengthen</span>
+                    <span class="fs-element-detail-value">${el.add.join('; ')}</span>
+                </div>
+            `;
+        }
+
+        html += `</div>`;
+    });
+
+    html += `</div></div>`;
+    return html;
+}
+
+function displayRoomFengShuiResults(result, imageDisplaySrc, label, imageSource) {
     if (!roomFengShuiBody) return;
+
+    currentFengShuiContext = { result, imageDisplaySrc, label, imageSource };
 
     const score = Number(result.overallScore) || 0;
     const scoreColor = score >= 7 ? '#22c55e' : score >= 4 ? '#f59e0b' : '#ef4444';
     let html = '';
 
-    if (imageSrc) {
-        html += `<img class="room-feng-shui-photo" src="${imageSrc}" alt="${label || 'Room'}">`;
+    if (imageDisplaySrc) {
+        html += `<img class="room-feng-shui-photo" src="${imageDisplaySrc}" alt="${label || 'Room'}">`;
     }
 
     html += `
@@ -4190,21 +4606,7 @@ function displayRoomFengShuiResults(result, imageSrc, label) {
         `;
     }
 
-    if (result.elements && typeof result.elements === 'object') {
-        const elementEntries = Object.entries(result.elements).filter(([, value]) => value);
-        if (elementEntries.length > 0) {
-            html += `<div class="room-feng-shui-elements"><h4>Five elements</h4>`;
-            elementEntries.forEach(([name, value]) => {
-                html += `
-                    <div class="fs-element-card">
-                        <div class="fs-element-name">${name}</div>
-                        <p class="fs-element-value">${value}</p>
-                    </div>
-                `;
-            });
-            html += `</div>`;
-        }
-    }
+    html += renderRoomFengShuiElementsSection(result);
 
     if (Array.isArray(result.suggestions) && result.suggestions.length > 0) {
         html += `<div class="feng-shui-suggestions"><div class="fs-suggestions-title">Recommendations</div>`;
@@ -4218,7 +4620,6 @@ function displayRoomFengShuiResults(result, imageSrc, label) {
                         <span class="suggestion-priority" style="background: ${priorityColor}">${priority}</span>
                         <span class="suggestion-name">${name}</span>
                     </div>
-                    ${suggestion.category ? `<p class="suggestion-category">${formatFengShuiCategory(suggestion.category)}</p>` : ''}
                     <p class="suggestion-principle">${suggestion.principle || ''}</p>
                     <p class="suggestion-desc">${suggestion.description || ''}</p>
                 </div>
@@ -4230,7 +4631,21 @@ function displayRoomFengShuiResults(result, imageSrc, label) {
     }
 
     roomFengShuiBody.innerHTML = html;
-    if (typeof feather !== 'undefined') feather.replace();
+    updateFengShuiApplyFooter();
+}
+
+async function applyFengShuiFromAnalysis() {
+    const ctx = currentFengShuiContext;
+    if (!ctx?.imageSource || !ctx?.result) return;
+
+    const usePremium = fengShuiApplyPremiumToggle?.checked ?? (getEffectiveDefaultModelPref() === 'premium');
+    hideRoomFengShuiModal();
+
+    await generateDesigns({
+        fengShuiResult: ctx.result,
+        imageSource: ctx.imageSource,
+        usePremium,
+    });
 }
 
 async function startRoomFengShuiAnalysis(imageSource, { label = 'Room' } = {}) {
@@ -4241,6 +4656,13 @@ async function startRoomFengShuiAnalysis(imageSource, { label = 'Room' } = {}) {
     }
 
     showRoomFengShuiModal(label);
+
+    const cached = getCachedFengShuiAnalysis(imageSource);
+    if (cached) {
+        displayRoomFengShuiResults(cached.result, cached.imageDisplaySrc, cached.label, imageSource);
+        return;
+    }
+
     showRoomFengShuiLoading();
 
     try {
@@ -4267,7 +4689,12 @@ async function startRoomFengShuiAnalysis(imageSource, { label = 'Room' } = {}) {
             throw new Error(data.error || `Analysis failed (${resp.status})`);
         }
 
-        displayRoomFengShuiResults(data, imageBase64, label);
+        setCachedFengShuiAnalysis(imageSource, {
+            result: data,
+            imageDisplaySrc: imageBase64,
+            label,
+        });
+        displayRoomFengShuiResults(data, imageBase64, label, imageSource);
     } catch (error) {
         console.error('Feng shui analysis failed:', error);
         showRoomFengShuiError(error.message || 'Unable to analyze this room. Please try again.');

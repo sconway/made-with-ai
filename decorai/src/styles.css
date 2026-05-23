@@ -56,7 +56,8 @@
 
   /* ── Type scale ── */
   --font-sans: 'Inter', system-ui, -apple-system, sans-serif;
-  --text-xs:   0.75rem;   /* 12 */
+  --text-min:  0.875rem;  /* 14 — minimum app font size */
+  --text-xs:   var(--text-min);
   --text-sm:   0.875rem;  /* 14 */
   --text-base: 1rem;      /* 16 */
   --text-lg:   1.125rem;  /* 18 */
@@ -212,6 +213,16 @@ a:hover {
   width: 100%;
 }
 
+.wizard-upload-actions {
+  display: flex;
+  justify-content: center;
+  margin-bottom: var(--space-4);
+}
+
+.wizard-upload-actions .feng-shui-action-btn {
+  width: auto;
+}
+
 /* ================================================================
    Wizard stepper (labeled)
    ================================================================ */
@@ -321,7 +332,7 @@ a:hover {
     gap: var(--space-1);
   }
   .wizard-step-label {
-    font-size: 10px;
+    font-size: 14px;
     overflow: visible;
   }
   .wizard-step-line {
@@ -364,16 +375,16 @@ a:hover {
   align-items: center;
 }
 
-/* Default-model preference toggle — sits directly above the Generate Design
-   button so users can pick their default engine before kicking off a run. */
+/* Results-page toggle: no top margin inside the refinement box. */
 .model-pref-row {
-  margin-top: var(--space-6);
+  margin-top: var(--space-8);
 }
 
-/* The results-page toggle sits inside .refinement-area, directly above the
-   Regenerate button — needs tighter, non-top spacing. */
 .refinement-area .model-pref-row {
-  margin: 0 8px 8px 8px;
+  margin-top: 0;
+  margin-left: 8px;
+  margin-right: 8px;
+  margin-bottom: 8px;
 }
 
 .model-pref-toggle {
@@ -392,6 +403,16 @@ a:hover {
 .model-pref-toggle:hover {
   background: rgba(99, 102, 241, 0.08);
   border-color: rgba(99, 102, 241, 0.35);
+}
+
+.model-pref-toggle.model-pref-disabled {
+  opacity: 0.65;
+  cursor: not-allowed;
+}
+
+.model-pref-toggle.model-pref-disabled:hover {
+  background: rgba(99, 102, 241, 0.04);
+  border-color: rgba(99, 102, 241, 0.2);
 }
 
 .model-pref-toggle input[type="checkbox"] {
@@ -449,7 +470,7 @@ a:hover {
 }
 
 .model-pref-hint {
-  font-size: 0.8rem;
+  font-size: 0.875rem;
   color: #6b7280;
 }
 
@@ -647,8 +668,16 @@ main {
 
 .modal-footer .primary-btn,
 .modal-footer .secondary-btn {
-  flex: 1;
+  flex: 1 1 0;
+  min-width: 0;
   max-width: 180px;
+  white-space: normal;
+  text-align: center;
+  line-height: 1.35;
+  min-height: 48px;
+  align-self: stretch;
+  padding: var(--space-3) var(--space-4);
+  font-size: var(--text-sm);
 }
 
 /* Auth Tabs */
@@ -967,6 +996,7 @@ main {
   gap: var(--space-4);
   text-align: left;
   margin-bottom: var(--space-6);
+  padding: 2rem;
 }
 
 .results-header-text {
@@ -1113,7 +1143,7 @@ main {
   display: block;
   padding: 4px 6px;
   font-family: var(--font-sans);
-  font-size: 11px;
+  font-size: 14px;
   font-weight: var(--weight-medium);
   color: var(--text-secondary);
   text-align: center;
@@ -1167,6 +1197,7 @@ main {
 /* ── Refinement area: mirrors .design-card structure (full-bleed input,
    padded header/footer, single outer frame) ── */
 .refinement-area {
+  margin-bottom: var(--space-8);
   margin-top: var(--space-6);
   background: var(--surface);
   border: 1px solid var(--border-subtle);
@@ -1204,12 +1235,12 @@ main {
 
 .refinement-textarea {
   display: block;
-  width: 100%;
-  padding: var(--space-4) var(--space-5);
-  border: none;
-  border-top: 1px solid var(--border-subtle);
-  border-bottom: 1px solid var(--border-subtle);
-  border-radius: 0;
+  width: calc(100% - 2 * var(--space-4));
+  margin-left: var(--space-4);
+  margin-right: var(--space-4);
+  padding: var(--space-4);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
   font-family: var(--font-sans);
   font-size: var(--text-sm);
   line-height: var(--leading-relaxed);
@@ -1247,9 +1278,7 @@ main {
 .refinement-footer {
   display: flex;
   justify-content: flex-end;
-  padding: var(--space-3) var(--space-5) var(--space-4);
-  border-top: 1px solid var(--border-subtle);
-  background: var(--gray-50);
+  padding: var(--space-4);
 }
 
 .refinement-footer .primary-btn {
@@ -1459,7 +1488,7 @@ main {
   border: none;
   border-radius: var(--button-border-radius);
   padding: 8px 12px;
-  font-size: 12px;
+  font-size: 14px;
   cursor: pointer;
   display: flex;
   align-items: center;
@@ -1480,7 +1509,7 @@ main {
   background-color: rgba(220, 38, 38, 0.8);
   color: white;
   padding: 8px;
-  font-size: 11px;
+  font-size: 14px;
   text-align: center;
   z-index: 2;
 }
@@ -1494,7 +1523,7 @@ main {
 .model-status {
   margin: 16px 8px;
   padding: 6px 10px;
-  font-size: 12px;
+  font-size: 14px;
   color: #4338ca;
   background-color: rgba(99, 102, 241, 0.08);
   border: 1px solid rgba(99, 102, 241, 0.2);
@@ -1644,7 +1673,7 @@ main {
   }
 
   .room-option .option-text p {
-    font-size: 0.78rem;
+    font-size: 0.875rem;
   }
 
   /* ── Generate button (mobile main screen — hidden by default) ── */
@@ -1675,7 +1704,7 @@ main {
     top: 0;
     z-index: 5;
     background-color: var(--background-color);
-    padding-bottom: 0.75rem;
+    padding: 1rem;
     margin-bottom: 0;
     flex-wrap: wrap;
   }
@@ -1705,7 +1734,21 @@ main {
 
   .refinement-area {
     margin-top: 0.75rem;
-    padding: 0.75rem;
+    padding: 0;
+  }
+
+  .refinement-area > *:not(.refinement-textarea) {
+    padding-left: var(--space-4);
+    padding-right: var(--space-4);
+  }
+
+  .refinement-area .model-pref-row {
+    margin-left: 0;
+    margin-right: 0;
+  }
+
+  .model-pref-row {
+    margin-top: 0;
   }
 
   .refinement-textarea {
@@ -1742,6 +1785,18 @@ main {
   .modal-footer {
     padding: 0 1rem 1rem;
     margin-top: 2.5rem;
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .modal-footer .primary-btn,
+  .modal-footer .secondary-btn {
+    flex: none;
+    max-width: none;
+    width: 100%;
+    min-height: 3.75rem;
+    padding: 0.875rem 1.5rem;
+    font-size: 1rem;
   }
 
   /* ── Items/style grids: compact 4-column cards on small screens ── */
@@ -1762,7 +1817,7 @@ main {
   }
 
   .style-name {
-    font-size: 0.72rem;
+    font-size: 0.875rem;
   }
 
   .items-grid {
@@ -1782,7 +1837,7 @@ main {
   }
 
   .item-name {
-    font-size: 0.72rem;
+    font-size: 0.875rem;
   }
 
   /* Furnished option cards: compact */
@@ -1807,7 +1862,7 @@ main {
   }
 
   .furnished-option .option-text p {
-    font-size: 0.78rem;
+    font-size: 0.875rem;
     line-height: 1.35;
   }
 }
@@ -2286,7 +2341,7 @@ main {
   }
 
   .item-name {
-    font-size: 0.8rem;
+    font-size: 0.875rem;
   }
 }
 
@@ -2420,7 +2475,7 @@ main {
   }
 
   .style-name {
-    font-size: 0.8rem;
+    font-size: 0.875rem;
   }
 }
 
@@ -2644,7 +2699,27 @@ main {
 }
 
 .room-feng-shui-modal .feng-shui-body {
-  max-height: calc(100vh - 8rem);
+  max-height: calc(100vh - 14rem);
+}
+
+.room-feng-shui-footer {
+  flex-shrink: 0;
+  padding: 16px;
+  border-top: 1px solid #e5e7eb;
+  background: linear-gradient(180deg, #f9fafb 0%, #ffffff 100%);
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.room-feng-shui-footer .primary-btn,
+.room-feng-shui-footer .secondary-btn {
+  width: 100%;
+  justify-content: center;
+}
+
+.room-feng-shui-footer .model-pref-row {
+  margin-bottom: 4px;
 }
 
 .room-feng-shui-photo {
@@ -2662,7 +2737,7 @@ main {
 
 .room-feng-shui-strengths h4,
 .room-feng-shui-elements h4 {
-  font-size: 11px;
+  font-size: 14px;
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.05em;
@@ -2674,45 +2749,138 @@ main {
   margin: 0;
   padding-left: 1.1rem;
   color: #4b5563;
-  font-size: 12px;
+  font-size: 14px;
   line-height: 1.5;
 }
 
 .room-feng-shui-elements {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 8px;
   margin-bottom: 16px;
 }
 
-.fs-element-card {
+.fs-elements-summary {
+  margin: 0 0 14px;
+  font-size: 14px;
+  line-height: 1.5;
+  color: #4b5563;
+}
+
+.fs-elements-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.fs-element-row {
   background: #f9fafb;
   border: 1px solid #e5e7eb;
+  border-radius: 10px;
+  padding: 12px;
+}
+
+.fs-element-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.fs-element-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
   border-radius: 8px;
-  padding: 8px 10px;
+  flex-shrink: 0;
+}
+
+.fs-element-icon svg {
+  width: 16px;
+  height: 16px;
 }
 
 .fs-element-name {
-  font-size: 10px;
+  font-size: 14px;
   font-weight: 600;
-  text-transform: uppercase;
-  color: #6b7280;
-  margin-bottom: 4px;
+  color: #111827;
 }
 
-.fs-element-value {
-  font-size: 11px;
+.fs-element-level {
+  font-size: 14px;
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: 999px;
+  margin-left: auto;
+}
+
+.fs-element-level--low {
+  background: #fef3c7;
+  color: #b45309;
+}
+
+.fs-element-level--balanced {
+  background: #dcfce7;
+  color: #15803d;
+}
+
+.fs-element-level--strong {
+  background: #dbeafe;
+  color: #1d4ed8;
+}
+
+.fs-element-score {
+  font-size: 14px;
+  font-weight: 500;
+  color: #6b7280;
+  min-width: 2.5rem;
+  text-align: right;
+}
+
+.fs-element-meter {
+  height: 6px;
+  background: #e5e7eb;
+  border-radius: 999px;
+  overflow: hidden;
+  margin-bottom: 8px;
+}
+
+.fs-element-meter-fill {
+  height: 100%;
+  border-radius: 999px;
+  transition: width 0.3s ease;
+}
+
+.fs-element-summary {
+  margin: 0 0 8px;
+  font-size: 14px;
+  line-height: 1.45;
   color: #374151;
-  line-height: 1.4;
-  margin: 0;
 }
 
-.suggestion-category {
-  font-size: 10px;
+.fs-element-detail {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-top: 6px;
+  font-size: 14px;
+  line-height: 1.4;
+}
+
+.fs-element-detail-label {
   font-weight: 600;
-  text-transform: uppercase;
   color: #6b7280;
-  letter-spacing: 0.04em;
+}
+
+.fs-element-detail-value {
+  color: #374151;
+}
+
+.fs-element-detail--add .fs-element-detail-label {
+  color: #4338ca;
+}
+
+.fs-element-detail--add .fs-element-detail-value {
+  color: #4b5563;
 }
 
 .preview-container {
@@ -2982,7 +3150,7 @@ main {
 
 .retry-message p {
   color: #6b7280;
-  font-size: 13px;
+  font-size: 14px;
   line-height: 1.4;
   margin: 0;
 }
@@ -3042,7 +3210,7 @@ main {
   align-items: center;
   color: white;
   text-shadow: 0 1px 2px rgba(0, 0, 0, 0.8);
-  font-size: 10px;
+  font-size: 14px;
   font-weight: 600;
   opacity: 0.8;
   transition: opacity 0.2s ease;
@@ -3250,7 +3418,7 @@ main {
 
 .layout-editor-title h2 {
   margin: 0;
-  font-size: 0.85rem;
+  font-size: 0.875rem;
   font-weight: 600;
   color: #888;
   text-transform: uppercase;
@@ -3305,7 +3473,7 @@ main {
 
 .scale-control label,
 .unit-control label {
-  font-size: 0.85rem;
+  font-size: 0.875rem;
   color: #666;
   white-space: nowrap;
 }
@@ -3315,7 +3483,7 @@ main {
   padding: 6px 10px;
   border: 1px solid #e0e0e0;
   border-radius: 6px;
-  font-size: 0.85rem;
+  font-size: 0.875rem;
   background: white;
   cursor: pointer;
 }
@@ -3340,7 +3508,7 @@ main {
   padding: 6px 10px;
   background: #1f2937;
   color: #fff;
-  font-size: 0.75rem;
+  font-size: 0.875rem;
   font-weight: 500;
   line-height: 1.35;
   border-radius: 6px;
@@ -3573,7 +3741,7 @@ main {
   display: flex;
   align-items: center;
   gap: 8px;
-  font-size: 0.85rem;
+  font-size: 0.875rem;
   color: #555;
   cursor: pointer;
   white-space: nowrap;
@@ -3609,7 +3777,7 @@ main {
 
 .tool-section h4 {
   margin: 0 0 12px 0;
-  font-size: 0.75rem;
+  font-size: 0.875rem;
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.5px;
@@ -3669,14 +3837,14 @@ main {
 
 .my-layouts-empty {
   margin: 0;
-  font-size: 0.85rem;
+  font-size: 0.875rem;
   color: #888;
   padding: 8px 0;
 }
 
 .my-layouts-loading {
   margin: 0;
-  font-size: 0.85rem;
+  font-size: 0.875rem;
   color: #888;
   padding: 12px 0;
   display: flex;
@@ -3703,7 +3871,7 @@ main {
   gap: 8px;
   padding: 8px 0;
   border-bottom: 1px solid #eee;
-  font-size: 0.85rem;
+  font-size: 0.875rem;
 }
 
 .my-layouts-item:last-child {
@@ -3732,7 +3900,7 @@ main {
 }
 
 .my-layouts-item-meta {
-  font-size: 0.75rem;
+  font-size: 0.875rem;
   color: #888;
 }
 
@@ -3763,7 +3931,7 @@ main {
 .my-layouts-delete-btn {
   padding: 4px 10px;
   border-radius: var(--button-border-radius);
-  font-size: 0.75rem;
+  font-size: 0.875rem;
   cursor: pointer;
   border: 1px solid #ddd;
   background: white;
@@ -3830,7 +3998,7 @@ main {
 
 .option-group label:not(.checkbox-label) {
   display: block;
-  font-size: 0.8rem;
+  font-size: 0.875rem;
   color: #666;
   margin-bottom: 6px;
 }
@@ -3840,7 +4008,7 @@ main {
   align-items: center;
   gap: 8px;
   cursor: pointer;
-  font-size: 0.85rem;
+  font-size: 0.875rem;
   color: #444;
 }
 
@@ -3857,13 +4025,13 @@ main {
 
 #wall-thickness-value,
 #snap-threshold-value {
-  font-size: 0.8rem;
+  font-size: 0.875rem;
   color: #666;
 }
 
 .snap-threshold-row label {
   display: block;
-  font-size: 0.8rem;
+  font-size: 0.875rem;
   color: #666;
   margin-bottom: 6px;
 }
@@ -3904,7 +4072,7 @@ main {
   padding: 8px 16px;
   background: white;
   border-top: 1px solid #e0e0e0;
-  font-size: 0.8rem;
+  font-size: 0.875rem;
   color: #666;
 }
 
@@ -3941,7 +4109,7 @@ main {
   padding: 8px 12px;
   border: 1px solid #e0e0e0;
   border-radius: 6px;
-  font-size: 0.85rem;
+  font-size: 0.875rem;
 }
 
 #furniture-search:focus {
@@ -3962,7 +4130,7 @@ main {
   border: 1px solid #e0e0e0;
   border-radius: var(--button-border-radius);
   background: white;
-  font-size: 0.75rem;
+  font-size: 0.875rem;
   cursor: pointer;
   transition: all 0.15s ease;
   color: #555;
@@ -4036,7 +4204,7 @@ main {
 }
 
 .furniture-item span {
-  font-size: 0.75rem;
+  font-size: 0.875rem;
   color: #555;
   text-align: center;
 }
@@ -4054,13 +4222,13 @@ main {
 
 .properties-panel h4 {
   margin: 0 0 12px 0;
-  font-size: 0.85rem;
+  font-size: 0.875rem;
   font-weight: 600;
   color: #333;
 }
 
 .property-item-name {
-  font-size: 0.85rem;
+  font-size: 0.875rem;
   font-weight: 600;
   color: #1a1a1a;
   margin-bottom: 10px;
@@ -4075,7 +4243,7 @@ main {
 
 .property-row label {
   width: 60px;
-  font-size: 0.8rem;
+  font-size: 0.875rem;
   color: #666;
 }
 
@@ -4084,7 +4252,7 @@ main {
   padding: 6px 8px;
   border: 1px solid #e0e0e0;
   border-radius: 4px;
-  font-size: 0.85rem;
+  font-size: 0.875rem;
   width: 60px;
 }
 
@@ -4094,7 +4262,7 @@ main {
 }
 
 .property-row .unit-label {
-  font-size: 0.8rem;
+  font-size: 0.875rem;
   color: #999;
   width: 20px;
 }
@@ -4121,7 +4289,7 @@ main {
   border: 1px solid #fecaca;
   border-radius: var(--button-border-radius);
   color: #dc2626;
-  font-size: 0.85rem;
+  font-size: 0.875rem;
   cursor: pointer;
   transition: all 0.15s ease;
 }
@@ -4221,7 +4389,7 @@ main {
   background: white;
   border: 1px solid #d1d5db;
   border-radius: var(--button-border-radius);
-  font-size: 11px;
+  font-size: 14px;
   font-weight: 500;
   color: #374151;
   cursor: pointer;
@@ -4288,7 +4456,7 @@ main {
   align-items: center;
   gap: 8px;
   font-weight: 600;
-  font-size: 13px;
+  font-size: 14px;
   color: #166534;
 }
 
@@ -4336,12 +4504,12 @@ main {
   font-weight: 600;
   color: #374151;
   margin: 0 0 4px;
-  font-size: 13px;
+  font-size: 14px;
 }
 
 .feng-shui-loading small {
   color: #9ca3af;
-  font-size: 11px;
+  font-size: 14px;
 }
 
 /* Error */
@@ -4353,7 +4521,7 @@ main {
 .feng-shui-error p {
   margin: 12px 0;
   color: #ef4444;
-  font-size: 13px;
+  font-size: 14px;
 }
 
 /* Score */
@@ -4383,12 +4551,12 @@ main {
 }
 
 .score-label {
-  font-size: 10px;
+  font-size: 14px;
   color: #9ca3af;
 }
 
 .score-summary {
-  font-size: 12px;
+  font-size: 14px;
   color: #4b5563;
   line-height: 1.5;
   margin: 0;
@@ -4416,7 +4584,7 @@ main {
 }
 
 .fs-layout-label {
-  font-size: 10px;
+  font-size: 14px;
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.05em;
@@ -4453,7 +4621,7 @@ main {
 
 /* Suggestions */
 .fs-suggestions-title {
-  font-size: 11px;
+  font-size: 14px;
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.05em;
@@ -4484,7 +4652,7 @@ main {
 .suggestion-priority {
   padding: 1px 6px;
   border-radius: 4px;
-  font-size: 10px;
+  font-size: 14px;
   font-weight: 600;
   color: white;
   text-transform: uppercase;
@@ -4492,19 +4660,19 @@ main {
 
 .suggestion-name {
   font-weight: 600;
-  font-size: 12px;
+  font-size: 14px;
   color: #1f2937;
 }
 
 .suggestion-principle {
-  font-size: 11px;
+  font-size: 14px;
   font-weight: 500;
   color: #6d28d9;
   margin: 0 0 4px;
 }
 
 .suggestion-desc {
-  font-size: 11px;
+  font-size: 14px;
   color: #6b7280;
   line-height: 1.4;
   margin: 0;
@@ -4513,7 +4681,7 @@ main {
 .feng-shui-no-suggestions {
   text-align: center;
   color: #6b7280;
-  font-size: 12px;
+  font-size: 14px;
   padding: 16px;
 }
 
@@ -4527,7 +4695,7 @@ main {
   color: white;
   padding: 10px 16px;
   border-radius: 8px;
-  font-size: 12px;
+  font-size: 14px;
   display: flex;
   align-items: center;
   gap: 8px;
@@ -4552,7 +4720,7 @@ main {
   color: white;
   padding: 10px 16px;
   border-radius: 8px;
-  font-size: 13px;
+  font-size: 14px;
   z-index: 300;
   opacity: 0;
   transition: all 0.3s ease;
@@ -4593,7 +4761,7 @@ main {
   border: none;
   background: transparent;
   border-radius: var(--button-border-radius);
-  font-size: 11px;
+  font-size: 14px;
   font-weight: 500;
   color: #6b7280;
   cursor: pointer;
@@ -4649,7 +4817,7 @@ main {
   left: 6px;
   background: rgba(0, 0, 0, 0.6);
   color: white;
-  font-size: 10px;
+  font-size: 14px;
   font-weight: 600;
   padding: 2px 8px;
   border-radius: 4px;
@@ -4659,7 +4827,7 @@ main {
 .feng-shui-image-note {
   text-align: center;
   color: #9ca3af;
-  font-size: 12px;
+  font-size: 14px;
   padding: 12px;
   background: #f9fafb;
   border-radius: 8px;
@@ -4667,7 +4835,7 @@ main {
 }
 
 .feng-shui-image-suggestions .suggestions-heading {
-  font-size: 13px;
+  font-size: 14px;
   font-weight: 600;
   color: #374151;
   margin: 0 0 8px;
@@ -4676,7 +4844,7 @@ main {
 }
 
 .suggestion-position {
-  font-size: 11px;
+  font-size: 14px;
   color: #6b7280;
   margin: 4px 0 0;
   line-height: 1.4;
@@ -4747,7 +4915,7 @@ main {
   align-items: center;
   gap: 6px;
   color: #666;
-  font-size: 11px;
+  font-size: 14px;
 }
 
 .drag-info {
@@ -4772,7 +4940,7 @@ main {
   border: 1px solid #d1d5db;
   border-radius: var(--button-border-radius);
   color: #374151;
-  font-size: 13px;
+  font-size: 14px;
   cursor: pointer;
   transition: all 0.15s ease;
   width: 100%;
@@ -4805,7 +4973,7 @@ main {
 
 .control-section h5 {
   margin: 0 0 8px 0;
-  font-size: 12px;
+  font-size: 14px;
   font-weight: 600;
   color: #6b7280;
   text-transform: uppercase;
@@ -4820,7 +4988,7 @@ main {
   background: #f0f9ff;
   border: 1px solid #bae6fd;
   border-radius: 6px;
-  font-size: 13px;
+  font-size: 14px;
   color: #0369a1;
   margin-bottom: 8px;
 }
@@ -4842,7 +5010,7 @@ main {
   align-items: center;
   gap: 6px;
   color: #666;
-  font-size: 11px;
+  font-size: 14px;
 }
 
 .resize-info svg {
@@ -4875,7 +5043,7 @@ main {
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 9px;
+  font-size: 14px;
   color: #6b7280;
   font-weight: 600;
   z-index: 51;
@@ -5156,7 +5324,7 @@ main {
 
 .ref-controls-content h4 {
   margin: 0 0 12px;
-  font-size: 0.85rem;
+  font-size: 0.875rem;
   font-weight: 600;
   color: #374151;
 }
@@ -5169,7 +5337,7 @@ main {
 }
 
 .ref-image-controls .control-row label {
-  font-size: 0.8rem;
+  font-size: 0.875rem;
   color: #6b7280;
   min-width: 50px;
 }
@@ -5180,7 +5348,7 @@ main {
 }
 
 .ref-image-controls .control-row span {
-  font-size: 0.8rem;
+  font-size: 0.875rem;
   color: #374151;
   min-width: 40px;
   text-align: right;
@@ -5196,7 +5364,7 @@ main {
   background: #fef2f2;
   color: #ef4444;
   cursor: pointer;
-  font-size: 0.8rem;
+  font-size: 0.875rem;
   font-weight: 500;
   transition: all 0.2s ease;
 }
@@ -5427,7 +5595,7 @@ main {
 
 .auth-divider span {
   color: var(--text-light);
-  font-size: 13px;
+  font-size: 14px;
 }
 
 .auth-switch {
@@ -5495,7 +5663,7 @@ main {
 }
 
 .auth-success .success-note {
-  font-size: 13px;
+  font-size: 14px;
   color: var(--text-light);
   margin-bottom: 1.5rem;
   padding: 1rem;
@@ -5576,7 +5744,7 @@ main {
   background: none;
   border: none;
   color: var(--text-light);
-  font-size: 13px;
+  font-size: 14px;
   padding: 4px 0;
   cursor: pointer;
   width: 100%;
@@ -5622,7 +5790,7 @@ main {
 }
 
 .tokens-label {
-  font-size: 12px;
+  font-size: 14px;
   color: var(--text-light);
 }
 
@@ -5796,7 +5964,7 @@ main {
 }
 
 .tokens-footer {
-  font-size: 0.75rem;
+  font-size: 0.875rem;
   color: var(--text-light);
   text-align: center;
   margin: 0;
@@ -5913,7 +6081,7 @@ main {
 }
 
 .subscribe-note {
-  font-size: 0.78rem;
+  font-size: 0.875rem;
   color: var(--text-light, #94a3b8);
   margin: 0;
   text-align: center;
