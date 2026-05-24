@@ -23,6 +23,7 @@ const FloorPlanEditor = (() => {
     let freeformOpenings = []; // Doors/windows not attached to walls
     let referenceImages = [];
     let importedElements = []; // Track imported SVG elements for selection/deletion
+    let roomNames = {}; // room face key -> display name
     let undoStack = [];
     let redoStack = [];
     let hasUnsavedChanges = false;
@@ -59,7 +60,7 @@ const FloorPlanEditor = (() => {
     let scale = 50; // pixels per foot (must match gridSize)
     let unit = 'ft';
     let wallThickness = 8;
-    let showGrid = false; // Toggle for grid overlay (starts hidden until reference image added)
+    let showGrid = true;
     let snapToGrid = true;
     let showDimensions = true;
     let gridSize = 50; // pixels per grid unit (1 foot = 50 pixels)
@@ -80,6 +81,7 @@ const FloorPlanEditor = (() => {
     
     // Panning state
     let isPanning = false;
+    let spacePanHeld = false;
     let panStart = { x: 0, y: 0 };
     let panOffset = { x: 0, y: 0 };
     
@@ -240,15 +242,8 @@ const FloorPlanEditor = (() => {
         });
         
         // Settings
-        document.getElementById('scale-select')?.addEventListener('change', (e) => {
-            scale = parseInt(e.target.value);
-            updateCanvasInfo();
-            redrawAll();
-        });
-        
         document.getElementById('unit-select')?.addEventListener('change', (e) => {
             unit = e.target.value;
-            updateCanvasInfo();
             redrawAll();
         });
         
@@ -296,6 +291,7 @@ const FloorPlanEditor = (() => {
         // Canvas events
         svg.addEventListener('mousedown', handleMouseDown);
         svg.addEventListener('mousemove', handleMouseMove);
+        svg.addEventListener('dblclick', handleCanvasDoubleClick);
         svg.addEventListener('mouseup', handleMouseUp);
         
         // Scroll/trackpad for pan and zoom (Figma-style)
@@ -309,6 +305,14 @@ const FloorPlanEditor = (() => {
         
         // Keyboard shortcuts
         document.addEventListener('keydown', handleKeyDown);
+        document.addEventListener('keyup', handleKeyUp);
+        
+        const showGridEl = document.getElementById('show-grid');
+        if (showGridEl) {
+            showGrid = showGridEl.checked;
+            const gridBg = document.getElementById('grid-background');
+            if (gridBg) gridBg.style.display = showGrid ? 'block' : 'none';
+        }
         
         // Warn when leaving the page with unsaved changes (tab close, refresh, navigate away)
         window.addEventListener('beforeunload', (e) => {
@@ -352,12 +356,162 @@ const FloorPlanEditor = (() => {
         document.getElementById('door-invert-direction-btn')?.addEventListener('click', invertSelectedDoorDirection);
         document.getElementById('rotate-left-btn')?.addEventListener('click', () => rotateSelectedBy(-90));
         document.getElementById('rotate-right-btn')?.addEventListener('click', () => rotateSelectedBy(90));
+        document.getElementById('duplicate-selection-btn')?.addEventListener('click', duplicateSelected);
+        document.getElementById('mirror-selection-btn')?.addEventListener('click', mirrorSelectionHorizontal);
         
         // Load furniture SVGs then populate the grid
         loadFurnitureSvgs().then(() => updateFurnitureGrid());
         
-        // Update canvas info
-        updateCanvasInfo();
+        initToolHintPopover();
+        if (typeof feather !== 'undefined') feather.replace();
+    }
+
+    const TOOL_LABELS = {
+        select: 'Select',
+        wall: 'Wall',
+        room: 'Room',
+        door: 'Door',
+        window: 'Window',
+        garage: 'Garage door',
+        curve: 'Curve wall',
+        stairs: 'Stairs',
+        label: 'Label',
+    };
+
+    const CANVAS_NAV_HINTS = [
+        { keys: '⌘/Ctrl + drag', desc: 'Pan' },
+        { keys: 'Space + drag', desc: 'Pan' },
+        { keys: 'Scroll / trackpad', desc: 'Pan' },
+        { keys: '⌘/Ctrl + scroll', desc: 'Zoom' },
+    ];
+
+    const EDIT_SHORTCUT_HINTS = [
+        { keys: '⌘Z', desc: 'Undo' },
+        { keys: '⌘⇧Z / ⌘Y', desc: 'Redo' },
+        { keys: '⌘C / ⌘V', desc: 'Copy / paste' },
+        { keys: '⌘A', desc: 'Select all' },
+        { keys: '⌘D', desc: 'Duplicate selection' },
+        { keys: 'Delete', desc: 'Delete selected' },
+        { keys: 'Esc', desc: 'Cancel / deselect' },
+        { keys: 'F', desc: 'Reverse door hinge (door selected)' },
+        { keys: 'I', desc: 'Invert door swing (door selected)' },
+    ];
+
+    const TOOL_SHORTCUT_HINTS = [
+        { keys: 'V', tool: 'select' },
+        { keys: 'W', tool: 'wall' },
+        { keys: 'R', tool: 'room' },
+        { keys: 'D', tool: 'door' },
+        { keys: 'L', tool: 'label' },
+        { keys: 'S', tool: 'stairs' },
+    ];
+
+    const TOOL_HINTS = {
+        select: 'Click to select · drag to move · Shift+click to multi-select · double-click a room to name it',
+        wall: 'Click two points to draw a wall · segments chain from the last corner',
+        room: 'Click and drag to draw a rectangular room',
+        door: 'Click two points on the same wall to place a door',
+        window: 'Click two points on the same wall to place a window',
+        garage: 'Click two points on the same wall to place a garage door',
+        curve: 'Click a corner, then pick two walls meeting there to add a curve',
+        stairs: 'Click and drag to place stairs',
+        label: 'Click anywhere to add a text label',
+    };
+
+    let toolHintMenuOpen = false;
+
+    function renderToolHintMenu() {
+        const panel = document.getElementById('tool-hint-menu-panel');
+        if (!panel) return;
+
+        const renderSection = (title, itemsHtml) => `
+            <section class="tool-hint-section">
+                <h4 class="tool-hint-section-title">${title}</h4>
+                <ul class="tool-hint-list">${itemsHtml}</ul>
+            </section>`;
+
+        const canvasItems = CANVAS_NAV_HINTS.map(({ keys, desc }) => `
+            <li class="tool-hint-item">
+                <span class="tool-hint-keys">${keys}</span>
+                <span class="tool-hint-desc">${desc}</span>
+            </li>`).join('');
+
+        const toolItems = Object.entries(TOOL_HINTS).map(([tool, hint]) => {
+            const shortcut = TOOL_SHORTCUT_HINTS.find((entry) => entry.tool === tool);
+            const keys = shortcut
+                ? `${shortcut.keys} · ${TOOL_LABELS[tool] || tool}`
+                : (TOOL_LABELS[tool] || tool);
+            return `
+            <li class="tool-hint-item" data-tool="${tool}">
+                <span class="tool-hint-keys">${keys}</span>
+                <span class="tool-hint-desc">${hint}</span>
+            </li>`;
+        }).join('');
+
+        const editItems = EDIT_SHORTCUT_HINTS.map(({ keys, desc }) => `
+            <li class="tool-hint-item">
+                <span class="tool-hint-keys">${keys}</span>
+                <span class="tool-hint-desc">${desc}</span>
+            </li>`).join('');
+
+        panel.innerHTML =
+            renderSection('Canvas navigation', canvasItems) +
+            renderSection('Tools', toolItems) +
+            renderSection('Editing', editItems);
+    }
+
+    function setToolHintMenuOpen(open) {
+        const popover = document.getElementById('tool-hint-popover');
+        const btn = document.getElementById('tool-hint-btn');
+        const menu = document.getElementById('tool-hint-menu');
+        if (!popover || !btn || !menu) return;
+
+        toolHintMenuOpen = open;
+        btn.setAttribute('aria-expanded', open ? 'true' : 'false');
+        menu.classList.toggle('hidden', !open);
+        popover.classList.toggle('is-open', open);
+    }
+
+    function toggleToolHintMenu() {
+        setToolHintMenuOpen(!toolHintMenuOpen);
+    }
+
+    function initToolHintPopover() {
+        renderToolHintMenu();
+
+        document.getElementById('tool-hint-btn')?.addEventListener('click', (e) => {
+            e.stopPropagation();
+            toggleToolHintMenu();
+        });
+
+        document.addEventListener('click', (e) => {
+            if (!toolHintMenuOpen) return;
+            const popover = document.getElementById('tool-hint-popover');
+            if (popover && !popover.contains(e.target)) {
+                setToolHintMenuOpen(false);
+            }
+        });
+    }
+
+    function updateRoomFillInteraction() {
+        if (!roomsLayer) return;
+        const interactive = currentTool === 'select';
+        roomsLayer.querySelectorAll('.room-fill').forEach((poly) => {
+            poly.classList.toggle('room-fill-interactive', interactive);
+        });
+    }
+
+    function updateZoomLevelDisplay() {
+        const zoomLevelEl = document.getElementById('zoom-level');
+        if (zoomLevelEl) zoomLevelEl.textContent = `${Math.round(zoom * 100)}%`;
+    }
+
+    function updateSelectionActionsPanel() {
+        const panel = document.getElementById('selection-actions-panel');
+        if (!panel) return;
+        const canTransform = selectedElements.some((sel) => sel.type === 'furniture' || sel.type === 'label');
+        panel.classList.toggle('hidden', !canTransform);
+        if (canTransform && typeof feather !== 'undefined') feather.replace();
     }
     
     function show() {
@@ -372,10 +526,10 @@ const FloorPlanEditor = (() => {
         const layoutName = (stateToRestore && stateToRestore.name) || 'Untitled layout';
         if (typeof window.__decoraiOnLayoutEditorShown === 'function') window.__decoraiOnLayoutEditorShown({ name: layoutName });
         feather.replace();
-        updateCanvasInfo();
         initRulers();
         setInitialZoom();
         applySubscriptionRestrictions();
+        updateRoomFillInteraction();
     }
 
     function applySubscriptionRestrictions() {
@@ -463,10 +617,13 @@ const FloorPlanEditor = (() => {
         const dim = Math.min(wrapper.clientWidth, wrapper.clientHeight);
         zoom = dim / (targetFeet * scale);
         panOffset = { x: 0, y: 0 };
+        const zoomLevelEl = document.getElementById('zoom-level');
+        if (zoomLevelEl) zoomLevelEl.textContent = Math.round(zoom * 100) + '%';
         applyTransform();
     }
     
     function hide() {
+        setToolHintMenuOpen(false);
         layoutEditorScreen.classList.add('hidden');
         document.body.style.overflow = '';
     }
@@ -511,6 +668,7 @@ const FloorPlanEditor = (() => {
         // Cancel any drawing in progress
         cancelDrawing();
         deselectAll();
+        updateRoomFillInteraction();
     }
     
     function getMousePos(e, forceNoSnap) {
@@ -527,8 +685,8 @@ const FloorPlanEditor = (() => {
     }
     
     function handleMouseDown(e) {
-        // Check for panning (Cmd/Ctrl + drag)
-        if (e.metaKey || e.ctrlKey) {
+        // Check for panning (Space, Cmd/Ctrl + drag)
+        if (spacePanHeld || e.metaKey || e.ctrlKey) {
             isPanning = true;
             panStart = { x: e.clientX, y: e.clientY };
             svg.style.cursor = 'grabbing';
@@ -1509,6 +1667,12 @@ const FloorPlanEditor = (() => {
                     </small>
                 </div>
                 <div class="control-row">
+                    <button id="ref-trace-btn" class="secondary-btn">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3 4 7v6c0 5 3.5 9.5 8 11 4.5-1.5 8-6 8-11V7l-8-4z"></path><path d="M12 8v8"></path><path d="M8 12h8"></path></svg>
+                        Trace to vectors
+                    </button>
+                </div>
+                <div class="control-row">
                     <button id="ref-center-btn" class="secondary-btn">
                         <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><line x1="22" y1="12" x2="18" y2="12"></line><line x1="6" y1="12" x2="2" y2="12"></line><line x1="12" y1="6" x2="12" y2="2"></line><line x1="12" y1="22" x2="12" y2="18"></line></svg>
                         Center Image
@@ -1539,6 +1703,10 @@ const FloorPlanEditor = (() => {
         // Center button
         document.getElementById('ref-center-btn').addEventListener('click', () => {
             centerReferenceImage(refImage);
+        });
+
+        document.getElementById('ref-trace-btn')?.addEventListener('click', () => {
+            traceReferenceImage(refImage);
         });
         
         // Delete button
@@ -1854,6 +2022,21 @@ const FloorPlanEditor = (() => {
         }
     }
     
+    async function traceReferenceImage(refImage) {
+        if (!refImage?.dataUrl) return;
+        try {
+            const res = await fetch(refImage.dataUrl);
+            const blob = await res.blob();
+            const file = new File([blob], 'reference.png', { type: blob.type || 'image/png' });
+            await convertImageToSVG(file);
+        } catch (err) {
+            console.error('Trace reference image failed:', err);
+            if (window.showAlertDialog) {
+                window.showAlertDialog('Could not trace this image. Try a clearer floor plan photo.');
+            }
+        }
+    }
+    
     async function convertImageToSVG(file) {
         if (isConvertingImage) {
             if (window.showAlertDialog) {
@@ -2050,6 +2233,10 @@ const FloorPlanEditor = (() => {
         const isTyping = e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' || e.target.isContentEditable;
         
         if (e.key === 'Escape') {
+            if (toolHintMenuOpen) {
+                setToolHintMenuOpen(false);
+                return;
+            }
             cancelDrawing();
             deselectAll();
         } else if ((e.key === 'Delete' || e.key === 'Backspace') && !isTyping) {
@@ -2075,8 +2262,17 @@ const FloorPlanEditor = (() => {
             } else if (e.key.toLowerCase() === 'a') {
                 e.preventDefault();
                 selectAll();
+            } else if (e.key.toLowerCase() === 'd') {
+                e.preventDefault();
+                duplicateSelected();
             }
         } else if (!isTyping) {
+            if (e.code === 'Space') {
+                e.preventDefault();
+                spacePanHeld = true;
+                if (svg) svg.style.cursor = 'grab';
+                return;
+            }
             if (e.key.toLowerCase() === 'f' && selectedElement?.type === 'opening' && selectedElement.element.opening?.type === 'door') {
                 e.preventDefault();
                 reverseSelectedDoorSwing();
@@ -2096,6 +2292,17 @@ const FloorPlanEditor = (() => {
             } else if (e.key === 's') {
                 selectTool('stairs');
             }
+        }
+    }
+
+    function handleKeyUp(e) {
+        if (!layoutEditorScreen || layoutEditorScreen.classList.contains('hidden')) return;
+        if (e.code === 'Space') {
+            spacePanHeld = false;
+            if (isPanning) {
+                isPanning = false;
+            }
+            if (svg && !isPanning) svg.style.cursor = '';
         }
     }
     
@@ -4558,6 +4765,7 @@ const FloorPlanEditor = (() => {
         if (type === 'wall' || type === 'label' || type === 'imported' || type === 'referenceImage') {
             showScaleHandles();
         }
+        updateSelectionActionsPanel();
     }
     
     function addToSelection(element, type) {
@@ -4595,6 +4803,7 @@ const FloorPlanEditor = (() => {
         if (selectedElements.length > 0) {
             showScaleHandles();
         }
+        updateSelectionActionsPanel();
     }
     
     function highlightElement(element, type, on) {
@@ -4681,6 +4890,7 @@ const FloorPlanEditor = (() => {
         removeScaleHandles();
         removeRefImageHandles();
         hideProperties();
+        updateSelectionActionsPanel();
     }
     
     function selectAll() {
@@ -4746,6 +4956,7 @@ const FloorPlanEditor = (() => {
             hideProperties();
             showScaleHandles();
         }
+        updateSelectionActionsPanel();
     }
     
     // --- Scale handles for selected elements ---
@@ -5616,6 +5827,53 @@ const FloorPlanEditor = (() => {
                 y: item.data.y + pasteOffset
             }
         }));
+
+        hasUnsavedChanges = true;
+        updateSelectionActionsPanel();
+    }
+
+    function duplicateSelected() {
+        if (!selectedElements.some((sel) => sel.type === 'furniture' || sel.type === 'label')) return;
+        copySelected();
+        pasteClipboard();
+    }
+
+    function mirrorSelectionHorizontal() {
+        const items = selectedElements.filter((sel) => sel.type === 'furniture' || sel.type === 'label');
+        if (items.length === 0) return;
+
+        let minX = Infinity;
+        let maxX = -Infinity;
+        for (const sel of items) {
+            if (sel.type === 'furniture') {
+                const item = sel.element;
+                minX = Math.min(minX, item.x);
+                maxX = Math.max(maxX, item.x + item.width);
+            } else if (sel.type === 'label') {
+                minX = Math.min(minX, sel.element.x);
+                maxX = Math.max(maxX, sel.element.x);
+            }
+        }
+        if (minX === Infinity) return;
+        const axisX = (minX + maxX) / 2;
+
+        addToHistory();
+        for (const sel of items) {
+            if (sel.type === 'furniture') {
+                const item = sel.element;
+                const centerX = item.x + item.width / 2;
+                item.x = axisX + (axisX - centerX) - item.width / 2;
+                item.rotation = (360 - (item.rotation || 0)) % 360;
+            } else if (sel.type === 'label') {
+                sel.element.x = axisX + (axisX - sel.element.x);
+            }
+        }
+
+        redrawFurniture();
+        labelsLayer.innerHTML = '';
+        labels.forEach((label) => renderLabel(label));
+        reapplySelectionHighlights();
+        hasUnsavedChanges = true;
     }
     
     function showProperties(item) {
@@ -5877,7 +6135,8 @@ const FloorPlanEditor = (() => {
                 type: el.type,
                 html: el.element.outerHTML,
                 parentId: el.element.parentNode?.id || 'walls-layer'
-            }))
+            })),
+            roomNames: JSON.parse(JSON.stringify(roomNames))
         };
     }
     
@@ -5889,6 +6148,7 @@ const FloorPlanEditor = (() => {
         furniture = Array.isArray(state.furniture) ? state.furniture.map(f => ({ ...f })) : [];
         labels = Array.isArray(state.labels) ? state.labels.map(l => ({ ...l })) : [];
         referenceImages = Array.isArray(state.referenceImages) ? state.referenceImages.map(r => ({ ...r })) : [];
+        roomNames = state.roomNames && typeof state.roomNames === 'object' ? { ...state.roomNames } : {};
         
         // Restore corners first
         (state.corners || []).forEach(c => {
@@ -5995,6 +6255,7 @@ const FloorPlanEditor = (() => {
         freeformOpenings = [];
         referenceImages = [];
         importedElements = [];
+        roomNames = {};
         undoStack = [];
         redoStack = [];
         
@@ -6008,6 +6269,179 @@ const FloorPlanEditor = (() => {
     }
     
     // Redraw functions
+    function getCornerId(corner) {
+        return typeof corner === 'object' ? corner.id : corner;
+    }
+
+    function polygonSignedArea(points) {
+        let sum = 0;
+        for (let i = 0; i < points.length; i++) {
+            const j = (i + 1) % points.length;
+            sum += points[i].x * points[j].y - points[j].x * points[i].y;
+        }
+        return sum / 2;
+    }
+
+    function findEnclosedRoomFaces() {
+        if (walls.length < 3 || corners.length < 3) return [];
+
+        const cornerById = new Map(corners.map((c) => [c.id, c]));
+        const outgoing = new Map();
+
+        for (const wall of walls) {
+            const aId = getCornerId(wall.start);
+            const bId = getCornerId(wall.end);
+            const ca = cornerById.get(aId);
+            const cb = cornerById.get(bId);
+            if (!ca || !cb) continue;
+
+            const angleAB = Math.atan2(cb.y - ca.y, cb.x - ca.x);
+            const angleBA = Math.atan2(ca.y - cb.y, ca.x - cb.x);
+            if (!outgoing.has(aId)) outgoing.set(aId, []);
+            if (!outgoing.has(bId)) outgoing.set(bId, []);
+            outgoing.get(aId).push({ to: bId, angle: angleAB });
+            outgoing.get(bId).push({ to: aId, angle: angleBA });
+        }
+
+        for (const edges of outgoing.values()) {
+            edges.sort((a, b) => a.angle - b.angle);
+        }
+
+        const visited = new Set();
+        const faces = [];
+
+        for (const [from, edges] of outgoing) {
+            for (const { to } of edges) {
+                const startKey = `${from}->${to}`;
+                if (visited.has(startKey)) continue;
+
+                const points = [];
+                let u = from;
+                let v = to;
+                let guard = 0;
+
+                while (guard++ < walls.length * 4) {
+                    visited.add(`${u}->${v}`);
+                    const pt = cornerById.get(u);
+                    if (pt) points.push({ x: pt.x, y: pt.y });
+
+                    const out = outgoing.get(v) || [];
+                    const incomingIdx = out.findIndex((edge) => edge.to === u);
+                    if (incomingIdx === -1) {
+                        points.length = 0;
+                        break;
+                    }
+                    const nextIdx = (incomingIdx - 1 + out.length) % out.length;
+                    u = v;
+                    v = out[nextIdx].to;
+                    if (u === from && v === to) break;
+                }
+
+                if (points.length < 3) continue;
+                const signedArea = polygonSignedArea(points);
+                if (signedArea <= 0) continue;
+                if (signedArea < scale * scale * 2) continue;
+
+                faces.push({ points, areaPx: signedArea });
+            }
+        }
+
+        const unique = [];
+        const seen = new Set();
+        for (const face of faces) {
+            const cx = face.points.reduce((sum, p) => sum + p.x, 0) / face.points.length;
+            const cy = face.points.reduce((sum, p) => sum + p.y, 0) / face.points.length;
+            const key = `${Math.round(cx / 10)},${Math.round(cy / 10)},${Math.round(face.areaPx / 100)}`;
+            if (seen.has(key)) continue;
+            seen.add(key);
+            unique.push(face);
+        }
+
+        if (unique.length > 1) {
+            unique.sort((a, b) => b.areaPx - a.areaPx);
+            return unique.slice(1);
+        }
+        return unique;
+    }
+
+    function formatRoomArea(areaPx) {
+        const areaUnits = areaPx / (scale * scale);
+        if (unit === 'ft') {
+            return `${Math.round(areaUnits)} sq ft`;
+        }
+        return `${areaUnits.toFixed(1)} sq m`;
+    }
+
+    function getRoomFaceKey(face) {
+        const cx = face.points.reduce((sum, p) => sum + p.x, 0) / face.points.length;
+        const cy = face.points.reduce((sum, p) => sum + p.y, 0) / face.points.length;
+        return `room-${Math.round(cx)}-${Math.round(cy)}`;
+    }
+
+    function handleCanvasDoubleClick(e) {
+        if (!layoutEditorScreen || layoutEditorScreen.classList.contains('hidden')) return;
+        if (currentTool !== 'select') return;
+        const faceKey = e.target?.dataset?.roomKey;
+        if (!faceKey) return;
+        e.preventDefault();
+        promptRoomNameForFace(faceKey);
+    }
+
+    function promptRoomNameForFace(faceKey) {
+        const current = roomNames[faceKey] || '';
+        const name = window.prompt('Room name:', current);
+        if (name === null) return;
+        addToHistory();
+        const trimmed = name.trim();
+        if (trimmed) roomNames[faceKey] = trimmed;
+        else delete roomNames[faceKey];
+        hasUnsavedChanges = true;
+        renderRoomFills();
+        updateRoomFillInteraction();
+    }
+
+    function renderRoomFills() {
+        if (!roomsLayer) return;
+        roomsLayer.innerHTML = '';
+        const faces = findEnclosedRoomFaces();
+        faces.forEach((face, index) => {
+            const faceKey = getRoomFaceKey(face);
+            const cx = face.points.reduce((sum, p) => sum + p.x, 0) / face.points.length;
+            const cy = face.points.reduce((sum, p) => sum + p.y, 0) / face.points.length;
+            const roomName = roomNames[faceKey];
+
+            const polygon = document.createElementNS('http://www.w3.org/2000/svg', 'polygon');
+            polygon.setAttribute('points', face.points.map((p) => `${p.x},${p.y}`).join(' '));
+            polygon.setAttribute('class', 'room-fill');
+            polygon.setAttribute('fill', `hsl(${(index * 47 + 200) % 360} 55% 94%)`);
+            polygon.dataset.roomKey = faceKey;
+            roomsLayer.appendChild(polygon);
+
+            if (roomName) {
+                const nameLabel = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+                nameLabel.setAttribute('x', cx);
+                nameLabel.setAttribute('y', cy - 10);
+                nameLabel.setAttribute('text-anchor', 'middle');
+                nameLabel.setAttribute('dominant-baseline', 'middle');
+                nameLabel.setAttribute('class', 'room-name-label');
+                nameLabel.dataset.roomKey = faceKey;
+                nameLabel.textContent = roomName;
+                roomsLayer.appendChild(nameLabel);
+            }
+
+            const areaLabel = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+            areaLabel.setAttribute('x', cx);
+            areaLabel.setAttribute('y', roomName ? cy + 12 : cy);
+            areaLabel.setAttribute('text-anchor', 'middle');
+            areaLabel.setAttribute('dominant-baseline', 'middle');
+            areaLabel.setAttribute('class', 'room-area-label');
+            areaLabel.dataset.roomKey = faceKey;
+            areaLabel.textContent = formatRoomArea(face.areaPx);
+            roomsLayer.appendChild(areaLabel);
+        });
+        updateRoomFillInteraction();
+    }
+
     function redrawAll() {
         imageLayer.innerHTML = '';
         wallsLayer.innerHTML = '';
@@ -6019,6 +6453,7 @@ const FloorPlanEditor = (() => {
         
         // Redraw in order
         referenceImages.forEach(img => renderReferenceImage(img));
+        renderRoomFills();
         walls.forEach(wall => renderWall(wall));
         freeformOpenings.forEach(opening => renderFreeformOpening(opening));
         furniture.forEach(item => renderFurniture(item));
@@ -6126,7 +6561,7 @@ const FloorPlanEditor = (() => {
         panOffset.x = centerX - canvasX * zoom;
         panOffset.y = centerY - canvasY * zoom;
         
-        document.getElementById('zoom-level') && (document.getElementById('zoom-level').textContent = Math.round(zoom * 100) + '%');
+        document.getElementById('zoom-level') && updateZoomLevelDisplay();
         applyTransform();
         updateRulers();
     }
@@ -6189,7 +6624,7 @@ const FloorPlanEditor = (() => {
                 panOffset.x = mouseX - canvasX * zoom;
                 panOffset.y = mouseY - canvasY * zoom;
                 
-                document.getElementById('zoom-level') && (document.getElementById('zoom-level').textContent = Math.round(zoom * 100) + '%');
+                updateZoomLevelDisplay();
                 applyTransform();
             }
         } else {
@@ -6217,13 +6652,7 @@ const FloorPlanEditor = (() => {
     
     function exportAs(format) {
         document.getElementById('export-menu')?.classList.remove('show');
-        
-        // Check if there are selected elements
-        if (selectedElements.length === 0) {
-            showExportMessage('Please select items to export');
-            return;
-        }
-        
+
         if (format === 'svg') {
             exportSVG();
         } else if (format === 'png') {
@@ -6350,6 +6779,9 @@ const FloorPlanEditor = (() => {
             const imageClone = imageLayer.cloneNode(true);
             contentGroup.appendChild(imageClone);
         }
+        if (roomsLayer && roomsLayer.children.length > 0) {
+            contentGroup.appendChild(roomsLayer.cloneNode(true));
+        }
         if (wallsLayer) {
             const wallsClone = wallsLayer.cloneNode(true);
             wallsClone.querySelectorAll('.selection-handle, .rotation-handle, .opening-preview').forEach(el => el.remove());
@@ -6389,115 +6821,47 @@ const FloorPlanEditor = (() => {
         return canvas.toDataURL('image/jpeg', 0.8);
     }
     
+    function appendClonedExportLayer(layer, target, removeSelectors = []) {
+        if (!layer || !layer.children.length) return;
+        const clone = layer.cloneNode(true);
+        removeSelectors.forEach((selector) => {
+            clone.querySelectorAll(selector).forEach((el) => el.remove());
+        });
+        clone.querySelectorAll('[marker-end], [marker-start], [marker-mid]').forEach((el) => {
+            el.removeAttribute('marker-end');
+            el.removeAttribute('marker-start');
+            el.removeAttribute('marker-mid');
+        });
+        target.appendChild(clone);
+    }
+
     function prepareExportSVG() {
         const includeDimensions = document.getElementById('export-include-dimensions')?.checked || false;
-        const bounds = getSelectedBounds();
-        
-        // Create a new SVG with only selected elements
+        const bounds = getAllContentBounds();
+
         const exportSvg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
         exportSvg.setAttribute('xmlns', 'http://www.w3.org/2000/svg');
-        
-        // Create a group for the content, translated to center the selection
+        exportSvg.setAttribute('xmlns:xlink', 'http://www.w3.org/1999/xlink');
+
         const contentGroup = document.createElementNS('http://www.w3.org/2000/svg', 'g');
         contentGroup.setAttribute('transform', `translate(${-bounds.x}, ${-bounds.y})`);
-        
-        // Clone and add only selected elements
-        for (const sel of selectedElements) {
-            if (sel.type === 'wall') {
-                // Clone wall line
-                const originalEl = wallsLayer.querySelector(`[data-wall-id="${sel.element.id}"]`);
-                if (originalEl) {
-                    const clone = originalEl.cloneNode(true);
-                    clone.classList.remove('selected');
-                    // Set inline stroke color for export
-                    clone.setAttribute('stroke', '#333');
-                    contentGroup.appendChild(clone);
-                }
-                
-                // Clone any openings (doors/windows) on this wall
-                const wall = sel.element;
-                for (const opening of wall.openings) {
-                    // Find and clone door/window elements
-                    const doorEls = wallsLayer.querySelectorAll('.door-element, .window-element');
-                    doorEls.forEach(el => {
-                        // Check if this element is on the selected wall (based on transform position)
-                        const transform = el.getAttribute('transform');
-                        if (transform) {
-                            const clone = el.cloneNode(true);
-                            contentGroup.appendChild(clone);
-                        }
-                    });
-                }
-            } else if (sel.type === 'furniture') {
-                const originalEl = furnitureLayer.querySelector(`[data-furniture-id="${sel.element.id}"]`);
-                if (originalEl) {
-                    const clone = originalEl.cloneNode(true);
-                    // Remove text label from furniture
-                    clone.querySelectorAll('text').forEach(t => t.remove());
-                    // Remove selection class
-                    clone.classList.remove('selected');
-                    contentGroup.appendChild(clone);
-                }
-            } else if (sel.type === 'label') {
-                const originalEl = labelsLayer.querySelector(`[data-label-id="${sel.element.id}"]`);
-                if (originalEl) {
-                    const clone = originalEl.cloneNode(true);
-                    clone.style.fill = ''; // Reset selection color
-                    contentGroup.appendChild(clone);
-                }
-            }
-        }
-        
-        // Optionally include dimensions for selected furniture
+
+        appendClonedExportLayer(imageLayer, contentGroup);
+        appendClonedExportLayer(roomsLayer, contentGroup);
+        appendClonedExportLayer(wallsLayer, contentGroup, ['.selection-handle', '.rotation-handle', '.opening-preview']);
+        appendClonedExportLayer(furnitureLayer, contentGroup, ['.selection-handle', '.rotation-handle']);
+        appendClonedExportLayer(labelsLayer, contentGroup);
         if (includeDimensions) {
-            for (const sel of selectedElements) {
-                if (sel.type === 'furniture') {
-                    const item = sel.element;
-                    const widthText = document.createElementNS('http://www.w3.org/2000/svg', 'text');
-                    widthText.setAttribute('x', item.x + item.width / 2);
-                    widthText.setAttribute('y', item.y - 8);
-                    widthText.setAttribute('text-anchor', 'middle');
-                    widthText.setAttribute('font-size', '11');
-                    widthText.setAttribute('fill', '#666');
-                    widthText.setAttribute('font-family', 'Arial, sans-serif');
-                    widthText.textContent = formatDimension(item.width / scale);
-                    contentGroup.appendChild(widthText);
-                    
-                    const heightText = document.createElementNS('http://www.w3.org/2000/svg', 'text');
-                    heightText.setAttribute('x', item.x - 8);
-                    heightText.setAttribute('y', item.y + item.height / 2);
-                    heightText.setAttribute('text-anchor', 'end');
-                    heightText.setAttribute('dominant-baseline', 'middle');
-                    heightText.setAttribute('font-size', '11');
-                    heightText.setAttribute('fill', '#666');
-                    heightText.setAttribute('font-family', 'Arial, sans-serif');
-                    heightText.textContent = formatDimension(item.height / scale);
-                    contentGroup.appendChild(heightText);
-                }
-            }
+            appendClonedExportLayer(dimensionsLayer, contentGroup);
         }
-        
+
         exportSvg.appendChild(contentGroup);
-        
-        // Remove rotation handles if any were cloned
-        exportSvg.querySelectorAll('.rotation-handle').forEach(h => h.remove());
-        
-        // Add embedded styles for proper rendering
-        const styleElement = document.createElementNS('http://www.w3.org/2000/svg', 'style');
-        styleElement.textContent = `
-            .wall-line { stroke: #333; stroke-linecap: round; }
-            .door-element .door-frame { fill: white; }
-            .door-element .door-swing { stroke: #8B4513; stroke-width: 1.5; fill: none; stroke-dasharray: 4,2; }
-            .window-element .window-frame { fill: #87CEEB; stroke: #4A90A4; stroke-width: 2; }
-            .window-element .window-mullion { stroke: #4A90A4; stroke-width: 2; }
-            .furniture-element rect { stroke: #666; stroke-width: 1; }
-            .furniture-element circle { stroke: #666; stroke-width: 1; }
-            .furniture-element ellipse { stroke: #666; stroke-width: 1; }
-            .room-label { font-family: Arial, sans-serif; font-size: 14px; fill: #666; }
-        `;
-        exportSvg.insertBefore(styleElement, exportSvg.firstChild);
-        
-        return { svg: exportSvg, bounds: bounds };
+        applyInlineStylesToSVG(exportSvg);
+
+        return {
+            svg: exportSvg,
+            bounds: { x: 0, y: 0, width: bounds.width, height: bounds.height },
+        };
     }
     
     function applyInlineStylesToSVG(svgElement) {
@@ -6558,6 +6922,18 @@ const FloorPlanEditor = (() => {
             el.setAttribute('fill', '#666');
         });
         
+        svgElement.querySelectorAll('.room-name-label').forEach(el => {
+            el.setAttribute('font-family', 'Arial, sans-serif');
+            el.setAttribute('font-size', '14');
+            el.setAttribute('fill', '#334155');
+        });
+
+        svgElement.querySelectorAll('.room-area-label').forEach(el => {
+            el.setAttribute('font-family', 'Arial, sans-serif');
+            el.setAttribute('font-size', '14');
+            el.setAttribute('fill', '#64748b');
+        });
+
         // Apply inline styles to room labels
         svgElement.querySelectorAll('.room-label').forEach(el => {
             el.setAttribute('font-family', 'Arial, sans-serif');
@@ -6639,20 +7015,6 @@ const FloorPlanEditor = (() => {
         link.download = filename;
         link.click();
         URL.revokeObjectURL(url);
-    }
-    
-    // Canvas info
-    function updateCanvasInfo() {
-        const wrapper = document.getElementById('layout-canvas-wrapper');
-        if (!wrapper) return;
-        
-        const widthFt = wrapper.clientWidth / scale;
-        const heightFt = wrapper.clientHeight / scale;
-        
-        const sizeDisplay = document.getElementById('canvas-size');
-        if (sizeDisplay) {
-            sizeDisplay.textContent = formatDimension(widthFt) + ' × ' + formatDimension(heightFt);
-        }
     }
     
     // ==========================================
@@ -8110,6 +8472,10 @@ const FloorPlanEditor = (() => {
         if (state) restoreState(state);
     }
     
+    function markSaved() {
+        hasUnsavedChanges = false;
+    }
+
     // Public API
     return {
         init,
@@ -8117,7 +8483,8 @@ const FloorPlanEditor = (() => {
         hide,
         getState,
         loadState,
-        getPreviewDataURL
+        getPreviewDataURL,
+        markSaved
     };
 })();
 

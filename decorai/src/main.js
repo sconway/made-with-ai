@@ -890,6 +890,7 @@ async function handleSaveLayout() {
             if (typeof window.__decoraiCurrentLayoutId !== 'undefined') window.__decoraiCurrentLayoutId = targetId;
         }
         showLayoutSaveToast('Layout saved.');
+        if (typeof FloorPlanEditor.markSaved === 'function') FloorPlanEditor.markSaved();
         refreshLayoutsList(true);
     } catch (e) {
         showLayoutSaveToast(e?.message || 'Failed to save layout', true);

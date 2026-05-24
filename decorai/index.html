@@ -438,15 +438,6 @@
                 </div>
             </div>
             <div class="layout-editor-controls">
-                <div class="scale-control">
-                    <label>Scale:</label>
-                    <select id="scale-select">
-                        <option value="10">1" = 1'</option>
-                        <option value="20" selected>1" = 2'</option>
-                        <option value="40">1" = 4'</option>
-                        <option value="5">1cm = 0.5m</option>
-                    </select>
-                </div>
                 <div class="unit-control">
                     <label>Units:</label>
                     <select id="unit-select">
@@ -628,9 +619,27 @@
                     </svg>
                 </div>
                 <div class="canvas-status">
-                    <span id="mouse-coords">0' 0" × 0' 0"</span>
-                    <span id="canvas-size">40' × 30'</span>
-                    <span id="selection-info"></span>
+                    <div class="canvas-status-start">
+                        <div class="canvas-zoom-controls">
+                            <button type="button" id="zoom-out-btn" class="canvas-zoom-btn" aria-label="Zoom out" data-tooltip="Zoom out">−</button>
+                            <span id="zoom-level">100%</span>
+                            <button type="button" id="zoom-in-btn" class="canvas-zoom-btn" aria-label="Zoom in" data-tooltip="Zoom in">+</button>
+                            <button type="button" id="zoom-fit-btn" class="canvas-zoom-btn canvas-zoom-fit" aria-label="Fit to screen" data-tooltip="Fit to screen">Fit</button>
+                        </div>
+                        <span id="mouse-coords">0' 0" × 0' 0"</span>
+                    </div>
+                    <div class="canvas-status-end">
+                        <span id="selection-info"></span>
+                        <div class="tool-hint-popover" id="tool-hint-popover">
+                            <button type="button" id="tool-hint-btn" class="tool-hint-btn" aria-expanded="false" aria-controls="tool-hint-menu" aria-haspopup="dialog" aria-label="Editor hints">
+                                <i data-feather="info" class="tool-hint-btn-icon" aria-hidden="true"></i>
+                            </button>
+                            <div id="tool-hint-menu" class="tool-hint-menu hidden" role="dialog" aria-label="Layout editor hints">
+                                <div class="tool-hint-menu-panel" id="tool-hint-menu-panel"></div>
+                                <div class="tool-hint-menu-arrow" aria-hidden="true"></div>
+                            </div>
+                        </div>
+                    </div>
                 </div>
             </div>
             
@@ -641,7 +650,7 @@
                     <input type="text" id="furniture-search" placeholder="Search..." aria-label="Search furniture by name" title="Search furniture by name">
                 </div>
                 <div class="furniture-categories">
-                    <button type="button" class="category-btn" data-category="living" aria-label="Show living room furniture">Living</button>
+                    <button type="button" class="category-btn active" data-category="living" aria-label="Show living room furniture">Living</button>
                     <button type="button" class="category-btn" data-category="bedroom" aria-label="Show bedroom furniture">Bedroom</button>
                     <button type="button" class="category-btn" data-category="dining" aria-label="Show dining furniture">Dining</button>
                     <button type="button" class="category-btn" data-category="kitchen" aria-label="Show kitchen furniture">Kitchen</button>
@@ -651,6 +660,20 @@
                 </div>
                 <div class="furniture-grid" id="furniture-grid">
                     <!-- Furniture items will be populated by JavaScript -->
+                </div>
+
+                <div class="selection-actions-panel hidden" id="selection-actions-panel">
+                    <h4>Selection</h4>
+                    <div class="selection-action-buttons">
+                        <button type="button" id="duplicate-selection-btn" class="secondary-btn" data-tooltip="Duplicate (⌘D)" aria-label="Duplicate selected furniture and labels">
+                            <i data-feather="copy"></i>
+                            <span>Duplicate</span>
+                        </button>
+                        <button type="button" id="mirror-selection-btn" class="secondary-btn" data-tooltip="Mirror horizontally" aria-label="Mirror selected furniture and labels horizontally">
+                            <i data-feather="columns"></i>
+                            <span>Mirror</span>
+                        </button>
+                    </div>
                 </div>
                 
                 <!-- Properties Panel (shown when item selected) -->
