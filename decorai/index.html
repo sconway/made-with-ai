@@ -490,8 +490,9 @@
         
         <div class="layout-editor-content">
             <!-- Left Toolbar -->
-            <div class="layout-toolbar">
-                <div class="tool-section">
+            <div class="layout-toolbar layout-sidebar" id="layout-toolbar">
+                <div class="layout-sidebar-body" id="layout-toolbar-body">
+                <div class="tool-section tool-section--tools">
                     <h4>Tools</h4>
                     <div class="tool-list">
                         <button type="button" class="floor-tool active" data-tool="select" data-tooltip="Select &amp; move (V)" aria-label="Select and move items (V)">
@@ -533,7 +534,7 @@
                     </div>
                 </div>
                 
-                <div class="tool-section">
+                <div class="tool-section tool-section--options">
                     <h4>Options</h4>
                     <div class="option-group">
                         <label class="checkbox-label">
@@ -564,13 +565,6 @@
                         <span id="wall-thickness-value">8px</span>
                     </div>
                 </div>
-                <div class="tool-section my-layouts-section">
-                    <button type="button" id="my-layouts-toggle" class="my-layouts-toggle" aria-label="Open My layouts—load or manage floor plans saved to your account">
-                        <i data-feather="folder"></i>
-                        <span>My layouts</span>
-                    </button>
-                </div>
-
                 <div id="my-layouts-panel" class="modal my-layouts-modal hidden" role="dialog" aria-modal="true" aria-labelledby="my-layouts-modal-title">
                     <div class="modal-content">
                         <div class="modal-header">
@@ -584,6 +578,10 @@
                         </div>
                     </div>
                 </div>
+                </div>
+                <button type="button" id="layout-toolbar-toggle" class="layout-sidebar-toggle layout-sidebar-toggle--left" aria-expanded="true" aria-controls="layout-toolbar-body" aria-label="Collapse tools panel">
+                    <i data-feather="chevron-left" class="layout-sidebar-toggle-icon" aria-hidden="true"></i>
+                </button>
             </div>
             
             <!-- Main Canvas Area -->
@@ -619,6 +617,17 @@
                     </svg>
                 </div>
                 <div class="canvas-status">
+                    <div class="canvas-status-left">
+                        <button type="button" id="my-layouts-toggle" class="my-layouts-toggle" aria-label="Open My layouts—load or manage floor plans saved to your account">
+                            <i data-feather="folder"></i>
+                            <span>My layouts</span>
+                        </button>
+                        <button type="button" id="import-floor-plan-btn" class="my-layouts-toggle" aria-label="Import a floor plan from an image (PNG, JPG, or SVG)">
+                            <i data-feather="upload"></i>
+                            <span>Import</span>
+                        </button>
+                        <input type="file" id="import-floor-plan-input" accept="image/png,image/jpeg,image/webp,image/svg+xml,.png,.jpg,.jpeg,.webp,.svg" hidden>
+                    </div>
                     <div class="canvas-status-start">
                         <div class="canvas-zoom-controls">
                             <button type="button" id="zoom-out-btn" class="canvas-zoom-btn" aria-label="Zoom out" data-tooltip="Zoom out">−</button>
@@ -644,19 +653,41 @@
             </div>
             
             <!-- Right Panel - Furniture Library -->
-            <div class="furniture-panel">
+            <div class="furniture-panel layout-sidebar" id="furniture-panel">
+                <div class="layout-sidebar-body" id="furniture-panel-body">
                 <div class="panel-header">
                     <h4>Furniture</h4>
                     <input type="text" id="furniture-search" placeholder="Search..." aria-label="Search furniture by name" title="Search furniture by name">
                 </div>
                 <div class="furniture-categories">
-                    <button type="button" class="category-btn active" data-category="living" aria-label="Show living room furniture">Living</button>
-                    <button type="button" class="category-btn" data-category="bedroom" aria-label="Show bedroom furniture">Bedroom</button>
-                    <button type="button" class="category-btn" data-category="dining" aria-label="Show dining furniture">Dining</button>
-                    <button type="button" class="category-btn" data-category="kitchen" aria-label="Show kitchen furniture">Kitchen</button>
-                    <button type="button" class="category-btn" data-category="bathroom" aria-label="Show bathroom fixtures">Bathroom</button>
-                    <button type="button" class="category-btn" data-category="lighting" aria-label="Show light fixtures">Lighting</button>
-                    <button type="button" class="category-btn" data-category="office" aria-label="Show office furniture">Office</button>
+                    <button type="button" class="category-btn active" data-category="living" data-tooltip="Living room" aria-label="Show living room furniture">
+                        <i data-feather="home" aria-hidden="true"></i>
+                        <span>Living</span>
+                    </button>
+                    <button type="button" class="category-btn" data-category="bedroom" data-tooltip="Bedroom" aria-label="Show bedroom furniture">
+                        <i data-feather="moon" aria-hidden="true"></i>
+                        <span>Bedroom</span>
+                    </button>
+                    <button type="button" class="category-btn" data-category="dining" data-tooltip="Dining" aria-label="Show dining furniture">
+                        <i data-feather="coffee" aria-hidden="true"></i>
+                        <span>Dining</span>
+                    </button>
+                    <button type="button" class="category-btn" data-category="kitchen" data-tooltip="Kitchen" aria-label="Show kitchen furniture">
+                        <i data-feather="grid" aria-hidden="true"></i>
+                        <span>Kitchen</span>
+                    </button>
+                    <button type="button" class="category-btn" data-category="bathroom" data-tooltip="Bathroom" aria-label="Show bathroom fixtures">
+                        <i data-feather="droplet" aria-hidden="true"></i>
+                        <span>Bathroom</span>
+                    </button>
+                    <button type="button" class="category-btn" data-category="lighting" data-tooltip="Lighting" aria-label="Show light fixtures">
+                        <i data-feather="sun" aria-hidden="true"></i>
+                        <span>Lighting</span>
+                    </button>
+                    <button type="button" class="category-btn" data-category="office" data-tooltip="Office" aria-label="Show office furniture">
+                        <i data-feather="briefcase" aria-hidden="true"></i>
+                        <span>Office</span>
+                    </button>
                 </div>
                 <div class="furniture-grid" id="furniture-grid">
                     <!-- Furniture items will be populated by JavaScript -->
@@ -718,6 +749,10 @@
                         </button>
                     </div>
                 </div>
+                </div>
+                <button type="button" id="furniture-panel-toggle" class="layout-sidebar-toggle layout-sidebar-toggle--right" aria-expanded="true" aria-controls="furniture-panel-body" aria-label="Collapse furniture panel">
+                    <i data-feather="chevron-right" class="layout-sidebar-toggle-icon" aria-hidden="true"></i>
+                </button>
             </div>
         </div>
     </div>

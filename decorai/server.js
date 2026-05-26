@@ -1147,6 +1147,148 @@ Return this exact JSON structure:
   }
 });
 
+// Convert an uploaded floor-plan image into a structured layout via Claude vision.
+app.post('/api/import-floor-plan', async (req, res) => {
+  try {
+    const user = await getAuthUser(req, res);
+    if (!user) return;
+
+    const apiKey = process.env.ANTHROPIC_API_KEY;
+    if (!apiKey) {
+      return res.status(500).json({ error: 'Anthropic API key not configured' });
+    }
+
+    const { imageBase64 } = req.body;
+    if (!imageBase64) {
+      return res.status(400).json({ error: 'imageBase64 is required' });
+    }
+
+    const match = imageBase64.match(/^data:(image\/(?:png|jpeg|jpg|webp));base64,(.+)$/i);
+    if (!match) {
+      return res.status(400).json({ error: 'imageBase64 must be a data URL with image/png|jpeg|webp' });
+    }
+    const mediaType = match[1].toLowerCase().replace('image/jpg', 'image/jpeg');
+    const data = match[2];
+
+    const FURNITURE_CATALOG = [
+      { id: 'sofa', w: 7, h: 3 }, { id: 'armchair', w: 3, h: 3 },
+      { id: 'coffee-table', w: 4, h: 2 }, { id: 'floor-plant', w: 1.5, h: 1.5 },
+      { id: 'tv-stand', w: 5, h: 1.5 }, { id: 'bookshelf', w: 4, h: 1 },
+      { id: 'queen-bed', w: 5, h: 6.5 }, { id: 'king-bed', w: 6.5, h: 6.5 },
+      { id: 'twin-bed', w: 3.5, h: 6.5 }, { id: 'nightstand', w: 2, h: 2 },
+      { id: 'dresser', w: 5, h: 2 }, { id: 'wardrobe', w: 4, h: 2 },
+      { id: 'dining-table', w: 6, h: 3.5 }, { id: 'dining-chair', w: 1.5, h: 1.5 },
+      { id: 'buffet', w: 5, h: 1.5 }, { id: 'fridge', w: 3, h: 3 },
+      { id: 'stove', w: 2.5, h: 2.5 }, { id: 'sink-kitchen', w: 3, h: 2 },
+      { id: 'dishwasher', w: 2, h: 2 }, { id: 'counter', w: 4, h: 2 },
+      { id: 'toilet', w: 1.5, h: 2.5 }, { id: 'bathtub', w: 2.5, h: 5 },
+      { id: 'shower', w: 3, h: 3 }, { id: 'sink-bath', w: 2, h: 1.5 },
+      { id: 'towel-holder', w: 1.5, h: 0.5 }, { id: 'floor-mat', w: 2, h: 3 },
+      { id: 'light-fixture', w: 1, h: 1 }, { id: 'desk', w: 5, h: 2.5 },
+      { id: 'office-chair', w: 2, h: 2 }, { id: 'filing-cabinet', w: 1.5, h: 2 }
+    ];
+
+    const systemPrompt = `You convert floor-plan images into a structured JSON description for a 2D floor-plan editor.
+
+Return ONLY valid JSON (no markdown, no code fences, no commentary). Use this exact schema:
+
+{
+  "width_ft": <number>,        // overall width of the plan in feet
+  "height_ft": <number>,       // overall height of the plan in feet
+  "walls": [                   // wall CENTERLINES. Origin (0,0) is the top-left of the plan.
+    { "x1": <ft>, "y1": <ft>, "x2": <ft>, "y2": <ft> }
+  ],
+  "openings": [                // doors and windows that sit on a wall
+    {
+      "wall_index": <integer>, // index into walls[]
+      "center_ft": <number>,   // distance along the wall from (x1,y1) to the center of the opening
+      "length_ft": <number>,   // length of the opening along the wall
+      "type": "door" | "window"
+    }
+  ],
+  "labels": [                  // optional room name labels positioned in the room
+    { "x_ft": <number>, "y_ft": <number>, "text": "<string>" }
+  ],
+  "furniture": [               // furniture items detected in the plan (chairs, beds, tables, fixtures, etc.)
+    {
+      "type": "<one of the catalog ids below>",
+      "center_x_ft": <number>, // center of the item, in feet
+      "center_y_ft": <number>,
+      "width_ft": <number>,    // along the item's local x-axis BEFORE rotation; use catalog default if uncertain
+      "height_ft": <number>,   // along the item's local y-axis BEFORE rotation
+      "rotation_deg": <number> // 0, 90, 180, or 270 — clockwise from the catalog's default orientation
+    }
+  ]
+}
+
+FURNITURE CATALOG (use the exact id, pick the closest match for what's shown). Default footprint in feet is (w × h):
+${FURNITURE_CATALOG.map(f => `- ${f.id} (${f.w} × ${f.h})`).join('\n')}
+
+Wall rules:
+- Output ONE wall per real wall. If the drawing shows a wall as two parallel lines (showing thickness) or a filled rectangle, output a SINGLE centerline between them.
+- Snap walls to axis-aligned (0°/90°) when the drawing clearly intends right angles. Preserve diagonals only when clearly intentional.
+- Door arcs and the gap they sit in count as ONE door opening on the underlying wall. Window double-lines count as ONE window opening on the underlying wall.
+- Keep wall count minimal — merge collinear, end-to-end segments into a single wall.
+- Coordinates must be non-negative: walls.x1/x2 ∈ [0, width_ft], y1/y2 ∈ [0, height_ft].
+
+Scale inference (very important — get the overall size right):
+- If the plan has labeled dimensions ("12'-6\"", "3.5 m") or a scale bar, use them.
+- Otherwise compare against any beds (queen ≈ 5×6.5 ft), refrigerators (≈ 3 ft wide), toilets (≈ 1.5×2.5 ft), or doors (≈ 3 ft wide). Pick the most reliable reference and back into width_ft / height_ft from it.
+- If still uncertain, assume the longest side is 25–35 feet.
+
+Furniture rules:
+- Detect every visible furniture item, not just a representative sample.
+- Map symbols you see (rectangles, beds, chairs, fixtures) to the nearest catalog id. If something has no good match, omit it rather than inventing a type.
+- "rotation_deg" describes orientation relative to the catalog default (catalog defaults are listed width × height as drawn upright). Use 0 if the long axis is horizontal, 90 if rotated clockwise, etc.
+- Place center_x_ft / center_y_ft at the visual center of the item.
+
+Skip decorations: hatching, dimension lines, north arrows, title blocks, page borders, plant pots that aren't floor plants, decorative text outside room labels.`;
+
+    const response = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: {
+        'x-api-key': apiKey,
+        'anthropic-version': '2023-06-01',
+        'content-type': 'application/json'
+      },
+      body: JSON.stringify({
+        model: 'claude-opus-4-7',
+        max_tokens: 4096,
+        system: systemPrompt,
+        messages: [{
+          role: 'user',
+          content: [
+            { type: 'image', source: { type: 'base64', media_type: mediaType, data } },
+            { type: 'text', text: 'Vectorize this floor plan into the JSON schema above.' }
+          ]
+        }]
+      })
+    });
+
+    if (!response.ok) {
+      const errText = await response.text();
+      console.error('Anthropic API error:', errText);
+      return res.status(response.status).json({ error: 'Vision API error', detail: errText.slice(0, 500) });
+    }
+
+    const result = await response.json();
+    const text = result.content?.[0]?.text || '';
+    let parsed;
+    try {
+      const jsonStr = text.replace(/^```(?:json)?\s*/i, '').replace(/```\s*$/, '').trim();
+      parsed = JSON.parse(jsonStr);
+    } catch (e) {
+      console.error('Failed to parse vision output:', text);
+      return res.status(500).json({ error: 'Could not parse vision output', raw: text });
+    }
+
+    res.json(parsed);
+  } catch (err) {
+    console.error('Floor plan import error:', err);
+    res.status(500).json({ error: 'Server error during floor plan import' });
+  }
+});
+
 // Config endpoint for client-side auth (Supabase URL and anon key)
 app.get('/api/config', (req, res) => {
   res.json({

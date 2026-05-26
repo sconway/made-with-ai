@@ -782,6 +782,7 @@ async function handleSubscribeCheckout() {
 
 // Exposed so floorPlanEditor can open the modal
 window.__decoraiShowSubscribeModal = showSubscribeModal;
+window.__decoraiGetAccessToken = () => currentSession?.access_token || null;
 
 /** Lightweight toast notification (no external dependency) */
 let _activeToast = null;

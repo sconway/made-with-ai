@@ -287,7 +287,19 @@ const FloorPlanEditor = (() => {
         document.getElementById('zoom-in-btn')?.addEventListener('click', () => setZoom(zoom + 0.1));
         document.getElementById('zoom-out-btn')?.addEventListener('click', () => setZoom(zoom - 0.1));
         document.getElementById('zoom-fit-btn')?.addEventListener('click', fitToScreen);
-        
+
+        // Import floor plan from image
+        const importBtn = document.getElementById('import-floor-plan-btn');
+        const importInput = document.getElementById('import-floor-plan-input');
+        if (importBtn && importInput) {
+            importBtn.addEventListener('click', () => importInput.click());
+            importInput.addEventListener('change', () => {
+                const file = importInput.files && importInput.files[0];
+                if (file) showDroppedImageChoice(file);
+                importInput.value = '';
+            });
+        }
+
         // Canvas events
         svg.addEventListener('mousedown', handleMouseDown);
         svg.addEventListener('mousemove', handleMouseMove);
@@ -363,7 +375,168 @@ const FloorPlanEditor = (() => {
         loadFurnitureSvgs().then(() => updateFurnitureGrid());
         
         initToolHintPopover();
+        initSidebarCollapse();
         if (typeof feather !== 'undefined') feather.replace();
+    }
+
+    const LAYOUT_SIDEBAR_STORAGE_KEY = 'decorai-layout-sidebar-state';
+
+    function initSidebarCollapse() {
+        const leftBar = document.getElementById('layout-toolbar');
+        const rightBar = document.getElementById('furniture-panel');
+        const leftToggle = document.getElementById('layout-toolbar-toggle');
+        const rightToggle = document.getElementById('furniture-panel-toggle');
+        if (!leftBar || !rightBar || !leftToggle || !rightToggle) return;
+
+        let saved = {};
+        try {
+            saved = JSON.parse(localStorage.getItem(LAYOUT_SIDEBAR_STORAGE_KEY) || '{}');
+        } catch {
+            saved = {};
+        }
+
+        if (saved.leftCollapsed) leftBar.classList.add('is-collapsed');
+        if (saved.rightCollapsed) rightBar.classList.add('is-collapsed');
+        syncSidebarToggleState();
+        if (typeof feather !== 'undefined') feather.replace();
+
+        leftToggle.addEventListener('click', () => toggleLayoutSidebar('left'));
+        rightToggle.addEventListener('click', () => toggleLayoutSidebar('right'));
+
+        initSidebarTooltips(leftBar, 'right');
+        initSidebarTooltips(rightBar, 'left', { onlyWhenCollapsed: true });
+    }
+
+    function initSidebarTooltips(sidebar, side, options = {}) {
+        const { onlyWhenCollapsed = false } = options;
+        if (!sidebar) return;
+        let tip = null;
+        let currentTarget = null;
+
+        const ensureTip = () => {
+            if (tip) return tip;
+            tip = document.createElement('div');
+            tip.className = 'sidebar-tooltip-floating';
+            tip.setAttribute('role', 'tooltip');
+            document.body.appendChild(tip);
+            return tip;
+        };
+
+        const positionTip = (target) => {
+            if (!tip) return;
+            const rect = target.getBoundingClientRect();
+            const sidebarRect = sidebar.getBoundingClientRect();
+            const gap = 10;
+            tip.style.visibility = 'hidden';
+            tip.style.left = '0px';
+            tip.style.top = '0px';
+            tip.classList.add('is-visible');
+            const tipRect = tip.getBoundingClientRect();
+            let left;
+            if (side === 'right') {
+                left = sidebarRect.right + gap;
+            } else {
+                left = sidebarRect.left - gap - tipRect.width;
+            }
+            let top = rect.top + rect.height / 2 - tipRect.height / 2;
+            const margin = 8;
+            top = Math.max(margin, Math.min(top, window.innerHeight - tipRect.height - margin));
+            left = Math.max(margin, Math.min(left, window.innerWidth - tipRect.width - margin));
+            tip.style.left = `${left}px`;
+            tip.style.top = `${top}px`;
+            tip.style.visibility = '';
+        };
+
+        const show = (target) => {
+            if (onlyWhenCollapsed && !sidebar.classList.contains('is-collapsed')) return;
+            const text = target.getAttribute('data-tooltip');
+            if (!text || target.disabled) return;
+            currentTarget = target;
+            ensureTip();
+            tip.textContent = text;
+            positionTip(target);
+        };
+
+        const hide = (target) => {
+            if (target && target !== currentTarget) return;
+            currentTarget = null;
+            if (tip) tip.classList.remove('is-visible');
+        };
+
+        const findTooltipTarget = (el) => {
+            if (!el || !(el instanceof Element)) return null;
+            const t = el.closest('[data-tooltip]');
+            return t && sidebar.contains(t) ? t : null;
+        };
+
+        sidebar.addEventListener('mouseover', (e) => {
+            const target = findTooltipTarget(e.target);
+            if (target && target !== currentTarget) show(target);
+        });
+        sidebar.addEventListener('mouseout', (e) => {
+            const target = findTooltipTarget(e.target);
+            if (!target) return;
+            const related = e.relatedTarget;
+            if (related && target.contains(related)) return;
+            hide(target);
+        });
+        sidebar.addEventListener('focusin', (e) => {
+            const target = findTooltipTarget(e.target);
+            if (target) show(target);
+        });
+        sidebar.addEventListener('focusout', (e) => {
+            const target = findTooltipTarget(e.target);
+            if (target) hide(target);
+        });
+        const reposition = () => {
+            if (currentTarget) positionTip(currentTarget);
+        };
+        sidebar.querySelector('.layout-sidebar-body')?.addEventListener('scroll', reposition, { passive: true });
+        window.addEventListener('scroll', reposition, { passive: true });
+        window.addEventListener('resize', reposition);
+    }
+
+    function toggleLayoutSidebar(side) {
+        const bar = side === 'left'
+            ? document.getElementById('layout-toolbar')
+            : document.getElementById('furniture-panel');
+        if (!bar) return;
+
+        bar.classList.toggle('is-collapsed');
+        persistLayoutSidebarState();
+        syncSidebarToggleState();
+        if (typeof feather !== 'undefined') feather.replace();
+        requestAnimationFrame(() => updateRulers());
+    }
+
+    function persistLayoutSidebarState() {
+        const leftBar = document.getElementById('layout-toolbar');
+        const rightBar = document.getElementById('furniture-panel');
+        if (!leftBar || !rightBar) return;
+
+        localStorage.setItem(LAYOUT_SIDEBAR_STORAGE_KEY, JSON.stringify({
+            leftCollapsed: leftBar.classList.contains('is-collapsed'),
+            rightCollapsed: rightBar.classList.contains('is-collapsed'),
+        }));
+    }
+
+    function syncSidebarToggleState() {
+        const leftBar = document.getElementById('layout-toolbar');
+        const rightBar = document.getElementById('furniture-panel');
+        const leftToggle = document.getElementById('layout-toolbar-toggle');
+        const rightToggle = document.getElementById('furniture-panel-toggle');
+        if (!leftBar || !rightBar || !leftToggle || !rightToggle) return;
+
+        const leftCollapsed = leftBar.classList.contains('is-collapsed');
+        const rightCollapsed = rightBar.classList.contains('is-collapsed');
+
+        leftToggle.setAttribute('aria-expanded', leftCollapsed ? 'false' : 'true');
+        leftToggle.setAttribute('aria-label', leftCollapsed ? 'Expand tools panel' : 'Collapse tools panel');
+        rightToggle.setAttribute('aria-expanded', rightCollapsed ? 'false' : 'true');
+        rightToggle.setAttribute('aria-label', rightCollapsed ? 'Expand furniture panel' : 'Collapse furniture panel');
+
+        leftToggle.innerHTML = `<i data-feather="${leftCollapsed ? 'chevron-right' : 'chevron-left'}" class="layout-sidebar-toggle-icon" aria-hidden="true"></i>`;
+        rightToggle.innerHTML = `<i data-feather="${rightCollapsed ? 'chevron-left' : 'chevron-right'}" class="layout-sidebar-toggle-icon" aria-hidden="true"></i>`;
     }
 
     const TOOL_LABELS = {
@@ -1552,14 +1725,83 @@ const FloorPlanEditor = (() => {
             loadLayoutFromFile(file);
             return;
         }
+        if (isSVGFile(file)) {
+            showDroppedImageChoice(file);
+            return;
+        }
         if (!file.type.startsWith('image/')) {
             if (window.showAlertDialog) {
-                window.showAlertDialog('Drop an image file (PNG, JPG) or a DecorAI layout file (.decorai-layout.json)');
+                window.showAlertDialog('Drop an image (PNG, JPG), an SVG floor plan, or a DecorAI layout file.');
             }
             return;
         }
-        
-        addImageAsReference(file);
+
+        showDroppedImageChoice(file);
+    }
+
+    function showDroppedImageChoice(file) {
+        const existing = document.getElementById('dropped-image-choice-modal');
+        if (existing) existing.remove();
+
+        const modal = document.createElement('div');
+        modal.id = 'dropped-image-choice-modal';
+        modal.className = 'modal show dropped-image-choice-modal';
+        modal.setAttribute('role', 'dialog');
+        modal.setAttribute('aria-modal', 'true');
+        modal.setAttribute('aria-labelledby', 'dropped-image-choice-title');
+        modal.innerHTML = `
+            <div class="modal-content dropped-image-choice-content">
+                <div class="modal-header">
+                    <h2 id="dropped-image-choice-title">What should we do with this image?</h2>
+                    <button type="button" class="close-modal-btn" data-action="cancel" aria-label="Cancel">
+                        <i data-feather="x"></i>
+                    </button>
+                </div>
+                <div class="modal-body dropped-image-choice-body">
+                    <p class="dropped-image-choice-prompt">Choose how to use <strong>${escapeHtml(file.name || 'this image')}</strong>:</p>
+                    <div class="dropped-image-choice-options">
+                        <button type="button" class="dropped-image-choice-option dropped-image-choice-option--recommended" data-action="trace" data-default="true">
+                            <i data-feather="image" aria-hidden="true"></i>
+                            <div class="dropped-image-choice-option-text">
+                                <strong>Add for tracing <span class="dropped-image-choice-badge">Recommended</span></strong>
+                                <span>Place the image on the canvas as a reference so you can draw walls on top of it.</span>
+                            </div>
+                        </button>
+                        <button type="button" class="dropped-image-choice-option" data-action="convert">
+                            <i data-feather="grid" aria-hidden="true"></i>
+                            <div class="dropped-image-choice-option-text">
+                                <strong>Convert to floor plan</strong>
+                                <span>Auto-detect walls, doors, windows, and furniture from the image. This is experimental and often misses or misplaces elements — expect to fix things up afterwards.</span>
+                            </div>
+                        </button>
+                    </div>
+                </div>
+            </div>
+        `;
+        document.body.appendChild(modal);
+        if (typeof feather !== 'undefined') feather.replace();
+        modal.querySelector('[data-default="true"]')?.focus();
+
+        const close = () => modal.remove();
+        modal.addEventListener('click', (e) => {
+            const target = e.target.closest('[data-action]');
+            if (target) {
+                const action = target.getAttribute('data-action');
+                close();
+                if (action === 'convert') importFloorPlanFromImage(file);
+                else if (action === 'trace') addImageAsReference(file);
+                return;
+            }
+            if (e.target === modal) close();
+        });
+        const onKey = (e) => {
+            if (e.key === 'Escape') { close(); document.removeEventListener('keydown', onKey); }
+        };
+        document.addEventListener('keydown', onKey);
+    }
+
+    function escapeHtml(str) {
+        return String(str).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
     }
     
     function addImageAsReference(file) {
@@ -6083,6 +6325,436 @@ const FloorPlanEditor = (() => {
     function isLayoutFile(file) {
         const n = (file.name || '').toLowerCase();
         return n.endsWith('.decorai-layout.json') || (n.endsWith('.json') && (file.type === 'application/json' || file.type === ''));
+    }
+
+    function isSVGFile(file) {
+        const n = (file.name || '').toLowerCase();
+        return file.type === 'image/svg+xml' || n.endsWith('.svg');
+    }
+
+    function isFloorPlanImageFile(file) {
+        if (!file) return false;
+        if (isSVGFile(file)) return true;
+        const n = (file.name || '').toLowerCase();
+        return file.type === 'image/png' || file.type === 'image/jpeg' || file.type === 'image/webp'
+            || n.endsWith('.png') || n.endsWith('.jpg') || n.endsWith('.jpeg') || n.endsWith('.webp');
+    }
+
+    // Render a File (SVG/PNG/JPG/WebP) to a PNG data URL with the longest side
+    // capped at maxSide pixels. Returns { dataUrl, width, height }.
+    async function renderFileToBoundedPng(file, maxSide = 1280) {
+        const sourceUrl = await new Promise((resolve, reject) => {
+            const r = new FileReader();
+            r.onload = () => resolve(r.result);
+            r.onerror = reject;
+            r.readAsDataURL(file);
+        });
+        const img = await new Promise((resolve, reject) => {
+            const i = new Image();
+            i.onload = () => resolve(i);
+            i.onerror = () => reject(new Error('Could not load image'));
+            i.src = sourceUrl;
+        });
+        const srcW = img.naturalWidth || img.width;
+        const srcH = img.naturalHeight || img.height;
+        if (!srcW || !srcH) throw new Error('Image has no dimensions');
+        const scale = Math.min(1, maxSide / Math.max(srcW, srcH));
+        const w = Math.max(1, Math.round(srcW * scale));
+        const h = Math.max(1, Math.round(srcH * scale));
+        const canvas = document.createElement('canvas');
+        canvas.width = w;
+        canvas.height = h;
+        const ctx = canvas.getContext('2d');
+        ctx.fillStyle = '#ffffff';
+        ctx.fillRect(0, 0, w, h);
+        ctx.drawImage(img, 0, 0, w, h);
+        return { dataUrl: canvas.toDataURL('image/png'), width: w, height: h };
+    }
+
+    async function importFloorPlanFromImage(file) {
+        if (!file) return;
+        const overlay = showImportProgress('Reading image…');
+        try {
+            overlay.setMessage('Analyzing floor plan…');
+            const { dataUrl } = await renderFileToBoundedPng(file);
+            const token = typeof window.__decoraiGetAccessToken === 'function' ? window.__decoraiGetAccessToken() : null;
+            const url = `${(window.__decoraiProxyUrl) || (window.location.hostname === 'localhost' ? 'http://localhost:3001' : '')}/api/import-floor-plan`;
+            const res = await fetch(url, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    ...(token ? { Authorization: `Bearer ${token}` } : {})
+                },
+                body: JSON.stringify({ imageBase64: dataUrl })
+            });
+            if (!res.ok) {
+                const err = await res.json().catch(() => ({}));
+                const msg = err.error || `Import failed (${res.status})`;
+                showLayoutFileMessage(msg);
+                return;
+            }
+            const spec = await res.json();
+            const state = layoutStateFromVisionSpec(spec);
+            if (!state || !state.walls.length) {
+                showLayoutFileMessage('No walls detected in the image.');
+                return;
+            }
+            addToHistory();
+            restoreState(state);
+            try { fitToScreen(); } catch {}
+            showLayoutFileMessage(`Imported ${state.walls.length} walls.`);
+        } catch (err) {
+            console.error('Floor plan import failed', err);
+            showLayoutFileMessage(err && err.message ? err.message : 'Could not import floor plan.');
+        } finally {
+            overlay.remove();
+        }
+    }
+
+    function showImportProgress(initialMessage) {
+        const wrap = document.getElementById('layout-canvas-wrapper');
+        let el = document.getElementById('layout-import-progress');
+        if (el) el.remove();
+        el = document.createElement('div');
+        el.id = 'layout-import-progress';
+        el.className = 'export-message';
+        el.innerHTML = `<div class="export-message-content"><span class="my-layouts-spinner" aria-hidden="true"></span><span class="layout-import-progress-text">${initialMessage}</span></div>`;
+        wrap?.appendChild(el);
+        return {
+            setMessage(msg) {
+                const t = el.querySelector('.layout-import-progress-text');
+                if (t) t.textContent = msg;
+            },
+            remove() { el.remove(); }
+        };
+    }
+
+    // Convert the vision API's JSON spec into the editor's state shape.
+    function layoutStateFromVisionSpec(spec) {
+        if (!spec || !Array.isArray(spec.walls) || !spec.walls.length) return null;
+
+        const PX_PER_FT = 50;
+        const PAD_PX = 100;
+        const AXIS_SNAP_DEG = 4;   // walls within 4° of horizontal/vertical snap to axis
+        const GRID_FT = 0.25;      // snap endpoints to nearest quarter-foot
+
+        // First pass: snap nearly-axial walls to axis-aligned. This catches the
+        // common LLM failure where a wall comes back at e.g. 0.6° off horizontal.
+        const cleanedWalls = spec.walls.map(w => {
+            if (!isFiniteNumber(w.x1) || !isFiniteNumber(w.y1) || !isFiniteNumber(w.x2) || !isFiniteNumber(w.y2)) return null;
+            const dx = w.x2 - w.x1, dy = w.y2 - w.y1;
+            const angle = Math.abs(Math.atan2(dy, dx) * 180 / Math.PI);
+            const out = { x1: w.x1, y1: w.y1, x2: w.x2, y2: w.y2 };
+            if (angle < AXIS_SNAP_DEG || Math.abs(angle - 180) < AXIS_SNAP_DEG) {
+                const y = (w.y1 + w.y2) / 2;
+                out.y1 = y; out.y2 = y;
+            } else if (Math.abs(angle - 90) < AXIS_SNAP_DEG) {
+                const x = (w.x1 + w.x2) / 2;
+                out.x1 = x; out.x2 = x;
+            }
+            const snap = v => Math.round(v / GRID_FT) * GRID_FT;
+            return { x1: snap(out.x1), y1: snap(out.y1), x2: snap(out.x2), y2: snap(out.y2) };
+        }).filter(Boolean);
+
+        if (!cleanedWalls.length) return null;
+
+        // Normalize to feet coordinates that start at (0,0).
+        let minX = Infinity, minY = Infinity;
+        cleanedWalls.forEach(w => {
+            minX = Math.min(minX, w.x1, w.x2);
+            minY = Math.min(minY, w.y1, w.y2);
+        });
+        if (!isFinite(minX) || !isFinite(minY)) return null;
+        const ftToPx = (xf, yf) => ({
+            x: Math.round((xf - minX) * PX_PER_FT) + PAD_PX,
+            y: Math.round((yf - minY) * PX_PER_FT) + PAD_PX
+        });
+
+        const SNAP = 6;
+        const cornerByKey = new Map();
+        let cornerSeq = 0;
+        const findOrAddCorner = (x, y) => {
+            const sx = Math.round(x / SNAP) * SNAP;
+            const sy = Math.round(y / SNAP) * SNAP;
+            const key = `${sx}|${sy}`;
+            let c = cornerByKey.get(key);
+            if (c) return c;
+            c = { id: `corner-import-${cornerSeq++}`, x: sx, y: sy, wallIds: [] };
+            cornerByKey.set(key, c);
+            return c;
+        };
+
+        const walls = [];
+        const wallKeySeen = new Set();
+        const wallIndexToWall = new Map();
+        cleanedWalls.forEach((raw, idx) => {
+            const a = ftToPx(raw.x1, raw.y1);
+            const b = ftToPx(raw.x2, raw.y2);
+            const len = Math.hypot(b.x - a.x, b.y - a.y);
+            if (len < SNAP) return;
+            const ca = findOrAddCorner(a.x, a.y);
+            const cb = findOrAddCorner(b.x, b.y);
+            if (ca === cb) return;
+            const key = ca.id < cb.id ? `${ca.id}-${cb.id}` : `${cb.id}-${ca.id}`;
+            if (wallKeySeen.has(key)) return;
+            wallKeySeen.add(key);
+            const wall = { id: `wall-import-${idx}`, startId: ca.id, endId: cb.id, openings: [], control: null };
+            walls.push(wall);
+            wallIndexToWall.set(idx, wall);
+            ca.wallIds.push(wall.id);
+            cb.wallIds.push(wall.id);
+        });
+
+        const cornerById = new Map();
+        cornerByKey.forEach(c => cornerById.set(c.id, c));
+        if (Array.isArray(spec.openings)) {
+            spec.openings.forEach((op, i) => {
+                const wall = wallIndexToWall.get(op.wall_index);
+                if (!wall) return;
+                if (!isFiniteNumber(op.center_ft) || !isFiniteNumber(op.length_ft)) return;
+                const a = cornerById.get(wall.startId);
+                const b = cornerById.get(wall.endId);
+                if (!a || !b) return;
+                const wallLenPx = Math.hypot(b.x - a.x, b.y - a.y);
+                if (wallLenPx <= 0) return;
+                const centerPx = op.center_ft * PX_PER_FT;
+                const widthPx = Math.max(8, op.length_ft * PX_PER_FT);
+                if (centerPx <= 0 || centerPx >= wallLenPx) return;
+                const position = Math.max(widthPx / 2, Math.min(wallLenPx - widthPx / 2, centerPx)) / wallLenPx;
+                const type = op.type === 'window' ? 'window' : 'door';
+                wall.openings.push({ id: `opening-import-${i}`, type, position, width: widthPx });
+            });
+        }
+
+        const labels = [];
+        if (Array.isArray(spec.labels)) {
+            spec.labels.forEach((lab, i) => {
+                if (!lab || typeof lab.text !== 'string' || !lab.text.trim()) return;
+                if (!isFiniteNumber(lab.x_ft) || !isFiniteNumber(lab.y_ft)) return;
+                const p = ftToPx(lab.x_ft, lab.y_ft);
+                labels.push({ id: `label-import-${i}`, x: p.x, y: p.y, text: lab.text.trim() });
+            });
+        }
+
+        const importedFurniture = [];
+        if (Array.isArray(spec.furniture)) {
+            spec.furniture.forEach((f, i) => {
+                if (!f || typeof f.type !== 'string') return;
+                const template = furnitureLibrary.find(t => t.id === f.type);
+                if (!template) return;
+                if (!isFiniteNumber(f.center_x_ft) || !isFiniteNumber(f.center_y_ft)) return;
+                const widthFt = isFiniteNumber(f.width_ft) && f.width_ft > 0 ? f.width_ft : template.width;
+                const heightFt = isFiniteNumber(f.height_ft) && f.height_ft > 0 ? f.height_ft : template.height;
+                let rotation = isFiniteNumber(f.rotation_deg) ? f.rotation_deg % 360 : 0;
+                if (rotation < 0) rotation += 360;
+                const center = ftToPx(f.center_x_ft, f.center_y_ft);
+                const widthPx = widthFt * PX_PER_FT;
+                const heightPx = heightFt * PX_PER_FT;
+                importedFurniture.push({
+                    id: `furniture-import-${i}-${Date.now()}`,
+                    typeId: template.id,
+                    name: template.name,
+                    x: center.x - widthPx / 2,
+                    y: center.y - heightPx / 2,
+                    width: widthPx,
+                    height: heightPx,
+                    rotation,
+                    color: template.color
+                });
+            });
+        }
+
+        return {
+            corners: Array.from(cornerByKey.values()),
+            walls,
+            furniture: importedFurniture,
+            labels,
+            freeformOpenings: [],
+            referenceImages: [],
+            importedElementsHTML: [],
+            roomNames: {}
+        };
+    }
+
+    function isFiniteNumber(n) { return typeof n === 'number' && isFinite(n); }
+
+    // Convert an SVG document's vector geometry into a layout state. Returns
+    // a state shaped like saveState() output, or null if nothing usable.
+    function parseSVGFloorPlan(svgText) {
+        const wrapper = document.createElement('div');
+        wrapper.style.cssText = 'position:absolute;left:-99999px;top:0;width:0;height:0;visibility:hidden;overflow:hidden;';
+        wrapper.innerHTML = svgText;
+        const svgEl = wrapper.querySelector('svg');
+        if (!svgEl) return null;
+        document.body.appendChild(wrapper);
+
+        try {
+            const point = svgEl.createSVGPoint();
+            const transformPoint = (el, x, y) => {
+                const ctm = el.getCTM();
+                if (!ctm) return { x, y };
+                point.x = x; point.y = y;
+                const r = point.matrixTransform(ctm);
+                return { x: r.x, y: r.y };
+            };
+
+            const segments = [];
+            const pushSeg = (el, x1, y1, x2, y2) => {
+                const a = transformPoint(el, x1, y1);
+                const b = transformPoint(el, x2, y2);
+                if (!isFinite(a.x) || !isFinite(a.y) || !isFinite(b.x) || !isFinite(b.y)) return;
+                segments.push({ x1: a.x, y1: a.y, x2: b.x, y2: b.y });
+            };
+
+            svgEl.querySelectorAll('line').forEach(el => {
+                const x1 = parseFloat(el.getAttribute('x1')) || 0;
+                const y1 = parseFloat(el.getAttribute('y1')) || 0;
+                const x2 = parseFloat(el.getAttribute('x2')) || 0;
+                const y2 = parseFloat(el.getAttribute('y2')) || 0;
+                pushSeg(el, x1, y1, x2, y2);
+            });
+
+            const parsePoints = (str) => (str || '').trim().split(/[\s,]+/).map(parseFloat).filter(n => !isNaN(n));
+            svgEl.querySelectorAll('polyline, polygon').forEach(el => {
+                const pts = parsePoints(el.getAttribute('points'));
+                for (let i = 0; i + 3 < pts.length; i += 2) {
+                    pushSeg(el, pts[i], pts[i + 1], pts[i + 2], pts[i + 3]);
+                }
+                if (el.tagName.toLowerCase() === 'polygon' && pts.length >= 4) {
+                    pushSeg(el, pts[pts.length - 2], pts[pts.length - 1], pts[0], pts[1]);
+                }
+            });
+
+            svgEl.querySelectorAll('rect').forEach(el => {
+                const x = parseFloat(el.getAttribute('x')) || 0;
+                const y = parseFloat(el.getAttribute('y')) || 0;
+                const w = parseFloat(el.getAttribute('width')) || 0;
+                const h = parseFloat(el.getAttribute('height')) || 0;
+                if (w <= 0 || h <= 0) return;
+                pushSeg(el, x, y, x + w, y);
+                pushSeg(el, x + w, y, x + w, y + h);
+                pushSeg(el, x + w, y + h, x, y + h);
+                pushSeg(el, x, y + h, x, y);
+            });
+
+            svgEl.querySelectorAll('path').forEach(el => {
+                const total = el.getTotalLength ? el.getTotalLength() : 0;
+                if (!total) return;
+                // Sample the path at regular intervals; getPointAtLength returns
+                // points in the element's local coordinate system, which we
+                // then push through the element's CTM.
+                const STEP = 4; // px in path-local space
+                const pts = [];
+                for (let s = 0; s <= total; s += STEP) {
+                    const p = el.getPointAtLength(s);
+                    pts.push(p);
+                }
+                const last = el.getPointAtLength(total);
+                pts.push(last);
+                // Collapse points that are nearly collinear to reduce wall count.
+                const simplified = simplifyPolyline(pts, 1.5);
+                for (let i = 0; i + 1 < simplified.length; i++) {
+                    pushSeg(el, simplified[i].x, simplified[i].y, simplified[i + 1].x, simplified[i + 1].y);
+                }
+            });
+
+            if (!segments.length) return null;
+
+            let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+            segments.forEach(s => {
+                minX = Math.min(minX, s.x1, s.x2);
+                minY = Math.min(minY, s.y1, s.y2);
+                maxX = Math.max(maxX, s.x1, s.x2);
+                maxY = Math.max(maxY, s.y1, s.y2);
+            });
+            const span = Math.max(maxX - minX, maxY - minY);
+            if (!isFinite(span) || span <= 0) return null;
+
+            // Scale so the longest side maps to ~30 ft of canvas space.
+            // The canvas uses 50px = 1 ft, so 30 ft = 1500px.
+            const TARGET_PX = 1500;
+            const scale = TARGET_PX / span;
+            const PAD = 200;
+            const tx = -minX * scale + PAD;
+            const ty = -minY * scale + PAD;
+
+            const SNAP = 8; // px; merges endpoints within this distance into one corner
+            const cornerByKey = new Map();
+            let cornerSeq = 0;
+            const findOrAddCorner = (x, y) => {
+                const sx = Math.round(x / SNAP) * SNAP;
+                const sy = Math.round(y / SNAP) * SNAP;
+                const key = `${sx}|${sy}`;
+                let c = cornerByKey.get(key);
+                if (c) return c;
+                c = { id: `corner-svg-${cornerSeq++}`, x: sx, y: sy, wallIds: [] };
+                cornerByKey.set(key, c);
+                return c;
+            };
+
+            const newWalls = [];
+            const wallKeySeen = new Set();
+            let wallSeq = 0;
+            segments.forEach(s => {
+                const x1 = s.x1 * scale + tx, y1 = s.y1 * scale + ty;
+                const x2 = s.x2 * scale + tx, y2 = s.y2 * scale + ty;
+                if (Math.hypot(x2 - x1, y2 - y1) < SNAP) return;
+                const a = findOrAddCorner(x1, y1);
+                const b = findOrAddCorner(x2, y2);
+                if (a === b) return;
+                const wallKey = a.id < b.id ? `${a.id}-${b.id}` : `${b.id}-${a.id}`;
+                if (wallKeySeen.has(wallKey)) return;
+                wallKeySeen.add(wallKey);
+                const wall = { id: `wall-svg-${wallSeq++}`, startId: a.id, endId: b.id, openings: [], control: null };
+                newWalls.push(wall);
+                a.wallIds.push(wall.id);
+                b.wallIds.push(wall.id);
+            });
+
+            if (!newWalls.length) return null;
+
+            return {
+                corners: Array.from(cornerByKey.values()),
+                walls: newWalls,
+                furniture: [],
+                labels: [],
+                freeformOpenings: [],
+                referenceImages: [],
+                importedElementsHTML: [],
+                roomNames: {}
+            };
+        } finally {
+            wrapper.remove();
+        }
+    }
+
+    // Ramer–Douglas–Peucker simplification for sampled path polylines.
+    function simplifyPolyline(points, epsilon) {
+        if (points.length < 3) return points.slice();
+        const sqEps = epsilon * epsilon;
+        const sqDistToSegment = (p, a, b) => {
+            const dx = b.x - a.x, dy = b.y - a.y;
+            if (dx === 0 && dy === 0) return (p.x - a.x) ** 2 + (p.y - a.y) ** 2;
+            const t = Math.max(0, Math.min(1, ((p.x - a.x) * dx + (p.y - a.y) * dy) / (dx * dx + dy * dy)));
+            const px = a.x + t * dx, py = a.y + t * dy;
+            return (p.x - px) ** 2 + (p.y - py) ** 2;
+        };
+        const keep = new Array(points.length).fill(false);
+        keep[0] = keep[points.length - 1] = true;
+        const stack = [[0, points.length - 1]];
+        while (stack.length) {
+            const [lo, hi] = stack.pop();
+            let maxSq = 0, idx = -1;
+            for (let i = lo + 1; i < hi; i++) {
+                const d = sqDistToSegment(points[i], points[lo], points[hi]);
+                if (d > maxSq) { maxSq = d; idx = i; }
+            }
+            if (idx !== -1 && maxSq > sqEps) {
+                keep[idx] = true;
+                stack.push([lo, idx], [idx, hi]);
+            }
+        }
+        return points.filter((_, i) => keep[i]);
     }
     
     function loadLayoutFromFile(file, onDone) {
