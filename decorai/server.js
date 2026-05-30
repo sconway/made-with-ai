@@ -31,6 +31,16 @@ const TOKENS_PER_PURCHASE = parseInt(process.env.TOKENS_PER_PURCHASE) || 5;
 // Subscribers get up to this many image generations per calendar month.
 const SUBSCRIPTION_MONTHLY_LIMIT = parseInt(process.env.SUBSCRIPTION_MONTHLY_LIMIT) || 50;
 
+// One-time token packs. Each maps to a Stripe Price (set the IDs in .env).
+// `tokens` is the number of generations granted; `amount` is in cents and is
+// only used to render the price client-side — the real charge comes from the
+// Stripe Price. Keep the keys ('10'/'20'/'50') in sync with the client.
+const TOKEN_PACKS = {
+  '10': { tokens: 10, amount: 499, priceId: process.env.STRIPE_PRICE_ID_PACK_10 || '' },
+  '20': { tokens: 20, amount: 999, priceId: process.env.STRIPE_PRICE_ID_PACK_20 || '' },
+  '50': { tokens: 50, amount: 1999, priceId: process.env.STRIPE_PRICE_ID_PACK_50 || '' },
+};
+
 // Subscription configuration
 const SUBSCRIPTION_PRICE_ID = process.env.STRIPE_SUBSCRIPTION_PRICE_ID || '';
 
@@ -169,28 +179,40 @@ async function reserveGenerationSlot(req, res) {
   const sub = await getActiveSubscription(user.id);
   if (sub) {
     const r = await reserveSubscriptionMonthlyGeneration(user.id);
-    if (!r.ok) {
-      if (r.reason === 'limit_reached') {
-        res.status(429).json({
-          error: 'Monthly generation limit reached',
-          limit: r.limit,
-          used: r.used,
-          remaining: 0,
-          resets: 'next month',
-        });
-      } else {
-        res.status(500).json({ error: 'Failed to reserve monthly quota' });
-      }
+    if (r.ok) {
+      return {
+        ok: true,
+        kind: 'subscription',
+        userId: user.id,
+        used: r.used,
+        limit: r.limit,
+        refund: () => refundSubscriptionMonthlyGeneration(user.id),
+      };
+    }
+    if (r.reason !== 'limit_reached') {
+      res.status(500).json({ error: 'Failed to reserve monthly quota' });
       return { ok: false };
     }
-    return {
-      ok: true,
-      kind: 'subscription',
-      userId: user.id,
-      used: r.used,
+    // Monthly cap reached — fall back to purchased token packs so subscribers
+    // can keep generating past their included quota.
+    const overflow = await reserveFreeCredit(user.id);
+    if (overflow.ok) {
+      return {
+        ok: true,
+        kind: 'credits',
+        userId: user.id,
+        credits: overflow.credits,
+        refund: () => refundFreeCredit(user.id),
+      };
+    }
+    res.status(429).json({
+      error: 'Monthly generation limit reached',
       limit: r.limit,
-      refund: () => refundSubscriptionMonthlyGeneration(user.id),
-    };
+      used: r.used,
+      remaining: 0,
+      resets: 'next month',
+    });
+    return { ok: false };
   }
 
   // Otherwise: free / purchased tokens.
@@ -260,7 +282,8 @@ app.post('/webhook/stripe', express.raw({ type: 'application/json' }), async (re
           return res.status(500).send('Error fetching user credits');
         }
 
-        const newCredits = (currentCredits?.credits || 0) + TOKENS_PER_PURCHASE;
+        const tokensPurchased = parseInt(session.metadata.tokens) || TOKENS_PER_PURCHASE;
+        const newCredits = (currentCredits?.credits || 0) + tokensPurchased;
 
         const { error: upsertError } = await supabase
           .from('user_credits')
@@ -277,11 +300,11 @@ app.post('/webhook/stripe', express.raw({ type: 'application/json' }), async (re
           stripe_checkout_session_id: session.id,
           stripe_payment_intent_id: session.payment_intent,
           amount: session.amount_total,
-          credits_purchased: TOKENS_PER_PURCHASE,
+          credits_purchased: tokensPurchased,
           status: 'completed'
         });
 
-        console.log(`Added ${TOKENS_PER_PURCHASE} tokens to user ${userId}. New total: ${newCredits}`);
+        console.log(`Added ${tokensPurchased} tokens to user ${userId}. New total: ${newCredits}`);
       } catch (error) {
         console.error('Error processing Stripe webhook:', error);
         return res.status(500).send('Error processing webhook');
@@ -462,16 +485,27 @@ app.post('/api/checkout', async (req, res) => {
     const user = await getAuthUser(req, res);
     if (!user) return;
 
+    const pack = TOKEN_PACKS[String(req.body?.pack || '')];
+    if (!pack) {
+      return res.status(400).json({ error: 'Invalid token pack' });
+    }
+    if (!pack.priceId) {
+      return res.status(500).json({
+        error: 'Token pack not configured',
+        detail: `Missing Stripe price ID for the ${pack.tokens}-token pack`,
+      });
+    }
+
     const appUrl = process.env.APP_URL || 'http://localhost:5173';
 
     const session = await stripe.checkout.sessions.create({
       payment_method_types: ['card'],
-      line_items: [{ price: process.env.STRIPE_PRICE_ID, quantity: 1 }],
+      line_items: [{ price: pack.priceId, quantity: 1 }],
       mode: 'payment',
       success_url: `${appUrl}?payment=success`,
       cancel_url: `${appUrl}?payment=cancelled`,
       customer_email: user.email,
-      metadata: { user_id: user.id }
+      metadata: { user_id: user.id, tokens: String(pack.tokens) }
     });
 
     res.json({ url: session.url });
@@ -1296,7 +1330,12 @@ app.get('/api/config', (req, res) => {
     supabaseAnonKey: process.env.SUPABASE_ANON_KEY || '',
     stripePublishableKey: process.env.STRIPE_PUBLISHABLE_KEY || '',
     tokensPerPurchase: TOKENS_PER_PURCHASE,
-    priceAmount: parseInt(process.env.PRICE_AMOUNT) || 199
+    priceAmount: parseInt(process.env.PRICE_AMOUNT) || 199,
+    tokenPacks: Object.entries(TOKEN_PACKS).map(([id, p]) => ({
+      id,
+      tokens: p.tokens,
+      amount: p.amount,
+    }))
   });
 });
 

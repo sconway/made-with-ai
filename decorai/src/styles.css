@@ -4335,6 +4335,10 @@ main {
   background: #ffffff;
 }
 
+.dropped-image-choice-option-text strong .dropped-image-choice-badge {
+  color: #ffffff;
+}
+
 .dropped-image-choice-badge {
   display: inline-block;
   margin-left: 8px;
@@ -6391,7 +6395,23 @@ main {
   font-size: var(--text-sm);
   font-weight: var(--weight-medium);
   white-space: nowrap;
-  cursor: default;
+  cursor: pointer;
+  transition: border-color 0.15s ease, background 0.15s ease;
+}
+
+.subscription-usage-display:hover {
+  border-color: var(--brand-400, var(--brand-300, #93c5fd));
+}
+
+.subscription-usage-extra {
+  margin-left: 4px;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: var(--brand-600, #2563eb);
+  color: #fff;
+  font-size: var(--text-xs);
+  font-weight: var(--weight-medium);
+  font-variant-numeric: tabular-nums;
 }
 
 .subscription-usage-display svg {
@@ -6488,52 +6508,62 @@ main {
   margin-bottom: 1.5rem;
 }
 
-.tokens-purchase-card {
+.token-packs {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 0.75rem;
+  margin-bottom: 1rem;
+}
+
+.token-pack {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  padding: 1rem 0.5rem;
   background: var(--secondary-color);
   border: 1px solid var(--border-color);
   border-radius: 12px;
-  padding: 1.25rem;
-  text-align: center;
-  margin-bottom: 1rem;
+  cursor: pointer;
+  transition: border-color 0.15s ease, transform 0.1s ease, box-shadow 0.15s ease;
 }
 
-.purchase-details {
-  display: flex;
-  align-items: baseline;
-  justify-content: center;
-  gap: 6px;
-  margin-bottom: 4px;
+.token-pack:hover:not(:disabled) {
+  border-color: var(--primary-color);
+  transform: translateY(-2px);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
 }
 
-.purchase-amount {
-  font-size: 2rem;
+.token-pack:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.token-pack-amount {
+  font-size: 1.75rem;
   font-weight: 700;
   color: var(--primary-color);
+  line-height: 1.1;
 }
 
-.purchase-label {
-  font-size: 1rem;
+.token-pack-label {
+  font-size: 0.8rem;
   color: var(--text-light);
 }
 
-.purchase-price {
-  font-size: 1.1rem;
+.token-pack-price {
+  margin-top: 4px;
+  font-size: 1rem;
   font-weight: 600;
   color: var(--text-color);
-  margin-bottom: 1rem;
 }
 
-.checkout-btn {
-  width: 100%;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 8px;
+.token-pack--loading {
+  position: relative;
 }
 
-.checkout-btn:disabled {
-  opacity: 0.6;
-  cursor: not-allowed;
+.token-pack--loading .token-pack-price::after {
+  content: '…';
 }
 
 .tokens-footer {
@@ -6733,4 +6763,161 @@ main {
 
 .toast-success { border-left: 4px solid #10b981; }
 .toast-error   { border-left: 4px solid #ef4444; }
+
+/* ── Generate 3D room modal ───────────────────────────────────────────── */
+.room3d-modal-content {
+  max-width: 920px;
+}
+
+.room3d-body {
+  display: grid;
+  grid-template-columns: 260px 1fr;
+  gap: 1.5rem;
+}
+
+@media (max-width: 760px) {
+  .room3d-body {
+    grid-template-columns: 1fr;
+  }
+}
+
+.room3d-controls {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.room3d-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.room3d-field > span {
+  font-size: 0.8125rem;
+  font-weight: 600;
+  color: #374151;
+}
+
+.room3d-room-select,
+#room3d-room-select {
+  padding: 8px 10px;
+  border: 1px solid rgba(148, 163, 184, 0.55);
+  border-radius: 8px;
+  background: #ffffff;
+  font-size: 0.875rem;
+}
+
+.room3d-presets {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
+.room3d-preset {
+  padding: 8px 10px;
+  border: 1px solid rgba(148, 163, 184, 0.55);
+  border-radius: 8px;
+  background: #ffffff;
+  font-size: 0.8125rem;
+  font-weight: 500;
+  color: #374151;
+  cursor: pointer;
+  transition: border-color 0.15s, background 0.15s, color 0.15s;
+}
+
+.room3d-preset:hover {
+  border-color: var(--primary-color);
+}
+
+.room3d-preset--active {
+  border-color: var(--primary-color);
+  background: var(--primary-color);
+  color: #ffffff;
+}
+
+.room3d-hint {
+  font-size: 0.75rem;
+  color: #6b7280;
+  line-height: 1.5;
+  margin: 0;
+}
+
+.room3d-preview {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1rem;
+}
+
+@media (max-width: 560px) {
+  .room3d-preview {
+    grid-template-columns: 1fr;
+  }
+}
+
+.room3d-pane {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.room3d-pane-label {
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: #6b7280;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+}
+
+.room3d-guide-img,
+.room3d-result {
+  aspect-ratio: 1 / 1;
+  width: 100%;
+  border-radius: 10px;
+  border: 1px solid rgba(148, 163, 184, 0.4);
+  background: #f3f4f6;
+  object-fit: cover;
+}
+
+.room3d-result {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+}
+
+.room3d-result-img {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.room3d-result-placeholder {
+  padding: 1rem;
+  text-align: center;
+  font-size: 0.8125rem;
+  color: #9ca3af;
+}
+
+.room3d-spinner {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  background: rgba(255, 255, 255, 0.82);
+  font-size: 0.8125rem;
+  color: #4b5563;
+}
+
+.room3d-footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+}
 .toast-info    { border-left: 4px solid #6366f1; }

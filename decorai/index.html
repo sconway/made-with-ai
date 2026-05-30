@@ -482,6 +482,7 @@
                             <button type="button" id="export-png-btn" data-tooltip="Export as PNG image" aria-label="Export the current view as a PNG image">Export as PNG</button>
                             <button type="button" id="export-svg-btn" data-tooltip="Export as SVG" aria-label="Export the floor plan as SVG">Export as SVG</button>
                             <button type="button" id="export-layout-file-btn" data-tooltip="Save layout file" aria-label="Download layout as a .decorai-layout.json file">Save layout as file</button>
+                            <button type="button" id="generate-3d-room-btn" data-tooltip="Generate a photoreal 3D room from this floor plan" aria-label="Generate a photorealistic 3D room view from the floor plan">Generate 3D room</button>
                         </div>
                     </div>
                 </div>
@@ -936,16 +937,8 @@
                     <p class="tokens-current">You have <strong id="modal-tokens-count">0</strong> token(s) remaining.</p>
                     <p class="tokens-description">Each AI-generated layout design uses 1 token. Tokens are only used when a design is successfully generated — failed attempts are free.</p>
                 </div>
-                <div class="tokens-purchase-card">
-                    <div class="purchase-details">
-                        <span class="purchase-amount" id="tokens-per-purchase">5</span>
-                        <span class="purchase-label">tokens</span>
-                    </div>
-                    <div class="purchase-price" id="tokens-price">$1.99</div>
-                    <button id="checkout-btn" class="primary-btn checkout-btn" type="button">
-                        <i data-feather="credit-card"></i>
-                        <span>Purchase Tokens</span>
-                    </button>
+                <div class="token-packs" id="token-packs">
+                    <!-- Pack options injected from /api/config -->
                 </div>
                 <p class="tokens-footer">Payments are processed securely by Stripe.</p>
             </div>
@@ -1002,6 +995,55 @@
                     <p class="subscribe-note">Free wall tool always available. Cancel anytime.</p>
                 </div>
                 <p class="tokens-footer">Payments are processed securely by Stripe.</p>
+            </div>
+        </div>
+    </div>
+
+    <div class="modal hidden" id="room3d-modal">
+        <div class="modal-content room3d-modal-content">
+            <div class="modal-header">
+                <h2>Generate 3D room</h2>
+                <button id="room3d-close-btn" class="close-modal-btn" type="button" aria-label="Close">
+                    <i data-feather="x"></i>
+                </button>
+            </div>
+            <div class="modal-body room3d-body">
+                <div class="room3d-controls">
+                    <label class="room3d-field hidden" id="room3d-room-field">
+                        <span>Room</span>
+                        <select id="room3d-room-select"></select>
+                    </label>
+                    <div class="room3d-field">
+                        <span>Style</span>
+                        <div class="room3d-presets" id="room3d-presets"></div>
+                    </div>
+                    <button id="room3d-generate-btn" class="primary-btn" type="button">
+                        <i data-feather="image"></i>
+                        <span>Generate</span>
+                    </button>
+                    <p class="room3d-hint">A 3D blockout of your room guides the render. Pick a style, then generate a photoreal eye-level view. This uses the premium model and can take up to a minute.</p>
+                </div>
+                <div class="room3d-preview">
+                    <div class="room3d-pane">
+                        <span class="room3d-pane-label">Structure guide</span>
+                        <img id="room3d-guide-img" class="room3d-guide-img" alt="3D structure guide of the room" />
+                    </div>
+                    <div class="room3d-pane">
+                        <span class="room3d-pane-label">Generated room</span>
+                        <div class="room3d-result" id="room3d-result">
+                            <div class="room3d-result-placeholder" id="room3d-result-placeholder">Your photoreal room will appear here.</div>
+                            <img id="room3d-result-img" class="room3d-result-img hidden" alt="Generated photoreal 3D room" />
+                            <div class="room3d-spinner hidden" id="room3d-spinner">
+                                <span class="my-layouts-spinner" aria-hidden="true"></span>
+                                <p>Rendering your room…</p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div class="modal-footer room3d-footer">
+                <button id="room3d-download-btn" class="secondary-btn" type="button" disabled>Download</button>
+                <button id="room3d-regenerate-btn" class="secondary-btn" type="button" disabled>Regenerate</button>
             </div>
         </div>
     </div>

@@ -1,4 +1,5 @@
 import feather from 'feather-icons';
+import * as THREE from 'three';
 
 // ==========================================
 // FLOOR PLAN EDITOR
@@ -232,7 +233,9 @@ const FloorPlanEditor = (() => {
         document.getElementById('export-png-btn')?.addEventListener('click', () => exportAs('png'));
         document.getElementById('export-svg-btn')?.addEventListener('click', () => exportAs('svg'));
         document.getElementById('export-layout-file-btn')?.addEventListener('click', () => { document.getElementById('export-menu')?.classList.remove('show'); downloadLayoutFile(); });
-        
+        document.getElementById('generate-3d-room-btn')?.addEventListener('click', () => { document.getElementById('export-menu')?.classList.remove('show'); openRoom3DModal(); });
+        initRoom3DModal();
+
         // Close export menu when clicking outside
         document.addEventListener('click', (e) => {
             const exportDropdown = document.querySelector('.export-dropdown');
@@ -7048,6 +7051,342 @@ const FloorPlanEditor = (() => {
         const cx = face.points.reduce((sum, p) => sum + p.x, 0) / face.points.length;
         const cy = face.points.reduce((sum, p) => sum + p.y, 0) / face.points.length;
         return `room-${Math.round(cx)}-${Math.round(cy)}`;
+    }
+
+    // ── Generate 3D room ──────────────────────────────────────────────────
+    const ROOM3D_PRESETS = [
+        { id: 'modern', label: 'Modern', prompt: 'modern contemporary interior design, clean lines, neutral palette, designer furniture' },
+        { id: 'scandinavian', label: 'Scandinavian', prompt: 'scandinavian interior, light wood floors, white walls, cozy minimal styling, soft daylight' },
+        { id: 'cozy', label: 'Cozy', prompt: 'cozy warm interior, soft textiles, layered rugs, warm ambient lighting, inviting' },
+        { id: 'minimalist', label: 'Minimalist', prompt: 'minimalist interior, uncluttered, muted tones, refined simple furniture' },
+        { id: 'industrial', label: 'Industrial', prompt: 'industrial loft interior, exposed brick, concrete, black metal accents, leather' },
+        { id: 'luxury', label: 'Luxury', prompt: 'luxury interior, elegant furnishings, rich materials, marble and brass, sophisticated' }
+    ];
+
+    let room3dFaces = [];
+    let room3dSelectedFaceIndex = 0;
+    let room3dStyle = 'modern';
+    let room3dGuideDataUrl = null;
+    let room3dResultUrl = null;
+    let room3dInited = false;
+    let room3dBusy = false;
+
+    function furnitureGuideColor(typeId) {
+        const beds = ['queen-bed', 'king-bed', 'twin-bed'];
+        const seating = ['sofa', 'armchair', 'dining-chair', 'office-chair'];
+        const wood = ['coffee-table', 'dining-table', 'desk', 'counter', 'buffet', 'nightstand', 'tv-stand'];
+        const storage = ['wardrobe', 'dresser', 'bookshelf', 'fridge', 'filing-cabinet', 'dishwasher'];
+        const fixtures = ['toilet', 'bathtub', 'shower', 'sink-bath', 'sink-kitchen', 'stove'];
+        if (beds.includes(typeId)) return 0xd8cdbf;
+        if (seating.includes(typeId)) return 0x8a94a6;
+        if (wood.includes(typeId)) return 0x9c7a55;
+        if (storage.includes(typeId)) return 0x6f7480;
+        if (fixtures.includes(typeId)) return 0xe8eaed;
+        if (typeId === 'floor-plant') return 0x5f7d52;
+        return 0xa7adb8;
+    }
+
+    function furnitureHeightFt(typeId) {
+        const tall = { wardrobe: 6, fridge: 5.5, bookshelf: 6, 'tv-stand': 1.8, dresser: 3, 'filing-cabinet': 4 };
+        const low = { 'coffee-table': 1.4, 'floor-mat': 0.1, 'floor-plant': 4, rug: 0.1, toilet: 2.5, bathtub: 1.8, shower: 6.5, 'queen-bed': 2, 'king-bed': 2, 'twin-bed': 2, nightstand: 2, sofa: 2.6, armchair: 2.6, 'dining-table': 2.5, 'dining-chair': 3, desk: 2.5, 'office-chair': 3, counter: 3, stove: 3, 'sink-kitchen': 3, dishwasher: 3, buffet: 3, 'sink-bath': 2.5, stairs: 4 };
+        if (tall[typeId] != null) return tall[typeId];
+        if (low[typeId] != null) return low[typeId];
+        return 2.5;
+    }
+
+    function pointInPolygonPx(x, y, pts) {
+        let inside = false;
+        for (let i = 0, j = pts.length - 1; i < pts.length; j = i++) {
+            const xi = pts[i].x, yi = pts[i].y, xj = pts[j].x, yj = pts[j].y;
+            const intersect = ((yi > y) !== (yj > y)) && (x < (xj - xi) * (y - yi) / (yj - yi) + xi);
+            if (intersect) inside = !inside;
+        }
+        return inside;
+    }
+
+    // Build an offscreen 3D blockout of a room and return it as a PNG data URL.
+    // This perspective "guide" gives the image model correct vanishing points
+    // and furniture placement to turn into a photoreal interior.
+    function renderRoomGuide(face) {
+        const H = 8; // ceiling height in feet
+        const ftPts = face.points.map(p => ({ x: p.x / scale, z: p.y / scale }));
+        const n = ftPts.length;
+        if (n < 3) return null;
+
+        const centroid = ftPts.reduce((a, p) => ({ x: a.x + p.x / n, z: a.z + p.z / n }), { x: 0, z: 0 });
+
+        const scene = new THREE.Scene();
+        scene.background = new THREE.Color(0xeef0f4);
+
+        const disposables = [];
+
+        // Floor — built in shape space (x, z), rotated down onto the XZ plane.
+        const floorShape = new THREE.Shape();
+        floorShape.moveTo(ftPts[0].x, ftPts[0].z);
+        for (let i = 1; i < n; i++) floorShape.lineTo(ftPts[i].x, ftPts[i].z);
+        floorShape.closePath();
+        const floorGeo = new THREE.ShapeGeometry(floorShape);
+        floorGeo.rotateX(-Math.PI / 2); // shape y → world -z, lies at y=0
+        const floorMat = new THREE.MeshStandardMaterial({ color: 0xb89576, roughness: 0.9, side: THREE.DoubleSide });
+        scene.add(new THREE.Mesh(floorGeo, floorMat));
+        disposables.push(floorGeo, floorMat);
+
+        // Ceiling — same polygon at the top so the render reads as an enclosed
+        // interior (otherwise the open top becomes a blown-out sky in the result).
+        const ceilGeo = new THREE.ShapeGeometry(floorShape);
+        ceilGeo.rotateX(-Math.PI / 2);
+        ceilGeo.translate(0, H, 0);
+        const ceilMat = new THREE.MeshStandardMaterial({ color: 0xf5f3ef, roughness: 1, side: THREE.DoubleSide });
+        scene.add(new THREE.Mesh(ceilGeo, ceilMat));
+        disposables.push(ceilGeo, ceilMat);
+
+        // Walls — one box per polygon edge, extruded to the ceiling.
+        const wallMat = new THREE.MeshStandardMaterial({ color: 0xece7dd, roughness: 1, side: THREE.DoubleSide });
+        disposables.push(wallMat);
+        for (let i = 0; i < n; i++) {
+            const A = ftPts[i], B = ftPts[(i + 1) % n];
+            const ax = A.x, az = -A.z, bx = B.x, bz = -B.z;
+            const dx = bx - ax, dz = bz - az;
+            const len = Math.hypot(dx, dz);
+            if (len < 0.01) continue;
+            const wallGeo = new THREE.BoxGeometry(len, H, 0.4);
+            disposables.push(wallGeo);
+            const wall = new THREE.Mesh(wallGeo, wallMat);
+            wall.position.set((ax + bx) / 2, H / 2, (az + bz) / 2);
+            wall.rotation.y = Math.atan2(-dz, dx);
+            scene.add(wall);
+        }
+
+        // Furniture — boxes coloured by category for items whose center lies
+        // inside the room, giving the model recognizable masses to render.
+        for (const item of furniture) {
+            const cxPx = item.x + item.width / 2;
+            const cyPx = item.y + item.height / 2;
+            if (!pointInPolygonPx(cxPx, cyPx, face.points)) continue;
+            const w = item.width / scale;
+            const d = item.height / scale;
+            const h = furnitureHeightFt(item.typeId);
+            const geo = new THREE.BoxGeometry(Math.max(w, 0.2), h, Math.max(d, 0.2));
+            const mat = new THREE.MeshStandardMaterial({ color: furnitureGuideColor(item.typeId), roughness: 0.8 });
+            disposables.push(geo, mat);
+            const mesh = new THREE.Mesh(geo, mat);
+            mesh.position.set(cxPx / scale, h / 2, -cyPx / scale);
+            mesh.rotation.y = -(item.rotation || 0) * Math.PI / 180;
+            scene.add(mesh);
+        }
+
+        scene.add(new THREE.HemisphereLight(0xffffff, 0x9aa0aa, 0.9));
+        const lamp = new THREE.PointLight(0xfff2e0, 1.5, 0, 1.3);
+        lamp.position.set(centroid.x, H - 1, -centroid.z);
+        scene.add(lamp);
+        const fill = new THREE.DirectionalLight(0xe6ecf5, 0.45);
+        fill.position.set(centroid.x + 6, H * 0.7, -centroid.z + 8);
+        scene.add(fill);
+
+        // Camera at eye level, anchored at the room corner farthest from the
+        // centroid (widest view), nudged just inside the wall, aimed across.
+        let anchor = ftPts[0], best = -Infinity;
+        for (const p of ftPts) {
+            const dd = Math.hypot(p.x - centroid.x, p.z - centroid.z);
+            if (dd > best) { best = dd; anchor = p; }
+        }
+        const camPlan = { x: anchor.x + (centroid.x - anchor.x) * 0.14, z: anchor.z + (centroid.z - anchor.z) * 0.14 };
+        const eye = 5.4;
+        const camera = new THREE.PerspectiveCamera(68, 1, 0.1, 250);
+        camera.position.set(camPlan.x, eye, -camPlan.z);
+        camera.lookAt(centroid.x, eye * 0.62, -centroid.z);
+
+        const size = 768;
+        const renderer = new THREE.WebGLRenderer({ antialias: true, preserveDrawingBuffer: true });
+        renderer.setSize(size, size);
+        renderer.setPixelRatio(1);
+        renderer.render(scene, camera);
+        const dataUrl = renderer.domElement.toDataURL('image/png');
+
+        disposables.forEach(d => d.dispose && d.dispose());
+        renderer.dispose();
+        renderer.forceContextLoss && renderer.forceContextLoss();
+
+        return dataUrl;
+    }
+
+    function initRoom3DModal() {
+        if (room3dInited) return;
+        room3dInited = true;
+
+        const presetWrap = document.getElementById('room3d-presets');
+        if (presetWrap) {
+            presetWrap.innerHTML = '';
+            ROOM3D_PRESETS.forEach(p => {
+                const btn = document.createElement('button');
+                btn.type = 'button';
+                btn.className = 'room3d-preset' + (p.id === room3dStyle ? ' room3d-preset--active' : '');
+                btn.textContent = p.label;
+                btn.dataset.styleId = p.id;
+                btn.addEventListener('click', () => selectRoom3DStyle(p.id));
+                presetWrap.appendChild(btn);
+            });
+        }
+
+        document.getElementById('room3d-close-btn')?.addEventListener('click', closeRoom3DModal);
+        document.getElementById('room3d-modal')?.addEventListener('click', (e) => {
+            if (e.target?.id === 'room3d-modal') closeRoom3DModal();
+        });
+        document.getElementById('room3d-room-select')?.addEventListener('change', (e) => {
+            selectRoom3DFace(parseInt(e.target.value, 10) || 0);
+        });
+        document.getElementById('room3d-generate-btn')?.addEventListener('click', generateRoom3D);
+        document.getElementById('room3d-regenerate-btn')?.addEventListener('click', generateRoom3D);
+        document.getElementById('room3d-download-btn')?.addEventListener('click', downloadRoom3D);
+    }
+
+    function openRoom3DModal() {
+        initRoom3DModal();
+        const faces = findEnclosedRoomFaces();
+        if (!faces.length) {
+            showLayoutFileMessage('Draw an enclosed room first to generate a 3D view.');
+            return;
+        }
+        room3dFaces = faces.slice().sort((a, b) => b.areaPx - a.areaPx);
+        room3dSelectedFaceIndex = 0;
+
+        const select = document.getElementById('room3d-room-select');
+        const field = document.getElementById('room3d-room-field');
+        if (select) {
+            select.innerHTML = '';
+            room3dFaces.forEach((face, i) => {
+                const opt = document.createElement('option');
+                opt.value = String(i);
+                const name = roomNames[getRoomFaceKey(face)];
+                opt.textContent = `${name || `Room ${i + 1}`} (${formatRoomArea(face.areaPx)})`;
+                select.appendChild(opt);
+            });
+            select.value = '0';
+        }
+        if (field) field.classList.toggle('hidden', room3dFaces.length <= 1);
+
+        resetRoom3DResult();
+        renderRoom3DGuide();
+
+        const modal = document.getElementById('room3d-modal');
+        if (modal) {
+            modal.classList.remove('hidden');
+            modal.classList.add('show');
+        }
+        if (typeof feather !== 'undefined') feather.replace();
+    }
+
+    function closeRoom3DModal() {
+        const modal = document.getElementById('room3d-modal');
+        if (modal) {
+            modal.classList.remove('show');
+            modal.classList.add('hidden');
+        }
+    }
+
+    function selectRoom3DStyle(id) {
+        room3dStyle = id;
+        document.querySelectorAll('#room3d-presets .room3d-preset').forEach(btn => {
+            btn.classList.toggle('room3d-preset--active', btn.dataset.styleId === id);
+        });
+    }
+
+    function selectRoom3DFace(index) {
+        room3dSelectedFaceIndex = index;
+        resetRoom3DResult();
+        renderRoom3DGuide();
+    }
+
+    function renderRoom3DGuide() {
+        const face = room3dFaces[room3dSelectedFaceIndex];
+        if (!face) return;
+        let dataUrl = null;
+        try {
+            dataUrl = renderRoomGuide(face);
+        } catch (err) {
+            console.error('Room guide render failed:', err);
+        }
+        room3dGuideDataUrl = dataUrl;
+        const img = document.getElementById('room3d-guide-img');
+        if (img && dataUrl) img.src = dataUrl;
+    }
+
+    function resetRoom3DResult() {
+        room3dResultUrl = null;
+        document.getElementById('room3d-result-img')?.classList.add('hidden');
+        const placeholder = document.getElementById('room3d-result-placeholder');
+        if (placeholder) {
+            placeholder.classList.remove('hidden');
+            placeholder.textContent = 'Your photoreal room will appear here.';
+        }
+        document.getElementById('room3d-spinner')?.classList.add('hidden');
+        const dl = document.getElementById('room3d-download-btn');
+        const re = document.getElementById('room3d-regenerate-btn');
+        if (dl) dl.disabled = true;
+        if (re) re.disabled = true;
+    }
+
+    async function generateRoom3D() {
+        if (room3dBusy || !room3dGuideDataUrl) return;
+        if (typeof window.__decoraiGenerateRoomRender !== 'function') {
+            showLayoutFileMessage('Image generation is unavailable right now.');
+            return;
+        }
+        room3dBusy = true;
+        const genBtn = document.getElementById('room3d-generate-btn');
+        const spinner = document.getElementById('room3d-spinner');
+        const placeholder = document.getElementById('room3d-result-placeholder');
+        const resultImg = document.getElementById('room3d-result-img');
+        if (genBtn) genBtn.disabled = true;
+        placeholder?.classList.add('hidden');
+        resultImg?.classList.add('hidden');
+        spinner?.classList.remove('hidden');
+
+        try {
+            const preset = ROOM3D_PRESETS.find(p => p.id === room3dStyle) || ROOM3D_PRESETS[0];
+            const url = await window.__decoraiGenerateRoomRender(room3dGuideDataUrl, { stylePrompt: preset.prompt });
+            if (!url) throw new Error('No image returned.');
+            room3dResultUrl = url;
+            if (resultImg) {
+                resultImg.src = url;
+                resultImg.classList.remove('hidden');
+            }
+            const dl = document.getElementById('room3d-download-btn');
+            const re = document.getElementById('room3d-regenerate-btn');
+            if (dl) dl.disabled = false;
+            if (re) re.disabled = false;
+        } catch (err) {
+            console.error('3D room generation failed:', err);
+            if (err && err.code === 'QUOTA_EXCEEDED' && typeof window.__decoraiShowSubscribeModal === 'function') {
+                closeRoom3DModal();
+                window.__decoraiShowSubscribeModal();
+            } else if (placeholder) {
+                placeholder.classList.remove('hidden');
+                placeholder.textContent = (err && err.message) ? err.message : 'Could not generate the room. Try again.';
+            }
+        } finally {
+            spinner?.classList.add('hidden');
+            if (genBtn) genBtn.disabled = false;
+            room3dBusy = false;
+        }
+    }
+
+    async function downloadRoom3D() {
+        if (!room3dResultUrl) return;
+        try {
+            const res = await fetch(room3dResultUrl);
+            const blob = await res.blob();
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = '3d-room.png';
+            document.body.appendChild(a);
+            a.click();
+            a.remove();
+            setTimeout(() => URL.revokeObjectURL(url), 1000);
+        } catch {
+            window.open(room3dResultUrl, '_blank');
+        }
     }
 
     function handleCanvasDoubleClick(e) {

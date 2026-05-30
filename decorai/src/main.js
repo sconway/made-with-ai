@@ -131,9 +131,7 @@ const buyTokensBtn = document.getElementById('buy-tokens-btn');
 const buyTokensModal = document.getElementById('buy-tokens-modal');
 const closeBuyTokensModalBtn = document.getElementById('close-buy-tokens-modal-btn');
 const modalTokensCount = document.getElementById('modal-tokens-count');
-const checkoutBtn = document.getElementById('checkout-btn');
-const tokensPerPurchaseEl = document.getElementById('tokens-per-purchase');
-const tokensPriceEl = document.getElementById('tokens-price');
+const tokenPacksContainer = document.getElementById('token-packs');
 
 // Generic alert modal elements
 const alertModal = document.getElementById('alert-modal');
@@ -375,12 +373,7 @@ async function initializeApp() {
         appConfig = await response.json();
 
         // Populate purchase UI from config
-        if (appConfig.tokensPerPurchase && tokensPerPurchaseEl) {
-            tokensPerPurchaseEl.textContent = appConfig.tokensPerPurchase;
-        }
-        if (appConfig.priceAmount && tokensPriceEl) {
-            tokensPriceEl.textContent = `$${(appConfig.priceAmount / 100).toFixed(2)}`;
-        }
+        renderTokenPacks(appConfig.tokenPacks);
 
         if (appConfig.supabaseUrl && appConfig.supabaseAnonKey) {
             const createClient = await loadSupabase();
@@ -562,9 +555,25 @@ function updateSubscriptionUsageDisplay() {
     const { used, limit, remaining } = subscriptionUsage;
     if (subscriptionUsageRemaining) subscriptionUsageRemaining.textContent = remaining;
     if (subscriptionUsageLimit) subscriptionUsageLimit.textContent = limit;
-    subscriptionUsageDisplay.classList.toggle('subscription-usage-empty', remaining <= 0);
-    subscriptionUsageDisplay.classList.toggle('subscription-usage-low', remaining > 0 && remaining < 10);
-    subscriptionUsageDisplay.title = `${used} of ${limit} image generations used this month`;
+    // Purchased token packs act as overflow once the monthly quota is spent.
+    let extraEl = document.getElementById('subscription-usage-extra');
+    if (userTokens > 0) {
+        if (!extraEl) {
+            extraEl = document.createElement('span');
+            extraEl.id = 'subscription-usage-extra';
+            extraEl.className = 'subscription-usage-extra';
+            subscriptionUsageDisplay.appendChild(extraEl);
+        }
+        extraEl.textContent = `+${userTokens}`;
+    } else if (extraEl) {
+        extraEl.remove();
+    }
+    // Only "empty" when the monthly quota AND any purchased overflow are gone.
+    const fullyEmpty = remaining <= 0 && userTokens <= 0;
+    subscriptionUsageDisplay.classList.toggle('subscription-usage-empty', fullyEmpty);
+    subscriptionUsageDisplay.classList.toggle('subscription-usage-low', !fullyEmpty && remaining > 0 && remaining < 10);
+    const extraNote = userTokens > 0 ? ` (+${userTokens} purchased)` : '';
+    subscriptionUsageDisplay.title = `${used} of ${limit} image generations used this month${extraNote} — click to buy more`;
     syncDefaultModelToggles();
 }
 
@@ -589,13 +598,13 @@ function hasTokensAvailable() {
     }
     if (userHasSubscription) {
         // Subscribers are capped at SUBSCRIPTION_MONTHLY_LIMIT (default 50)
-        // generations per calendar month. Block early when none remain so we
-        // don't make the user wait for a server 429.
-        if (subscriptionUsage.remaining <= 0) {
-            showSubscriptionLimitMessage();
-            return false;
-        }
-        return true;
+        // generations per calendar month. Once that's spent, purchased token
+        // packs act as overflow. Block early when both are gone so we don't
+        // make the user wait for a server 429.
+        if (subscriptionUsage.remaining > 0) return true;
+        if (userTokens > 0) return true;
+        showBuyTokensModal();
+        return false;
     }
     if (userTokens <= 0) {
         showBuyTokensModal();
@@ -607,7 +616,7 @@ function hasTokensAvailable() {
 /** Whether the user can still run a premium (OpenAI) image generation. */
 function hasPremiumGenerationsAvailable() {
     if (!currentUser || !currentSession) return false;
-    if (userHasSubscription) return subscriptionUsage.remaining > 0;
+    if (userHasSubscription && subscriptionUsage.remaining > 0) return true;
     return userTokens > 0;
 }
 
@@ -644,6 +653,9 @@ async function useTokenAfterSuccess() {
                     limit: data.monthlyLimit ?? 50,
                     remaining: data.remaining ?? 0,
                 };
+                // When the monthly quota is spent, the generation may have been
+                // billed to a purchased token pack — refresh that balance too.
+                if (subscriptionUsage.remaining <= 0) await fetchUserTokens();
                 updateSubscriptionUsageDisplay();
             } else {
                 userTokens = data.credits;
@@ -661,12 +673,39 @@ async function useTokenAfterSuccess() {
     }
 }
 
+// Fallback packs if /api/config hasn't loaded yet.
+const DEFAULT_TOKEN_PACKS = [
+    { id: '10', tokens: 10, amount: 499 },
+    { id: '20', tokens: 20, amount: 999 },
+    { id: '50', tokens: 50, amount: 1999 },
+];
+
+/** Render the selectable token-pack cards into the buy-tokens modal. */
+function renderTokenPacks(packs) {
+    if (!tokenPacksContainer) return;
+    const list = (packs && packs.length) ? packs : DEFAULT_TOKEN_PACKS;
+    tokenPacksContainer.innerHTML = '';
+    list.forEach((pack) => {
+        const price = `$${(pack.amount / 100).toFixed(2)}`;
+        const card = document.createElement('button');
+        card.type = 'button';
+        card.className = 'token-pack';
+        card.dataset.pack = pack.id;
+        card.innerHTML =
+            `<span class="token-pack-amount">${pack.tokens}</span>` +
+            `<span class="token-pack-label">tokens</span>` +
+            `<span class="token-pack-price">${price}</span>`;
+        card.addEventListener('click', () => handleCheckout(pack.id, card));
+        tokenPacksContainer.appendChild(card);
+    });
+}
+
 function showBuyTokensModal() {
     if (!currentUser) { showAuthModal('login'); return; }
     updateTokensDisplay();
-    if (checkoutBtn) {
-        checkoutBtn.disabled = false;
-        checkoutBtn.innerHTML = '<i data-feather="credit-card"></i><span>Purchase Tokens</span>';
+    if (modalTokensCount) modalTokensCount.textContent = userTokens;
+    if (!tokenPacksContainer || !tokenPacksContainer.children.length) {
+        renderTokenPacks(appConfig?.tokenPacks);
     }
     if (buyTokensModal) {
         buyTokensModal.classList.remove('hidden');
@@ -686,19 +725,20 @@ function hideBuyTokensModal() {
     }
 }
 
-async function handleCheckout() {
+async function handleCheckout(pack, cardEl) {
     if (!currentUser || !currentSession) { showAuthModal('login'); return; }
+    if (!pack) return;
+    const cards = tokenPacksContainer ? Array.from(tokenPacksContainer.children) : [];
     try {
-        if (checkoutBtn) {
-            checkoutBtn.disabled = true;
-            checkoutBtn.innerHTML = '<span>Processing...</span>';
-        }
+        cards.forEach((c) => { c.disabled = true; });
+        if (cardEl) cardEl.classList.add('token-pack--loading');
         const res = await fetch(`${PROXY_SERVER_URL}/api/checkout`, {
             method: 'POST',
             headers: {
                 Authorization: `Bearer ${currentSession.access_token}`,
                 'Content-Type': 'application/json'
-            }
+            },
+            body: JSON.stringify({ pack })
         });
         if (res.ok) {
             const { url } = await res.json();
@@ -710,11 +750,8 @@ async function handleCheckout() {
     } catch (err) {
         console.error('handleCheckout error:', err);
         showToastMessage('Error starting checkout. Please try again.', 'error');
-        if (checkoutBtn) {
-            checkoutBtn.disabled = false;
-            checkoutBtn.innerHTML = '<i data-feather="credit-card"></i><span>Purchase Tokens</span>';
-            if (typeof feather !== 'undefined') feather.replace();
-        }
+        cards.forEach((c) => { c.disabled = false; });
+        if (cardEl) cardEl.classList.remove('token-pack--loading');
     }
 }
 
@@ -1572,7 +1609,8 @@ document.addEventListener('DOMContentLoaded', async () => {
     // Token / payment listeners
     if (buyTokensBtn) buyTokensBtn.addEventListener('click', showBuyTokensModal);
     if (closeBuyTokensModalBtn) closeBuyTokensModalBtn.addEventListener('click', hideBuyTokensModal);
-    if (checkoutBtn) checkoutBtn.addEventListener('click', handleCheckout);
+    // Subscribers can click their monthly-usage badge to buy overflow token packs.
+    if (subscriptionUsageDisplay) subscriptionUsageDisplay.addEventListener('click', showBuyTokensModal);
     // Close modal when clicking outside
     if (buyTokensModal) {
         buyTokensModal.addEventListener('click', (e) => {
@@ -2883,6 +2921,16 @@ async function generateImageWithControlNet(imageBase64, prompt, negativePrompt, 
     // This should never be reached, but just in case
     throw lastError || new Error('All model attempts failed');
 }
+
+// Exposed so the floor plan editor can turn a rendered room blockout into a
+// photoreal eye-level interior. Uses the premium gpt-image-2 edit path: it
+// follows the blockout's room shape, camera and furniture placement while
+// producing a fully photorealistic result. Counts against the monthly quota.
+window.__decoraiGenerateRoomRender = async function (guideBase64, opts = {}) {
+    const stylePrompt = (opts && opts.stylePrompt) ? opts.stylePrompt.trim() : '';
+    const prompt = `This image is a plain 3D blockout of a room: a wooden floor, blank walls and ceiling, and colored boxes that mark where furniture goes. Turn it into a photorealistic interior photograph of the same room. Keep the room's shape and the position, footprint and orientation of every furniture block — replace each colored box with a realistic, well-designed piece of furniture of the matching type standing in that exact spot. Style: ${stylePrompt || 'tasteful contemporary interior'}. Add realistic materials, textures, soft natural daylight and subtle shadows. Ultra photorealistic, interior design magazine photography, high detail, no text or labels.`;
+    return await callPremiumImageEdit(guideBase64, prompt);
+};
 
 // Helper: Upscale image using Replicate (optional)
 async function upscaleImageWithReplicate(imageUrl) {

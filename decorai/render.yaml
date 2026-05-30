@@ -41,6 +41,13 @@ services:
         sync: false
       - key: STRIPE_SUBSCRIPTION_PRICE_ID
         sync: false
+      # One-time token packs (set the price IDs in the Render dashboard)
+      - key: STRIPE_PRICE_ID_PACK_10
+        sync: false
+      - key: STRIPE_PRICE_ID_PACK_20
+        sync: false
+      - key: STRIPE_PRICE_ID_PACK_50
+        sync: false
 
       # App configuration
       - key: APP_URL
