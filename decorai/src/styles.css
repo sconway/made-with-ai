@@ -104,6 +104,7 @@
   /* ── Motion ── */
   --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
   --ease-in-out: cubic-bezier(0.65, 0, 0.35, 1);
+  --ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1); /* slight overshoot for press/pop */
   --duration-fast: 120ms;
   --duration-base: 180ms;
   --duration-slow: 280ms;
@@ -175,10 +176,14 @@ h2,
 h3 {
   margin-bottom: var(--space-2);
   font-weight: var(--weight-semibold);
-  letter-spacing: -0.01em;
+  letter-spacing: -0.02em;
   color: var(--text-primary);
   line-height: var(--leading-tight);
 }
+
+/* Tighter tracking the larger the display size (Emil Kowalski: large text
+   wants tighter tracking than the default). */
+h1 { letter-spacing: -0.03em; }
 
 p {
   margin-bottom: var(--space-4);
@@ -399,7 +404,7 @@ a:hover {
   border: 1px solid rgba(99, 102, 241, 0.2);
   border-radius: 10px;
   cursor: pointer;
-  transition: background 0.15s ease, border-color 0.15s ease;
+  transition: background 0.15s var(--ease-out), border-color 0.15s var(--ease-out);
   user-select: none;
 }
 
@@ -431,7 +436,7 @@ a:hover {
   height: 20px;
   background: #d1d5db;
   border-radius: 999px;
-  transition: background 0.15s ease;
+  transition: background 0.15s var(--ease-out);
   margin-top: 2px;
 }
 
@@ -444,7 +449,7 @@ a:hover {
   background: #ffffff;
   border-radius: 50%;
   box-shadow: 0 1px 2px rgba(0, 0, 0, 0.2);
-  transition: transform 0.18s ease;
+  transition: transform 0.18s var(--ease-out);
 }
 
 .model-pref-toggle input[type="checkbox"]:checked + .model-pref-track {
@@ -565,7 +570,7 @@ main {
   border-radius: var(--button-border-radius);
   font-size: 0.875rem;
   cursor: pointer;
-  transition: all 0.2s ease;
+  transition: all 0.2s var(--ease-out);
 }
 
 .login-btn:hover {
@@ -592,7 +597,7 @@ main {
   z-index: 2000;
   opacity: 0;
   visibility: hidden;
-  transition: opacity 0.25s ease, visibility 0.25s ease;
+  transition: opacity 0.25s var(--ease-out), visibility 0.25s var(--ease-out);
 }
 
 .modal.show {
@@ -609,7 +614,7 @@ main {
   max-width: 500px;
   max-height: 90vh;
   overflow-y: auto;
-  animation: modalFadeIn 0.3s ease;
+  animation: modalFadeIn 0.3s var(--ease-out);
 }
 
 @keyframes modalFadeIn {
@@ -649,7 +654,7 @@ main {
   align-items: center;
   justify-content: center;
   border-radius: var(--button-border-radius);
-  transition: color 0.2s ease;
+  transition: color 0.2s var(--ease-out);
 }
 
 .close-modal-btn:hover {
@@ -700,7 +705,7 @@ main {
   font-weight: 500;
   color: var(--text-light);
   cursor: pointer;
-  transition: all 0.2s ease;
+  transition: all 0.2s var(--ease-out);
 }
 
 .auth-tab-btn:hover {
@@ -828,7 +833,7 @@ main {
   color: var(--text-light);
   cursor: pointer;
   border-radius: var(--button-border-radius);
-  transition: color 0.2s ease;
+  transition: color 0.2s var(--ease-out);
 }
 
 .toggle-visibility-btn:hover {
@@ -1568,7 +1573,7 @@ main {
   display: flex;
   align-items: center;
   gap: 5px;
-  transition: all 0.2s ease;
+  transition: all 0.2s var(--ease-out);
   z-index: 2;
 }
 
@@ -2118,7 +2123,7 @@ main {
   cursor: pointer;
   padding: 1rem;
   border-radius: var(--button-border-radius);
-  transition: background-color 0.2s ease;
+  transition: background-color 0.2s var(--ease-out);
 }
 
 .back-to-upload-btn:hover {
@@ -2193,6 +2198,11 @@ main {
   background: var(--gray-50);
   transform: translateY(-1px);
   box-shadow: var(--shadow-sm);
+}
+
+.room-option label:active {
+  transform: translateY(0) scale(0.99);
+  box-shadow: var(--shadow-xs);
 }
 
 .room-option input[type="radio"]:checked+label {
@@ -2442,6 +2452,14 @@ main {
   margin: 0 auto;
 }
 
+/* Mobile: add breathing room below the style grid. Declared after the base
+   rule above so its `margin: 0 auto` shorthand doesn't reset the bottom. */
+@media (max-width: 768px) {
+  .style-options-grid {
+    margin-bottom: var(--space-6); /* 24px */
+  }
+}
+
 .style-option {
   position: relative;
 }
@@ -2478,6 +2496,11 @@ main {
   background: var(--gray-50);
   transform: translateY(-1px);
   box-shadow: var(--shadow-sm);
+}
+
+.style-label:active {
+  transform: translateY(0) scale(0.99);
+  box-shadow: var(--shadow-xs);
 }
 
 .style-option input[type="radio"]:checked + .style-label {
@@ -2594,7 +2617,7 @@ main {
   border: 2px solid #e5e7eb;
   border-radius: 12px;
   cursor: pointer;
-  transition: all 0.2s ease;
+  transition: all 0.2s var(--ease-out);
   background: #fff;
   width: 100%;
   box-sizing: border-box;
@@ -2604,6 +2627,13 @@ main {
 .furnished-option label:hover {
   border-color: #d1d5db;
   background: #f9fafb;
+  transform: translateY(-1px);
+  box-shadow: var(--shadow-sm);
+}
+
+.furnished-option label:active {
+  transform: translateY(0) scale(0.99);
+  box-shadow: var(--shadow-xs);
 }
 
 .furnished-option input[type="radio"]:checked+label {
@@ -2620,7 +2650,7 @@ main {
   border-radius: 8px;
   background: #f3f4f6;
   color: #6b7280;
-  transition: all 0.2s ease;
+  transition: all 0.2s var(--ease-out);
 }
 
 .furnished-option input[type="radio"]:checked+label .option-icon {
@@ -2684,7 +2714,7 @@ main {
   border-radius: var(--border-radius);
   overflow: hidden;
   box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
-  transition: transform 0.2s ease;
+  transition: transform 0.2s var(--ease-out);
 }
 
 .image-preview-wrapper:hover {
@@ -2711,7 +2741,7 @@ main {
   justify-content: center;
   gap: 12px;
   opacity: 0;
-  transition: opacity 0.3s ease;
+  transition: opacity 0.3s var(--ease-out);
   border-radius: var(--border-radius);
   backdrop-filter: blur(4px);
 }
@@ -2732,7 +2762,7 @@ main {
   display: flex;
   align-items: center;
   gap: 8px;
-  transition: all 0.2s ease;
+  transition: all 0.2s var(--ease-out);
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
   backdrop-filter: blur(10px);
   border: 2px solid rgba(255, 255, 255, 0.5);
@@ -2922,7 +2952,7 @@ main {
 .fs-element-meter-fill {
   height: 100%;
   border-radius: 999px;
-  transition: width 0.3s ease;
+  transition: width 0.3s var(--ease-out);
 }
 
 .fs-element-summary {
@@ -3010,7 +3040,7 @@ main {
   border-radius: var(--border-radius);
   z-index: 3;
   background: #f6f6f7;
-  transition: opacity 0.2s ease;
+  transition: opacity 0.2s var(--ease-out);
   opacity: 1;
   /* Ensure it starts visible */
 }
@@ -3048,7 +3078,7 @@ main {
 
 .reveal-checkbox-text {
   color: var(--text-color);
-  transition: color 0.2s ease;
+  transition: color 0.2s var(--ease-out);
 }
 
 .reveal-checkbox-label:hover .reveal-checkbox-text {
@@ -3070,7 +3100,7 @@ main {
   z-index: 4;
   outline: none;
   opacity: 1;
-  transition: all 0.2s ease;
+  transition: all 0.2s var(--ease-out);
   pointer-events: all;
   filter: drop-shadow(0 2px 4px rgba(0, 0, 0, 0.2));
 }
@@ -3128,7 +3158,7 @@ main {
     inset 0 -1px 1px rgba(255, 255, 255, 0.8),
     0 1px 2px rgba(0, 0, 0, 0.1);
   cursor: grab;
-  transition: all 0.2s ease;
+  transition: all 0.2s var(--ease-out);
   position: relative;
 }
 
@@ -3176,7 +3206,7 @@ main {
     inset 0 -1px 1px rgba(255, 255, 255, 0.8),
     0 1px 2px rgba(0, 0, 0, 0.1);
   cursor: grab;
-  transition: all 0.2s ease;
+  transition: all 0.2s var(--ease-out);
 }
 
 .reveal-slider::-moz-range-thumb:hover {
@@ -3244,7 +3274,7 @@ main {
   justify-content: center;
   gap: 8px;
   margin: 0 auto;
-  transition: all 0.2s ease;
+  transition: all 0.2s var(--ease-out);
   box-shadow: 0 2px 4px rgba(99, 102, 241, 0.3);
 }
 
@@ -3288,7 +3318,7 @@ main {
   font-size: 14px;
   font-weight: 600;
   opacity: 0.8;
-  transition: opacity 0.2s ease;
+  transition: opacity 0.2s var(--ease-out);
 }
 
 .slider-indicator span {
@@ -3329,7 +3359,7 @@ main {
   z-index: 6;
   pointer-events: none;
   opacity: 0.8;
-  transition: opacity 0.3s ease;
+  transition: opacity 0.3s var(--ease-out);
 }
 
 .slider-hint-arrows.hidden {
@@ -3401,7 +3431,7 @@ main {
   font-size: 14px;
   font-weight: 500;
   cursor: pointer;
-  transition: all 0.3s ease;
+  transition: all 0.3s var(--ease-out);
   width: auto;
 }
 
@@ -3470,7 +3500,7 @@ main {
   border: 1px solid #e0e0e0;
   border-radius: var(--button-border-radius);
   cursor: pointer;
-  transition: all 0.2s ease;
+  transition: all 0.2s var(--ease-out);
   color: #333;
 }
 
@@ -3596,7 +3626,7 @@ main {
   pointer-events: none;
   opacity: 0;
   visibility: hidden;
-  transition: opacity 0.1s ease, visibility 0.1s ease;
+  transition: opacity 0.1s var(--ease-out), visibility 0.1s var(--ease-out);
 }
 
 .layout-editor-screen [data-tooltip]:not(:disabled):hover::after,
@@ -3627,7 +3657,7 @@ main {
   z-index: 10080;
   pointer-events: none;
   opacity: 0;
-  transition: opacity 0.1s ease;
+  transition: opacity 0.1s var(--ease-out);
 }
 
 .sidebar-tooltip-floating.is-visible {
@@ -3678,7 +3708,7 @@ main {
   border: 1px solid #e0e0e0;
   border-radius: var(--button-border-radius);
   cursor: pointer;
-  transition: all 0.2s ease;
+  transition: all 0.2s var(--ease-out);
   color: #555;
 }
 
@@ -3716,7 +3746,7 @@ main {
   font-weight: 500;
   line-height: 1;
   cursor: pointer;
-  transition: all 0.2s ease;
+  transition: all 0.2s var(--ease-out);
 }
 
 .export-dropdown .primary-btn:hover {
@@ -3749,7 +3779,7 @@ main {
   border: none;
   border-radius: var(--button-border-radius);
   cursor: pointer;
-  transition: all 0.2s ease;
+  transition: all 0.2s var(--ease-out);
 }
 
 .layout-save-primary-btn:hover {
@@ -3786,7 +3816,7 @@ main {
   left: 50%;
   transform: translateX(-50%);
   z-index: 1000;
-  animation: slideUp 0.3s ease;
+  animation: slideUp 0.3s var(--ease-out);
 }
 
 .export-message-content {
@@ -3808,7 +3838,7 @@ main {
 }
 
 .export-message.fade-out {
-  animation: fadeOut 0.3s ease forwards;
+  animation: fadeOut 0.3s var(--ease-out) forwards;
 }
 
 @keyframes slideUp {
@@ -3882,7 +3912,7 @@ main {
   flex-shrink: 0;
   display: flex;
   flex-direction: column;
-  transition: width 0.2s ease;
+  transition: width 0.2s var(--ease-out);
   overflow: visible;
   z-index: 2;
   height: 100%;
@@ -3922,7 +3952,7 @@ main {
   opacity: 0;
   visibility: hidden;
   pointer-events: none;
-  transition: opacity 0.15s ease, visibility 0.15s ease, background 0.15s ease, border-color 0.15s ease, color 0.15s ease;
+  transition: opacity 0.15s var(--ease-out), visibility 0.15s var(--ease-out), background 0.15s var(--ease-out), border-color 0.15s var(--ease-out), color 0.15s var(--ease-out);
 }
 
 .layout-sidebar-toggle--left {
@@ -4052,7 +4082,7 @@ main {
   width: 14px;
   height: 14px;
   margin-left: auto;
-  transition: transform 0.2s ease;
+  transition: transform 0.2s var(--ease-out);
 }
 
 .my-layouts-toggle .my-layouts-chevron.rotated {
@@ -4198,7 +4228,7 @@ main {
   border: none;
   border-radius: var(--button-border-radius);
   cursor: pointer;
-  transition: all 0.15s ease;
+  transition: all 0.15s var(--ease-out);
   color: #555;
   font-size: 0.9rem;
   text-align: left;
@@ -4364,7 +4394,7 @@ main {
   text-align: left;
   font: inherit;
   color: inherit;
-  transition: border-color 0.15s ease, background 0.15s ease, box-shadow 0.15s ease;
+  transition: border-color 0.15s var(--ease-out), background 0.15s var(--ease-out), box-shadow 0.15s var(--ease-out);
 }
 
 .dropped-image-choice-option:hover,
@@ -4533,7 +4563,7 @@ main {
   background: white;
   color: #64748b;
   cursor: pointer;
-  transition: background 0.15s ease, border-color 0.15s ease, color 0.15s ease;
+  transition: background 0.15s var(--ease-out), border-color 0.15s var(--ease-out), color 0.15s var(--ease-out);
 }
 
 .tool-hint-btn:hover,
@@ -4764,7 +4794,7 @@ main {
   background: white;
   font-size: 0.875rem;
   cursor: pointer;
-  transition: all 0.15s ease;
+  transition: all 0.15s var(--ease-out);
   color: #555;
 }
 
@@ -4803,7 +4833,7 @@ main {
   border: 1px solid #e8e8e8;
   border-radius: 8px;
   cursor: grab;
-  transition: all 0.15s ease;
+  transition: all 0.15s var(--ease-out);
   background: #fafafa;
 }
 
@@ -4929,7 +4959,7 @@ main {
   color: #dc2626;
   font-size: 0.875rem;
   cursor: pointer;
-  transition: all 0.15s ease;
+  transition: all 0.15s var(--ease-out);
 }
 
 .delete-btn:hover {
@@ -4958,7 +4988,7 @@ main {
   border-radius: var(--button-border-radius);
   color: #6366f1;
   cursor: pointer;
-  transition: all 0.15s ease;
+  transition: all 0.15s var(--ease-out);
 }
 
 .rotate-btn:hover {
@@ -5339,7 +5369,7 @@ main {
   gap: 8px;
   z-index: 300;
   opacity: 0;
-  transition: all 0.3s ease;
+  transition: all 0.3s var(--ease-out);
   max-width: 400px;
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
 }
@@ -5361,7 +5391,7 @@ main {
   font-size: 14px;
   z-index: 300;
   opacity: 0;
-  transition: all 0.3s ease;
+  transition: all 0.3s var(--ease-out);
   max-width: 360px;
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
 }
@@ -5403,7 +5433,7 @@ main {
   font-weight: 500;
   color: #6b7280;
   cursor: pointer;
-  transition: all 0.2s ease;
+  transition: all 0.2s var(--ease-out);
 }
 
 .comparison-tab.active {
@@ -5497,7 +5527,7 @@ main {
   stroke: var(--primary-color);
   stroke-width: 2;
   cursor: move;
-  transition: all 0.15s ease;
+  transition: all 0.15s var(--ease-out);
 }
 
 .corner-node:hover {
@@ -5580,7 +5610,7 @@ main {
   color: #374151;
   font-size: 14px;
   cursor: pointer;
-  transition: all 0.15s ease;
+  transition: all 0.15s var(--ease-out);
   width: 100%;
   justify-content: center;
 }
@@ -6019,7 +6049,7 @@ main {
   cursor: pointer;
   font-size: 0.875rem;
   font-weight: 500;
-  transition: all 0.2s ease;
+  transition: all 0.2s var(--ease-out);
 }
 
 .ref-image-controls .delete-btn:hover {
@@ -6031,7 +6061,7 @@ main {
 .imported-svg-element,
 .imported-svg-group {
   cursor: pointer;
-  transition: filter 0.15s ease;
+  transition: filter 0.15s var(--ease-out);
 }
 
 .imported-svg-element:hover,
@@ -6107,7 +6137,7 @@ main {
   align-items: center;
   justify-content: center;
   gap: 8px;
-  transition: all 0.2s ease;
+  transition: all 0.2s var(--ease-out);
   min-height: 38px;
   width: auto;
   box-sizing: border-box;
@@ -6154,7 +6184,7 @@ main {
   color: var(--text-color);
   font-size: 14px;
   cursor: pointer;
-  transition: background 0.2s ease;
+  transition: background 0.2s var(--ease-out);
   text-align: left;
 }
 
@@ -6426,7 +6456,7 @@ main {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  transition: all 0.2s ease;
+  transition: all 0.2s var(--ease-out);
   min-height: 38px;
   white-space: nowrap;
 }
@@ -6472,7 +6502,7 @@ main {
   font-weight: var(--weight-medium);
   white-space: nowrap;
   cursor: pointer;
-  transition: border-color 0.15s ease, background 0.15s ease;
+  transition: border-color 0.15s var(--ease-out), background 0.15s var(--ease-out);
 }
 
 .subscription-usage-display:hover {
@@ -6601,7 +6631,7 @@ main {
   border: 1px solid var(--border-color);
   border-radius: 12px;
   cursor: pointer;
-  transition: border-color 0.15s ease, transform 0.1s ease, box-shadow 0.15s ease;
+  transition: border-color 0.15s var(--ease-out), transform 0.1s var(--ease-out), box-shadow 0.15s var(--ease-out);
 }
 
 .token-pack:hover:not(:disabled) {
@@ -6826,7 +6856,7 @@ main {
   font-size: 14px;
   box-shadow: 0 4px 16px rgba(0,0,0,0.3);
   opacity: 0;
-  transition: opacity 0.25s ease, transform 0.25s ease;
+  transition: opacity 0.25s var(--ease-out), transform 0.25s var(--ease-out);
   z-index: 9999;
   max-width: 360px;
   text-align: center;
@@ -6997,3 +7027,18 @@ main {
   gap: 10px;
 }
 .toast-info    { border-left: 4px solid #6366f1; }
+/* ============================================================
+   Accessibility — honor reduced-motion preference
+   Neutralizes non-essential motion app-wide while keeping
+   final states intact (opacity/visibility still resolve).
+   ============================================================ */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
