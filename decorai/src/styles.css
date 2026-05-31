@@ -215,11 +215,14 @@ a:hover {
 
 .wizard-upload-actions {
   display: flex;
+  flex-wrap: wrap;
   justify-content: center;
+  gap: var(--space-3);
   margin-bottom: var(--space-4);
 }
 
-.wizard-upload-actions .feng-shui-action-btn {
+.wizard-upload-actions .feng-shui-action-btn,
+.wizard-upload-actions .quick-edit-action-btn {
   width: auto;
 }
 
@@ -1032,6 +1035,78 @@ main {
 .feng-shui-action-btn:disabled {
   opacity: 0.5;
   cursor: not-allowed;
+}
+
+.quick-edit-action-btn {
+  flex-shrink: 0;
+  color: #3730a3;
+  border-color: #c7d2fe;
+  background: #eef2ff;
+}
+
+.quick-edit-action-btn:hover:not(:disabled) {
+  background: #e0e7ff;
+  border-color: #a5b4fc;
+}
+
+.quick-edit-action-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* ── Quick Edit modal ─────────────────────────────────────────── */
+.quick-edit-modal-content {
+  max-width: 560px;
+}
+
+.quick-edit-intro {
+  margin: 0 0 var(--space-4);
+  color: var(--text-secondary, #475569);
+  font-size: 0.95rem;
+}
+
+.quick-edit-input {
+  width: 100%;
+  box-sizing: border-box;
+  resize: vertical;
+  min-height: 84px;
+  padding: 12px 14px;
+  border: 1px solid #d1d5db;
+  border-radius: 10px;
+  background: #ffffff;
+  color: #1f2937;
+  font-family: inherit;
+  font-size: 0.95rem;
+  line-height: 1.5;
+}
+
+.quick-edit-input::placeholder {
+  color: #9ca3af;
+}
+
+.quick-edit-input:focus {
+  outline: none;
+  border-color: #4f46e5;
+  box-shadow: 0 0 0 2px rgba(79, 70, 229, 0.15);
+}
+
+.quick-edit-footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  margin-top: var(--space-5, 20px);
+}
+
+.quick-edit-footer .secondary-btn,
+.quick-edit-footer .primary-btn {
+  width: auto;
+}
+
+.quick-edit-note {
+  margin: 10px 0 0;
+  text-align: right;
+  font-size: 0.78rem;
+  color: #94a3b8;
 }
 
 .results-display {
@@ -5921,6 +5996,7 @@ main {
 
 .ref-image-controls .control-row input[type="range"] {
   flex: 1;
+  min-width: 0;
   height: 4px;
 }
 

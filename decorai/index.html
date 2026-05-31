@@ -124,6 +124,10 @@
                             <i data-feather="compass"></i>
                             <span>Feng Shui Analysis</span>
                         </button>
+                        <button type="button" id="wizard-quick-edit-btn" class="secondary-btn quick-edit-action-btn">
+                            <i data-feather="droplet"></i>
+                            <span>Quick Edit</span>
+                        </button>
                     </div>
 
                     <!-- Step 1: Photo + room type -->
@@ -371,10 +375,15 @@
                 <i data-feather="arrow-left"></i>
                 <span>Back</span>
             </button>
-            <h2>Woodworking 3D Editor</h2>
+            <h2>Woodworking</h2>
+            <span class="ww-project-name" contenteditable="true" spellcheck="false" title="Click to rename this project" data-ww-project-name>Untitled project</span>
             <div class="ww-spacer"></div>
+            <button type="button" class="ww-btn" data-action="projects">Projects</button>
             <button type="button" class="ww-btn" data-action="reset-view">Reset View</button>
-            <button type="button" class="ww-btn" data-action="save">Save</button>
+            <button type="button" class="ww-btn" data-action="clear" title="Remove all boards from this project">Clear</button>
+            <button type="button" class="ww-btn" data-action="export-csv" title="Download the cut list as a CSV file">Export CSV</button>
+            <button type="button" class="ww-btn" data-action="export-png" title="Download the 3D view as a PNG image">Export PNG</button>
+            <button type="button" class="ww-btn ww-btn--primary" data-action="save">Save</button>
             <span class="ww-save-status" aria-live="polite"></span>
         </div>
         <div class="ww-body">
@@ -402,12 +411,49 @@
                         <label>Length (in)<input type="number" min="0.25" step="0.25" data-board-input="length"></label>
                         <label>Width (in)<input type="number" min="0.25" step="0.25" data-board-input="width"></label>
                         <label>Thickness (in)<input type="number" min="0.125" step="0.125" data-board-input="thickness"></label>
+                        <label>Orientation<select data-board-input="orientation">
+                            <option value="flat">Flat</option>
+                            <option value="edge">On edge</option>
+                            <option value="end">On end (leg)</option>
+                        </select></label>
+                        <label>Rotation X (°)<input type="number" step="15" data-board-input="rotX"></label>
                         <label>Rotation Y (°)<input type="number" step="15" data-board-input="rotY"></label>
+                        <label>Rotation Z (°)<input type="number" step="15" data-board-input="rotZ"></label>
                         <label>Position X (in)<input type="number" step="0.25" data-board-input="posX"></label>
+                        <label>Position Y (in)<input type="number" step="0.25" data-board-input="posY"></label>
                         <label>Position Z (in)<input type="number" step="0.25" data-board-input="posZ"></label>
                     </div>
                     <div class="ww-selected-actions">
                         <button type="button" class="ww-btn ww-btn--danger" data-action="delete-board">Delete Board</button>
+                    </div>
+                    <div class="ww-array-controls">
+                        <span class="ww-array-label">Array copies</span>
+                        <div class="ww-array-fields">
+                            <label>Count<input type="number" min="2" max="200" step="1" value="3" data-array-input="count"></label>
+                            <label>Spacing (in)<input type="number" step="0.25" value="6" data-array-input="spacing"></label>
+                            <label>Axis<select data-array-input="axis">
+                                <option value="x">X</option>
+                                <option value="z">Z</option>
+                            </select></label>
+                        </div>
+                        <button type="button" class="ww-btn" data-action="array">Create array</button>
+                    </div>
+                    <div class="ww-align-controls">
+                        <span class="ww-array-label">Align &amp; distribute</span>
+                        <div class="ww-align-grid">
+                            <button type="button" class="ww-align-btn" data-align="x-min" title="Align left edges (X)">Left</button>
+                            <button type="button" class="ww-align-btn" data-align="x-center" title="Center horizontally (X)">Center</button>
+                            <button type="button" class="ww-align-btn" data-align="x-max" title="Align right edges (X)">Right</button>
+                            <button type="button" class="ww-align-btn" data-align="z-min" title="Align front edges (Z)">Front</button>
+                            <button type="button" class="ww-align-btn" data-align="z-center" title="Center in depth (Z)">Center</button>
+                            <button type="button" class="ww-align-btn" data-align="z-max" title="Align back edges (Z)">Back</button>
+                            <button type="button" class="ww-align-btn" data-align="y-min" title="Align bottoms (Y)">Bottom</button>
+                            <button type="button" class="ww-align-btn" data-align="y-center" title="Center vertically (Y)">Middle</button>
+                            <button type="button" class="ww-align-btn" data-align="y-max" title="Align tops (Y)">Top</button>
+                            <button type="button" class="ww-align-btn" data-distribute="x" title="Distribute evenly left-to-right (X)">Even X</button>
+                            <button type="button" class="ww-align-btn" data-distribute="z" title="Distribute evenly front-to-back (Z)">Even Z</button>
+                            <button type="button" class="ww-align-btn" data-distribute="y" title="Distribute evenly bottom-to-top (Y)">Even Y</button>
+                        </div>
                     </div>
                 </section>
                 <section>
@@ -420,8 +466,43 @@
                         <span>Total board feet</span>
                         <strong><span class="ww-cutlist-total">0.00</span></strong>
                     </div>
+                    <button type="button" class="ww-btn ww-btn--primary ww-cutopt-open" data-action="cutopt-open">Optimize cuts</button>
                 </section>
             </aside>
+        </div>
+
+        <!-- Cut optimization modal -->
+        <div class="ww-modal hidden" id="ww-cutopt-modal" role="dialog" aria-modal="true" aria-label="Cut optimization">
+            <div class="ww-modal-backdrop" data-action="cutopt-close"></div>
+            <div class="ww-modal-panel">
+                <div class="ww-modal-header">
+                    <h3>Cut Optimization</h3>
+                    <button type="button" class="ww-btn ww-btn--ghost ww-modal-close" data-action="cutopt-close" aria-label="Close">&times;</button>
+                </div>
+                <div class="ww-cutopt-controls">
+                    <label>Saw kerf (in)<input type="number" min="0" step="0.0625" value="0.125" id="ww-cutopt-kerf"></label>
+                    <label>Default stock length (in)<input type="number" min="1" step="1" value="96" id="ww-cutopt-stock"></label>
+                    <button type="button" class="ww-btn ww-btn--primary" data-action="cutopt-run">Optimize</button>
+                </div>
+                <div class="ww-cutopt-summary" id="ww-cutopt-summary"></div>
+                <div class="ww-cutopt-results" id="ww-cutopt-results"></div>
+            </div>
+        </div>
+
+        <!-- Projects modal -->
+        <div class="ww-modal hidden" id="ww-projects-modal" role="dialog" aria-modal="true" aria-label="Projects">
+            <div class="ww-modal-backdrop" data-action="projects-close"></div>
+            <div class="ww-modal-panel">
+                <div class="ww-modal-header">
+                    <h3>Projects</h3>
+                    <button type="button" class="ww-btn ww-btn--ghost ww-modal-close" data-action="projects-close" aria-label="Close">&times;</button>
+                </div>
+                <div class="ww-projects-toolbar">
+                    <button type="button" class="ww-btn ww-btn--primary" data-action="project-new">New project</button>
+                    <span class="ww-projects-hint">Saved projects are tied to your account.</span>
+                </div>
+                <div class="ww-projects-list" id="ww-projects-list"></div>
+            </div>
         </div>
     </div>
 
@@ -879,6 +960,45 @@
                     <span>Continue with design wizard</span>
                     <i data-feather="arrow-right"></i>
                 </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Quick Edit Modal -->
+    <div class="modal" id="quick-edit-modal">
+        <div class="modal-content quick-edit-modal-content">
+            <div class="modal-header">
+                <h2>Quick Edit</h2>
+                <button type="button" id="quick-edit-close" class="close-modal-btn" aria-label="Close">
+                    <i data-feather="x"></i>
+                </button>
+            </div>
+            <div class="modal-body">
+                <p class="quick-edit-intro">Describe a simple change to your room photo. Everything else stays the same.</p>
+                <textarea
+                    id="quick-edit-input"
+                    class="quick-edit-input"
+                    rows="3"
+                    placeholder="e.g. make the walls blue, make the floors granite, change the cabinets to white…"
+                ></textarea>
+                <div class="model-pref-row">
+                    <label class="model-pref-toggle">
+                        <input type="checkbox" id="quick-edit-premium-toggle">
+                        <span class="model-pref-track"><span class="model-pref-thumb"></span></span>
+                        <span class="model-pref-text">
+                            <span class="model-pref-label">Use premium model</span>
+                            <span class="model-pref-hint">Higher fidelity. Counts against your monthly limit.</span>
+                        </span>
+                    </label>
+                </div>
+                <div class="quick-edit-footer">
+                    <button type="button" id="quick-edit-clear" class="secondary-btn">Clear</button>
+                    <button type="button" id="quick-edit-apply" class="primary-btn" disabled>
+                        <i data-feather="zap"></i>
+                        <span>Apply edit</span>
+                    </button>
+                </div>
+                <p class="quick-edit-note">The standard model is free. Premium is higher fidelity and counts as one generation.</p>
             </div>
         </div>
     </div>

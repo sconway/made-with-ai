@@ -121,6 +121,26 @@ async function refundSubscriptionMonthlyGeneration(userId) {
     .eq('user_id', userId);
 }
 
+// Idempotently credit purchased tokens for a completed checkout session.
+// Backed by the atomic Postgres function `credit_tokens_for_session` (see
+// sql/credit_tokens_for_session.sql) so the webhook and the success-page
+// verification endpoint can both call this without ever double-crediting.
+// Returns the user's new token balance. Throws on a real DB error.
+async function creditTokensForSession({ userId, sessionId, paymentIntent, tokens, amount }) {
+  const { data, error } = await supabase.rpc('credit_tokens_for_session', {
+    p_user_id: userId,
+    p_session_id: sessionId,
+    p_payment_intent: paymentIntent || null,
+    p_tokens: tokens,
+    p_amount: amount ?? null,
+  });
+  if (error) {
+    console.error('credit_tokens_for_session RPC error:', error);
+    throw new Error('credit_failed');
+  }
+  return data; // new token balance
+}
+
 // Reserve a free-tier credit. Returns { ok, credits } or { ok:false, reason }.
 async function reserveFreeCredit(userId) {
   const { data: row, error } = await supabase
@@ -264,48 +284,23 @@ app.post('/webhook/stripe', express.raw({ type: 'application/json' }), async (re
     // Only handle one-time payments here (subscriptions are handled via subscription events)
     if (session.mode === 'payment') {
       try {
-        const userId = session.metadata.user_id;
+        const userId = session.metadata?.user_id;
         if (!userId) {
           console.error('No user_id in Stripe session metadata');
           return res.status(400).send('No user_id in session metadata');
         }
-
-        // Fetch current token balance
-        const { data: currentCredits, error: fetchError } = await supabase
-          .from('user_credits')
-          .select('credits')
-          .eq('user_id', userId)
-          .single();
-
-        if (fetchError && fetchError.code !== 'PGRST116') {
-          console.error('Error fetching user credits:', fetchError);
-          return res.status(500).send('Error fetching user credits');
-        }
-
-        const tokensPurchased = parseInt(session.metadata.tokens) || TOKENS_PER_PURCHASE;
-        const newCredits = (currentCredits?.credits || 0) + tokensPurchased;
-
-        const { error: upsertError } = await supabase
-          .from('user_credits')
-          .upsert({ user_id: userId, credits: newCredits }, { onConflict: 'user_id' });
-
-        if (upsertError) {
-          console.error('Error updating user credits:', upsertError);
-          return res.status(500).send('Error updating user credits');
-        }
-
-        // Record payment
-        await supabase.from('payments').insert({
-          user_id: userId,
-          stripe_checkout_session_id: session.id,
-          stripe_payment_intent_id: session.payment_intent,
+        const tokensPurchased = parseInt(session.metadata?.tokens) || TOKENS_PER_PURCHASE;
+        const newBalance = await creditTokensForSession({
+          userId,
+          sessionId: session.id,
+          paymentIntent: session.payment_intent,
+          tokens: tokensPurchased,
           amount: session.amount_total,
-          credits_purchased: tokensPurchased,
-          status: 'completed'
         });
-
-        console.log(`Added ${tokensPurchased} tokens to user ${userId}. New total: ${newCredits}`);
+        console.log(`Credited ${tokensPurchased} tokens to ${userId} for session ${session.id}. Balance: ${newBalance}`);
       } catch (error) {
+        // Return 500 so Stripe retries — crediting is idempotent, so a retry
+        // after a transient failure is safe.
         console.error('Error processing Stripe webhook:', error);
         return res.status(500).send('Error processing webhook');
       }
@@ -502,7 +497,9 @@ app.post('/api/checkout', async (req, res) => {
       payment_method_types: ['card'],
       line_items: [{ price: pack.priceId, quantity: 1 }],
       mode: 'payment',
-      success_url: `${appUrl}?payment=success`,
+      // session_id lets the success page verify + credit immediately, without
+      // depending on webhook delivery timing.
+      success_url: `${appUrl}?payment=success&session_id={CHECKOUT_SESSION_ID}`,
       cancel_url: `${appUrl}?payment=cancelled`,
       customer_email: user.email,
       metadata: { user_id: user.id, tokens: String(pack.tokens) }
@@ -512,6 +509,60 @@ app.post('/api/checkout', async (req, res) => {
   } catch (error) {
     console.error('Error creating checkout session:', error);
     res.status(500).json({ error: 'Failed to create checkout session', detail: error.message });
+  }
+});
+
+// POST /api/verify-checkout — credit a one-time purchase from the success page.
+// This is the primary, deterministic fulfillment path: it doesn't depend on
+// webhook delivery timing (which can lag on cold starts). The webhook remains
+// as a backup; both call the same idempotent credit function, so a session is
+// only ever credited once.
+//
+// Security: requires auth; only credits a session whose metadata.user_id
+// matches the caller; the token amount comes from the session metadata set at
+// checkout creation (never from the client); replays are no-ops via idempotency.
+app.post('/api/verify-checkout', async (req, res) => {
+  try {
+    const user = await getAuthUser(req, res);
+    if (!user) return;
+
+    const sessionId = String(req.body?.session_id || '');
+    if (!sessionId.startsWith('cs_')) {
+      return res.status(400).json({ error: 'Invalid session_id' });
+    }
+
+    let session;
+    try {
+      session = await stripe.checkout.sessions.retrieve(sessionId);
+    } catch (e) {
+      return res.status(404).json({ error: 'Checkout session not found' });
+    }
+
+    // Ownership: a user may only credit their own session.
+    if (!session || session.metadata?.user_id !== user.id) {
+      return res.status(403).json({ error: 'Session does not belong to this user' });
+    }
+    if (session.mode !== 'payment') {
+      return res.status(400).json({ error: 'Not a token purchase session' });
+    }
+    if (session.payment_status !== 'paid') {
+      // Payment may still be processing — caller can retry.
+      return res.status(409).json({ error: 'Payment not completed', payment_status: session.payment_status });
+    }
+
+    const tokens = parseInt(session.metadata?.tokens) || TOKENS_PER_PURCHASE;
+    const balance = await creditTokensForSession({
+      userId: user.id,
+      sessionId: session.id,
+      paymentIntent: session.payment_intent,
+      tokens,
+      amount: session.amount_total,
+    });
+
+    res.json({ success: true, credits: balance, tokensAdded: tokens });
+  } catch (error) {
+    console.error('Error in POST /api/verify-checkout:', error);
+    res.status(500).json({ error: 'Failed to verify checkout' });
   }
 });
 
@@ -607,15 +658,29 @@ app.post('/replicate/predictions', async (req, res) => {
       forwardBody.input = { ...forwardBody.input, replicate_api_key: apiKey };
     }
 
-    console.log('Making request to Replicate API (free) with body:', JSON.stringify(forwardBody, (k, v) => k === 'replicate_api_key' ? '***' : v, 2));
+    // Replicate has two create-prediction shapes:
+    //   • Versioned community models → POST /v1/predictions with { version: "<hash>" }
+    //   • Official/named models (e.g. "google/nano-banana") → POST
+    //     /v1/models/{owner}/{name}/predictions with just { input } (latest version).
+    // A bare "owner/name" slug (a "/" but no ":hash") signals the latter.
+    const versionRef = typeof forwardBody.version === 'string' ? forwardBody.version : '';
+    const isBareSlug = versionRef.includes('/') && !versionRef.includes(':');
+    let targetUrl = 'https://api.replicate.com/v1/predictions';
+    let outboundBody = forwardBody;
+    if (isBareSlug) {
+      targetUrl = `https://api.replicate.com/v1/models/${versionRef}/predictions`;
+      outboundBody = { input: forwardBody.input };
+    }
 
-    const response = await fetch('https://api.replicate.com/v1/predictions', {
+    console.log(`Making request to Replicate API (free) [${targetUrl}] with body:`, JSON.stringify(outboundBody, (k, v) => k === 'replicate_api_key' ? '***' : (k === 'image' || k === 'image_input' ? '<image>' : v), 2));
+
+    const response = await fetch(targetUrl, {
       method: 'POST',
       headers: {
         'Authorization': `Token ${apiKey}`,
         'Content-Type': 'application/json',
       },
-      body: JSON.stringify(forwardBody),
+      body: JSON.stringify(outboundBody),
     });
 
     if (!response.ok) {
@@ -1418,6 +1483,128 @@ app.put('/api/woodworking-project', async (req, res) => {
     res.json({ success: true, id: inserted.id });
   } catch (err) {
     console.error('Error in PUT /api/woodworking-project:', err);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+// ── Woodworking projects: multi-project collection endpoints ──
+// Mirror the /api/layouts pattern so the editor can keep several named projects.
+
+// List all of the user's projects (metadata only — no heavy state payload).
+app.get('/api/woodworking-projects', async (req, res) => {
+  try {
+    const user = await getAuthUser(req, res);
+    if (!user) return;
+    const { data, error } = await supabase
+      .from('user_woodworking_projects')
+      .select('id, name, updated_at')
+      .eq('user_id', user.id)
+      .order('updated_at', { ascending: false })
+      .limit(1000);
+    if (error) {
+      console.error('Error fetching woodworking projects:', error);
+      return res.status(500).json({ error: 'Failed to fetch projects' });
+    }
+    res.json({ projects: Array.isArray(data) ? data : [] });
+  } catch (err) {
+    console.error('Error in GET /api/woodworking-projects:', err);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+// Get one project by id (full state for loading).
+app.get('/api/woodworking-projects/:id', async (req, res) => {
+  try {
+    const user = await getAuthUser(req, res);
+    if (!user) return;
+    const { data, error } = await supabase
+      .from('user_woodworking_projects')
+      .select('id, name, state, updated_at')
+      .eq('id', req.params.id)
+      .eq('user_id', user.id)
+      .maybeSingle();
+    if (error) {
+      console.error('Error fetching woodworking project:', error);
+      return res.status(500).json({ error: 'Failed to fetch project' });
+    }
+    if (!data) return res.status(404).json({ error: 'Project not found' });
+    res.json(data);
+  } catch (err) {
+    console.error('Error in GET /api/woodworking-projects/:id:', err);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+// Create a new project.
+app.post('/api/woodworking-projects', async (req, res) => {
+  try {
+    const user = await getAuthUser(req, res);
+    if (!user) return;
+    const { name, state } = req.body || {};
+    if (state === undefined) return res.status(400).json({ error: 'state is required' });
+    const projectName = (name && String(name).trim()) || 'Untitled project';
+    const now = new Date().toISOString();
+    const { data, error } = await supabase
+      .from('user_woodworking_projects')
+      .insert({ user_id: user.id, name: projectName, state, updated_at: now })
+      .select('id, name, updated_at')
+      .single();
+    if (error) {
+      console.error('Error creating woodworking project:', error);
+      return res.status(500).json({ error: 'Failed to save project' });
+    }
+    res.status(201).json(data);
+  } catch (err) {
+    console.error('Error in POST /api/woodworking-projects:', err);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+// Update an existing project (name and/or state).
+app.put('/api/woodworking-projects/:id', async (req, res) => {
+  try {
+    const user = await getAuthUser(req, res);
+    if (!user) return;
+    const { name, state } = req.body || {};
+    const updates = { updated_at: new Date().toISOString() };
+    if (name !== undefined) updates.name = (String(name).trim()) || 'Untitled project';
+    if (state !== undefined) updates.state = state;
+    const { data, error } = await supabase
+      .from('user_woodworking_projects')
+      .update(updates)
+      .eq('id', req.params.id)
+      .eq('user_id', user.id)
+      .select('id, name, updated_at')
+      .maybeSingle();
+    if (error) {
+      console.error('Error updating woodworking project:', error);
+      return res.status(500).json({ error: 'Failed to save project' });
+    }
+    if (!data) return res.status(404).json({ error: 'Project not found' });
+    res.json(data);
+  } catch (err) {
+    console.error('Error in PUT /api/woodworking-projects/:id:', err);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+// Delete a project.
+app.delete('/api/woodworking-projects/:id', async (req, res) => {
+  try {
+    const user = await getAuthUser(req, res);
+    if (!user) return;
+    const { error } = await supabase
+      .from('user_woodworking_projects')
+      .delete()
+      .eq('id', req.params.id)
+      .eq('user_id', user.id);
+    if (error) {
+      console.error('Error deleting woodworking project:', error);
+      return res.status(500).json({ error: 'Failed to delete project' });
+    }
+    res.status(204).send();
+  } catch (err) {
+    console.error('Error in DELETE /api/woodworking-projects/:id:', err);
     res.status(500).json({ error: 'Server error' });
   }
 });

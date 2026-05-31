@@ -811,7 +811,7 @@ const FloorPlanEditor = (() => {
                 proceed = await window.showConfirmDialog(
                     'You have unsaved changes. Leave without exporting?',
                     'Unsaved changes',
-                    'Leave without exporting',
+                    'Leave',
                     'Cancel'
                 );
             }
@@ -2307,12 +2307,18 @@ const FloorPlanEditor = (() => {
         try {
             // Convert file to base64
             const base64 = await fileToBase64(file);
-            
-            // Call the server API to convert image to SVG using AI
-            const response = await fetch('/api/image-to-svg', {
+
+            // Call the server API to convert image to SVG using AI. This is an
+            // authenticated endpoint, so attach the access token and target the
+            // backend via the same proxy base the other API calls use —
+            // otherwise the server returns 401 and tracing fails generically.
+            const token = typeof window.__decoraiGetAccessToken === 'function' ? window.__decoraiGetAccessToken() : null;
+            const apiBase = (window.__decoraiProxyUrl) || (window.location.hostname === 'localhost' ? 'http://localhost:3001' : '');
+            const response = await fetch(`${apiBase}/api/image-to-svg`, {
                 method: 'POST',
                 headers: {
-                    'Content-Type': 'application/json'
+                    'Content-Type': 'application/json',
+                    ...(token ? { Authorization: `Bearer ${token}` } : {})
                 },
                 body: JSON.stringify({
                     image: base64,
@@ -7201,7 +7207,21 @@ const FloorPlanEditor = (() => {
         renderer.setSize(size, size);
         renderer.setPixelRatio(1);
         renderer.render(scene, camera);
-        const dataUrl = renderer.domElement.toDataURL('image/png');
+
+        // The plan uses screen coordinates (X right, Y DOWN). Mapping plan-Y to
+        // world-Z with the fixed camera up-vector renders the room as a
+        // horizontal mirror of the top-down layout (e.g. an object to the right
+        // of the bed in the plan ends up on the left). Flip the output
+        // horizontally so the guide — and the AI image generated from it — reads
+        // left/right exactly like the layout the user drew.
+        const flip = document.createElement('canvas');
+        flip.width = size;
+        flip.height = size;
+        const fctx = flip.getContext('2d');
+        fctx.translate(size, 0);
+        fctx.scale(-1, 1);
+        fctx.drawImage(renderer.domElement, 0, 0);
+        const dataUrl = flip.toDataURL('image/png');
 
         disposables.forEach(d => d.dispose && d.dispose());
         renderer.dispose();

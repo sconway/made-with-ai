@@ -61,6 +61,13 @@ const roomFengShuiFooter = document.getElementById('room-feng-shui-footer');
 const fengShuiApplyBtn = document.getElementById('feng-shui-apply-btn');
 const fengShuiContinueWizardBtn = document.getElementById('feng-shui-continue-wizard-btn');
 const fengShuiApplyPremiumToggle = document.getElementById('feng-shui-apply-premium-toggle');
+const wizardQuickEditBtn = document.getElementById('wizard-quick-edit-btn');
+const quickEditModal = document.getElementById('quick-edit-modal');
+const quickEditInput = document.getElementById('quick-edit-input');
+const quickEditApplyBtn = document.getElementById('quick-edit-apply');
+const quickEditClearBtn = document.getElementById('quick-edit-clear');
+const quickEditCloseBtn = document.getElementById('quick-edit-close');
+const quickEditPremiumToggle = document.getElementById('quick-edit-premium-toggle');
 
 // Refinement suggestion chips: append (or set) the chip text into the textarea.
 document.querySelectorAll('.refinement-chip').forEach((chip) => {
@@ -420,22 +427,10 @@ async function initializeApp() {
             const urlParams = new URLSearchParams(window.location.search);
             const paymentStatus = urlParams.get('payment');
             if (paymentStatus === 'success') {
-                // Poll until the Stripe webhook has credited the tokens
-                let attempts = 0;
-                const previousTokens = userTokens;
-                const checkTokens = async () => {
-                    attempts++;
-                    await fetchUserTokens();
-                    if (userTokens > previousTokens) {
-                        showToastMessage(`Payment successful! You now have ${userTokens} token(s).`, 'success');
-                    } else if (attempts < 5) {
-                        setTimeout(checkTokens, 1500);
-                    } else {
-                        showToastMessage('Payment received! Tokens may take a moment to appear.', 'info');
-                    }
-                };
-                setTimeout(checkTokens, 500);
+                const sessionId = urlParams.get('session_id');
+                // Strip the params before any async work so a refresh can't re-trigger.
                 window.history.replaceState({}, document.title, window.location.pathname);
+                verifyCheckoutAndCredit(sessionId);
             } else if (paymentStatus === 'cancelled') {
                 showToastMessage('Payment cancelled.', 'error');
                 window.history.replaceState({}, document.title, window.location.pathname);
@@ -753,6 +748,71 @@ async function handleCheckout(pack, cardEl) {
         cards.forEach((c) => { c.disabled = false; });
         if (cardEl) cardEl.classList.remove('token-pack--loading');
     }
+}
+
+/**
+ * Deterministically confirm a completed purchase and credit tokens via the
+ * server, independent of Stripe webhook timing. Idempotent on the server, so
+ * this is safe even if the webhook also fires. Retries while the payment is
+ * still settling or the server is cold-starting.
+ */
+async function verifyCheckoutAndCredit(sessionId) {
+    if (!currentUser || !currentSession) return;
+    if (!sessionId) {
+        // No session id (older checkout link). Fall back to a balance refresh.
+        await fetchUserTokens();
+        if (userHasSubscription) { await fetchSubscriptionUsage(); }
+        showToastMessage('Payment received! Tokens may take a moment to appear.', 'info');
+        return;
+    }
+
+    showToastMessage('Confirming your purchase…', 'info');
+
+    const maxAttempts = 6;
+    let attempt = 0;
+    const attemptVerify = async () => {
+        attempt++;
+        try {
+            const res = await fetch(`${PROXY_SERVER_URL}/api/verify-checkout`, {
+                method: 'POST',
+                headers: {
+                    Authorization: `Bearer ${currentSession.access_token}`,
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({ session_id: sessionId })
+            });
+
+            if (res.ok) {
+                const data = await res.json();
+                userTokens = data.credits;
+                updateTokensDisplay();
+                if (userHasSubscription) updateSubscriptionUsageDisplay();
+                showToastMessage(`Payment successful! ${data.tokensAdded} token(s) added.`, 'success');
+                return;
+            }
+
+            // 409 = payment still settling; retry with backoff.
+            if (res.status === 409 && attempt < maxAttempts) {
+                setTimeout(attemptVerify, 2000);
+                return;
+            }
+
+            const body = await res.json().catch(() => ({}));
+            throw new Error(body.error || `verify failed (${res.status})`);
+        } catch (err) {
+            if (attempt < maxAttempts) {
+                setTimeout(attemptVerify, 2000);
+                return;
+            }
+            console.error('verifyCheckoutAndCredit error:', err);
+            // Last resort: the webhook backup may still credit shortly. Refresh
+            // what we can and tell the user how to recover.
+            await fetchUserTokens();
+            if (userHasSubscription) updateSubscriptionUsageDisplay();
+            showToastMessage('Payment received. Your tokens will appear shortly — refresh if they don’t.', 'info');
+        }
+    };
+    attemptVerify();
 }
 
 // ── Subscription modal helpers ─────────────────────────────────────────────────
@@ -1583,6 +1643,39 @@ document.addEventListener('DOMContentLoaded', async () => {
             const target = getFengShuiAnalysisTarget();
             if (!target) return;
             startRoomFengShuiAnalysis(target.src, { label: target.label });
+        });
+    }
+    if (wizardQuickEditBtn) {
+        wizardQuickEditBtn.addEventListener('click', () => {
+            if (!currentUploadedImage) return;
+            openQuickEdit();
+        });
+    }
+    if (quickEditCloseBtn) quickEditCloseBtn.addEventListener('click', closeQuickEdit);
+    if (quickEditClearBtn) quickEditClearBtn.addEventListener('click', clearQuickEditInput);
+    if (quickEditApplyBtn) quickEditApplyBtn.addEventListener('click', applyQuickEdit);
+    if (quickEditPremiumToggle) {
+        quickEditPremiumToggle.addEventListener('change', () => {
+            if (quickEditPremiumToggle.checked && !hasPremiumGenerationsAvailable()) {
+                quickEditPremiumToggle.checked = false;
+                if (userHasSubscription) showSubscriptionLimitMessage();
+                else showBuyTokensModal();
+            }
+        });
+    }
+    if (quickEditInput) {
+        quickEditInput.addEventListener('input', updateQuickEditApplyState);
+        // Cmd/Ctrl+Enter applies; plain Enter inserts a newline.
+        quickEditInput.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
+                e.preventDefault();
+                if (!quickEditApplyBtn?.disabled) applyQuickEdit();
+            }
+        });
+    }
+    if (quickEditModal) {
+        quickEditModal.addEventListener('click', (e) => {
+            if (e.target === quickEditModal) closeQuickEdit();
         });
     }
     if (roomFengShuiCloseBtn) roomFengShuiCloseBtn.addEventListener('click', hideRoomFengShuiModal);
@@ -3011,16 +3104,20 @@ async function generateImageWithReplicate(imageBase64, prompt) {
 // Generate a single design image
 async function generateDesigns(options = {}) {
     const fengShuiApply = options.fengShuiResult && options.imageSource;
+    const quickEditApply = !!(options.quickEdit && options.imageSource);
+    const specialApply = fengShuiApply || quickEditApply;
 
     if (!requireEmailConfirmedForFeature('design generation')) return;
-    if (!currentUploadedImage && !fengShuiApply) {
+    if (!currentUploadedImage && !specialApply) {
         showAlertDialog('Please upload an image first');
         return;
     }
 
     const usePremium = fengShuiApply
         ? !!options.usePremium
-        : getEffectiveDefaultModelPref() === 'premium';
+        : quickEditApply
+            ? !!options.usePremium
+            : getEffectiveDefaultModelPref() === 'premium';
 
     // Only premium generations consume tokens. Free runs are unlimited for
     // signed-in users — we gate on auth so anonymous traffic can't abuse it.
@@ -3040,6 +3137,11 @@ async function generateDesigns(options = {}) {
     let prompts;
     let fullPrompt;
     let negativePrompt;
+    // When set, the non-premium path uses Nano Banana (instruction-edit model)
+    // with this prompt instead of the proplabs/ControlNet staging model. This is
+    // for targeted edits ("make the walls blue") where proplabs — which has no
+    // free-form prompt — would ignore the instruction and just re-stage furniture.
+    let nanoEditPrompt = null;
 
     if (fengShuiApply) {
         ensureRoomTypeFromWizard();
@@ -3049,6 +3151,16 @@ async function generateDesigns(options = {}) {
         fullPrompt = buildFengShuiGenerationPrompt(options.fengShuiResult);
         negativePrompt = getFengShuiNegativePrompt();
         prompts = { shouldGenerate: true };
+    } else if (quickEditApply) {
+        // Prompt is fully specified by the user's swatch picks; no wizard
+        // context or base prompt needed.
+        basePrompt = '';
+        style = options.quickEdit.label || 'Quick edit';
+        description = options.quickEdit.description || 'Applying your quick edit…';
+        fullPrompt = options.quickEdit.prompt;
+        negativePrompt = '';
+        prompts = { shouldGenerate: true };
+        nanoEditPrompt = fullPrompt; // free path → Nano Banana
     } else {
         // Try to determine the room type if not already set
         if (!currentRoomType) {
@@ -3094,6 +3206,14 @@ async function generateDesigns(options = {}) {
             const baseForRefinement = priorDesign.prompt || prompts.positivePrompt;
             fullPrompt = buildRefinementPrompt(baseForRefinement, refinementText);
             negativePrompt = priorDesign.negativePrompt || prompts.negativePrompt;
+            // Refining an existing result with a typed instruction is an *edit*,
+            // not a re-stage. Route the non-premium path through Nano Banana with
+            // just the instruction (guardrailed) so it honors the user's words.
+            // No text → leave nanoEditPrompt null so "regenerate for a fresh
+            // variation" keeps the legacy proplabs staging behavior.
+            if (refinementText) {
+                nanoEditPrompt = buildQuickEditPrompt(refinementText)?.prompt || null;
+            }
         } else {
             fullPrompt = refinementText
                 ? buildRefinementPrompt(prompts.positivePrompt, refinementText)
@@ -3146,7 +3266,7 @@ async function generateDesigns(options = {}) {
     // When regenerating from the results screen, chain off whichever history
     // entry the user has selected (defaults to the most recent generation).
     // On the first run, the strip is empty and we use the original upload.
-    const sourceImage = fengShuiApply
+    const sourceImage = specialApply
         ? options.imageSource
         : (isCurrentlyOnResults ? getBaseImageForNextGeneration() : currentUploadedImage);
 
@@ -3161,7 +3281,7 @@ async function generateDesigns(options = {}) {
     try {
         console.log('Starting image generation with prompt:', fullPrompt);
         console.log('Negative prompt:', negativePrompt);
-        console.log('Source image:', fengShuiApply ? 'feng shui apply' : (isCurrentlyOnResults && lastGeneratedImageUrl ? 'last generated' : 'original upload'));
+        console.log('Source image:', fengShuiApply ? 'feng shui apply' : quickEditApply ? 'quick edit' : (isCurrentlyOnResults && lastGeneratedImageUrl ? 'last generated' : 'original upload'));
         console.log('Model preference:', usePremium ? 'premium' : 'free');
 
         let imageUrl = '';
@@ -3172,6 +3292,13 @@ async function generateDesigns(options = {}) {
             // Premium path — counts against quota. Endpoint reserves a slot.
             imageUrl = await callPremiumImageEdit(sourceImage, fullPrompt);
             modelUsed = 'openai';
+        } else if (nanoEditPrompt) {
+            // Free instruction-edit path — Nano Banana (Gemini 2.5 Flash Image)
+            // preserves the rest of the room while applying the typed edit.
+            // Used for Quick Edit and for refining a generated result with text.
+            // Free to the user; never counts against quota.
+            imageUrl = await generateQuickEditWithNanoBanana(sourceImage, nanoEditPrompt);
+            modelUsed = 'nano-banana';
         } else {
             const imageUrls = await generateImageWithControlNet(sourceImage, fullPrompt, negativePrompt);
             if (Array.isArray(imageUrls)) {
@@ -3434,22 +3561,35 @@ async function retryImageGeneration() {
         // generation, falls back to the original upload).
         const retrySourceImage = getBaseImageForNextGeneration();
 
-        let imageUrls = await generateImageWithControlNet(
-            retrySourceImage,
-            retryPrompt,
-            design.negativePrompt || prompts.negativePrompt
-        );
         let imageUrl;
         let usedFallback = false;
         let modelUsed = null;
-        if (Array.isArray(imageUrls)) {
-            imageUrl = imageUrls[0];
-            usedFallback = !!imageUrls.usedFallback;
-            modelUsed = imageUrls.modelUsed || null;
-        } else if (typeof imageUrls === 'string') {
-            imageUrl = imageUrls;
+
+        // A typed refinement is an instruction edit → use Nano Banana so the
+        // text is honored (proplabs has no free-form prompt). No text → keep the
+        // legacy proplabs staging for a fresh variation.
+        const retryNanoPrompt = retryRefinementText
+            ? (buildQuickEditPrompt(retryRefinementText)?.prompt || null)
+            : null;
+
+        if (retryNanoPrompt) {
+            imageUrl = await generateQuickEditWithNanoBanana(retrySourceImage, retryNanoPrompt);
+            modelUsed = 'nano-banana';
         } else {
-            imageUrl = '';
+            let imageUrls = await generateImageWithControlNet(
+                retrySourceImage,
+                retryPrompt,
+                design.negativePrompt || prompts.negativePrompt
+            );
+            if (Array.isArray(imageUrls)) {
+                imageUrl = imageUrls[0];
+                usedFallback = !!imageUrls.usedFallback;
+                modelUsed = imageUrls.modelUsed || null;
+            } else if (typeof imageUrls === 'string') {
+                imageUrl = imageUrls;
+            } else {
+                imageUrl = '';
+            }
         }
 
         design.imageUrl = imageUrl;
@@ -4682,6 +4822,124 @@ function displayRoomFengShuiResults(result, imageDisplaySrc, label, imageSource)
 
     roomFengShuiBody.innerHTML = html;
     updateFengShuiApplyFooter();
+}
+
+// ── Quick Edit (Option A: prompt-only simple edits) ──────────────────────────
+// A lightweight path for simple changes (wall color, flooring, finishes) without
+// the full design wizard. The user types a plain-language instruction; we wrap it
+// with "keep everything else the same" guardrails and send it to the premium
+// image-edit model, which preserves the rest of the photo.
+
+// Nano Banana = Google's Gemini 2.5 Flash Image on Replicate — a cheap
+// instruction-edit model. Runs through the existing Replicate proxy/poll;
+// a bare "owner/name" slug routes to Replicate's official-model endpoint.
+const NANO_BANANA_MODEL = 'google/nano-banana';
+
+/** Run a free Quick Edit through Nano Banana. Returns the result image URL. */
+async function generateQuickEditWithNanoBanana(sourceImage, prompt) {
+    const imageInput = await toDataUri(sourceImage);
+    const startResponse = await fetchWithRetry(REPLICATE_API_URL, {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+            ...(currentSession ? { 'Authorization': `Bearer ${currentSession.access_token}` } : {})
+        },
+        body: JSON.stringify({
+            version: NANO_BANANA_MODEL,
+            input: {
+                prompt,
+                image_input: [imageInput],
+                output_format: 'png',
+            },
+        }),
+    }, 3, 3000);
+
+    if (startResponse.status === 429) {
+        const data = await startResponse.json().catch(() => ({}));
+        const err = new Error(data.error || 'Monthly generation limit reached');
+        err.code = 'QUOTA_EXCEEDED';
+        err.quota = data;
+        throw err;
+    }
+    if (!startResponse.ok) {
+        const data = await startResponse.json().catch(() => ({}));
+        throw new Error(`Quick edit failed: ${data.error || data.detail || startResponse.status}`);
+    }
+    const prediction = await startResponse.json();
+    if (!prediction.urls || !prediction.urls.get) {
+        throw new Error('Quick edit model did not return a polling URL.');
+    }
+    const result = await pollReplicatePrediction(prediction.urls.get);
+    const raw = result.imageUrls;
+    const imageUrl = Array.isArray(raw) ? raw[0] : raw;
+    if (!imageUrl) throw new Error('Quick edit model returned no image.');
+    return imageUrl;
+}
+
+/** Wrap the user's free-text edit with guardrails to preserve the rest of the room. */
+function buildQuickEditPrompt(text) {
+    const edit = (text || '').trim();
+    if (!edit) return null;
+    const prompt =
+        `Make only this change to this room photo: ${edit}. ` +
+        `Keep every other element identical — all furniture, decor, fixtures, windows, ` +
+        `layout, perspective, and lighting must stay exactly the same. Do not move, add, ` +
+        `or remove any objects unless the change above explicitly requires it. ` +
+        `Photorealistic and seamless, consistent with the original photo.`;
+    return { prompt, label: edit };
+}
+
+/** Enable/disable Apply based on whether there's any text. */
+function updateQuickEditApplyState() {
+    if (quickEditApplyBtn) {
+        quickEditApplyBtn.disabled = !(quickEditInput?.value || '').trim();
+    }
+}
+
+function clearQuickEditInput() {
+    if (quickEditInput) quickEditInput.value = '';
+    updateQuickEditApplyState();
+}
+
+function openQuickEdit() {
+    if (!requireEmailConfirmedForFeature('quick edit')) return;
+    clearQuickEditInput();
+    // Default to the free model every time — premium is an explicit opt-in.
+    if (quickEditPremiumToggle) {
+        quickEditPremiumToggle.checked = false;
+        quickEditPremiumToggle.closest('.model-pref-row')?.classList.toggle('hidden', !hasPremiumGenerationsAvailable());
+    }
+    if (quickEditModal) quickEditModal.classList.add('show');
+    // Focus the box so the user can start typing right away.
+    requestAnimationFrame(() => quickEditInput?.focus());
+}
+
+function closeQuickEdit() {
+    if (quickEditModal) quickEditModal.classList.remove('show');
+}
+
+/** Apply the typed quick edit through the shared generation pipeline. */
+async function applyQuickEdit() {
+    if (!currentUploadedImage) {
+        showAlertDialog('Please upload an image first.');
+        return;
+    }
+    const built = buildQuickEditPrompt(quickEditInput?.value);
+    if (!built) return;
+    const usePremium = !!quickEditPremiumToggle?.checked;
+    closeQuickEdit();
+    // Default: free Nano Banana (cheap instruction-edit model, no token).
+    // Premium opt-in: gpt-image-2 (higher fidelity, counts as one generation).
+    // generateDesigns handles token gating and the buy/limit modal.
+    await generateDesigns({
+        quickEdit: {
+            prompt: built.prompt,
+            label: usePremium ? 'Quick edit (premium)' : 'Quick edit',
+            description: built.label,
+        },
+        imageSource: currentUploadedImage,
+        usePremium,
+    });
 }
 
 async function applyFengShuiFromAnalysis() {
