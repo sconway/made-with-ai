@@ -1,0 +1,583 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Cosmic Zoom — Earth to the Universe</title>
+<style>
+  html, body { margin: 0; height: 100%; background: #000; overflow: hidden;
+    font-family: ui-monospace, Menlo, monospace; color: #cfe8ff; }
+  canvas { display: block; width: 100vw; height: 100vh; }
+  #hud { position: fixed; top: 14px; left: 16px; z-index: 3; pointer-events: none;
+    user-select: none; text-shadow: 0 0 8px rgba(0,180,255,0.5); }
+  #scaleName { font-size: 22px; font-weight: 600; color: #9ff; letter-spacing: 0.04em; }
+  #scaleSub  { font-size: 12px; opacity: 0.75; margin-top: 2px; }
+  #hint { position: fixed; bottom: 16px; left: 16px; z-index: 3; font-size: 12px;
+    opacity: 0.5; pointer-events: none; user-select: none; }
+  #fps { position: fixed; top: 14px; right: 16px; z-index: 3; font-size: 12px; opacity: 0.55; }
+  #loading { position: fixed; inset: 0; display: flex; align-items: center; justify-content: center;
+    background: #000; z-index: 5; color: #9ff; font-size: 14px; letter-spacing: 0.2em; }
+</style>
+</head>
+<body>
+<div id="loading">ASSEMBLING THE UNIVERSE…</div>
+<div id="hud">
+  <div id="scaleName">EARTH</div>
+  <div id="scaleSub"></div>
+</div>
+<div id="fps">–</div>
+<div id="hint">scroll / ↑↓ to travel out · drag to look around</div>
+<canvas id="c"></canvas>
+
+<script type="importmap">
+{ "imports": { "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js" } }
+</script>
+
+<script type="module">
+import * as THREE from 'three';
+
+// ============================================================================
+//  3D simplex noise (Ashima / Stefan Gustavson, public domain)
+// ============================================================================
+const NOISE = `
+vec3 mod289(vec3 x){return x-floor(x*(1.0/289.0))*289.0;}
+vec4 mod289(vec4 x){return x-floor(x*(1.0/289.0))*289.0;}
+vec4 permute(vec4 x){return mod289(((x*34.0)+1.0)*x);}
+vec4 taylorInvSqrt(vec4 r){return 1.79284291400159-0.85373472095314*r;}
+float snoise(vec3 v){
+  const vec2 C=vec2(1.0/6.0,1.0/3.0); const vec4 D=vec4(0.0,0.5,1.0,2.0);
+  vec3 i=floor(v+dot(v,C.yyy)); vec3 x0=v-i+dot(i,C.xxx);
+  vec3 g=step(x0.yzx,x0.xyz); vec3 l=1.0-g; vec3 i1=min(g.xyz,l.zxy); vec3 i2=max(g.xyz,l.zxy);
+  vec3 x1=x0-i1+C.xxx; vec3 x2=x0-i2+C.yyy; vec3 x3=x0-D.yyy;
+  i=mod289(i);
+  vec4 p=permute(permute(permute(i.z+vec4(0.0,i1.z,i2.z,1.0))+i.y+vec4(0.0,i1.y,i2.y,1.0))+i.x+vec4(0.0,i1.x,i2.x,1.0));
+  float n_=0.142857142857; vec3 ns=n_*D.wyz-D.xzx;
+  vec4 j=p-49.0*floor(p*ns.z*ns.z);
+  vec4 x_=floor(j*ns.z); vec4 y_=floor(j-7.0*x_);
+  vec4 x=x_*ns.x+ns.yyyy; vec4 y=y_*ns.x+ns.yyyy; vec4 h=1.0-abs(x)-abs(y);
+  vec4 b0=vec4(x.xy,y.xy); vec4 b1=vec4(x.zw,y.zw);
+  vec4 s0=floor(b0)*2.0+1.0; vec4 s1=floor(b1)*2.0+1.0; vec4 sh=-step(h,vec4(0.0));
+  vec4 a0=b0.xzyw+s0.xzyw*sh.xxyy; vec4 a1=b1.xzyw+s1.xzyw*sh.zzww;
+  vec3 p0=vec3(a0.xy,h.x); vec3 p1=vec3(a0.zw,h.y); vec3 p2=vec3(a1.xy,h.z); vec3 p3=vec3(a1.zw,h.w);
+  vec4 norm=taylorInvSqrt(vec4(dot(p0,p0),dot(p1,p1),dot(p2,p2),dot(p3,p3)));
+  p0*=norm.x; p1*=norm.y; p2*=norm.z; p3*=norm.w;
+  vec4 m=max(0.6-vec4(dot(x0,x0),dot(x1,x1),dot(x2,x2),dot(x3,x3)),0.0); m=m*m;
+  return 42.0*dot(m*m,vec4(dot(p0,x0),dot(p1,x1),dot(p2,x2),dot(p3,x3)));
+}
+float fbm(vec3 p){ float v=0.0,a=0.5; for(int i=0;i<6;i++){ v+=a*snoise(p); p*=2.03; a*=0.5; } return v; }
+`;
+
+// ============================================================================
+//  Real-scale constants (metres). Sizes are TRUE; distances are gently
+//  compressed (artistic) so the journey stays watchable — see DESIGN note.
+// ============================================================================
+const KM = 1e3, AU = 1.496e11, LY = 9.461e15, MLY = 9.461e21;
+const R_EARTH = 6.371e6;
+const R_MOON  = 1.737e6;
+const R_SUN   = 6.9634e8;
+
+// ============================================================================
+//  Renderer / scene / camera
+// ============================================================================
+const canvas = document.getElementById('c');
+const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, powerPreference: 'high-performance' });
+const DPR = Math.min(window.devicePixelRatio || 1, 1.75);
+renderer.setPixelRatio(DPR);
+renderer.setSize(window.innerWidth, window.innerHeight);
+
+const scene = new THREE.Scene();
+const camera = new THREE.PerspectiveCamera(50, innerWidth / innerHeight, 0.01, 5e5);
+const CAMR = 3.0;                 // camera render distance from origin (Earth)
+const clock = new THREE.Clock();
+
+// The single zoom value: WS = render-units per metre. Everything is built in
+// real metres (origin = Earth) and each group is scaled by WS every frame, so
+// on-screen sizes always reflect true proportions.
+const WS0  = 1.3 / R_EARTH;       // Earth nicely framed at scroll 0
+const WSmin = 2.5e-19;            // cosmic web framed near scroll 1
+const SPAN = Math.log10(WS0 / WSmin);
+let WS = WS0;
+
+// Sun sits ~1 (compressed) AU from Earth, in the ecliptic (world X–Z plane),
+// so Earth (origin) is the 3rd planet and the Sun is off to one side.
+const ORB_E = 6.0e9;                              // compressed Earth–Sun distance
+const SUN_DIR = new THREE.Vector3(1, 0, 0.35).normalize();
+const SUN_POS = SUN_DIR.clone().multiplyScalar(ORB_E);
+const SUN_LIGHT_DIR = SUN_POS.clone().normalize(); // direction from Earth to Sun
+
+// ============================================================================
+//  Helpers
+// ============================================================================
+function rand(a, b) { return a + Math.random() * (b - a); }
+function gauss() { return (Math.random() + Math.random() + Math.random() + Math.random() - 2) / 2; }
+function starColor(t) {
+  const s = [[1,.78,.62],[1,.86,.70],[1,.96,.86],[.96,.97,1],[.78,.86,1]];
+  const f = t * (s.length - 1), i = Math.min(s.length - 2, Math.floor(f)), k = f - i;
+  return [s[i][0]+(s[i+1][0]-s[i][0])*k, s[i][1]+(s[i+1][1]-s[i][1])*k, s[i][2]+(s[i+1][2]-s[i][2])*k];
+}
+function smoothband(x, a, b, c, d) { // 0 below a, 1 between b..c, 0 above d
+  if (x <= a || x >= d) return 0;
+  if (x < b) return (x - a) / (b - a);
+  if (x > c) return (d - x) / (d - c);
+  return 1;
+}
+
+// Additive soft round points (used for star fields & particle structures).
+function makePoints(positions, colors, sizes, opts = {}) {
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+  geo.setAttribute('aColor', new THREE.BufferAttribute(colors, 3));
+  geo.setAttribute('aSize', new THREE.BufferAttribute(sizes, 1));
+  const mat = new THREE.ShaderMaterial({
+    uniforms: {
+      uOpacity: { value: 1 }, uTime: { value: 0 },
+      uPx: { value: innerHeight * DPR * (opts.scale || 0.5) },
+      uMax: { value: opts.maxSize || 10000 }, uTwinkle: { value: opts.twinkle ? 1 : 0 },
+      uBright: { value: opts.bright != null ? opts.bright : 1 },
+    },
+    vertexShader: `
+      attribute vec3 aColor; attribute float aSize;
+      uniform float uPx, uTime, uMax, uTwinkle; varying vec3 vC; varying float vB;
+      void main(){ vC=aColor; vec4 mv=modelViewMatrix*vec4(position,1.0);
+        float tw=1.0; if(uTwinkle>0.5) tw=0.75+0.45*sin(uTime*3.0+position.x*1.7+position.y*2.3);
+        vB=tw; gl_PointSize=min(aSize*uPx*tw/max(-mv.z,1e-4), uMax);
+        gl_Position=projectionMatrix*mv; }`,
+    fragmentShader: `
+      precision highp float; uniform float uOpacity, uBright; varying vec3 vC; varying float vB;
+      void main(){ float d=length(gl_PointCoord-0.5); float a=pow(smoothstep(0.5,0.0,d),1.6);
+        if(a<0.004) discard; gl_FragColor=vec4(vC*(0.5+0.5*vB)*uBright, a*uOpacity); }`,
+    transparent: true, blending: THREE.AdditiveBlending, depthWrite: false,
+  });
+  return new THREE.Points(geo, mat);
+}
+
+// ============================================================================
+//  Body "glints": every solid body also renders as a min-size glowing point so
+//  it stays visible (like a star) once its sphere shrinks below a pixel.
+// ============================================================================
+const glintData = []; // {pos:Vec3(m), radius:m, color:[r,g,b]}
+function addGlint(pos, radius, color) { glintData.push({ pos, radius, color }); }
+
+// ============================================================================
+//  EARTH (procedural shader globe + clouds + atmosphere) — built at true radius
+// ============================================================================
+function buildEarth() {
+  const g = new THREE.Group();
+  const earthMat = new THREE.ShaderMaterial({
+    uniforms: { uTime: { value: 0 }, uSun: { value: SUN_LIGHT_DIR.clone() }, uOpacity: { value: 1 } },
+    vertexShader: `varying vec3 vDir; varying vec3 vWN; varying vec3 vView;
+      void main(){ vDir=normalize(position); vWN=normalize(mat3(modelMatrix)*normalize(position));
+        vec4 wp=modelMatrix*vec4(position,1.0); vView=normalize(cameraPosition-wp.xyz);
+        gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.0); }`,
+    fragmentShader: NOISE + `precision highp float; uniform float uTime; uniform vec3 uSun; uniform float uOpacity;
+      varying vec3 vDir; varying vec3 vWN; varying vec3 vView;
+      void main(){ vec3 d=normalize(vDir);
+        float c=fbm(d*1.9+11.0)+0.5*fbm(d*4.3-3.0); float land=smoothstep(0.02,0.16,c);
+        float detail=fbm(d*9.0);
+        vec3 ocean=mix(vec3(0.02,0.10,0.26),vec3(0.05,0.22,0.42),smoothstep(-0.4,0.6,detail));
+        vec3 lc=mix(vec3(0.12,0.30,0.10),vec3(0.45,0.38,0.20),smoothstep(0.1,0.7,fbm(d*5.0+20.0)));
+        lc=mix(lc,vec3(0.06,0.22,0.08),smoothstep(0.3,0.8,detail));
+        float ice=smoothstep(0.74,0.86,abs(d.y)); lc=mix(lc,vec3(0.9,0.95,1.0),ice);
+        ocean=mix(ocean,vec3(0.8,0.9,1.0),ice*0.7); vec3 base=mix(ocean,lc,land);
+        vec3 N=normalize(vWN); float ndl=dot(N,normalize(uSun)); float day=smoothstep(-0.1,0.25,ndl);
+        vec3 H=normalize(normalize(uSun)+normalize(vView));
+        float spec=pow(max(dot(N,H),0.0),60.0)*(1.0-land)*day;
+        vec3 col=base*(0.05+1.05*max(day,0.0))+vec3(1.0,0.95,0.8)*spec*0.8;
+        float night=1.0-day; float cities=smoothstep(0.55,0.85,fbm(d*22.0))*land*night;
+        col+=vec3(1.0,0.8,0.45)*cities*1.2;
+        float fres=pow(1.0-max(dot(N,normalize(vView)),0.0),3.0); col+=vec3(0.3,0.55,1.0)*fres*0.35*(0.3+day);
+        col=col/(1.0+col*0.6); gl_FragColor=vec4(col,uOpacity); }`,
+    transparent: true,
+  });
+  const earth = new THREE.Mesh(new THREE.SphereGeometry(R_EARTH, 96, 96), earthMat);
+  g.add(earth);
+
+  const cloudMat = new THREE.ShaderMaterial({
+    uniforms: { uTime: { value: 0 }, uSun: { value: SUN_LIGHT_DIR.clone() }, uOpacity: { value: 1 } },
+    vertexShader: `varying vec3 vDir; varying vec3 vWN;
+      void main(){ vDir=normalize(position); vWN=normalize(mat3(modelMatrix)*normalize(position));
+        gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.0); }`,
+    fragmentShader: NOISE + `precision highp float; uniform float uTime; uniform vec3 uSun; uniform float uOpacity;
+      varying vec3 vDir; varying vec3 vWN;
+      void main(){ vec3 d=normalize(vDir); float n=fbm(d*3.0+vec3(uTime*0.01,0.0,0.0))+0.5*fbm(d*7.0-uTime*0.015);
+        float a=smoothstep(0.35,0.85,n); float day=smoothstep(-0.1,0.3,dot(normalize(vWN),normalize(uSun)));
+        gl_FragColor=vec4(vec3(0.15+0.95*day), a*uOpacity*0.9); }`,
+    transparent: true, depthWrite: false,
+  });
+  const clouds = new THREE.Mesh(new THREE.SphereGeometry(R_EARTH * 1.015, 64, 64), cloudMat);
+  g.add(clouds);
+
+  const atmoMat = new THREE.ShaderMaterial({
+    uniforms: { uSun: { value: SUN_LIGHT_DIR.clone() }, uOpacity: { value: 1 } },
+    vertexShader: `varying vec3 vWN; varying vec3 vView;
+      void main(){ vWN=normalize(mat3(modelMatrix)*normalize(position));
+        vec4 wp=modelMatrix*vec4(position,1.0); vView=normalize(cameraPosition-wp.xyz);
+        gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.0); }`,
+    fragmentShader: `precision highp float; uniform vec3 uSun; uniform float uOpacity; varying vec3 vWN; varying vec3 vView;
+      void main(){ vec3 N=normalize(vWN); float rim=pow(1.0-max(dot(N,normalize(vView)),0.0),2.4);
+        float day=smoothstep(-0.35,0.6,dot(N,normalize(uSun)));
+        gl_FragColor=vec4(mix(vec3(0.15,0.35,0.9),vec3(0.5,0.7,1.0),day), rim*(0.25+0.85*day)*uOpacity); }`,
+    transparent: true, side: THREE.BackSide, blending: THREE.AdditiveBlending, depthWrite: false,
+  });
+  const atmo = new THREE.Mesh(new THREE.SphereGeometry(R_EARTH * 1.16, 64, 64), atmoMat);
+  g.add(atmo);
+
+  addGlint(new THREE.Vector3(0, 0, 0), R_EARTH, [0.5, 0.7, 1.0]);
+  g.userData = {
+    realRadius: R_EARTH * 1.16, center: new THREE.Vector3(0, 0, 0),
+    setOpacity(o) { earthMat.uniforms.uOpacity.value = o; cloudMat.uniforms.uOpacity.value = o; atmoMat.uniforms.uOpacity.value = o; },
+    update(t) { earthMat.uniforms.uTime.value = t; cloudMat.uniforms.uTime.value = t;
+      earth.rotation.y = t * 0.03; clouds.rotation.y = t * 0.042; },
+  };
+  return g;
+}
+
+// ============================================================================
+//  SOLAR SYSTEM — Sun (shader) + planets + orbit rings, in absolute coords
+//  (origin = Earth). True body radii; compressed orbital distances.
+// ============================================================================
+function orbC(au) { return ORB_E * Math.pow(au, 0.55); } // compressed orbit radius
+function eclipticPoint(center, radius, angle) {
+  return new THREE.Vector3(center.x + Math.cos(angle) * radius, center.y, center.z + Math.sin(angle) * radius);
+}
+function buildSolar() {
+  const g = new THREE.Group();
+
+  // Sun
+  const sunMat = new THREE.ShaderMaterial({
+    uniforms: { uTime: { value: 0 }, uOpacity: { value: 1 } },
+    vertexShader: `varying vec3 vD; void main(){ vD=normalize(position); gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.0);}`,
+    fragmentShader: NOISE + `precision highp float; uniform float uTime, uOpacity; varying vec3 vD;
+      void main(){ vec3 d=normalize(vD); float n=fbm(d*5.0+uTime*0.15)+0.5*fbm(d*12.0-uTime*0.25);
+        float hot=smoothstep(0.0,1.0,n*0.5+0.5); vec3 c=mix(vec3(1.0,0.35,0.05),vec3(1.0,0.85,0.4),hot);
+        c=mix(c,vec3(1.0,1.0,0.9),pow(hot,3.0)); gl_FragColor=vec4(c*1.4,uOpacity); }`,
+    transparent: true,
+  });
+  const sun = new THREE.Mesh(new THREE.SphereGeometry(R_SUN, 48, 48), sunMat);
+  sun.position.copy(SUN_POS);
+  g.add(sun);
+
+  // Sun glow billboard (real-sized halo)
+  const glowMat = new THREE.ShaderMaterial({
+    uniforms: { uOpacity: { value: 1 } },
+    vertexShader: `varying vec2 vUv; void main(){ vUv=uv; gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.0);}`,
+    fragmentShader: `precision highp float; uniform float uOpacity; varying vec2 vUv;
+      void main(){ float d=length(vUv-0.5)*2.0; float a=pow(max(1.0-d,0.0),2.6);
+        gl_FragColor=vec4(mix(vec3(1.0,0.6,0.2),vec3(1.0,0.9,0.6),1.0-d), a*uOpacity*0.8); }`,
+    transparent: true, blending: THREE.AdditiveBlending, depthWrite: false,
+  });
+  const glow = new THREE.Mesh(new THREE.PlaneGeometry(R_SUN * 6, R_SUN * 6), glowMat);
+  glow.position.copy(SUN_POS);
+  g.add(glow);
+  addGlint(SUN_POS.clone(), R_SUN, [1.0, 0.85, 0.5]);
+
+  // Planets (true radii; tiny spheres + glints)
+  const planets = [
+    { au: 0.39, r: 2.44e6, c: 0x9a8b7a, a: 0.4 },
+    { au: 0.72, r: 6.05e6, c: 0xd9b38c, a: 1.3 },
+    { au: 1.52, r: 3.39e6, c: 0xc1502e, a: 3.5 },
+    { au: 5.20, r: 6.99e7, c: 0xd9a066, a: 5.4 },
+    { au: 9.54, r: 5.82e7, c: 0xe3c98b, a: 2.6, ring: true },
+    { au: 19.2, r: 2.54e7, c: 0x9fd0e0, a: 1.7 },
+    { au: 30.1, r: 2.46e7, c: 0x4a6fe0, a: 4.4 },
+  ];
+  const planetMats = [];
+  planets.forEach(p => {
+    const radius = orbC(p.au);
+    const pos = eclipticPoint(SUN_POS, radius, p.a);
+    const m = new THREE.Mesh(new THREE.SphereGeometry(p.r, 24, 24),
+      new THREE.MeshBasicMaterial({ color: p.c, transparent: true }));
+    m.position.copy(pos); g.add(m); planetMats.push(m.material);
+    const col = new THREE.Color(p.c);
+    addGlint(pos.clone(), p.r * 3, [col.r, col.g, col.b]);
+    if (p.ring) {
+      const ring = new THREE.Mesh(new THREE.RingGeometry(p.r * 1.5, p.r * 2.3, 48),
+        new THREE.MeshBasicMaterial({ color: 0xd9c89a, side: THREE.DoubleSide, transparent: true, opacity: 0.6 }));
+      ring.rotation.x = Math.PI / 2.3; ring.position.copy(pos); g.add(ring); planetMats.push(ring.material);
+    }
+  });
+
+  // Orbit rings (faint particle circles around the Sun)
+  const op = [], oc = [], os = [];
+  [1.0, ...planets.map(p => p.au)].forEach(au => {
+    const radius = orbC(au), n = Math.floor(220 + radius / 2e8);
+    for (let i = 0; i < n; i++) {
+      const v = eclipticPoint(SUN_POS, radius, (i / n) * Math.PI * 2);
+      op.push(v.x, v.y, v.z); oc.push(0.32, 0.45, 0.7); os.push(0.5);
+    }
+  });
+  const orbits = makePoints(new Float32Array(op), new Float32Array(oc), new Float32Array(os), { scale: 0.16, maxSize: 2.5 });
+  g.add(orbits);
+
+  g.userData = {
+    realRadius: orbC(30.1), center: SUN_POS.clone(),
+    setOpacity(o) {
+      sunMat.uniforms.uOpacity.value = o; glowMat.uniforms.uOpacity.value = o;
+      orbits.material.uniforms.uOpacity.value = o;
+      planetMats.forEach(m => { m.opacity = o; });
+    },
+    update(t) { sunMat.uniforms.uTime.value = t; glow.lookAt(camera.position); },
+  };
+  return g;
+}
+
+// ============================================================================
+//  STELLAR NEIGHBOURHOOD — nearby stars (compressed light-year distances)
+// ============================================================================
+function buildStellar() {
+  const g = new THREE.Group();
+  const N = 4000, INNER = 1.6e11, OUTER = 4.1e12;
+  const pos = [], col = [], sz = [];
+  for (let i = 0; i < N; i++) {
+    const r = INNER + Math.pow(Math.random(), 0.5) * (OUTER - INNER);
+    const th = Math.random() * Math.PI * 2, ph = Math.acos(rand(-1, 1));
+    pos.push(r * Math.sin(ph) * Math.cos(th), r * Math.sin(ph) * Math.sin(th), r * Math.cos(ph));
+    const c = starColor(Math.random()), b = rand(0.5, 1);
+    col.push(c[0] * b, c[1] * b, c[2] * b); sz.push(rand(1.0, 3.2));
+  }
+  const stars = makePoints(new Float32Array(pos), new Float32Array(col), new Float32Array(sz),
+    { scale: 0.5, twinkle: true, maxSize: 16 });
+  g.add(stars);
+  g.userData = {
+    realRadius: OUTER, center: new THREE.Vector3(0, 0, 0),
+    setOpacity(o) { stars.material.uniforms.uOpacity.value = o; },
+    update(t) { stars.material.uniforms.uTime.value = t; g.rotation.y = t * 0.01; },
+  };
+  return g;
+}
+
+// ============================================================================
+//  THE MILKY WAY — spiral particle disk (true galactic radius). Face-on view
+//  (artistic, per option 1). We sit offset from the core.
+// ============================================================================
+// Scale gap compressed (vs the true ~10^7×) so the galaxy resolves around us as
+// we leave the stellar neighbourhood. Our offset stays ~half the radius — i.e.
+// out in a spiral arm with the core to one side, as in reality.
+const GAL_R = 1.3e15, GAL_CORE = new THREE.Vector3(1, 0, 0).normalize().multiplyScalar(6.24e14);
+function buildGalaxy() {
+  const g = new THREE.Group();
+  const N = 60000, ARMS = 4, TWIST = 2.6;
+  const pos = new Float32Array(N * 3), col = new Float32Array(N * 3), sz = new Float32Array(N);
+  for (let i = 0; i < N; i++) {
+    const bulge = Math.random() < 0.16;
+    let rr, yy;
+    if (bulge) { rr = Math.pow(Math.random(), 2.2) * 0.32; yy = gauss() * 0.18 * (1 - rr); }
+    else { rr = Math.pow(Math.random(), 0.6); yy = gauss() * 0.05 * Math.exp(-rr / 0.8); }
+    const arm = Math.floor(Math.random() * ARMS);
+    const ang = (arm / ARMS) * Math.PI * 2 + rr * TWIST + gauss() * 0.5 * (0.55 / (0.4 + rr)) + (bulge ? Math.random() * 6.28 : 0);
+    const R = rr * GAL_R, Y = yy * GAL_R;
+    pos[i*3] = GAL_CORE.x + Math.cos(ang) * R;
+    pos[i*3+1] = GAL_CORE.y + Y;
+    pos[i*3+2] = GAL_CORE.z + Math.sin(ang) * R;
+    let c;
+    if (bulge || rr < 0.28) c = [1.0, 0.82, 0.5];
+    else { c = starColor(Math.min(1, 0.45 + Math.random() * 0.55)); if (Math.random() < 0.05) c = [1, 0.45, 0.7]; }
+    const b = rand(0.3, 0.75) * (bulge ? 1.05 : 1);
+    col[i*3] = c[0]*b; col[i*3+1] = c[1]*b; col[i*3+2] = c[2]*b;
+    sz[i] = bulge ? rand(0.35, 0.9) : rand(0.3, 1.1);
+  }
+  const galaxy = makePoints(pos, col, sz, { scale: 0.16, bright: 0.5, maxSize: 7 });
+  galaxy.rotation.x = 0.5;
+  g.add(galaxy);
+  g.userData = {
+    realRadius: GAL_R, center: GAL_CORE.clone(),
+    setOpacity(o) { galaxy.material.uniforms.uOpacity.value = o; },
+    update(t) { g.rotation.y = t * 0.02; },
+  };
+  return g;
+}
+
+// ============================================================================
+//  THE COSMIC WEB — galaxies along filaments (compressed Mpc distances)
+// ============================================================================
+function buildCosmicWeb() {
+  const g = new THREE.Group();
+  const SCALE = 4.1e17;
+  const NODES = 16, nodes = [];
+  for (let i = 0; i < NODES; i++) nodes.push(new THREE.Vector3(rand(-1, 1), rand(-0.8, 0.8), rand(-1, 1)).multiplyScalar(SCALE));
+  const N = 48000;
+  const pos = new Float32Array(N * 3), col = new Float32Array(N * 3), sz = new Float32Array(N);
+  for (let i = 0; i < N; i++) {
+    let v; const m = Math.random();
+    if (m < 0.5) { const a = nodes[(Math.random()*NODES)|0], b = nodes[(Math.random()*NODES)|0], t = Math.random();
+      v = a.clone().lerp(b, t).add(new THREE.Vector3(gauss(), gauss(), gauss()).multiplyScalar(0.06 * SCALE)); }
+    else if (m < 0.85) { const a = nodes[(Math.random()*NODES)|0];
+      v = a.clone().add(new THREE.Vector3(gauss(), gauss(), gauss()).multiplyScalar(0.12 * SCALE)); }
+    else v = new THREE.Vector3(gauss(), gauss(), gauss()).multiplyScalar(SCALE);
+    pos[i*3]=v.x; pos[i*3+1]=v.y; pos[i*3+2]=v.z;
+    const c = Math.random() < 0.5 ? [1.0, 0.85, 0.6] : starColor(rand(0.3, 1)), b = rand(0.4, 1);
+    col[i*3]=c[0]*b; col[i*3+1]=c[1]*b; col[i*3+2]=c[2]*b; sz[i]=rand(0.4, 1.6);
+  }
+  const web = makePoints(pos, col, sz, { scale: 0.26, bright: 0.5, twinkle: true, maxSize: 6.5 });
+  g.add(web);
+  g.userData = {
+    realRadius: SCALE, center: new THREE.Vector3(0, 0, 0),
+    setOpacity(o) { web.material.uniforms.uOpacity.value = o; },
+    update(t) { web.material.uniforms.uTime.value = t; g.rotation.y = t * 0.008; },
+  };
+  return g;
+}
+
+// ============================================================================
+//  Assemble
+// ============================================================================
+const earth = buildEarth();
+const solar = buildSolar();
+const stellar = buildStellar();
+const galaxy = buildGalaxy();
+const cosmic = buildCosmicWeb();
+
+// Each entry: group + the WS window over which it's visible (log10 WS bounds
+// with soft fade), so structures appear/vanish smoothly as you zoom.
+// fade = [out-low, in-low, in-high, out-high] in log10(WS). Note logWS DECREASES
+// as you zoom out, so each structure is visible between its in-low..in-high band
+// centred on the logWS where it's nicely framed.
+const objects = [
+  { g: earth,   fade: [-10.0, -9.0,  -3.0,  -2.0] },
+  { g: solar,   fade: [-13.0, -12.2, -8.5,  -8.0] },
+  { g: stellar, fade: [-13.5, -12.8, -10.5, -9.8] },
+  { g: galaxy,  fade: [-18.0, -17.2, -12.2, -11.5] },
+  { g: cosmic,  fade: [-19.8, -19.2, -14.8, -14.0] },
+];
+objects.forEach(o => { o.g.scale.setScalar(WS); scene.add(o.g); });
+
+// Body glints (always present; min pixel size keeps tiny bodies visible)
+const gpos = new Float32Array(glintData.length * 3), gcol = new Float32Array(glintData.length * 3), gsz = new Float32Array(glintData.length);
+glintData.forEach((d, i) => { gpos[i*3]=d.pos.x; gpos[i*3+1]=d.pos.y; gpos[i*3+2]=d.pos.z;
+  gcol[i*3]=d.color[0]; gcol[i*3+1]=d.color[1]; gcol[i*3+2]=d.color[2]; gsz[i]=d.radius; });
+const glintGeo = new THREE.BufferGeometry();
+glintGeo.setAttribute('position', new THREE.BufferAttribute(gpos, 3));
+glintGeo.setAttribute('aColor', new THREE.BufferAttribute(gcol, 3));
+glintGeo.setAttribute('aRadius', new THREE.BufferAttribute(gsz, 1));
+const glintMat = new THREE.ShaderMaterial({
+  uniforms: { uWS: { value: WS }, uH: { value: innerHeight * DPR }, uMin: { value: 2.2 }, uMax: { value: 90 } },
+  vertexShader: `attribute vec3 aColor; attribute float aRadius; uniform float uWS, uH, uMin, uMax;
+    varying vec3 vC; varying float vBig;
+    void main(){ vC=aColor; vec4 mv=modelViewMatrix*vec4(position*uWS,1.0);
+      float ang = (aRadius*uWS)/max(-mv.z,1e-4);   // angular radius
+      float px = ang*uH;                            // sphere size in px
+      vBig = clamp(px/uMin,0.0,1.0);                // fade glint as the real sphere takes over
+      gl_PointSize=clamp(px*2.4, uMin, uMax);
+      gl_Position=projectionMatrix*mv; }`,
+  fragmentShader: `precision highp float; varying vec3 vC; varying float vBig;
+    void main(){ vec2 q=gl_PointCoord-0.5; float d=length(q);
+      float core=pow(smoothstep(0.5,0.0,d),1.5);
+      float spike=(exp(-abs(q.x)*22.0)*smoothstep(0.5,0.0,abs(q.y))+exp(-abs(q.y)*22.0)*smoothstep(0.5,0.0,abs(q.x)))*0.5;
+      float a=core+spike; if(a<0.01) discard;
+      float fade=1.0 - smoothstep(0.6,1.4,vBig);   // hide once the mesh sphere is clearly visible
+      gl_FragColor=vec4(vC*1.3, a*fade); }`,
+  transparent: true, blending: THREE.AdditiveBlending, depthWrite: false,
+});
+const glints = new THREE.Points(glintGeo, glintMat);
+glints.frustumCulled = false;
+scene.add(glints);
+
+// Fixed faint background starfield (does not scale — effectively at infinity)
+function buildBackground() {
+  const N = 5000, pos = [], col = [], sz = [];
+  for (let i = 0; i < N; i++) {
+    const v = new THREE.Vector3(gauss(), gauss(), gauss()).normalize().multiplyScalar(rand(3e4, 5e4));
+    pos.push(v.x, v.y, v.z); const c = starColor(Math.random()), b = rand(0.2, 0.6);
+    col.push(c[0]*b, c[1]*b, c[2]*b); sz.push(rand(0.3, 1.1));
+  }
+  const bg = makePoints(new Float32Array(pos), new Float32Array(col), new Float32Array(sz), { scale: 0.5, twinkle: true, maxSize: 3 });
+  bg.material.uniforms.uOpacity.value = 0.7;
+  bg.frustumCulled = false;
+  return bg;
+}
+const background = buildBackground();
+scene.add(background);
+
+// ============================================================================
+//  Controls
+// ============================================================================
+let targetScroll = 0, scroll = 0;
+// Deep-link / debug: #0.55 starts the journey at that scroll position (0..1).
+{ const h = parseFloat(location.hash.slice(1)); if (!isNaN(h)) { targetScroll = scroll = Math.min(1, Math.max(0, h)); } }
+let theta = 0.3, phi = 1.3, tTheta = 0.3, tPhi = 1.3, dragging = false, lx = 0, ly = 0;
+addEventListener('wheel', e => { targetScroll = Math.min(1, Math.max(0, targetScroll + e.deltaY * 0.00028)); e.preventDefault(); }, { passive: false });
+addEventListener('keydown', e => {
+  if (e.code === 'ArrowDown' || e.code === 'ArrowRight') targetScroll = Math.min(1, targetScroll + 0.03);
+  if (e.code === 'ArrowUp' || e.code === 'ArrowLeft') targetScroll = Math.max(0, targetScroll - 0.03);
+});
+canvas.addEventListener('pointerdown', e => { dragging = true; lx = e.clientX; ly = e.clientY; canvas.setPointerCapture(e.pointerId); });
+canvas.addEventListener('pointerup', () => dragging = false);
+canvas.addEventListener('pointermove', e => { if (!dragging) return;
+  tTheta -= (e.clientX - lx) * 0.005; tPhi = Math.max(0.25, Math.min(Math.PI - 0.25, tPhi - (e.clientY - ly) * 0.005));
+  lx = e.clientX; ly = e.clientY; });
+
+function resize() {
+  renderer.setSize(innerWidth, innerHeight); camera.aspect = innerWidth / innerHeight; camera.updateProjectionMatrix();
+  const px = innerHeight * DPR;
+  scene.traverse(o => { if (o.isPoints && o.material.uniforms && o.material.uniforms.uPx) {
+    o.material.uniforms.uPx.value = px * (o.userData._sf || 0.5); } });
+  glintMat.uniforms.uH.value = px;
+}
+scene.traverse(o => { if (o.isPoints && o.material.uniforms && o.material.uniforms.uPx) o.userData._sf = o.material.uniforms.uPx.value / (innerHeight * DPR); });
+addEventListener('resize', resize);
+
+// ============================================================================
+//  HUD helpers
+// ============================================================================
+const nameEl = document.getElementById('scaleName'), subEl = document.getElementById('scaleSub'), fpsEl = document.getElementById('fps');
+function fmt(m) {
+  if (m < 1e3) return m.toFixed(0) + ' m';
+  if (m < AU) return (m / KM).toLocaleString(undefined, { maximumFractionDigits: 0 }) + ' km';
+  if (m < 1000 * AU) return (m / AU).toFixed(1) + ' AU';
+  if (m < MLY) return (m / LY).toPrecision(2) + ' light-years';
+  return (m / MLY).toPrecision(2) + ' million ly';
+}
+// Named by zoom level (log10 WS), since distances are artistically compressed.
+function scaleName(logWS) {
+  if (logWS >= -8.6)   return ['EARTH', 'our home planet · 12,742 km across'];
+  if (logWS >= -11.5)  return ['THE SOLAR SYSTEM', 'the Sun and its eight planets'];
+  if (logWS >= -13.75) return ['INTERSTELLAR SPACE', "the Sun's stellar neighbourhood"];
+  if (logWS >= -16.25) return ['THE MILKY WAY', '~200 billion stars · 100,000 ly across'];
+  return ['THE COSMIC WEB', 'galaxies, clusters & filaments · billions of ly'];
+}
+
+// ============================================================================
+//  Main loop
+// ============================================================================
+document.getElementById('loading').style.display = 'none';
+let frames = 0, fpsT = performance.now();
+const HALF = CAMR * Math.tan(THREE.MathUtils.degToRad(25)); // render half-height at origin
+
+function frame() {
+  const t = clock.getElapsedTime();
+  scroll += (targetScroll - scroll) * 0.06;
+  theta += (tTheta - theta) * 0.08; phi += (tPhi - phi) * 0.08;
+  if (!dragging) tTheta += 0.0005;
+
+  WS = WS0 * Math.pow(10, -scroll * SPAN);
+  const logWS = Math.log10(WS);
+
+  camera.position.set(CAMR * Math.sin(phi) * Math.sin(theta), CAMR * Math.cos(phi), CAMR * Math.sin(phi) * Math.cos(theta));
+  camera.lookAt(0, 0, 0);
+
+  for (const o of objects) {
+    const op = smoothband(logWS, o.fade[0], o.fade[1], o.fade[2], o.fade[3]);
+    if (op <= 0.001) { if (o.g.visible) o.g.visible = false; continue; }
+    o.g.visible = true;
+    o.g.scale.setScalar(WS);
+    o.g.userData.setOpacity(op);
+    o.g.userData.update(t);
+  }
+
+  glintMat.uniforms.uWS.value = WS;
+  background.rotation.y = t * 0.003; background.material.uniforms.uTime.value = t;
+
+  // HUD
+  const [nm, sb] = scaleName(logWS);
+  nameEl.textContent = nm;
+  subEl.textContent = sb;
+
+  renderer.render(scene, camera);
+  frames++; const now = performance.now();
+  if (now - fpsT >= 500) { fpsEl.textContent = Math.round(frames * 1000 / (now - fpsT)) + ' fps'; frames = 0; fpsT = now; }
+  requestAnimationFrame(frame);
+}
+frame();
+</script>
+</body>
+</html>

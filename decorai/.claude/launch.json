@@ -6,6 +6,12 @@
       "runtimeExecutable": "/Users/scottconway/.nvm/versions/node/v20.12.2/bin/node",
       "runtimeArgs": ["./node_modules/vite/bin/vite.js", "--port", "5173"],
       "port": 5173
+    },
+    {
+      "name": "portfolio",
+      "runtimeExecutable": "/Library/Frameworks/Python.framework/Versions/3.13/bin/python3",
+      "runtimeArgs": ["-m", "http.server", "8090", "--directory", ".."],
+      "port": 8090
     }
   ]
 }
