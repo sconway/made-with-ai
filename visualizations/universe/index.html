@@ -26,7 +26,7 @@
   <div id="scaleSub"></div>
 </div>
 <div id="fps">–</div>
-<div id="hint">scroll / ↑↓ to travel out · drag to look around</div>
+<div id="hint">scroll to zoom in (Planck) or out (cosmos) · drag to look around</div>
 <canvas id="c"></canvas>
 
 <script type="importmap">
@@ -75,6 +75,13 @@ const KM = 1e3, AU = 1.496e11, LY = 9.461e15, MLY = 9.461e21;
 const R_EARTH = 6.371e6;
 const R_MOON  = 1.737e6;
 const R_SUN   = 6.9634e8;
+// Sub-Earth scales — sizes in metres
+const PLANCK_L = 1.616e-35;   // Planck length
+const QUARK_R  = 1.0e-19;     // upper bound on quark "size"
+const PROTON_R = 8.4e-16;     // proton charge radius
+const ATOM_R   = 5.3e-11;     // Bohr radius
+const DNA_R    = 1.0e-9;      // DNA helix radius
+const CELL_R   = 1.0e-5;      // typical eukaryotic cell radius
 
 // ============================================================================
 //  Renderer / scene / camera
@@ -93,10 +100,15 @@ const clock = new THREE.Clock();
 // The single zoom value: WS = render-units per metre. Everything is built in
 // real metres (origin = Earth) and each group is scaled by WS every frame, so
 // on-screen sizes always reflect true proportions.
-const WS0  = 1.3 / R_EARTH;       // Earth nicely framed at scroll 0
-const WSmin = 2.5e-19;            // cosmic web framed near scroll 1
-const SPAN = Math.log10(WS0 / WSmin);
-let WS = WS0;
+// Zoom range now spans Planck length → cosmic web. Earth is the default
+// starting point (scroll ~0.78), with smaller-than-Earth scales below it
+// (scroll → 0) and larger scales above (scroll → 1).
+const WS_PLANCK = 1.3 / PLANCK_L;     // Planck "foam" framed at scroll 0
+const WS_COSMIC = 2.5e-19;            // cosmic web framed near scroll 1
+const SPAN = Math.log10(WS_PLANCK / WS_COSMIC);
+const WS_EARTH = 1.3 / R_EARTH;
+const EARTH_SCROLL = Math.log10(WS_PLANCK / WS_EARTH) / SPAN;
+let WS = WS_EARTH;
 
 // Sun sits ~1 (compressed) AU from Earth, in the ecliptic (world X–Z plane),
 // so Earth (origin) is the 3rd planet and the Sun is off to one side.
@@ -157,6 +169,345 @@ function makePoints(positions, colors, sizes, opts = {}) {
 // ============================================================================
 const glintData = []; // {pos:Vec3(m), radius:m, color:[r,g,b]}
 function addGlint(pos, radius, color) { glintData.push({ pos, radius, color }); }
+
+// ============================================================================
+//  QUANTUM FOAM (Planck scale) — turbulent shader sphere
+//  Speculative visualization: real physics is undefined at this scale.
+// ============================================================================
+function buildPlanckFoam() {
+  const g = new THREE.Group();
+  const R = PLANCK_L * 0.6;  // ~0.8 units when framed → comfortable sphere view
+  const mat = new THREE.ShaderMaterial({
+    uniforms: { uTime: { value: 0 }, uOpacity: { value: 1 } },
+    vertexShader: `varying vec3 vDir; varying vec3 vView;
+      void main(){ vDir=normalize(position);
+        vec4 wp=modelMatrix*vec4(position,1.0); vView=normalize(cameraPosition-wp.xyz);
+        gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.0); }`,
+    fragmentShader: NOISE + `precision highp float; uniform float uTime, uOpacity;
+      varying vec3 vDir; varying vec3 vView;
+      void main(){
+        vec3 d=normalize(vDir);
+        float n1=fbm(d*4.0+vec3(uTime*0.7,0.0,0.0));
+        float n2=fbm(d*14.0-vec3(0.0,uTime*0.55,0.0));
+        float n3=fbm(d*36.0+uTime*0.9);
+        float foam=abs(n1)+0.6*abs(n2)+0.35*abs(n3);
+        float pop=smoothstep(0.62,0.95,sin(uTime*5.0+n1*16.0)*n2);
+        vec3 col=mix(vec3(0.03,0.01,0.07),vec3(0.55,0.35,1.0),clamp(foam*0.55,0.0,1.0));
+        col+=vec3(1.0,0.8,1.0)*pop*0.9;
+        // soft rim
+        float rim=pow(1.0-max(dot(normalize(vDir),normalize(vView)),0.0),2.0);
+        col+=vec3(0.7,0.45,1.0)*rim*0.4;
+        gl_FragColor=vec4(col,uOpacity);
+      }`,
+    transparent: true,
+  });
+  const m = new THREE.Mesh(new THREE.SphereGeometry(R, 64, 64), mat);
+  g.add(m);
+  g.userData = {
+    setOpacity(o) { mat.uniforms.uOpacity.value = o; },
+    update(t) { mat.uniforms.uTime.value = t; m.rotation.y = t * 0.08; m.rotation.x = t * 0.05; },
+  };
+  return g;
+}
+
+// ============================================================================
+//  QUARKS — three colour-charged quarks bound by gluon flux tubes inside a
+//  proton boundary. Standard pedagogical picture.
+// ============================================================================
+function buildQuarks() {
+  const g = new THREE.Group();
+  const R = 4e-19;             // quark separation
+  const qR = 0.9e-19;          // quark visual radius
+  const colors = [[1.0,0.35,0.35],[0.35,1.0,0.45],[0.45,0.55,1.0]];
+  const qpos = [];
+  for (let i = 0; i < 3; i++) {
+    const a = i * Math.PI * 2 / 3;
+    qpos.push(new THREE.Vector3(Math.cos(a) * R, Math.sin(a) * R * 0.7, Math.sin(a) * R * 0.3));
+  }
+  const qmats = [];
+  qpos.forEach((p, i) => {
+    const mat = new THREE.MeshBasicMaterial({ color: new THREE.Color(colors[i][0], colors[i][1], colors[i][2]), transparent: true });
+    const m = new THREE.Mesh(new THREE.SphereGeometry(qR, 24, 24), mat);
+    m.position.copy(p); g.add(m); qmats.push(mat);
+  });
+  // Gluon flux tubes: dense particle streams between each pair, with noise wobble.
+  const PAIRS = [[0,1],[1,2],[2,0]];
+  const N_PER = 220;
+  const pos = new Float32Array(PAIRS.length * N_PER * 3);
+  const col = new Float32Array(PAIRS.length * N_PER * 3);
+  const sz  = new Float32Array(PAIRS.length * N_PER);
+  let k = 0;
+  PAIRS.forEach(([i, j]) => {
+    const a = qpos[i], b = qpos[j];
+    for (let n = 0; n < N_PER; n++) {
+      const u = n / (N_PER - 1);
+      const x = a.x + (b.x - a.x) * u + gauss() * R * 0.12;
+      const y = a.y + (b.y - a.y) * u + gauss() * R * 0.12;
+      const z = a.z + (b.z - a.z) * u + gauss() * R * 0.12;
+      pos[k*3] = x; pos[k*3+1] = y; pos[k*3+2] = z;
+      const ca = colors[i], cb = colors[j];
+      col[k*3] = ca[0]*(1-u) + cb[0]*u;
+      col[k*3+1] = ca[1]*(1-u) + cb[1]*u;
+      col[k*3+2] = ca[2]*(1-u) + cb[2]*u;
+      sz[k] = rand(0.6, 1.8); k++;
+    }
+  });
+  const gluon = makePoints(pos, col, sz, { scale: 0.35, twinkle: true, maxSize: 7, bright: 1.0 });
+  g.add(gluon);
+  // Faint proton boundary as a subtle additive shell
+  const boundMat = new THREE.ShaderMaterial({
+    uniforms: { uOpacity: { value: 1 } },
+    vertexShader: `varying vec3 vN; varying vec3 vV;
+      void main(){ vN=normalize(mat3(modelMatrix)*normalize(position));
+        vec4 wp=modelMatrix*vec4(position,1.0); vV=normalize(cameraPosition-wp.xyz);
+        gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.0); }`,
+    fragmentShader: `precision highp float; uniform float uOpacity; varying vec3 vN; varying vec3 vV;
+      void main(){ float rim=pow(1.0-max(dot(vN,vV),0.0),2.5);
+        gl_FragColor=vec4(vec3(1.0,0.95,0.75)*rim, rim*uOpacity*0.35); }`,
+    transparent: true, side: THREE.BackSide, blending: THREE.AdditiveBlending, depthWrite: false,
+  });
+  // Conceptually the proton boundary is ~PROTON_R, but at the quark-cluster
+  // framing that's 2000× the cluster — we'd be deep inside it. Render it as a
+  // visible containment shell just outside the quarks instead.
+  const bound = new THREE.Mesh(new THREE.SphereGeometry(R * 1.45, 32, 32), boundMat);
+  g.add(bound);
+  g.userData = {
+    setOpacity(o) { qmats.forEach(m => m.opacity = o); gluon.material.uniforms.uOpacity.value = o; boundMat.uniforms.uOpacity.value = o; },
+    update(t) { gluon.material.uniforms.uTime.value = t; g.rotation.y = t * 0.4; g.rotation.x = t * 0.27; },
+  };
+  return g;
+}
+
+// ============================================================================
+//  ATOMIC NUCLEUS — packed protons (red) and neutrons (blue) at true radius
+// ============================================================================
+function buildNucleus() {
+  const g = new THREE.Group();
+  // Sized so that at nucleus framing (logWS ~15) the whole cluster reads as
+  // ~1 unit wide — fits comfortably in the camera's view from distance 3.
+  const nR = PROTON_R * 0.28;
+  const N = 24, items = [];
+  const cluster = PROTON_R * 0.9;
+  for (let i = 0; i < N; i++) {
+    // approximate sphere packing via rejection
+    let v;
+    for (let k = 0; k < 30; k++) {
+      v = new THREE.Vector3(rand(-1,1), rand(-1,1), rand(-1,1));
+      if (v.lengthSq() <= 1) break;
+    }
+    v.multiplyScalar(cluster);
+    const isProton = i < N / 2;
+    const mat = new THREE.MeshBasicMaterial({
+      color: isProton ? 0xff5544 : 0x4488ff, transparent: true,
+    });
+    const m = new THREE.Mesh(new THREE.SphereGeometry(nR, 20, 20), mat);
+    m.position.copy(v); m.userData = { base: v.clone(), phase: Math.random() * 10 };
+    g.add(m); items.push(m);
+  }
+  // Bright glow shell
+  const glowMat = new THREE.ShaderMaterial({
+    uniforms: { uOpacity: { value: 1 } },
+    vertexShader: `varying vec3 vN; varying vec3 vV;
+      void main(){ vN=normalize(mat3(modelMatrix)*normalize(position));
+        vec4 wp=modelMatrix*vec4(position,1.0); vV=normalize(cameraPosition-wp.xyz);
+        gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.0); }`,
+    fragmentShader: `precision highp float; uniform float uOpacity; varying vec3 vN; varying vec3 vV;
+      void main(){ float rim=pow(1.0-max(dot(vN,vV),0.0),2.2);
+        gl_FragColor=vec4(vec3(1.0,0.7,0.5)*rim, rim*uOpacity*0.5); }`,
+    transparent: true, side: THREE.BackSide, blending: THREE.AdditiveBlending, depthWrite: false,
+  });
+  // Halo just outside the nucleon cluster, sized to read as a glow rather than enveloping the camera.
+  const glow = new THREE.Mesh(new THREE.SphereGeometry(cluster * 1.15, 48, 48), glowMat);
+  g.add(glow);
+  g.userData = {
+    setOpacity(o) { items.forEach(m => m.material.opacity = o); glowMat.uniforms.uOpacity.value = o; },
+    update(t) {
+      items.forEach(m => {
+        const w = m.userData;
+        m.position.set(w.base.x + Math.sin(t * 2 + w.phase) * nR * 0.15,
+                       w.base.y + Math.cos(t * 1.7 + w.phase) * nR * 0.15,
+                       w.base.z + Math.sin(t * 2.3 + w.phase * 0.7) * nR * 0.15);
+      });
+      g.rotation.y = t * 0.2;
+    },
+  };
+  return g;
+}
+
+// ============================================================================
+//  ATOM — electron probability cloud around a bright nucleus.
+//  Density: 1s ground state ~ exp(-2r/a0) — sampled via rejection.
+// ============================================================================
+function buildAtom() {
+  const g = new THREE.Group();
+  // Nucleus core (tiny glowing dot at scale)
+  const nucMat = new THREE.MeshBasicMaterial({ color: 0xffd070, transparent: true });
+  const nuc = new THREE.Mesh(new THREE.SphereGeometry(ATOM_R * 0.02, 24, 24), nucMat);
+  g.add(nuc);
+  // Nucleus glow halo
+  const nGlowMat = new THREE.ShaderMaterial({
+    uniforms: { uOpacity: { value: 1 } },
+    vertexShader: `varying vec2 vUv; void main(){ vUv=uv; gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.0); }`,
+    fragmentShader: `precision highp float; uniform float uOpacity; varying vec2 vUv;
+      void main(){ float d=length(vUv-0.5)*2.0; float a=pow(max(1.0-d,0.0),2.5);
+        gl_FragColor=vec4(mix(vec3(1.0,0.8,0.4),vec3(1.0,1.0,0.8),1.0-d), a*uOpacity*0.8); }`,
+    transparent: true, blending: THREE.AdditiveBlending, depthWrite: false,
+  });
+  const nGlow = new THREE.Mesh(new THREE.PlaneGeometry(ATOM_R * 0.18, ATOM_R * 0.18), nGlowMat);
+  g.add(nGlow);
+  // Electron cloud (s + p mix for visual variety)
+  const N = 14000;
+  const pos = new Float32Array(N * 3), col = new Float32Array(N * 3), sz = new Float32Array(N);
+  for (let i = 0; i < N; i++) {
+    // sample from a smoothed exponential, then bias slightly to a "p-lobe" along x
+    const r = -Math.log(1 - Math.random() * 0.99) * ATOM_R * 0.7;
+    const th = Math.random() * Math.PI * 2;
+    const ph = Math.acos(rand(-1, 1));
+    let x = r * Math.sin(ph) * Math.cos(th);
+    let y = r * Math.sin(ph) * Math.sin(th);
+    let z = r * Math.cos(ph);
+    if (Math.random() < 0.35) x *= 1.6; // mild p-lobe stretch
+    pos[i*3] = x; pos[i*3+1] = y; pos[i*3+2] = z;
+    const radial = Math.min(1, r / (ATOM_R * 1.4));
+    col[i*3] = 0.6 + 0.4 * (1 - radial); col[i*3+1] = 0.85; col[i*3+2] = 1.0;
+    sz[i] = rand(0.3, 1.0) * (1 - radial * 0.5);
+  }
+  const cloud = makePoints(pos, col, sz, { scale: 0.45, twinkle: true, maxSize: 4, bright: 0.7 });
+  g.add(cloud);
+  g.userData = {
+    setOpacity(o) { nucMat.opacity = o; nGlowMat.uniforms.uOpacity.value = o; cloud.material.uniforms.uOpacity.value = o; },
+    update(t) { cloud.material.uniforms.uTime.value = t; g.rotation.y = t * 0.15; nGlow.lookAt(camera.position); },
+  };
+  return g;
+}
+
+// ============================================================================
+//  DNA — double helix of base-pair connected strands, parametric
+// ============================================================================
+function buildDNA() {
+  const g = new THREE.Group();
+  // 2 turns keeps the helix length comparable to its diameter at DNA framing,
+  // so a whole readable section fits the view.
+  const TURNS = 2, PER_TURN = 60, N = TURNS * PER_TURN;
+  const PITCH = 3.4e-9, R = DNA_R;
+  const len = TURNS * PITCH;
+  // Two strand particle arrays + base-pair rungs
+  const pos = new Float32Array((N * 2 + N * 6) * 3);  // 2 strands + base pair particles
+  const col = new Float32Array((N * 2 + N * 6) * 3);
+  const sz  = new Float32Array(N * 2 + N * 6);
+  let k = 0;
+  // strands
+  for (let strand = 0; strand < 2; strand++) {
+    const offset = strand * Math.PI;
+    for (let i = 0; i < N; i++) {
+      const u = i / (N - 1);
+      const a = u * TURNS * Math.PI * 2 + offset;
+      const y = u * len - len / 2;
+      pos[k*3] = Math.cos(a) * R; pos[k*3+1] = y; pos[k*3+2] = Math.sin(a) * R;
+      col[k*3] = strand ? 0.35 : 1.0; col[k*3+1] = strand ? 0.65 : 0.55; col[k*3+2] = strand ? 1.0 : 0.4;
+      sz[k] = 1.6; k++;
+    }
+  }
+  // base pair rungs (every few)
+  for (let i = 0; i < N; i++) {
+    if (i % 4 !== 0) continue;
+    const u = i / (N - 1);
+    const a = u * TURNS * Math.PI * 2;
+    const y = u * len - len / 2;
+    const sx = Math.cos(a) * R, sz1 = Math.sin(a) * R;
+    const ex = Math.cos(a + Math.PI) * R, ez1 = Math.sin(a + Math.PI) * R;
+    for (let s = 0; s < 6; s++) {
+      const t = s / 5;
+      pos[k*3] = sx + (ex - sx) * t; pos[k*3+1] = y; pos[k*3+2] = sz1 + (ez1 - sz1) * t;
+      // bp colors: A-T orange, G-C teal, alternate by rung
+      const isAT = (i / 4) % 2 === 0;
+      col[k*3] = isAT ? 1.0 : 0.4; col[k*3+1] = isAT ? 0.75 : 0.95; col[k*3+2] = isAT ? 0.45 : 0.85;
+      sz[k] = 1.2; k++;
+    }
+  }
+  const dna = makePoints(pos, col, sz, { scale: 0.45, twinkle: false, maxSize: 14, bright: 1.2 });
+  g.add(dna);
+  g.userData = {
+    setOpacity(o) { dna.material.uniforms.uOpacity.value = o; },
+    update(t) { g.rotation.y = t * 0.35; g.rotation.z = Math.sin(t * 0.4) * 0.1; },
+  };
+  return g;
+}
+
+// ============================================================================
+//  CELLS — translucent shader spheres with nuclei + organelle particles
+// ============================================================================
+function buildCells() {
+  const g = new THREE.Group();
+  // A small cluster of cells
+  const cellDefs = [];
+  for (let i = 0; i < 5; i++) {
+    cellDefs.push({
+      pos: new THREE.Vector3(rand(-2.5, 2.5), rand(-1.5, 1.5), rand(-2, 2)).multiplyScalar(CELL_R),
+      radius: rand(0.7, 1.2) * CELL_R,
+    });
+  }
+  // Membrane shader (mild fresnel + noise tint)
+  const memMat = (radius) => new THREE.ShaderMaterial({
+    uniforms: { uTime: { value: 0 }, uOpacity: { value: 1 } },
+    vertexShader: `varying vec3 vN; varying vec3 vV; varying vec3 vP;
+      void main(){ vN=normalize(mat3(modelMatrix)*normalize(position));
+        vP=position; vec4 wp=modelMatrix*vec4(position,1.0); vV=normalize(cameraPosition-wp.xyz);
+        gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.0); }`,
+    fragmentShader: NOISE + `precision highp float; uniform float uTime, uOpacity;
+      varying vec3 vN; varying vec3 vV; varying vec3 vP;
+      void main(){
+        float texture = fbm(normalize(vP) * 6.0 + uTime * 0.2);
+        float rim = pow(1.0 - max(dot(vN, vV), 0.0), 2.0);
+        vec3 base = mix(vec3(0.1,0.3,0.45), vec3(0.4,0.7,0.9), texture * 0.5 + 0.5);
+        vec3 col = base * 0.6 + vec3(0.5,0.9,1.0) * rim;
+        float a = mix(0.15, 0.55, rim) * uOpacity;
+        gl_FragColor = vec4(col, a);
+      }`,
+    transparent: true, side: THREE.DoubleSide, depthWrite: false,
+  });
+  const memMats = [];
+  const nucMats = [];
+  cellDefs.forEach(def => {
+    const m = memMat(def.radius);
+    const cell = new THREE.Mesh(new THREE.SphereGeometry(def.radius, 40, 40), m);
+    cell.position.copy(def.pos); g.add(cell); memMats.push(m);
+    // Nucleus
+    const nMat = new THREE.MeshBasicMaterial({ color: 0x6c3aaf, transparent: true, opacity: 0.85 });
+    const nuc = new THREE.Mesh(new THREE.SphereGeometry(def.radius * 0.28, 24, 24), nMat);
+    nuc.position.copy(def.pos);
+    nuc.position.x += def.radius * 0.1; nuc.position.y -= def.radius * 0.08;
+    g.add(nuc); nucMats.push(nMat);
+  });
+  // Organelles as additive particle cloud, distributed inside cells
+  const Norg = 1800;
+  const op = new Float32Array(Norg * 3), oc = new Float32Array(Norg * 3), os = new Float32Array(Norg);
+  for (let i = 0; i < Norg; i++) {
+    const def = cellDefs[(Math.random() * cellDefs.length) | 0];
+    let v;
+    for (let k = 0; k < 12; k++) {
+      v = new THREE.Vector3(rand(-1,1), rand(-1,1), rand(-1,1));
+      if (v.lengthSq() < 0.8) break;
+    }
+    v.multiplyScalar(def.radius * 0.85).add(def.pos);
+    op[i*3] = v.x; op[i*3+1] = v.y; op[i*3+2] = v.z;
+    // mix of green (mitochondria), gold (ribosomes), teal (vesicles)
+    const r = Math.random();
+    if (r < 0.4) { oc[i*3]=0.3; oc[i*3+1]=0.9; oc[i*3+2]=0.5; }
+    else if (r < 0.75) { oc[i*3]=1.0; oc[i*3+1]=0.85; oc[i*3+2]=0.45; }
+    else { oc[i*3]=0.4; oc[i*3+1]=0.85; oc[i*3+2]=0.95; }
+    os[i] = rand(0.5, 1.4);
+  }
+  const orgs = makePoints(op, oc, os, { scale: 0.4, twinkle: true, maxSize: 5, bright: 0.9 });
+  g.add(orgs);
+  g.userData = {
+    setOpacity(o) { memMats.forEach(m => m.uniforms.uOpacity.value = o); nucMats.forEach(m => m.opacity = o);
+      orgs.material.uniforms.uOpacity.value = o; },
+    update(t) { memMats.forEach(m => m.uniforms.uTime.value = t); orgs.material.uniforms.uTime.value = t;
+      g.rotation.y = t * 0.04; },
+  };
+  return g;
+}
 
 // ============================================================================
 //  EARTH (procedural shader globe + clouds + atmosphere) — built at true radius
@@ -421,11 +772,17 @@ function buildCosmicWeb() {
 // ============================================================================
 //  Assemble
 // ============================================================================
-const earth = buildEarth();
-const solar = buildSolar();
+const planck  = buildPlanckFoam();
+const quarks  = buildQuarks();
+const nucleus = buildNucleus();
+const atom    = buildAtom();
+const dna     = buildDNA();
+const cells   = buildCells();
+const earth   = buildEarth();
+const solar   = buildSolar();
 const stellar = buildStellar();
-const galaxy = buildGalaxy();
-const cosmic = buildCosmicWeb();
+const galaxy  = buildGalaxy();
+const cosmic  = buildCosmicWeb();
 
 // Each entry: group + the WS window over which it's visible (log10 WS bounds
 // with soft fade), so structures appear/vanish smoothly as you zoom.
@@ -433,7 +790,13 @@ const cosmic = buildCosmicWeb();
 // as you zoom out, so each structure is visible between its in-low..in-high band
 // centred on the logWS where it's nicely framed.
 const objects = [
-  { g: earth,   fade: [-10.0, -9.0,  -3.0,  -2.0] },
+  { g: planck,  fade: [31.0,  32.0,  38.0,  39.0] },
+  { g: quarks,  fade: [16.0,  17.0,  21.0,  22.0] },
+  { g: nucleus, fade: [13.0,  14.0,  17.5,  18.5] },
+  { g: atom,    fade: [9.0,   10.0,  13.5,  14.5] },
+  { g: dna,     fade: [7.5,   8.5,   10.5,  11.0] },
+  { g: cells,   fade: [2.5,   3.5,   8.0,   9.0] },
+  { g: earth,   fade: [-10.0, -9.0,  3.5,   4.5] },
   { g: solar,   fade: [-13.0, -12.2, -8.5,  -8.0] },
   { g: stellar, fade: [-13.5, -12.8, -10.5, -9.8] },
   { g: galaxy,  fade: [-18.0, -17.2, -12.2, -11.5] },
@@ -491,7 +854,7 @@ scene.add(background);
 // ============================================================================
 //  Controls
 // ============================================================================
-let targetScroll = 0, scroll = 0;
+let targetScroll = EARTH_SCROLL, scroll = EARTH_SCROLL;
 // Deep-link / debug: #0.55 starts the journey at that scroll position (0..1).
 { const h = parseFloat(location.hash.slice(1)); if (!isNaN(h)) { targetScroll = scroll = Math.min(1, Math.max(0, h)); } }
 let theta = 0.3, phi = 1.3, tTheta = 0.3, tPhi = 1.3, dragging = false, lx = 0, ly = 0;
@@ -529,6 +892,13 @@ function fmt(m) {
 }
 // Named by zoom level (log10 WS), since distances are artistically compressed.
 function scaleName(logWS) {
+  // Larger logWS = more zoomed in (smaller objects)
+  if (logWS >= 33.0)   return ['THE PLANCK SCALE', 'quantum foam · ~10⁻³⁵ m · physics breaks down'];
+  if (logWS >= 17.5)   return ['QUARKS & GLUONS', 'three colour-charged quarks inside a proton'];
+  if (logWS >= 13.5)   return ['THE ATOMIC NUCLEUS', 'protons & neutrons · ~10⁻¹⁵ m'];
+  if (logWS >= 9.6)    return ['AN ATOM', 'electron probability cloud · ~0.1 nm'];
+  if (logWS >= 7.5)    return ['DNA', 'the molecule of life · ~2 nm wide'];
+  if (logWS >= 3.0)    return ['CELLS', 'the building blocks of life · ~10 μm'];
   if (logWS >= -8.6)   return ['EARTH', 'our home planet · 12,742 km across'];
   if (logWS >= -11.5)  return ['THE SOLAR SYSTEM', 'the Sun and its eight planets'];
   if (logWS >= -13.75) return ['INTERSTELLAR SPACE', "the Sun's stellar neighbourhood"];
@@ -549,7 +919,7 @@ function frame() {
   theta += (tTheta - theta) * 0.08; phi += (tPhi - phi) * 0.08;
   if (!dragging) tTheta += 0.0005;
 
-  WS = WS0 * Math.pow(10, -scroll * SPAN);
+  WS = WS_PLANCK * Math.pow(10, -scroll * SPAN);
   const logWS = Math.log10(WS);
 
   camera.position.set(CAMR * Math.sin(phi) * Math.sin(theta), CAMR * Math.cos(phi), CAMR * Math.sin(phi) * Math.cos(theta));
