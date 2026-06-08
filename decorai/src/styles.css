@@ -154,9 +154,14 @@ input[type="reset"] {
 
 html {
   overflow-y: auto;
+  /* Stop horizontal trackpad swipes from chaining up to the browser's
+     swipe-to-go-back gesture (most visible inside the layout editor where
+     wheel events over the toolbar/sidebar aren't otherwise intercepted). */
+  overscroll-behavior-x: contain;
 }
 
 body {
+  overscroll-behavior-x: contain;
   font-family: var(--font-sans);
   font-size: var(--text-base);
   line-height: var(--leading-normal);
@@ -388,10 +393,12 @@ a:hover {
   margin-top: var(--space-8);
 }
 
+/* Inside the refinement box, the row aligns to the box's 16px gutter on
+   screens larger than mobile (the mobile media query below zeroes this out). */
 .refinement-area .model-pref-row {
   margin-top: 0;
-  margin-left: 8px;
-  margin-right: 8px;
+  margin-left: 16px;
+  margin-right: 16px;
   margin-bottom: 8px;
 }
 
@@ -3678,6 +3685,21 @@ main {
   transform: translateX(-50%);
 }
 
+/* Edge-anchored tooltips: the default rule centers the tooltip on the
+   button (left: 50%; translateX(-50%)). For buttons that sit flush against
+   the viewport edge, half the tooltip would overflow off-screen. Anchor
+   those tooltips to the inner edge of the button instead. */
+.layout-editor-screen #layout-editor-back-btn[data-tooltip]::after {
+  left: 0;
+  transform: none;
+}
+
+.layout-editor-screen .export-menu [data-tooltip]::after {
+  left: auto;
+  right: 0;
+  transform: none;
+}
+
 #mouse-coords {
   width: 120px;
 }
@@ -4324,7 +4346,12 @@ main {
   border-top: 1px solid #e0e0e0;
   font-size: 0.875rem;
   color: #666;
+  /* Keep the bar from collapsing so far that buttons inside it wrap. The
+     canvas viewport above is the part that scrolls / resizes — the status
+     bar should hold its row height regardless of viewport width. */
+  min-width: 560px;
 }
+
 
 .canvas-status-start,
 .canvas-status-end {
@@ -4350,6 +4377,10 @@ main {
   padding: 4px 10px;
   font-size: 0.8125rem;
   gap: 6px;
+  /* Button labels in the status bar must stay on a single line — otherwise
+     "My layouts" wraps to two lines when the bar gets squeezed. */
+  white-space: nowrap;
+  flex-shrink: 0;
 }
 
 .canvas-status .my-layouts-toggle svg:first-of-type {
@@ -6011,6 +6042,88 @@ main {
   color: #374151;
 }
 
+/* Tracing tips — short workflow guide that appears once an image is added.
+   Collapsible (state persists via localStorage) so it doesn't crowd the
+   panel for returning users. */
+.ref-image-tips {
+  margin: -4px 0 14px;
+  padding: 10px 12px;
+  background: #f0f7ff;
+  border: 1px solid #cfe2ff;
+  border-radius: 8px;
+  color: #1f3a5f;
+}
+
+.ref-image-tips-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.ref-image-tips-header svg {
+  flex-shrink: 0;
+  color: #2563eb;
+}
+
+.ref-image-tips-title {
+  flex: 1;
+  font-size: 0.8125rem;
+  font-weight: 600;
+}
+
+.ref-image-tips-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  border-radius: 4px;
+  transition: background 0.15s var(--ease-out), transform 0.2s var(--ease-out);
+}
+
+.ref-image-tips-toggle:hover {
+  background: rgba(37, 99, 235, 0.1);
+}
+
+.ref-image-tips.is-collapsed .ref-image-tips-toggle {
+  transform: rotate(-90deg);
+}
+
+.ref-image-tips-list {
+  margin: 8px 0 0;
+  padding-left: 20px;
+  font-size: 0.75rem;
+  line-height: 1.45;
+  color: #374151;
+}
+
+.ref-image-tips-list li {
+  margin-bottom: 6px;
+}
+
+.ref-image-tips-list li:last-child {
+  margin-bottom: 0;
+}
+
+.ref-image-tips-list strong {
+  color: #111827;
+}
+
+.ref-image-tips-list em {
+  font-style: normal;
+  font-weight: 600;
+  color: #1d4ed8;
+}
+
+.ref-image-tips.is-collapsed .ref-image-tips-list {
+  display: none;
+}
+
 .ref-image-controls .control-row {
   display: flex;
   align-items: center;
@@ -6050,6 +6163,25 @@ main {
   font-size: 0.875rem;
   font-weight: 500;
   transition: all 0.2s var(--ease-out);
+}
+
+/* Buttons in the reference-image controls row must stay within the row's
+   width — the snap-to-image button shows a dynamic label (corner count) that
+   would otherwise grow the button past the toolbar. */
+.ref-image-controls .control-row .secondary-btn,
+.ref-image-controls .control-row .delete-btn {
+  width: 100%;
+  min-width: 0;
+  justify-content: center;
+  white-space: nowrap;
+  overflow: hidden;
+}
+
+.ref-image-controls .control-row .secondary-btn .ref-trace-btn-label,
+.ref-image-controls .control-row .delete-btn > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .ref-image-controls .delete-btn:hover {
@@ -6605,6 +6737,13 @@ main {
   font-size: 1rem;
   margin-bottom: 0.75rem;
   color: var(--text-color);
+}
+
+.tokens-current-breakdown {
+  display: block;
+  margin-top: 4px;
+  font-size: 0.8125rem;
+  color: var(--text-light);
 }
 
 .tokens-description {

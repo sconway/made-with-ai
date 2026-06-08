@@ -28,8 +28,6 @@ const FloorPlanEditor = (() => {
     let undoStack = [];
     let redoStack = [];
     let hasUnsavedChanges = false;
-    let isConvertingImage = false;
-    
     // Current tool and drawing state
     let currentTool = 'select';
     let isDrawing = false;
@@ -298,7 +296,7 @@ const FloorPlanEditor = (() => {
             importBtn.addEventListener('click', () => importInput.click());
             importInput.addEventListener('change', () => {
                 const file = importInput.files && importInput.files[0];
-                if (file) showDroppedImageChoice(file);
+                if (file) addImageAsReference(file);
                 importInput.value = '';
             });
         }
@@ -1123,6 +1121,7 @@ const FloorPlanEditor = (() => {
             let targetCorner = null;
             let snapPos = rawPos;
             
+            let usedDetectedSnap = false;
             if (snapToGrid) {
                 targetCorner = findNearbyCorner(rawPos);
                 if (!targetCorner) {
@@ -1130,6 +1129,17 @@ const FloorPlanEditor = (() => {
                     if (wallSnap) {
                         targetCorner = splitWallAtPoint(wallSnap.wall, wallSnap.point);
                         redrawAll();
+                    }
+                }
+                if (!targetCorner) {
+                    // Snap to detected geometry from reference images. The flow
+                    // below creates a real corner at `snapPos`, so nudge snapPos
+                    // onto the detected location and skip the axis/angle snap
+                    // (which would otherwise drag it back toward the start).
+                    const detected = findNearbyDetectedSnap(rawPos);
+                    if (detected) {
+                        snapPos = { x: detected.x, y: detected.y };
+                        usedDetectedSnap = true;
                     }
                 }
                 if (targetCorner) {
@@ -1141,7 +1151,7 @@ const FloorPlanEditor = (() => {
             
             if (hasSegmentStart) {
                 // Second click: finish segment — one history entry for corners + wall together
-                if (snapToGrid && !targetCorner) {
+                if (snapToGrid && !targetCorner && !usedDetectedSnap) {
                     snapPos = applyDrawingSnaps(
                         drawingStartCorner || { x: wallDrawPendingStart.x, y: wallDrawPendingStart.y, walls: [] },
                         snapPos
@@ -1432,6 +1442,23 @@ const FloorPlanEditor = (() => {
             return;
         }
         
+        // Wall tool: show the snap indicator BEFORE the first click too. Without
+        // this, the cursor moves freely until the first commit, so users have no
+        // visual cue that detected lines/corners are snap targets — they aim by
+        // eye and click outside the snap radius. Running getMagneticSnapPos here
+        // gives the first click the same magnetic feedback as subsequent clicks.
+        if (currentTool === 'wall' && !isDrawing && !drawingStartCorner && !wallDrawPendingStart) {
+            if (snapToGrid) {
+                const rawPos = getMousePos(e, true);
+                getMagneticSnapPos(rawPos);
+                highlightSnapTarget(rawPos);
+            } else {
+                removeWallSnapIndicator();
+                removeMagneticIndicator();
+                cornersLayer.querySelectorAll('.snap-target').forEach(el => el.classList.remove('snap-target'));
+            }
+        }
+
         // Handle drawing preview
         if (isDrawing) {
             if (currentTool === 'wall' && (drawingStartCorner || wallDrawPendingStart)) {
@@ -1729,7 +1756,7 @@ const FloorPlanEditor = (() => {
             return;
         }
         if (isSVGFile(file)) {
-            showDroppedImageChoice(file);
+            addImageAsReference(file);
             return;
         }
         if (!file.type.startsWith('image/')) {
@@ -1739,68 +1766,7 @@ const FloorPlanEditor = (() => {
             return;
         }
 
-        showDroppedImageChoice(file);
-    }
-
-    function showDroppedImageChoice(file) {
-        const existing = document.getElementById('dropped-image-choice-modal');
-        if (existing) existing.remove();
-
-        const modal = document.createElement('div');
-        modal.id = 'dropped-image-choice-modal';
-        modal.className = 'modal show dropped-image-choice-modal';
-        modal.setAttribute('role', 'dialog');
-        modal.setAttribute('aria-modal', 'true');
-        modal.setAttribute('aria-labelledby', 'dropped-image-choice-title');
-        modal.innerHTML = `
-            <div class="modal-content dropped-image-choice-content">
-                <div class="modal-header">
-                    <h2 id="dropped-image-choice-title">What should we do with this image?</h2>
-                    <button type="button" class="close-modal-btn" data-action="cancel" aria-label="Cancel">
-                        <i data-feather="x"></i>
-                    </button>
-                </div>
-                <div class="modal-body dropped-image-choice-body">
-                    <p class="dropped-image-choice-prompt">Choose how to use <strong>${escapeHtml(file.name || 'this image')}</strong>:</p>
-                    <div class="dropped-image-choice-options">
-                        <button type="button" class="dropped-image-choice-option dropped-image-choice-option--recommended" data-action="trace" data-default="true">
-                            <i data-feather="image" aria-hidden="true"></i>
-                            <div class="dropped-image-choice-option-text">
-                                <strong>Add for tracing <span class="dropped-image-choice-badge">Recommended</span></strong>
-                                <span>Place the image on the canvas as a reference so you can draw walls on top of it.</span>
-                            </div>
-                        </button>
-                        <button type="button" class="dropped-image-choice-option" data-action="convert">
-                            <i data-feather="grid" aria-hidden="true"></i>
-                            <div class="dropped-image-choice-option-text">
-                                <strong>Convert to floor plan</strong>
-                                <span>Auto-detect walls, doors, windows, and furniture from the image. This is experimental and often misses or misplaces elements — expect to fix things up afterwards.</span>
-                            </div>
-                        </button>
-                    </div>
-                </div>
-            </div>
-        `;
-        document.body.appendChild(modal);
-        if (typeof feather !== 'undefined') feather.replace();
-        modal.querySelector('[data-default="true"]')?.focus();
-
-        const close = () => modal.remove();
-        modal.addEventListener('click', (e) => {
-            const target = e.target.closest('[data-action]');
-            if (target) {
-                const action = target.getAttribute('data-action');
-                close();
-                if (action === 'convert') importFloorPlanFromImage(file);
-                else if (action === 'trace') addImageAsReference(file);
-                return;
-            }
-            if (e.target === modal) close();
-        });
-        const onKey = (e) => {
-            if (e.key === 'Escape') { close(); document.removeEventListener('keydown', onKey); }
-        };
-        document.addEventListener('keydown', onKey);
+        addImageAsReference(file);
     }
 
     function escapeHtml(str) {
@@ -1897,9 +1863,28 @@ const FloorPlanEditor = (() => {
         
         const controls = document.createElement('div');
         controls.className = 'ref-image-controls';
+        const tipsDismissed = (() => {
+            try { return localStorage.getItem('decorai-ref-image-tips-dismissed') === '1'; }
+            catch { return false; }
+        })();
+
         controls.innerHTML = `
             <div class="ref-controls-content">
                 <h4>Reference Image</h4>
+                <div class="ref-image-tips${tipsDismissed ? ' is-collapsed' : ''}">
+                    <div class="ref-image-tips-header">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="8" x2="12" y2="12"></line><line x1="12" y1="16" x2="12.01" y2="16"></line></svg>
+                        <span class="ref-image-tips-title">How to trace this image</span>
+                        <button type="button" id="ref-image-tips-toggle" class="ref-image-tips-toggle" aria-label="${tipsDismissed ? 'Show tracing tips' : 'Hide tracing tips'}">
+                            <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="6 9 12 15 18 9"></polyline></svg>
+                        </button>
+                    </div>
+                    <ol class="ref-image-tips-list">
+                        <li><strong>Size the image.</strong> Drag the corners to scale it to match your floor's real dimensions, then center it on the canvas.</li>
+                        <li><strong>Turn on snapping.</strong> Click <em>Snap to image</em> below — it detects the dark lines in your image so the wall tool magnetically locks onto them.</li>
+                        <li><strong>Trace with the wall tool.</strong> Switch to the wall tool and click along the image's walls. Snapped corners and lines stay pixel-accurate to the underlying drawing.</li>
+                    </ol>
+                </div>
                 <div class="control-row">
                     <label>Opacity:</label>
                     <input type="range" id="ref-opacity" min="0" max="100" value="${refImage.opacity * 100}">
@@ -1912,9 +1897,9 @@ const FloorPlanEditor = (() => {
                     </small>
                 </div>
                 <div class="control-row">
-                    <button id="ref-trace-btn" class="secondary-btn">
-                        <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3 4 7v6c0 5 3.5 9.5 8 11 4.5-1.5 8-6 8-11V7l-8-4z"></path><path d="M12 8v8"></path><path d="M8 12h8"></path></svg>
-                        Trace to vectors
+                    <button id="ref-trace-btn" class="secondary-btn" data-snap-enabled="${refImage.snapData?.enabled ? 'true' : 'false'}">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12h4l3-9 4 18 3-9h4"></path></svg>
+                        <span class="ref-trace-btn-label">${refImage.snapData?.enabled ? `Snap: on · ${refImage.snapData.corners.length} pts` : 'Snap to image'}</span>
                     </button>
                 </div>
                 <div class="control-row">
@@ -1950,8 +1935,23 @@ const FloorPlanEditor = (() => {
             centerReferenceImage(refImage);
         });
 
-        document.getElementById('ref-trace-btn')?.addEventListener('click', () => {
-            traceReferenceImage(refImage);
+        document.getElementById('ref-trace-btn')?.addEventListener('click', async () => {
+            await toggleReferenceImageSnap(refImage);
+        });
+
+        // Collapse/expand the tracing-tips card and persist the choice so
+        // returning users aren't nagged by the same intro every time.
+        document.getElementById('ref-image-tips-toggle')?.addEventListener('click', () => {
+            const tips = controls.querySelector('.ref-image-tips');
+            if (!tips) return;
+            const willCollapse = !tips.classList.contains('is-collapsed');
+            tips.classList.toggle('is-collapsed', willCollapse);
+            const toggleBtn = document.getElementById('ref-image-tips-toggle');
+            if (toggleBtn) {
+                toggleBtn.setAttribute('aria-label', willCollapse ? 'Show tracing tips' : 'Hide tracing tips');
+            }
+            try { localStorage.setItem('decorai-ref-image-tips-dismissed', willCollapse ? '1' : '0'); }
+            catch { /* ignore quota / private-mode failures */ }
         });
         
         // Delete button
@@ -2267,215 +2267,286 @@ const FloorPlanEditor = (() => {
         }
     }
     
-    async function traceReferenceImage(refImage) {
-        if (!refImage?.dataUrl) return;
-        try {
-            const res = await fetch(refImage.dataUrl);
-            const blob = await res.blob();
-            const file = new File([blob], 'reference.png', { type: blob.type || 'image/png' });
-            await convertImageToSVG(file);
-        } catch (err) {
-            console.error('Trace reference image failed:', err);
-            if (window.showAlertDialog) {
-                window.showAlertDialog('Could not trace this image. Try a clearer floor plan photo.');
-            }
-        }
-    }
-    
-    async function convertImageToSVG(file) {
-        if (isConvertingImage) {
-            if (window.showAlertDialog) {
-                window.showAlertDialog('Already converting an image. Please wait...');
-            }
-            return;
-        }
-        
-        isConvertingImage = true;
-        
-        // Show loading indicator
-        const loadingOverlay = document.createElement('div');
-        loadingOverlay.className = 'image-convert-loading';
-        loadingOverlay.innerHTML = `
-            <div class="loading-content">
-                <div class="spinner"></div>
-                <p>Converting image to SVG...</p>
-                <small>This may take a moment</small>
-            </div>
-        `;
-        document.body.appendChild(loadingOverlay);
-        
-        try {
-            // Convert file to base64
-            const base64 = await fileToBase64(file);
+    // ==========================================
+    // REFERENCE IMAGE SNAP DETECTION
+    //
+    // Runs lightweight line/corner detection on a reference image so the wall
+    // tool can magnetically snap to the dark lines (and their intersections) in
+    // the underlying floor plan. Detection is orthogonal-only (horizontal +
+    // vertical runs of dark pixels) — fast, deterministic, and reliable for
+    // crisp architectural plans. Results live on `refImage.snapData` in image-
+    // local pixel coordinates and are converted to canvas coords on demand.
+    // ==========================================
 
-            // Call the server API to convert image to SVG using AI. This is an
-            // authenticated endpoint, so attach the access token and target the
-            // backend via the same proxy base the other API calls use —
-            // otherwise the server returns 401 and tracing fails generically.
-            const token = typeof window.__decoraiGetAccessToken === 'function' ? window.__decoraiGetAccessToken() : null;
-            const apiBase = (window.__decoraiProxyUrl) || (window.location.hostname === 'localhost' ? 'http://localhost:3001' : '');
-            const response = await fetch(`${apiBase}/api/image-to-svg`, {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                    ...(token ? { Authorization: `Bearer ${token}` } : {})
-                },
-                body: JSON.stringify({
-                    image: base64,
-                    filename: file.name
-                })
-            });
-            
-            if (!response.ok) {
-                const error = await response.json();
-                throw new Error(error.message || 'Failed to convert image');
-            }
-            
-            const result = await response.json();
-            
-            if (result.svg) {
-                // Parse and add SVG paths to the canvas
-                addSVGToCanvas(result.svg);
-            } else {
-                throw new Error('No SVG data returned');
-            }
-        } catch (error) {
-            console.error('Error converting image:', error);
-            
-            // Fallback: add as reference image
-            const fallbackMsg = `Could not convert image to SVG: ${error.message}\n\nWould you like to add it as a reference image instead?`;
-            if (window.showConfirmDialog) {
-                const proceed = await window.showConfirmDialog(
-                    fallbackMsg,
-                    'Import image as reference?',
-                    'Add as reference',
-                    'Cancel'
-                );
-                if (proceed) addImageAsReference(file);
-            }
-        } finally {
-            isConvertingImage = false;
-            loadingOverlay.remove();
-        }
-    }
-    
-    function fileToBase64(file) {
-        return new Promise((resolve, reject) => {
-            const reader = new FileReader();
-            reader.onload = () => resolve(reader.result);
-            reader.onerror = reject;
-            reader.readAsDataURL(file);
-        });
-    }
-    
-    function addSVGToCanvas(svgString) {
-        // Save state before making changes
-        addToHistory();
-        
-        // Parse the SVG string
-        const parser = new DOMParser();
-        const svgDoc = parser.parseFromString(svgString, 'image/svg+xml');
-        const svgElement = svgDoc.querySelector('svg');
-        
-        if (!svgElement) {
-            console.error('Invalid SVG');
-            return;
-        }
-        
-        const wrapper = document.getElementById('layout-canvas-wrapper');
-        const canvasWidth = wrapper.clientWidth;
-        const canvasHeight = wrapper.clientHeight;
-        
-        // Get SVG dimensions
-        const viewBox = svgElement.getAttribute('viewBox');
-        let svgWidth = parseFloat(svgElement.getAttribute('width')) || canvasWidth;
-        let svgHeight = parseFloat(svgElement.getAttribute('height')) || canvasHeight;
-        
-        if (viewBox) {
-            const parts = viewBox.split(/[\s,]+/).map(parseFloat);
-            if (parts.length >= 4) {
-                svgWidth = parts[2] || svgWidth;
-                svgHeight = parts[3] || svgHeight;
-            }
-        }
-        
-        // Calculate scale to fit
-        const scaleX = (canvasWidth * 0.8) / svgWidth;
-        const scaleY = (canvasHeight * 0.8) / svgHeight;
-        const fitScale = Math.min(scaleX, scaleY);
-        
-        // Offset to center
-        const offsetX = (canvasWidth - svgWidth * fitScale) / 2;
-        const offsetY = (canvasHeight - svgHeight * fitScale) / 2;
-        
-        // Extract all paths, lines, rects, etc. and add them directly
-        const elements = svgElement.querySelectorAll('path, line, rect, polyline, polygon, circle, ellipse');
-        
-        elements.forEach(el => {
-            const clone = el.cloneNode(true);
-            clone.classList.add('imported-svg-element');
-            
-            // Generate unique ID for tracking
-            const elementId = 'imported-' + Date.now() + '-' + Math.random().toString(36).substr(2, 9);
-            clone.dataset.importedId = elementId;
-            
-            // Remove white fills - convert to transparent
-            const fill = clone.getAttribute('fill');
-            if (fill && isWhiteFill(fill)) {
-                clone.setAttribute('fill', 'none');
-            }
-            
-            // Transform the element
-            const existingTransform = clone.getAttribute('transform') || '';
-            clone.setAttribute('transform', `translate(${offsetX}, ${offsetY}) scale(${fitScale}) ${existingTransform}`);
-            
-            // Ensure it has a stroke for visibility
-            if (!clone.getAttribute('stroke') && !clone.getAttribute('fill')) {
-                clone.setAttribute('stroke', '#333');
-                clone.setAttribute('stroke-width', '2');
-                clone.setAttribute('fill', 'none');
-            }
-            
-            // Track the imported element
-            importedElements.push({
-                id: elementId,
-                element: clone,
-                type: el.tagName.toLowerCase()
-            });
-            
-            wallsLayer.appendChild(clone);
-        });
-        
-        // Also check for grouped elements - but track individual children
-        const groups = svgElement.querySelectorAll('g');
-        groups.forEach(g => {
-            const clone = g.cloneNode(true);
-            clone.classList.add('imported-svg-group');
-            
-            // Remove white fills and track each child element individually
-            clone.querySelectorAll('path, line, rect, polyline, polygon, circle, ellipse').forEach(child => {
-                const fill = child.getAttribute('fill');
-                if (fill && isWhiteFill(fill)) {
-                    child.setAttribute('fill', 'none');
+    const SNAP_DETECT_MAX_SIDE = 1600;     // downsample huge images for speed
+    const SNAP_DETECT_DARK_THRESHOLD = 110; // grayscale luminance < this = dark
+    const SNAP_DETECT_MIN_RUN_PX = 20;      // ignore runs shorter than this
+    const SNAP_DETECT_MERGE_GAP = 6;        // collinear runs within this gap merge
+    const SNAP_DETECT_PARALLEL_TOL = 10;    // parallel lines within this distance merge to centerline
+
+    async function toggleReferenceImageSnap(refImage) {
+        const btn = document.getElementById('ref-trace-btn');
+        const label = btn?.querySelector('.ref-trace-btn-label');
+        if (!refImage.snapData) {
+            // First activation: run detection. Show progress in the button label.
+            if (label) label.textContent = 'Detecting lines…';
+            if (btn) btn.disabled = true;
+            try {
+                refImage.snapData = await detectReferenceImageSnapPoints(refImage);
+                refImage.snapData.enabled = true;
+            } catch (err) {
+                console.error('Snap detection failed:', err);
+                if (window.showAlertDialog) {
+                    window.showAlertDialog('Could not analyze this image for snap points.');
                 }
-                
-                // Track each child element individually for selection/deletion
-                const childId = 'imported-' + Date.now() + '-' + Math.random().toString(36).substr(2, 9);
-                child.dataset.importedId = childId;
-                child.classList.add('imported-svg-element');
-                
-                importedElements.push({
-                    id: childId,
-                    element: child,
-                    type: child.tagName.toLowerCase()
-                });
-            });
-            
-            const existingTransform = clone.getAttribute('transform') || '';
-            clone.setAttribute('transform', `translate(${offsetX}, ${offsetY}) scale(${fitScale}) ${existingTransform}`);
-            
-            wallsLayer.appendChild(clone);
+                if (label) label.textContent = 'Snap to image lines';
+                if (btn) {
+                    btn.disabled = false;
+                    btn.dataset.snapEnabled = 'false';
+                }
+                return;
+            }
+        } else {
+            refImage.snapData.enabled = !refImage.snapData.enabled;
+        }
+        if (btn) {
+            btn.disabled = false;
+            btn.dataset.snapEnabled = refImage.snapData.enabled ? 'true' : 'false';
+        }
+        if (label) {
+            label.textContent = refImage.snapData.enabled
+                ? `Snap: on · ${refImage.snapData.corners.length} pts`
+                : 'Snap to image';
+        }
+    }
+
+    async function detectReferenceImageSnapPoints(refImage) {
+        // Load the image at its natural size, downsample if huge, then scan.
+        const img = await new Promise((resolve, reject) => {
+            const i = new Image();
+            i.onload = () => resolve(i);
+            i.onerror = () => reject(new Error('Could not load reference image'));
+            i.src = refImage.dataUrl;
         });
+        const naturalW = img.naturalWidth || img.width;
+        const naturalH = img.naturalHeight || img.height;
+        if (!naturalW || !naturalH) throw new Error('Image has no dimensions');
+
+        const downscale = Math.min(1, SNAP_DETECT_MAX_SIDE / Math.max(naturalW, naturalH));
+        const sw = Math.max(1, Math.round(naturalW * downscale));
+        const sh = Math.max(1, Math.round(naturalH * downscale));
+        const canvas = document.createElement('canvas');
+        canvas.width = sw;
+        canvas.height = sh;
+        const ctx = canvas.getContext('2d', { willReadFrequently: true });
+        ctx.fillStyle = '#ffffff';
+        ctx.fillRect(0, 0, sw, sh);
+        ctx.drawImage(img, 0, 0, sw, sh);
+        const { data } = ctx.getImageData(0, 0, sw, sh);
+
+        // Build a 1-bit dark mask using grayscale luminance.
+        const mask = new Uint8Array(sw * sh);
+        for (let i = 0, p = 0; i < data.length; i += 4, p++) {
+            const lum = 0.299 * data[i] + 0.587 * data[i + 1] + 0.114 * data[i + 2];
+            mask[p] = lum < SNAP_DETECT_DARK_THRESHOLD ? 1 : 0;
+        }
+
+        // Horizontal runs: scan each row for runs of dark pixels above min length,
+        // merging across small gaps so dashed/imperfect lines still register.
+        const hRuns = [];
+        for (let y = 0; y < sh; y++) {
+            let runStart = -1, gap = 0;
+            for (let x = 0; x < sw; x++) {
+                if (mask[y * sw + x]) {
+                    if (runStart === -1) runStart = x;
+                    gap = 0;
+                } else if (runStart !== -1) {
+                    gap++;
+                    if (gap > SNAP_DETECT_MERGE_GAP) {
+                        const end = x - gap;
+                        if (end - runStart >= SNAP_DETECT_MIN_RUN_PX) {
+                            hRuns.push({ y, x1: runStart, x2: end });
+                        }
+                        runStart = -1;
+                        gap = 0;
+                    }
+                }
+            }
+            if (runStart !== -1 && (sw - runStart) >= SNAP_DETECT_MIN_RUN_PX) {
+                hRuns.push({ y, x1: runStart, x2: sw - 1 });
+            }
+        }
+
+        const vRuns = [];
+        for (let x = 0; x < sw; x++) {
+            let runStart = -1, gap = 0;
+            for (let y = 0; y < sh; y++) {
+                if (mask[y * sw + x]) {
+                    if (runStart === -1) runStart = y;
+                    gap = 0;
+                } else if (runStart !== -1) {
+                    gap++;
+                    if (gap > SNAP_DETECT_MERGE_GAP) {
+                        const end = y - gap;
+                        if (end - runStart >= SNAP_DETECT_MIN_RUN_PX) {
+                            vRuns.push({ x, y1: runStart, y2: end });
+                        }
+                        runStart = -1;
+                        gap = 0;
+                    }
+                }
+            }
+            if (runStart !== -1 && (sh - runStart) >= SNAP_DETECT_MIN_RUN_PX) {
+                vRuns.push({ x, y1: runStart, y2: sh - 1 });
+            }
+        }
+
+        // Cluster parallel runs. A wall drawn as two parallel lines (showing
+        // thickness) produces many adjacent rows of similar runs — collapse to a
+        // single centerline. Cluster by coordinate within tolerance + overlapping
+        // perpendicular range.
+        const hLines = clusterAxisRuns(hRuns, 'y', 'x1', 'x2', SNAP_DETECT_PARALLEL_TOL);
+        const vLines = clusterAxisRuns(vRuns, 'x', 'y1', 'y2', SNAP_DETECT_PARALLEL_TOL);
+
+        // Intersections of hLines × vLines become candidate corners.
+        const corners = [];
+        const SLOP = 4; // pixels — endpoints don't have to touch exactly
+        for (const h of hLines) {
+            for (const v of vLines) {
+                if (v.x >= h.x1 - SLOP && v.x <= h.x2 + SLOP &&
+                    h.y >= v.y1 - SLOP && h.y <= v.y2 + SLOP) {
+                    corners.push({ x: v.x, y: h.y });
+                }
+            }
+        }
+        // Also add line endpoints as snap targets (T-junctions, free ends).
+        for (const h of hLines) {
+            corners.push({ x: h.x1, y: h.y });
+            corners.push({ x: h.x2, y: h.y });
+        }
+        for (const v of vLines) {
+            corners.push({ x: v.x, y: v.y1 });
+            corners.push({ x: v.x, y: v.y2 });
+        }
+        // Dedupe corners within a few pixels of each other.
+        const dedupedCorners = [];
+        for (const c of corners) {
+            const dup = dedupedCorners.find(d => Math.abs(d.x - c.x) < 5 && Math.abs(d.y - c.y) < 5);
+            if (!dup) dedupedCorners.push(c);
+        }
+
+        // Convert image-internal scan coords back to original pixel coords so
+        // canvas conversion uses the unmodified naturalWidth/Height.
+        const inv = 1 / downscale;
+        return {
+            enabled: false,
+            naturalWidth: naturalW,
+            naturalHeight: naturalH,
+            hLines: hLines.map(l => ({ y: l.y * inv, x1: l.x1 * inv, x2: l.x2 * inv })),
+            vLines: vLines.map(l => ({ x: l.x * inv, y1: l.y1 * inv, y2: l.y2 * inv })),
+            corners: dedupedCorners.map(c => ({ x: c.x * inv, y: c.y * inv }))
+        };
+    }
+
+    // Collapse near-parallel runs (same axis, similar coordinate, overlapping
+    // extent) into single lines using the median coordinate and the union extent.
+    function clusterAxisRuns(runs, axisKey, startKey, endKey, tol) {
+        if (!runs.length) return [];
+        const sorted = runs.slice().sort((a, b) => a[axisKey] - b[axisKey]);
+        const clusters = [];
+        for (const r of sorted) {
+            const c = clusters.find(cl =>
+                Math.abs(cl[axisKey] - r[axisKey]) <= tol &&
+                r[startKey] <= cl[endKey] + tol &&
+                r[endKey] >= cl[startKey] - tol
+            );
+            if (c) {
+                c[startKey] = Math.min(c[startKey], r[startKey]);
+                c[endKey] = Math.max(c[endKey], r[endKey]);
+                c._coords.push(r[axisKey]);
+                c[axisKey] = c._coords[Math.floor(c._coords.length / 2)];
+            } else {
+                clusters.push({
+                    [axisKey]: r[axisKey],
+                    [startKey]: r[startKey],
+                    [endKey]: r[endKey],
+                    _coords: [r[axisKey]]
+                });
+            }
+        }
+        return clusters.map(({ _coords, ...rest }) => rest);
+    }
+
+    // Convert image-local pixel coordinates to canvas coordinates using the
+    // reference image's current placement (x/y + width/height scale).
+    function imageLocalToCanvas(refImage, pt) {
+        const sx = refImage.width / (refImage.snapData?.naturalWidth || refImage.originalWidth || 1);
+        const sy = refImage.height / (refImage.snapData?.naturalHeight || refImage.originalHeight || 1);
+        return { x: refImage.x + pt.x * sx, y: refImage.y + pt.y * sy };
+    }
+
+    // Find the closest detected snap target across all enabled reference images.
+    // Returns `{ x, y, type: 'detected-corner' | 'detected-line', refImage }` or null.
+    function findNearbyDetectedSnap(rawPos) {
+        let best = null;
+        let bestDist = snapDistance;
+        for (const refImage of referenceImages) {
+            const sd = refImage.snapData;
+            if (!sd?.enabled) continue;
+
+            // Detected corners (highest priority).
+            for (const c of sd.corners) {
+                const p = imageLocalToCanvas(refImage, c);
+                const d = Math.hypot(p.x - rawPos.x, p.y - rawPos.y);
+                if (d < bestDist) {
+                    bestDist = d;
+                    best = { x: p.x, y: p.y, type: 'detected-corner', refImage };
+                }
+            }
+        }
+        if (best) return best;
+
+        // No corner within range — check detected lines (slide along the line).
+        let bestLineDist = snapDistance;
+        for (const refImage of referenceImages) {
+            const sd = refImage.snapData;
+            if (!sd?.enabled) continue;
+            const sx = refImage.width / (sd.naturalWidth || 1);
+            const sy = refImage.height / (sd.naturalHeight || 1);
+            // Horizontal lines in image space stay horizontal in canvas space
+            // (we only allow uniform-ish scaling via corner-drag resize).
+            for (const h of sd.hLines) {
+                const cy = refImage.y + h.y * sy;
+                const cx1 = refImage.x + h.x1 * sx;
+                const cx2 = refImage.x + h.x2 * sx;
+                if (rawPos.x < cx1 - snapDistance || rawPos.x > cx2 + snapDistance) continue;
+                const d = Math.abs(rawPos.y - cy);
+                if (d < bestLineDist) {
+                    bestLineDist = d;
+                    best = {
+                        x: Math.max(cx1, Math.min(cx2, rawPos.x)),
+                        y: cy,
+                        type: 'detected-line', refImage
+                    };
+                }
+            }
+            for (const v of sd.vLines) {
+                const cx = refImage.x + v.x * sx;
+                const cy1 = refImage.y + v.y1 * sy;
+                const cy2 = refImage.y + v.y2 * sy;
+                if (rawPos.y < cy1 - snapDistance || rawPos.y > cy2 + snapDistance) continue;
+                const d = Math.abs(rawPos.x - cx);
+                if (d < bestLineDist) {
+                    bestLineDist = d;
+                    best = {
+                        x: cx,
+                        y: Math.max(cy1, Math.min(cy2, rawPos.y)),
+                        type: 'detected-line', refImage
+                    };
+                }
+            }
+        }
+        return best;
     }
     
     function handleKeyDown(e) {
@@ -2958,7 +3029,7 @@ const FloorPlanEditor = (() => {
                 // Too far from the wall – break snap
                 currentSnapTarget = null;
             } else {
-                // Corner (fixed snap point)
+                // Corner or detected-corner (fixed snap point); detected-line releases by distance too.
                 const distFromSnap = Math.sqrt(
                     (rawPos.x - currentSnapTarget.x) ** 2 + (rawPos.y - currentSnapTarget.y) ** 2
                 );
@@ -2968,21 +3039,28 @@ const FloorPlanEditor = (() => {
                 currentSnapTarget = null;
             }
         }
-        
-        // Corner snap (highest priority)
+
+        // Corner snap (highest priority) — user-drawn corners win over detected ones.
         const cornerTarget = findNearbyCorner(rawPos);
         if (cornerTarget && (!drawingStartCorner || cornerTarget.id !== drawingStartCorner.id)) {
             currentSnapTarget = { x: cornerTarget.x, y: cornerTarget.y, type: 'corner', id: cornerTarget.id };
             return currentSnapTarget;
         }
-        
-        // Mid-wall snap
+
+        // Mid-wall snap on existing user walls.
         const wallSnap = findSnapPointOnWall(rawPos, drawingStartCorner);
         if (wallSnap) {
             currentSnapTarget = { x: wallSnap.point.x, y: wallSnap.point.y, type: 'wall', wall: wallSnap.wall };
             return currentSnapTarget;
         }
-        
+
+        // Detected snap on reference-image lines/corners (lowest priority).
+        const detected = findNearbyDetectedSnap(rawPos);
+        if (detected) {
+            currentSnapTarget = { x: detected.x, y: detected.y, type: detected.type };
+            return currentSnapTarget;
+        }
+
         currentSnapTarget = null;
         return null;
     }
@@ -3002,6 +3080,9 @@ const FloorPlanEditor = (() => {
             showMagneticIndicator(snap);
         } else if (snap.type === 'wall') {
             showWallSnapIndicator(snap);
+            showMagneticIndicator(snap);
+        } else if (snap.type === 'detected-corner' || snap.type === 'detected-line') {
+            // Reuse the magnetic indicator so users see why the cursor jumped.
             showMagneticIndicator(snap);
         }
     }
@@ -6379,213 +6460,6 @@ const FloorPlanEditor = (() => {
         ctx.drawImage(img, 0, 0, w, h);
         return { dataUrl: canvas.toDataURL('image/png'), width: w, height: h };
     }
-
-    async function importFloorPlanFromImage(file) {
-        if (!file) return;
-        const overlay = showImportProgress('Reading image…');
-        try {
-            overlay.setMessage('Analyzing floor plan…');
-            const { dataUrl } = await renderFileToBoundedPng(file);
-            const token = typeof window.__decoraiGetAccessToken === 'function' ? window.__decoraiGetAccessToken() : null;
-            const url = `${(window.__decoraiProxyUrl) || (window.location.hostname === 'localhost' ? 'http://localhost:3001' : '')}/api/import-floor-plan`;
-            const res = await fetch(url, {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                    ...(token ? { Authorization: `Bearer ${token}` } : {})
-                },
-                body: JSON.stringify({ imageBase64: dataUrl })
-            });
-            if (!res.ok) {
-                const err = await res.json().catch(() => ({}));
-                const msg = err.error || `Import failed (${res.status})`;
-                showLayoutFileMessage(msg);
-                return;
-            }
-            const spec = await res.json();
-            const state = layoutStateFromVisionSpec(spec);
-            if (!state || !state.walls.length) {
-                showLayoutFileMessage('No walls detected in the image.');
-                return;
-            }
-            addToHistory();
-            restoreState(state);
-            try { fitToScreen(); } catch {}
-            showLayoutFileMessage(`Imported ${state.walls.length} walls.`);
-        } catch (err) {
-            console.error('Floor plan import failed', err);
-            showLayoutFileMessage(err && err.message ? err.message : 'Could not import floor plan.');
-        } finally {
-            overlay.remove();
-        }
-    }
-
-    function showImportProgress(initialMessage) {
-        const wrap = document.getElementById('layout-canvas-wrapper');
-        let el = document.getElementById('layout-import-progress');
-        if (el) el.remove();
-        el = document.createElement('div');
-        el.id = 'layout-import-progress';
-        el.className = 'export-message';
-        el.innerHTML = `<div class="export-message-content"><span class="my-layouts-spinner" aria-hidden="true"></span><span class="layout-import-progress-text">${initialMessage}</span></div>`;
-        wrap?.appendChild(el);
-        return {
-            setMessage(msg) {
-                const t = el.querySelector('.layout-import-progress-text');
-                if (t) t.textContent = msg;
-            },
-            remove() { el.remove(); }
-        };
-    }
-
-    // Convert the vision API's JSON spec into the editor's state shape.
-    function layoutStateFromVisionSpec(spec) {
-        if (!spec || !Array.isArray(spec.walls) || !spec.walls.length) return null;
-
-        const PX_PER_FT = 50;
-        const PAD_PX = 100;
-        const AXIS_SNAP_DEG = 4;   // walls within 4° of horizontal/vertical snap to axis
-        const GRID_FT = 0.25;      // snap endpoints to nearest quarter-foot
-
-        // First pass: snap nearly-axial walls to axis-aligned. This catches the
-        // common LLM failure where a wall comes back at e.g. 0.6° off horizontal.
-        const cleanedWalls = spec.walls.map(w => {
-            if (!isFiniteNumber(w.x1) || !isFiniteNumber(w.y1) || !isFiniteNumber(w.x2) || !isFiniteNumber(w.y2)) return null;
-            const dx = w.x2 - w.x1, dy = w.y2 - w.y1;
-            const angle = Math.abs(Math.atan2(dy, dx) * 180 / Math.PI);
-            const out = { x1: w.x1, y1: w.y1, x2: w.x2, y2: w.y2 };
-            if (angle < AXIS_SNAP_DEG || Math.abs(angle - 180) < AXIS_SNAP_DEG) {
-                const y = (w.y1 + w.y2) / 2;
-                out.y1 = y; out.y2 = y;
-            } else if (Math.abs(angle - 90) < AXIS_SNAP_DEG) {
-                const x = (w.x1 + w.x2) / 2;
-                out.x1 = x; out.x2 = x;
-            }
-            const snap = v => Math.round(v / GRID_FT) * GRID_FT;
-            return { x1: snap(out.x1), y1: snap(out.y1), x2: snap(out.x2), y2: snap(out.y2) };
-        }).filter(Boolean);
-
-        if (!cleanedWalls.length) return null;
-
-        // Normalize to feet coordinates that start at (0,0).
-        let minX = Infinity, minY = Infinity;
-        cleanedWalls.forEach(w => {
-            minX = Math.min(minX, w.x1, w.x2);
-            minY = Math.min(minY, w.y1, w.y2);
-        });
-        if (!isFinite(minX) || !isFinite(minY)) return null;
-        const ftToPx = (xf, yf) => ({
-            x: Math.round((xf - minX) * PX_PER_FT) + PAD_PX,
-            y: Math.round((yf - minY) * PX_PER_FT) + PAD_PX
-        });
-
-        const SNAP = 6;
-        const cornerByKey = new Map();
-        let cornerSeq = 0;
-        const findOrAddCorner = (x, y) => {
-            const sx = Math.round(x / SNAP) * SNAP;
-            const sy = Math.round(y / SNAP) * SNAP;
-            const key = `${sx}|${sy}`;
-            let c = cornerByKey.get(key);
-            if (c) return c;
-            c = { id: `corner-import-${cornerSeq++}`, x: sx, y: sy, wallIds: [] };
-            cornerByKey.set(key, c);
-            return c;
-        };
-
-        const walls = [];
-        const wallKeySeen = new Set();
-        const wallIndexToWall = new Map();
-        cleanedWalls.forEach((raw, idx) => {
-            const a = ftToPx(raw.x1, raw.y1);
-            const b = ftToPx(raw.x2, raw.y2);
-            const len = Math.hypot(b.x - a.x, b.y - a.y);
-            if (len < SNAP) return;
-            const ca = findOrAddCorner(a.x, a.y);
-            const cb = findOrAddCorner(b.x, b.y);
-            if (ca === cb) return;
-            const key = ca.id < cb.id ? `${ca.id}-${cb.id}` : `${cb.id}-${ca.id}`;
-            if (wallKeySeen.has(key)) return;
-            wallKeySeen.add(key);
-            const wall = { id: `wall-import-${idx}`, startId: ca.id, endId: cb.id, openings: [], control: null };
-            walls.push(wall);
-            wallIndexToWall.set(idx, wall);
-            ca.wallIds.push(wall.id);
-            cb.wallIds.push(wall.id);
-        });
-
-        const cornerById = new Map();
-        cornerByKey.forEach(c => cornerById.set(c.id, c));
-        if (Array.isArray(spec.openings)) {
-            spec.openings.forEach((op, i) => {
-                const wall = wallIndexToWall.get(op.wall_index);
-                if (!wall) return;
-                if (!isFiniteNumber(op.center_ft) || !isFiniteNumber(op.length_ft)) return;
-                const a = cornerById.get(wall.startId);
-                const b = cornerById.get(wall.endId);
-                if (!a || !b) return;
-                const wallLenPx = Math.hypot(b.x - a.x, b.y - a.y);
-                if (wallLenPx <= 0) return;
-                const centerPx = op.center_ft * PX_PER_FT;
-                const widthPx = Math.max(8, op.length_ft * PX_PER_FT);
-                if (centerPx <= 0 || centerPx >= wallLenPx) return;
-                const position = Math.max(widthPx / 2, Math.min(wallLenPx - widthPx / 2, centerPx)) / wallLenPx;
-                const type = op.type === 'window' ? 'window' : 'door';
-                wall.openings.push({ id: `opening-import-${i}`, type, position, width: widthPx });
-            });
-        }
-
-        const labels = [];
-        if (Array.isArray(spec.labels)) {
-            spec.labels.forEach((lab, i) => {
-                if (!lab || typeof lab.text !== 'string' || !lab.text.trim()) return;
-                if (!isFiniteNumber(lab.x_ft) || !isFiniteNumber(lab.y_ft)) return;
-                const p = ftToPx(lab.x_ft, lab.y_ft);
-                labels.push({ id: `label-import-${i}`, x: p.x, y: p.y, text: lab.text.trim() });
-            });
-        }
-
-        const importedFurniture = [];
-        if (Array.isArray(spec.furniture)) {
-            spec.furniture.forEach((f, i) => {
-                if (!f || typeof f.type !== 'string') return;
-                const template = furnitureLibrary.find(t => t.id === f.type);
-                if (!template) return;
-                if (!isFiniteNumber(f.center_x_ft) || !isFiniteNumber(f.center_y_ft)) return;
-                const widthFt = isFiniteNumber(f.width_ft) && f.width_ft > 0 ? f.width_ft : template.width;
-                const heightFt = isFiniteNumber(f.height_ft) && f.height_ft > 0 ? f.height_ft : template.height;
-                let rotation = isFiniteNumber(f.rotation_deg) ? f.rotation_deg % 360 : 0;
-                if (rotation < 0) rotation += 360;
-                const center = ftToPx(f.center_x_ft, f.center_y_ft);
-                const widthPx = widthFt * PX_PER_FT;
-                const heightPx = heightFt * PX_PER_FT;
-                importedFurniture.push({
-                    id: `furniture-import-${i}-${Date.now()}`,
-                    typeId: template.id,
-                    name: template.name,
-                    x: center.x - widthPx / 2,
-                    y: center.y - heightPx / 2,
-                    width: widthPx,
-                    height: heightPx,
-                    rotation,
-                    color: template.color
-                });
-            });
-        }
-
-        return {
-            corners: Array.from(cornerByKey.values()),
-            walls,
-            furniture: importedFurniture,
-            labels,
-            freeformOpenings: [],
-            referenceImages: [],
-            importedElementsHTML: [],
-            roomNames: {}
-        };
-    }
-
-    function isFiniteNumber(n) { return typeof n === 'number' && isFinite(n); }
 
     // Convert an SVG document's vector geometry into a layout state. Returns
     // a state shaped like saveState() output, or null if nothing usable.

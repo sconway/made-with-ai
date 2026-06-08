@@ -695,10 +695,50 @@ function renderTokenPacks(packs) {
     });
 }
 
+async function refreshBuyTokensModalCounts() {
+    // Pull the latest counts so the breakdown reflects post-generation state,
+    // not the snapshot from when the app loaded. Run both fetches in parallel
+    // since they hit unrelated endpoints.
+    const tasks = [fetchUserTokens()];
+    if (userHasSubscription) tasks.push(fetchSubscriptionUsage());
+    try { await Promise.all(tasks); }
+    catch (err) { console.error('refreshBuyTokensModalCounts error:', err); }
+    renderBuyTokensModalCounts();
+}
+
+function renderBuyTokensModalCounts() {
+    const monthlyRemaining = userHasSubscription ? (subscriptionUsage?.remaining ?? 0) : 0;
+    const purchasedRemaining = userTokens || 0;
+    const totalRemaining = monthlyRemaining + purchasedRemaining;
+    const countEl = document.getElementById('modal-tokens-count');
+    if (countEl) countEl.textContent = totalRemaining;
+    const tokensCurrentEl = buyTokensModal?.querySelector('.tokens-current');
+    if (!tokensCurrentEl) return;
+    if (userHasSubscription) {
+        tokensCurrentEl.innerHTML =
+            `You have <strong id="modal-tokens-count">${totalRemaining}</strong> generation${totalRemaining === 1 ? '' : 's'} remaining ` +
+            `<span class="tokens-current-breakdown">(${monthlyRemaining} from this month's plan` +
+            (purchasedRemaining > 0 ? ` + ${purchasedRemaining} purchased` : '') +
+            `).</span>`;
+    } else {
+        tokensCurrentEl.innerHTML =
+            `You have <strong id="modal-tokens-count">${purchasedRemaining}</strong> token${purchasedRemaining === 1 ? '' : 's'} remaining.`;
+    }
+}
+
 function showBuyTokensModal() {
     if (!currentUser) { showAuthModal('login'); return; }
     updateTokensDisplay();
-    if (modalTokensCount) modalTokensCount.textContent = userTokens;
+    // Subscribers have two pools that both count toward generation: the
+    // monthly subscription allowance and any purchased token packs on top of
+    // it. The modal should show the COMBINED remaining count plus a
+    // breakdown — showing only purchased tokens (userTokens) misled
+    // subscribers into thinking they had fewer generations available than
+    // they actually did.
+    renderBuyTokensModalCounts();
+    // Kick off a background refresh so the numbers reflect post-generation
+    // server state. The modal stays interactive while it's in flight.
+    refreshBuyTokensModalCounts();
     if (!tokenPacksContainer || !tokenPacksContainer.children.length) {
         renderTokenPacks(appConfig?.tokenPacks);
     }
