@@ -1,0 +1,1221 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Watch — Swiss Lever Movement</title>
+<style>
+  html, body { margin: 0; height: 100%; background: #05060a; overflow: hidden;
+    font-family: ui-monospace, Menlo, monospace; color: #d8e0ea; }
+  canvas { display: block; width: 100vw; height: 100vh; }
+
+  #hud { position: fixed; top: 14px; left: 16px; z-index: 3; pointer-events: none;
+    user-select: none; text-shadow: 0 0 8px rgba(120,180,255,0.35); }
+  #title { font-size: 20px; font-weight: 600; color: #cfe0ff; letter-spacing: 0.06em; }
+  #sub { font-size: 11px; opacity: 0.7; margin-top: 3px; line-height: 1.5; }
+  #clock { margin-top: 8px; font-size: 13px; color: #ffd27a; letter-spacing: 0.12em; }
+
+  #part { position: fixed; top: 14px; right: 16px; z-index: 3; text-align: right;
+    pointer-events: none; user-select: none; }
+  #partName { font-size: 15px; color: #9ad0ff; font-weight: 600; min-height: 20px;
+    text-shadow: 0 0 10px rgba(80,170,255,0.5); }
+  #partDesc { font-size: 11px; opacity: 0.7; max-width: 280px; margin-top: 2px; }
+
+  #panel { position: fixed; bottom: 18px; left: 50%; transform: translateX(-50%);
+    z-index: 4; display: flex; align-items: center; gap: 14px;
+    background: rgba(10,14,22,0.72); border: 1px solid rgba(120,160,220,0.25);
+    border-radius: 10px; padding: 12px 18px; backdrop-filter: blur(6px); }
+  #panel label { font-size: 11px; letter-spacing: 0.08em; opacity: 0.8; }
+  #explode { width: 220px; accent-color: #6aa6ff; cursor: pointer; }
+  .btn { background: rgba(40,52,74,0.6); border: 1px solid rgba(140,175,235,0.35);
+    color: #d8e0ea; font-family: inherit; font-size: 11px; letter-spacing: 0.06em;
+    text-transform: uppercase; padding: 7px 12px; border-radius: 6px; cursor: pointer;
+    transition: all 0.2s ease; }
+  .btn:hover { border-color: #6aa6ff; color: #acd2ff; box-shadow: 0 0 14px rgba(80,150,255,0.3); }
+  .btn.on { background: rgba(70,110,180,0.5); border-color: #6aa6ff; color: #cfe6ff; }
+  .sep { width: 1px; height: 26px; background: rgba(140,175,235,0.25); margin: 0 2px; }
+  #speedVal { font-size: 11px; color: #ffd27a; min-width: 46px; text-align: right; letter-spacing: 0.04em; }
+
+  #loading { position: fixed; inset: 0; display: flex; align-items: center; justify-content: center;
+    background: #05060a; z-index: 9; color: #9ad0ff; font-size: 13px; letter-spacing: 0.25em; }
+</style>
+</head>
+<body>
+<div id="loading">WINDING THE MAINSPRING…</div>
+
+<div id="hud">
+  <div id="title">SWISS LEVER WATCH</div>
+  <div id="sub">
+    Ø40&nbsp;mm case · hand-wound · 4&nbsp;Hz (28,800&nbsp;vph) · 21 jewels · date · 50+ modelled parts<br/>
+    barrel · train · escapement · keyless · date &amp; setting works · lume · printed dial · engraved caseback<br/>
+    drag to orbit · scroll to zoom · hover to identify · REVEAL + SPEED to watch the train run
+  </div>
+  <div id="clock">--:--:--</div>
+</div>
+
+<div id="part">
+  <div id="partName"></div>
+  <div id="partDesc"></div>
+</div>
+
+<div id="panel">
+  <label for="explode">EXPLODE</label>
+  <input id="explode" type="range" min="0" max="1" step="0.001" value="0" />
+  <button id="toggleExplode" class="btn">Expand</button>
+  <span class="sep"></span>
+  <label for="reveal">REVEAL GEARS</label>
+  <input id="reveal" type="range" min="0" max="1" step="0.001" value="0" />
+  <label for="speed">SPEED</label>
+  <input id="speed" type="range" min="0" max="1" step="0.001" value="0" />
+  <span id="speedVal">1×</span>
+  <span class="sep"></span>
+  <button id="toggleSpin" class="btn">Auto-rotate</button>
+  <button id="resetView" class="btn">Reset view</button>
+</div>
+
+<canvas id="c"></canvas>
+
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+  }
+}
+</script>
+
+<script type="module">
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
+
+// ============================================================================
+//  Scene / renderer  (world units = millimetres; a 40 mm wristwatch)
+// ============================================================================
+const canvas = document.getElementById('c');
+const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+renderer.setSize(innerWidth, innerHeight);
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure = 1.05;
+renderer.outputColorSpace = THREE.SRGBColorSpace;
+
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x05060a);
+
+const camera = new THREE.PerspectiveCamera(38, innerWidth / innerHeight, 0.1, 4000);
+const HOME_CAM = new THREE.Vector3(0, -14, 78);
+camera.position.copy(HOME_CAM);
+
+const controls = new OrbitControls(camera, renderer.domElement);
+controls.enableDamping = true;
+controls.dampingFactor = 0.08;
+controls.minDistance = 30;
+controls.maxDistance = 240;
+controls.target.set(0, 0, 0);
+
+// Environment for crisp metal reflections
+const pmrem = new THREE.PMREMGenerator(renderer);
+scene.environment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
+
+// Key + rim lighting
+scene.add(new THREE.AmbientLight(0xffffff, 0.25));
+const key = new THREE.DirectionalLight(0xffffff, 2.4); key.position.set(20, 35, 50); scene.add(key);
+const rim = new THREE.DirectionalLight(0x9fc4ff, 1.1); rim.position.set(-30, -10, -40); scene.add(rim);
+const fill = new THREE.DirectionalLight(0xffe6c0, 0.7); fill.position.set(-25, 20, 30); scene.add(fill);
+
+// ============================================================================
+//  Materials
+// ============================================================================
+const MAT = {
+  gold:   new THREE.MeshStandardMaterial({ color: 0xb98e4e, metalness: 1.0, roughness: 0.32 }),
+  brass:  new THREE.MeshStandardMaterial({ color: 0xc8a45e, metalness: 1.0, roughness: 0.38 }),
+  steel:  new THREE.MeshStandardMaterial({ color: 0xdde2e8, metalness: 1.0, roughness: 0.16 }),
+  steelDark: new THREE.MeshStandardMaterial({ color: 0x9aa3ad, metalness: 1.0, roughness: 0.3 }),
+  blued:  new THREE.MeshStandardMaterial({ color: 0x244c9e, metalness: 0.95, roughness: 0.22 }),
+  nickel: new THREE.MeshStandardMaterial({ color: 0xc6cad0, metalness: 1.0, roughness: 0.42 }),
+  plate:  new THREE.MeshStandardMaterial({ color: 0xbfc4cb, metalness: 1.0, roughness: 0.5 }),
+  ruby:   new THREE.MeshPhysicalMaterial({ color: 0xd11440, metalness: 0.0, roughness: 0.12,
+            transmission: 0.45, thickness: 0.6, ior: 1.76, emissive: 0x3a0010, emissiveIntensity: 0.4 }),
+  dial:   new THREE.MeshStandardMaterial({ color: 0x0a1326, metalness: 0.55, roughness: 0.42 }),
+  dialRing: new THREE.MeshStandardMaterial({ color: 0x121f3a, metalness: 0.6, roughness: 0.5 }),
+  caseGold: new THREE.MeshStandardMaterial({ color: 0xcBa063, metalness: 1.0, roughness: 0.2 }),
+  sapphire: new THREE.MeshPhysicalMaterial({ color: 0xffffff, metalness: 0, roughness: 0.02,
+            transmission: 1.0, thickness: 1.2, ior: 1.77, transparent: true, opacity: 1.0,
+            clearcoat: 1.0, clearcoatRoughness: 0.02 }),
+  lume:   new THREE.MeshStandardMaterial({ color: 0xeaf6e0, emissive: 0x9fd98c, emissiveIntensity: 0.6, roughness: 0.5, metalness: 0 }),
+};
+
+// ----------------------------------------------------------------------------
+//  Procedural movement finishing (perlage, Côtes de Genève, sunburst dial)
+// ----------------------------------------------------------------------------
+function makeCanvas(s) { const c = document.createElement('canvas'); c.width = c.height = s; return c; }
+
+function perlageTexture() {                       // overlapping spotting on the main plate
+  const s = 512, c = makeCanvas(s), x = c.getContext('2d');
+  x.fillStyle = '#8a8a8a'; x.fillRect(0, 0, s, s);
+  const step = 26, r = 19;
+  for (let row = 0, yy = 0; yy < s + step; yy += step * 0.62, row++) {
+    for (let xx = (row % 2 ? step / 2 : 0); xx < s + step; xx += step) {
+      const g = x.createRadialGradient(xx - 5, yy - 5, 1, xx, yy, r);
+      g.addColorStop(0, '#c4c4c4'); g.addColorStop(0.65, '#7a7a7a'); g.addColorStop(1, '#9c9c9c');
+      x.fillStyle = g; x.beginPath(); x.arc(xx, yy, r, 0, 7); x.fill();
+    }
+  }
+  const t = new THREE.CanvasTexture(c); t.wrapS = t.wrapT = THREE.RepeatWrapping; t.repeat.set(2.5, 2.5);
+  t.anisotropy = 4; return t;
+}
+function genevaTexture() {                        // Côtes de Genève striping on bridges
+  const s = 512, c = makeCanvas(s), x = c.getContext('2d');
+  for (let i = 0; i < s; i += 14) {
+    const v = (Math.floor(i / 14) % 2) ? 150 : 205;
+    const g = x.createLinearGradient(0, i, 0, i + 14);
+    g.addColorStop(0, `rgb(${v},${v},${v + 4})`); g.addColorStop(0.5, `rgb(${v + 30},${v + 30},${v + 34})`);
+    g.addColorStop(1, `rgb(${v},${v},${v + 4})`);
+    x.fillStyle = g; x.fillRect(0, i, s, 14);
+  }
+  const t = new THREE.CanvasTexture(c); t.wrapS = t.wrapT = THREE.RepeatWrapping; t.repeat.set(1.4, 1.4);
+  t.anisotropy = 4; return t;
+}
+function sunburstTexture() {                      // radial brushed dial
+  const s = 512, c = makeCanvas(s), x = c.getContext('2d'), cx = s / 2, cy = s / 2;
+  x.fillStyle = '#3a3a3a'; x.fillRect(0, 0, s, s);
+  for (let i = 0; i < 1440; i++) {
+    const a = i / 1440 * Math.PI * 2;
+    x.strokeStyle = (i % 2) ? '#5c5c5c' : '#303030'; x.lineWidth = 1;
+    x.beginPath(); x.moveTo(cx, cy); x.lineTo(cx + Math.cos(a) * s, cy + Math.sin(a) * s); x.stroke();
+  }
+  return new THREE.CanvasTexture(c);
+}
+
+MAT.plate.roughnessMap = perlageTexture();   MAT.plate.roughness = 0.6;
+MAT.nickel.roughnessMap = genevaTexture();   MAT.nickel.roughness = 0.5;
+MAT.dial.roughnessMap = sunburstTexture();   MAT.dial.roughness = 0.5;
+
+// ============================================================================
+//  Gear / pinion geometry helpers
+// ============================================================================
+function gearShape(teeth, module, bore, opts = {}) {
+  const rp = module * teeth / 2;
+  const ra = rp + module * (opts.addendum ?? 0.95);
+  const rd = rp - module * (opts.dedendum ?? 1.25);
+  const shape = new THREE.Shape();
+  const ta = (Math.PI * 2) / teeth;
+  const topH = ta * (opts.topFrac ?? 0.17);
+  const botH = ta * (opts.botFrac ?? 0.32);
+  for (let i = 0; i < teeth; i++) {
+    const c = i * ta;
+    const pts = [
+      [rd, c - ta / 2], [rd, c - botH], [ra, c - topH],
+      [ra, c + topH],   [rd, c + botH],
+    ];
+    pts.forEach(([r, a], idx) => {
+      const x = Math.cos(a) * r, y = Math.sin(a) * r;
+      if (i === 0 && idx === 0) shape.moveTo(x, y); else shape.lineTo(x, y);
+    });
+  }
+  shape.closePath();
+  if (bore > 0) { const h = new THREE.Path(); h.absarc(0, 0, bore, 0, Math.PI * 2, true); shape.holes.push(h); }
+  // Lightening crossings (spoke holes) for larger wheels
+  if (opts.crossings) {
+    const n = opts.crossings, hr = rp * (opts.crossR ?? 0.58), holeR = rp * (opts.crossSize ?? 0.17);
+    for (let i = 0; i < n; i++) {
+      const a = (i / n) * Math.PI * 2 + Math.PI / n;
+      const h = new THREE.Path(); h.absarc(Math.cos(a) * hr, Math.sin(a) * hr, holeR, 0, Math.PI * 2, true);
+      shape.holes.push(h);
+    }
+  }
+  return shape;
+}
+
+function makeGear(teeth, module, thickness, bore, material, opts = {}) {
+  const geo = new THREE.ExtrudeGeometry(gearShape(teeth, module, bore, opts), {
+    depth: thickness, bevelEnabled: true,
+    bevelThickness: module * 0.16, bevelSize: module * 0.13, bevelSegments: 1,
+    steps: 1, curveSegments: 6,
+  });
+  geo.translate(0, 0, -thickness / 2);
+  // ExtrudeGeometry already lies in the XY plane and extrudes along +Z,
+  // so the gear's spin axis is Z — exactly the movement's axis. No rotation needed.
+  return new THREE.Mesh(geo, material);
+}
+
+// A wheel + pinion mounted on one arbor (concentric, co-planar in the movement)
+function makeWheelset(cfg) {
+  const g = new THREE.Group();
+  if (cfg.wheelTeeth) {
+    const w = makeGear(cfg.wheelTeeth, cfg.module, cfg.wheelThk ?? 0.45, cfg.bore ?? cfg.module * 1.6,
+      cfg.wheelMat ?? MAT.gold, { crossings: cfg.crossings ?? (cfg.wheelTeeth >= 40 ? 5 : 0) });
+    g.add(w);
+  }
+  if (cfg.pinionTeeth) {
+    const p = makeGear(cfg.pinionTeeth, cfg.module, cfg.pinionThk ?? 1.5, cfg.module * 0.5,
+      MAT.steel, { addendum: 1.1, dedendum: 1.3, topFrac: 0.22, botFrac: 0.34 });
+    p.position.z = -1.0; // pinion sits below the wheel, through the plate
+    g.add(p);
+  }
+  // arbor (staff) — runs along the movement axis (Z)
+  const staff = new THREE.Mesh(
+    new THREE.CylinderGeometry(cfg.module * 0.45, cfg.module * 0.45, 4.4, 14), MAT.steel);
+  staff.rotation.x = Math.PI / 2;
+  g.add(staff);
+  return g;
+}
+
+// ============================================================================
+//  Component registry (for explode + hover labels)
+// ============================================================================
+const components = [];        // { group, spinner, name, desc, home:Vector3, boom:Vector3 }
+function addComponent(name, desc, home, boom) {
+  const group = new THREE.Group();
+  group.position.copy(home);
+  const spinner = new THREE.Group();
+  group.add(spinner);
+  scene.add(group);
+  const c = { group, spinner, name, desc, home: home.clone(), boom: boom.clone() };
+  components.push(c);
+  return c;
+}
+function tagMeshes(obj, name, desc) {
+  obj.traverse(o => { if (o.isMesh) { o.userData.partName = name; o.userData.partDesc = desc; } });
+}
+
+// Movement axis is Z (front = +Z, dial side). Gears live in the XY plane.
+const Z = {
+  caseback: -7.2, mainplate: -4.8, train: -4.0, escape: -4.0, pallet: -3.7,
+  bridge: -3.0, balance: -2.7, motion: 3.0, dial: 3.8, marker: 4.15,
+  hourHand: 4.7, minHand: 5.0, secHand: 4.5, crystal: 6.4,
+};
+
+// ----------------------------------------------------------------------------
+//  Gear train layout (positions in mm, derived so wheel pitch radii mesh)
+// ----------------------------------------------------------------------------
+const M = 0.14; // gear module (mm)
+const TRAIN = {
+  barrel: { pos: [-4.86, 5.79], wheelTeeth: 96, module: M, wheelThk: 1.6, crossings: 0,
+            rps: -1 / 28800, name: 'Mainspring barrel',
+            desc: 'Houses the coiled mainspring; ~8 h reserve. Turns once every 8 hours.' },
+  center: { pos: [0, 0], wheelTeeth: 64, pinionTeeth: 12, module: M,
+            rps: -1 / 3600, name: 'Centre wheel',
+            desc: 'Turns once per hour; carries the cannon pinion driving the minute hand.' },
+  third:  { pos: [3.24, -3.86], wheelTeeth: 60, pinionTeeth: 8, module: M,
+            rps: +1 / 450, name: 'Third wheel',
+            desc: 'Intermediate wheel of the going train.' },
+  fourth: { pos: [0.86, -7.98], wheelTeeth: 80, pinionTeeth: 8, module: M,
+            rps: -1 / 60, name: 'Fourth wheel',
+            desc: 'Turns once per minute; carries the small-seconds hand at 6 o’clock.' },
+  escape: { pos: [3.84, -2.83], wheelTeeth: 15, pinionTeeth: 5, module: M, wheelThk: 0.4,
+            rps: +4 / 15, name: 'Escape wheel',
+            desc: 'Club-tooth wheel; locked and released by the pallet fork 8 times per second.' },
+};
+
+const trainParts = {};
+for (const [key, cfg] of Object.entries(TRAIN)) {
+  const home = new THREE.Vector3(cfg.pos[0], cfg.pos[1], Z.train);
+  // fan outward + stagger along Z when exploded
+  const dir = new THREE.Vector3(cfg.pos[0], cfg.pos[1], 0);
+  if (dir.lengthSq() < 1e-4) dir.set(0, 0.001, 0);
+  const boom = new THREE.Vector3(cfg.pos[0] * 1.7, cfg.pos[1] * 1.7, Z.train - 16);
+  const comp = addComponent(cfg.name, cfg.desc, home, boom);
+  const set = makeWheelset(cfg);
+  tagMeshes(set, cfg.name, cfg.desc);
+  comp.spinner.add(set);
+  comp.rps = cfg.rps;
+  comp.timeDriven = cfg.timeDriven;
+  trainParts[key] = comp;
+}
+
+// ----------------------------------------------------------------------------
+//  Barrel internals: drum wall, lid, arbor and the coiled mainspring
+// ----------------------------------------------------------------------------
+{
+  const bp = TRAIN.barrel.pos, R = 6.9;
+  // drum wall (the toothed gear is the barrel; add the side wall + lid below it)
+  const wall = new THREE.Mesh(new THREE.CylinderGeometry(R, R, 2.6, 64, 1, true), MAT.brass);
+  wall.rotation.x = Math.PI / 2; wall.position.z = -1.3;
+  const lid = new THREE.Mesh(new THREE.CylinderGeometry(R - 0.1, R - 0.1, 0.25, 64), MAT.brass);
+  lid.rotation.x = Math.PI / 2; lid.position.z = -2.5;
+  const arbor = new THREE.Mesh(new THREE.CylinderGeometry(0.9, 0.9, 4.0, 20), MAT.steel);
+  arbor.rotation.x = Math.PI / 2; arbor.position.z = -1.0;
+  // mainspring — flat coil between arbor and drum wall
+  const sp = [];
+  for (let i = 0; i <= 520; i++) {
+    const t = i / 520, ang = t * 11 * Math.PI * 2;
+    const rr = 1.1 + t * (R - 1.8) + Math.sin(ang) * 0.12;
+    sp.push(new THREE.Vector3(Math.cos(ang) * rr, Math.sin(ang) * rr, -1.3));
+  }
+  const spring = new THREE.Mesh(
+    new THREE.TubeGeometry(new THREE.CatmullRomCurve3(sp), 520, 0.11, 4, false), MAT.blued);
+  const grp = new THREE.Group(); grp.add(wall, lid, arbor, spring);
+  tagMeshes(grp, 'Mainspring & barrel drum',
+    'A long coiled spring inside the barrel drum stores the energy that powers the watch.');
+  // give the mainspring its own hover tag distinct from the drum
+  spring.userData.partName = 'Mainspring';
+  spring.userData.partDesc = 'Coiled flat spring; unwinds to drive the entire gear train (~8 h reserve).';
+  trainParts.barrel.spinner.add(grp);
+}
+
+// ----------------------------------------------------------------------------
+//  Winding works (movement side): ratchet wheel, crown wheel, click + spring
+// ----------------------------------------------------------------------------
+const Z_WIND = Z.bridge + 0.9;
+const ratchetComp = addComponent('Ratchet wheel',
+  'Sits atop the barrel arbor; the crown winds it and the click stops it running back.',
+  new THREE.Vector3(TRAIN.barrel.pos[0], TRAIN.barrel.pos[1], Z_WIND),
+  new THREE.Vector3(TRAIN.barrel.pos[0] * 1.5, TRAIN.barrel.pos[1] * 1.5 + 4, Z_WIND + 18));
+{
+  const rw = makeGear(36, 0.2, 0.55, 0.7, MAT.blued, { addendum: 0.7, dedendum: 0.9, topFrac: 0.1, botFrac: 0.4 });
+  rw.add(screw(0, 0, 0.4, 0.55));
+  tagMeshes(rw, ratchetComp.name, ratchetComp.desc);
+  ratchetComp.spinner.add(rw); ratchetComp.rps = -1 / 28800;
+}
+const crownWheelPos = [TRAIN.barrel.pos[0] + 5.4, TRAIN.barrel.pos[1] - 4.2];
+const crownWheelComp = addComponent('Crown wheel',
+  'Transfers winding torque from the crown stem to the ratchet wheel.',
+  new THREE.Vector3(crownWheelPos[0], crownWheelPos[1], Z_WIND),
+  new THREE.Vector3(crownWheelPos[0] + 6, crownWheelPos[1] - 4, Z_WIND + 15));
+{
+  const cw = makeGear(24, 0.2, 0.55, 0.6, MAT.steel, { addendum: 0.8, dedendum: 1.0 });
+  cw.add(screw(0, 0, 0.4, 0.5));
+  tagMeshes(cw, crownWheelComp.name, crownWheelComp.desc);
+  crownWheelComp.spinner.add(cw); crownWheelComp.rps = 1 / 9600;
+}
+{
+  const comp = addComponent('Click & click spring',
+    'A spring-loaded pawl that lets the ratchet wheel turn one way only, holding the wound spring.',
+    new THREE.Vector3(TRAIN.barrel.pos[0] + 4.0, TRAIN.barrel.pos[1] + 1.8, Z_WIND),
+    new THREE.Vector3(TRAIN.barrel.pos[0] + 9, TRAIN.barrel.pos[1] + 6, Z_WIND + 13));
+  const click = new THREE.Mesh(new THREE.BoxGeometry(2.6, 0.7, 0.5), MAT.steel);
+  click.rotation.z = -0.6; click.position.set(-1.0, -0.6, 0);
+  const tip = new THREE.Mesh(new THREE.BoxGeometry(0.7, 0.7, 0.5), MAT.steel);
+  tip.position.set(-2.0, -1.5, 0);
+  // click spring (thin curved blade)
+  const csp = [];
+  for (let i = 0; i <= 40; i++) { const t = i / 40; csp.push(new THREE.Vector3(0.4 + t * 2.2, 0.4 + Math.sin(t * 2.4) * 0.9, 0)); }
+  const cspring = new THREE.Mesh(new THREE.TubeGeometry(new THREE.CatmullRomCurve3(csp), 40, 0.12, 4, false), MAT.blued);
+  const g = new THREE.Group(); g.add(click, tip, cspring, screw(0, 0, 0.3, 0.45));
+  tagMeshes(g, comp.name, comp.desc);
+  comp.spinner.add(g);
+}
+
+// ============================================================================
+//  Mainplate + bridges + jewels
+// ============================================================================
+const MOVE_R = 14.5;
+
+// Mainplate
+{
+  const home = new THREE.Vector3(0, 0, Z.mainplate);
+  const comp = addComponent('Main plate', 'The base plate; every wheel and bridge is anchored to it.',
+    home, new THREE.Vector3(0, 0, Z.mainplate - 22));
+  const geo = new THREE.CylinderGeometry(MOVE_R, MOVE_R, 1.4, 96);
+  const plate = new THREE.Mesh(geo, MAT.plate);
+  plate.rotation.x = Math.PI / 2;
+  // a few drilled holes for character
+  tagMeshes(plate, 'Main plate', 'The base plate; every wheel and bridge is anchored to it.');
+  comp.spinner.add(plate);
+}
+
+// Jewel helper (ruby bearing) — placed at each pivot
+function jewel(x, y, z, r = 0.55) {
+  const j = new THREE.Mesh(new THREE.CylinderGeometry(r, r, 0.5, 16), MAT.ruby);
+  j.rotation.x = Math.PI / 2; j.position.set(x, y, z);
+  return j;
+}
+function screw(x, y, z, r = 0.7) {
+  const g = new THREE.Group();
+  const head = new THREE.Mesh(new THREE.CylinderGeometry(r, r, 0.45, 18), MAT.blued);
+  head.rotation.x = Math.PI / 2; g.add(head);
+  const slot = new THREE.Mesh(new THREE.BoxGeometry(r * 2, 0.12, 0.5), MAT.steelDark);
+  slot.position.z = 0.18; g.add(slot);
+  g.position.set(x, y, z);
+  return g;
+}
+// Cap-jewel in a gold chaton, held by three screws (a hallmark of fine movements)
+function chaton(x, y, z, jr = 0.42) {
+  const g = new THREE.Group();
+  const ring = new THREE.Mesh(new THREE.TorusGeometry(jr + 0.26, 0.15, 10, 22), MAT.gold);
+  const rj = new THREE.Mesh(new THREE.CylinderGeometry(jr, jr, 0.4, 16), MAT.ruby);
+  rj.rotation.x = Math.PI / 2; g.add(ring, rj);
+  for (let i = 0; i < 3; i++) {
+    const a = i / 3 * Math.PI * 2 + 0.5;
+    g.add(screw(Math.cos(a) * (jr + 0.55), Math.sin(a) * (jr + 0.55), 0, 0.22));
+  }
+  g.position.set(x, y, z);
+  return g;
+}
+// Flat text decal (engraving) drawn on a transparent plane
+function textDecal(lines, w, h, round = false) {
+  const cw = 512, ch = round ? 512 : Math.max(64, Math.round(cw * h / w));
+  const c = makeCanvas(cw); c.height = ch;
+  const x = c.getContext('2d');
+  x.clearRect(0, 0, cw, ch);
+  x.fillStyle = 'rgba(20,24,30,0.92)'; x.textAlign = 'center'; x.textBaseline = 'middle';
+  const fs = Math.round(ch / (lines.length * 1.55));
+  x.font = `bold ${fs}px ui-monospace, Menlo, monospace`;
+  lines.forEach((ln, i) => x.fillText(ln, cw / 2, ch * (i + 0.5) / lines.length));
+  const t = new THREE.CanvasTexture(c); t.anisotropy = 4;
+  const geo = round ? new THREE.CircleGeometry(w / 2, 96) : new THREE.PlaneGeometry(w, h);
+  return new THREE.Mesh(geo,
+    new THREE.MeshBasicMaterial({ map: t, transparent: true, depthWrite: false, side: THREE.DoubleSide }));
+}
+// Set planar (XY) UVs on a geometry so a centred texture maps cleanly
+function planarUV(geo, halfSize) {
+  const pos = geo.attributes.position, uv = geo.attributes.uv;
+  for (let i = 0; i < pos.count; i++) uv.setXY(i, pos.getX(i) / (2 * halfSize) + 0.5, pos.getY(i) / (2 * halfSize) + 0.5);
+  uv.needsUpdate = true;
+}
+// Printed date-disc texture: numbers 1–31 around the rim, upright at the 3 o'clock window
+function dateTexture(discR, windowR) {
+  const size = 1024, c = makeCanvas(size), x = c.getContext('2d'), cx = size / 2, cy = size / 2;
+  x.fillStyle = '#efe9dc'; x.beginPath(); x.arc(cx, cy, cx, 0, 7); x.fill();
+  x.fillStyle = '#16181d'; x.textAlign = 'center'; x.textBaseline = 'middle'; x.font = 'bold 74px Arial';
+  const step = Math.PI * 2 / 31, Rt = size * windowR / (2 * discR);
+  for (let n = 1; n <= 31; n++) {
+    const beta = -(n - 1) * step;
+    const px = cx + Math.cos(beta) * Rt, py = cy - Math.sin(beta) * Rt;
+    x.save(); x.translate(px, py); x.rotate((n - 1) * step); x.fillText(String(n), 0, 0); x.restore();
+  }
+  const t = new THREE.CanvasTexture(c); t.anisotropy = 4; return t;
+}
+// A cylinder spanning two points (for spring bars, links, etc.)
+function rod(a, b, r, mat) {
+  const d = new THREE.Vector3().subVectors(b, a), len = d.length();
+  const m = new THREE.Mesh(new THREE.CylinderGeometry(r, r, len, 12), mat);
+  m.position.copy(a).addScaledVector(d, 0.5);
+  m.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), d.clone().normalize());
+  return m;
+}
+// Printed dial: minute/seconds track, brand and foot text on a transparent overlay
+function dialPrintTexture() {
+  const S = 1024, c = makeCanvas(S), x = c.getContext('2d'), cs = S / 2, k = S / (2 * DIAL_R);
+  const at = (wx, wy) => [cs + wx * k, cs - wy * k];
+  x.clearRect(0, 0, S, S); x.strokeStyle = '#dfe7fb';
+  for (let i = 0; i < 60; i++) {
+    const a = i / 60 * Math.PI * 2, sx = Math.sin(a), sy = Math.cos(a);
+    const r1 = DIAL_R - 1.0, r2 = (i % 5 === 0) ? DIAL_R - 1.9 : DIAL_R - 1.45;
+    const p1 = at(sx * r1, sy * r1), p2 = at(sx * r2, sy * r2);
+    x.lineWidth = (i % 5 === 0) ? 4 : 2;
+    x.beginPath(); x.moveTo(p1[0], p1[1]); x.lineTo(p2[0], p2[1]); x.stroke();
+  }
+  x.fillStyle = '#e7ecfb'; x.textAlign = 'center'; x.textBaseline = 'middle';
+  x.font = 'bold 58px Georgia, serif'; let p = at(0, 6.0); x.fillText('AVRELIA', p[0], p[1]);
+  x.font = '600 26px Georgia, serif'; p = at(0, 4.2); x.fillText('GENÈVE', p[0], p[1]);
+  x.font = '600 22px Arial'; p = at(0, -3.2); x.fillText('21 JEWELS', p[0], p[1]);
+  x.font = '600 24px Arial'; p = at(0, -13.4); x.fillText('SWISS  MADE', p[0], p[1]);
+  const t = new THREE.CanvasTexture(c); t.anisotropy = 4; return t;
+}
+
+// Rounded bridge plate built from overlapping discs
+function makeBridge(discs, mat) {
+  const g = new THREE.Group();
+  for (const [x, y, r] of discs) {
+    const d = new THREE.Mesh(new THREE.CylinderGeometry(r, r, 0.9, 40), mat);
+    d.rotation.x = Math.PI / 2; d.position.set(x, y, 0);
+    g.add(d);
+  }
+  return g;
+}
+
+// Barrel bridge (covers barrel + center)
+{
+  const comp = addComponent('Barrel bridge', 'Holds the upper pivots of the barrel and centre wheel.',
+    new THREE.Vector3(0, 0, Z.bridge), new THREE.Vector3(-9, 9, Z.bridge + 16));
+  const br = makeBridge([[-4.86, 5.79, 5.2], [0, 0, 3.0], [-2.4, 2.9, 3.0]], MAT.nickel);
+  br.add(jewel(-4.86, 5.79, 0.55));
+  br.add(chaton(0, 0, 0.5, 0.45));
+  br.add(screw(-9.2, 7.2, 0.55), screw(2.2, 2.4, 0.55));
+  const eng = textDecal(['SWISS MADE'], 3.6, 1.0); eng.position.set(-2.6, 3.0, 0.47); br.add(eng);
+  tagMeshes(br, 'Barrel bridge', 'Holds the upper pivots of the barrel and centre wheel.');
+  comp.spinner.add(br);
+}
+// Train bridge (covers third + fourth + escape)
+{
+  const comp = addComponent('Train bridge', 'Holds the upper pivots of the third, fourth and escape wheels.',
+    new THREE.Vector3(0, 0, Z.bridge), new THREE.Vector3(8, -10, Z.bridge + 16));
+  const br = makeBridge([[3.24, -3.86, 2.7], [0.86, -7.98, 2.6], [3.84, -2.83, 2.2], [2.5, -5.4, 2.6]], MAT.nickel);
+  br.add(jewel(3.24, -3.86, 0.55));
+  br.add(chaton(0.86, -7.98, 0.5, 0.45), chaton(3.84, -2.83, 0.5, 0.38));
+  br.add(screw(5.4, -8.4, 0.5), screw(5.2, -1.4, 0.5));
+  const eng = textDecal(['21 JEWELS'], 3.0, 0.9); eng.position.set(2.5, -5.4, 0.47); br.add(eng);
+  tagMeshes(br, 'Train bridge', 'Holds the upper pivots of the third, fourth and escape wheels.');
+  comp.spinner.add(br);
+}
+
+// ============================================================================
+//  Escapement: pallet fork + balance wheel + hairspring
+// ============================================================================
+const PALLET_POS = new THREE.Vector3(3.7, 0.6, Z.pallet);
+const palletComp = addComponent('Pallet fork (lever)',
+  'Blued-steel lever with two ruby pallet jewels; locks & releases the escape wheel, ticking 8×/s.',
+  PALLET_POS, new THREE.Vector3(10, 2, Z.pallet + 14));
+{
+  const fork = new THREE.Group();
+  // staff
+  fork.add(new THREE.Mesh(new THREE.CylinderGeometry(0.25, 0.25, 3.6, 12).rotateX(Math.PI / 2), MAT.steel));
+  // two arms
+  const armGeo = new THREE.BoxGeometry(2.4, 0.5, 0.45);
+  const armA = new THREE.Mesh(armGeo, MAT.blued); armA.position.set(1.0, 0.7, 0); armA.rotation.z = 0.5; fork.add(armA);
+  const armB = new THREE.Mesh(armGeo, MAT.blued); armB.position.set(1.0, -0.7, 0); armB.rotation.z = -0.5; fork.add(armB);
+  // fork end (toward balance)
+  const tail = new THREE.Mesh(new THREE.BoxGeometry(2.0, 0.5, 0.45), MAT.blued);
+  tail.position.set(-1.4, 0, 0); fork.add(tail);
+  const horn1 = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.9, 0.45), MAT.blued); horn1.position.set(-2.3, 0.35, 0); fork.add(horn1);
+  const horn2 = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.9, 0.45), MAT.blued); horn2.position.set(-2.3, -0.35, 0); fork.add(horn2);
+  // pallet jewels
+  const pj1 = new THREE.Mesh(new THREE.BoxGeometry(0.55, 0.4, 0.5), MAT.ruby); pj1.position.set(1.9, 1.05, 0); pj1.rotation.z = 0.5; fork.add(pj1);
+  const pj2 = new THREE.Mesh(new THREE.BoxGeometry(0.55, 0.4, 0.5), MAT.ruby); pj2.position.set(1.9, -1.05, 0); pj2.rotation.z = -0.5; fork.add(pj2);
+  tagMeshes(fork, palletComp.name, palletComp.desc);
+  palletComp.spinner.add(fork);
+}
+
+const BAL_POS = new THREE.Vector3(3.5, 3.4, Z.balance);
+const balanceComp = addComponent('Balance wheel & hairspring',
+  'The oscillating heart of the watch — swings back and forth 8×/s (4 Hz) to regulate timekeeping.',
+  BAL_POS, new THREE.Vector3(11, 11, Z.balance + 10));
+{
+  const bal = new THREE.Group();
+  const R = 4.6;
+  // rim
+  const rimGeo = new THREE.TorusGeometry(R, 0.42, 14, 64);
+  const rimM = new THREE.Mesh(rimGeo, MAT.gold); bal.add(rimM);
+  // crossbar / spokes (2-arm)
+  const spoke = new THREE.Mesh(new THREE.BoxGeometry(R * 2, 0.5, 0.5), MAT.gold); bal.add(spoke);
+  const spoke2 = spoke.clone(); spoke2.rotation.z = Math.PI / 2; bal.add(spoke2);
+  // hub
+  bal.add(new THREE.Mesh(new THREE.CylinderGeometry(0.6, 0.6, 1.2, 16).rotateX(Math.PI / 2), MAT.steel));
+  // timing screws around rim
+  for (let i = 0; i < 8; i++) {
+    const a = (i / 8) * Math.PI * 2;
+    const s = new THREE.Mesh(new THREE.CylinderGeometry(0.32, 0.32, 0.7, 10), MAT.steel);
+    s.rotation.z = Math.PI / 2; s.position.set(Math.cos(a) * R, Math.sin(a) * R, 0);
+    bal.add(s);
+  }
+  // hairspring — flat spiral (blued steel) sitting just above the wheel
+  const turns = 5, pts = [];
+  for (let i = 0; i <= 260; i++) {
+    const t = i / 260, ang = t * turns * Math.PI * 2;
+    const rr = 0.7 + t * (R - 1.3);
+    pts.push(new THREE.Vector3(Math.cos(ang) * rr, Math.sin(ang) * rr, 1.1));
+  }
+  const spiral = new THREE.Mesh(
+    new THREE.TubeGeometry(new THREE.CatmullRomCurve3(pts), 260, 0.07, 6, false), MAT.blued);
+  bal.add(spiral);
+  // roller table + impulse (roller) jewel on the balance staff
+  const roller = new THREE.Mesh(new THREE.CylinderGeometry(1.1, 1.1, 0.4, 24), MAT.steel);
+  roller.rotation.x = Math.PI / 2; roller.position.z = -1.1; bal.add(roller);
+  const impulse = new THREE.Mesh(new THREE.CylinderGeometry(0.18, 0.18, 0.9, 10), MAT.ruby);
+  impulse.rotation.x = Math.PI / 2; impulse.position.set(0, -1.0, -1.1); bal.add(impulse);
+  tagMeshes(bal, balanceComp.name, balanceComp.desc);
+  roller.userData.partName = 'Roller table & impulse jewel';
+  roller.userData.partDesc = 'Disc on the balance staff; its ruby impulse pin engages the pallet fork to keep the balance swinging.';
+  impulse.userData.partName = roller.userData.partName; impulse.userData.partDesc = roller.userData.partDesc;
+  balanceComp.spinner.add(bal);
+}
+
+// Balance cock — bridge over the balance carrying the upper jewel, regulator & stud
+{
+  const comp = addComponent('Balance cock',
+    'Cantilevered bridge over the balance; carries the upper shock-jewel, the regulator index and the hairspring stud.',
+    new THREE.Vector3(BAL_POS.x, BAL_POS.y, BAL_POS.z + 1.1),
+    new THREE.Vector3(BAL_POS.x * 1.5, BAL_POS.y * 1.5 + 3, BAL_POS.z + 16));
+  const cock = new THREE.Group();
+  // foot (anchored toward plate edge) + neck + round boss over the balance centre
+  const foot = new THREE.Mesh(new THREE.CylinderGeometry(1.5, 1.5, 0.9, 28), MAT.nickel);
+  foot.rotation.x = Math.PI / 2; foot.position.set(4.4, 3.0, 0);
+  const neck = new THREE.Mesh(new THREE.BoxGeometry(4.6, 2.0, 0.9), MAT.nickel);
+  neck.position.set(2.2, 1.5, 0); neck.rotation.z = 0.6;
+  const boss = new THREE.Mesh(new THREE.CylinderGeometry(1.7, 1.7, 0.9, 28), MAT.nickel);
+  boss.rotation.x = Math.PI / 2;
+  cock.add(foot, neck, boss);
+  cock.add(screw(4.4, 3.0, 0.5, 0.5));
+  // Incabloc-style cap jewel (chaton) on the boss
+  const chaton = new THREE.Mesh(new THREE.TorusGeometry(0.7, 0.18, 10, 24), MAT.gold);
+  chaton.position.z = 0.55; cock.add(chaton);
+  cock.add(jewel(0, 0, 0.6, 0.45));
+  // lyre-shaped shock spring
+  const lyre = [];
+  for (let i = 0; i <= 30; i++) { const a = -1.2 + (i / 30) * 2.4; lyre.push(new THREE.Vector3(Math.sin(a) * 1.05, Math.cos(a) * 1.05, 0.75)); }
+  cock.add(new THREE.Mesh(new THREE.TubeGeometry(new THREE.CatmullRomCurve3(lyre), 30, 0.07, 4, false), MAT.steel));
+  // regulator index arm + two curb pins
+  const idx = new THREE.Mesh(new THREE.TorusGeometry(2.2, 0.16, 8, 32, Math.PI * 0.7), MAT.steel);
+  idx.position.z = 0.4; idx.rotation.z = -0.4; cock.add(idx);
+  const pin1 = new THREE.Mesh(new THREE.CylinderGeometry(0.09, 0.09, 0.7, 8).rotateX(Math.PI / 2), MAT.steel);
+  pin1.position.set(2.0, 0.9, 0.55); cock.add(pin1);
+  const pin2 = pin1.clone(); pin2.position.set(2.2, 0.6, 0.55); cock.add(pin2);
+  // hairspring stud (holds the outer coil)
+  const stud = new THREE.Mesh(new THREE.CylinderGeometry(0.3, 0.3, 1.0, 12).rotateX(Math.PI / 2), MAT.blued);
+  stud.position.set(-2.6, 1.4, 0.4); cock.add(stud);
+  tagMeshes(cock, comp.name, comp.desc);
+  comp.spinner.add(cock);
+}
+
+// Pallet cock — small bridge over the pallet fork
+{
+  const comp = addComponent('Pallet cock',
+    'Small bridge holding the upper pivot of the pallet fork, with its own ruby jewel.',
+    new THREE.Vector3(PALLET_POS.x, PALLET_POS.y, PALLET_POS.z + 1.6),
+    new THREE.Vector3(PALLET_POS.x * 1.4 + 4, PALLET_POS.y - 4, PALLET_POS.z + 13));
+  const pc = new THREE.Group();
+  const arm = new THREE.Mesh(new THREE.BoxGeometry(3.2, 1.4, 0.8), MAT.nickel); arm.position.set(1.4, 0, 0);
+  const boss = new THREE.Mesh(new THREE.CylinderGeometry(1.0, 1.0, 0.8, 24), MAT.nickel); boss.rotation.x = Math.PI / 2;
+  pc.add(arm, boss, jewel(0, 0, 0.55, 0.4), screw(3.0, 0, 0.45, 0.45));
+  tagMeshes(pc, comp.name, comp.desc);
+  comp.spinner.add(pc);
+}
+
+// Banking pins (limit the pallet fork travel) + an escape-wheel chaton
+{
+  const comp = addComponent('Banking pins',
+    'Two fixed pins that limit how far the pallet fork can swing on each beat.',
+    new THREE.Vector3(PALLET_POS.x, PALLET_POS.y, Z.pallet),
+    new THREE.Vector3(PALLET_POS.x + 6, PALLET_POS.y - 6, Z.pallet + 11));
+  const g = new THREE.Group();
+  const p1 = new THREE.Mesh(new THREE.CylinderGeometry(0.16, 0.16, 1.2, 10).rotateX(Math.PI / 2), MAT.blued);
+  p1.position.set(-1.9, 1.2, 0.2);
+  const p2 = p1.clone(); p2.position.set(-1.9, -1.2, 0.2);
+  g.add(p1, p2);
+  tagMeshes(g, comp.name, comp.desc);
+  comp.spinner.add(g);
+}
+
+// ============================================================================
+//  Motion works (dial side): cannon pinion + hour wheel
+// ============================================================================
+const cannonComp = addComponent('Cannon pinion',
+  'Friction-fit on the centre wheel; carries the minute hand and drives the motion works.',
+  new THREE.Vector3(0, 0, Z.motion), new THREE.Vector3(-3, 3, Z.motion + 12));
+{
+  const g = makeGear(10, 0.13, 1.1, 0.4, MAT.steel, { addendum: 1.1, dedendum: 1.3 });
+  tagMeshes(g, cannonComp.name, cannonComp.desc);
+  cannonComp.spinner.add(g);
+  cannonComp.rps = -1 / 3600;
+}
+const hourWheelComp = addComponent('Hour wheel',
+  'Driven 12:1 from the cannon pinion through the minute wheel; carries the hour hand.',
+  new THREE.Vector3(0, 0, Z.motion + 0.9), new THREE.Vector3(3, -3, Z.motion + 16));
+{
+  const g = makeGear(48, 0.13, 0.5, 1.3, MAT.brass, { crossings: 4 });
+  tagMeshes(g, hourWheelComp.name, hourWheelComp.desc);
+  hourWheelComp.spinner.add(g);
+  hourWheelComp.rps = -1 / 43200;
+}
+// minute wheel (idler that reduces 12:1) placed off-centre for authenticity
+const minuteWheelComp = addComponent('Minute wheel',
+  'Idler wheel & pinion that reduces the cannon pinion 12:1 down to the hour wheel.',
+  new THREE.Vector3(5.2, 0, Z.motion + 0.4), new THREE.Vector3(12, 0, Z.motion + 13));
+{
+  const set = new THREE.Group();
+  set.add(makeGear(36, 0.13, 0.45, 0.5, MAT.brass, { crossings: 3 }));
+  set.add(makeGear(10, 0.13, 1.0, 0.35, MAT.steel));
+  tagMeshes(set, minuteWheelComp.name, minuteWheelComp.desc);
+  minuteWheelComp.spinner.add(set);
+  minuteWheelComp.rps = (1 / 3600) * (10 / 36);
+}
+
+// ============================================================================
+//  Keyless works (winding & hand-setting mechanism at 3 o'clock)
+// ============================================================================
+const KY = -3.0; // z-plane of the keyless works (between plate and dial)
+{
+  const comp = addComponent('Winding stem',
+    'Connects the crown to the movement; winds the mainspring when pushed in, sets the hands when pulled out.',
+    new THREE.Vector3(9.5, 0, KY), new THREE.Vector3(16, 0, KY + 10));
+  const stem = new THREE.Mesh(new THREE.CylinderGeometry(0.5, 0.5, 9, 14), MAT.steel);
+  stem.rotation.z = Math.PI / 2;
+  const square = new THREE.Mesh(new THREE.BoxGeometry(1.6, 0.9, 0.9), MAT.steel); square.position.x = 1.0;
+  const g = new THREE.Group(); g.add(stem, square);
+  tagMeshes(g, comp.name, comp.desc); comp.spinner.add(g);
+}
+{
+  const comp = addComponent('Winding pinion',
+    'Rides on the stem and meshes the crown wheel to wind the mainspring.',
+    new THREE.Vector3(11.0, 0, KY), new THREE.Vector3(16, 4, KY + 12));
+  const wp = makeGear(12, 0.16, 1.4, 0.55, MAT.steel, { addendum: 1.0, dedendum: 1.2 });
+  wp.rotation.y = Math.PI / 2;          // teeth face along the stem (bevel/contrate style)
+  tagMeshes(wp, comp.name, comp.desc); comp.spinner.add(wp);
+}
+{
+  const comp = addComponent('Sliding (clutch) pinion',
+    'Slides along the stem to switch between winding the spring and setting the hands.',
+    new THREE.Vector3(8.0, 0, KY), new THREE.Vector3(14, -4, KY + 12));
+  const cp = makeGear(12, 0.16, 1.6, 0.55, MAT.steel, { addendum: 1.0, dedendum: 1.2, topFrac: 0.22 });
+  cp.rotation.y = Math.PI / 2;
+  tagMeshes(cp, comp.name, comp.desc); comp.spinner.add(cp);
+}
+{
+  const comp = addComponent('Setting lever',
+    'Detects the crown position and shifts the clutch between winding and time-setting.',
+    new THREE.Vector3(8.0, -2.6, KY - 0.3), new THREE.Vector3(13, -8, KY + 9));
+  const lever = new THREE.Mesh(new THREE.BoxGeometry(3.4, 0.8, 0.6), MAT.steel); lever.rotation.z = 0.5;
+  const hook = new THREE.Mesh(new THREE.BoxGeometry(0.8, 1.6, 0.6), MAT.steel); hook.position.set(1.4, 0.9, 0);
+  const g = new THREE.Group(); g.add(lever, hook, screw(-1.4, -0.8, 0.35, 0.45));
+  tagMeshes(g, comp.name, comp.desc); comp.spinner.add(g);
+}
+{
+  const comp = addComponent('Yoke (setting lever spring)',
+    'Spring-loaded yoke that holds the clutch pinion in its winding or setting position.',
+    new THREE.Vector3(6.4, -3.2, KY - 0.6), new THREE.Vector3(11, -10, KY + 8));
+  const yoke = new THREE.Mesh(new THREE.TorusGeometry(1.4, 0.22, 8, 24, Math.PI * 1.1), MAT.steel);
+  yoke.rotation.z = 1.4;
+  const tailY = new THREE.Mesh(new THREE.BoxGeometry(2.6, 0.5, 0.5), MAT.steel); tailY.position.set(-1.2, -0.6, 0); tailY.rotation.z = 0.4;
+  const g = new THREE.Group(); g.add(yoke, tailY);
+  tagMeshes(g, comp.name, comp.desc); comp.spinner.add(g);
+}
+// Setting wheels — transmit crown rotation to the motion works when setting the time
+{
+  const comp = addComponent('Intermediate setting wheel',
+    'Engaged when the crown is pulled out; passes hand-setting rotation toward the motion works.',
+    new THREE.Vector3(6.2, -2.0, KY - 0.6), new THREE.Vector3(11, -7, KY + 9));
+  const w = makeGear(16, 0.16, 0.5, 0.4, MAT.steel, { addendum: 1.0, dedendum: 1.2 });
+  tagMeshes(w, comp.name, comp.desc); comp.spinner.add(w);
+}
+{
+  const comp = addComponent('Setting wheel',
+    'Meshes the minute wheel so turning the crown sets the hands.',
+    new THREE.Vector3(3.8, -1.4, KY - 0.6), new THREE.Vector3(8, -6, KY + 8));
+  const w = makeGear(16, 0.16, 0.5, 0.4, MAT.brass, { addendum: 1.0, dedendum: 1.2 });
+  tagMeshes(w, comp.name, comp.desc); comp.spinner.add(w);
+}
+// Hacking lever (stop-seconds) — brakes the balance when the crown is pulled out
+{
+  const comp = addComponent('Hacking lever (stop-seconds)',
+    'When the crown is pulled, this thin spring touches the balance to stop the seconds for precise setting.',
+    new THREE.Vector3(6.0, 1.6, KY - 0.4), new THREE.Vector3(11, 8, KY + 7));
+  const pts = [];
+  for (let i = 0; i <= 30; i++) { const t = i / 30; pts.push(new THREE.Vector3(t * -5.0, Math.sin(t * 1.6) * 1.4, 0)); }
+  const blade = new THREE.Mesh(new THREE.TubeGeometry(new THREE.CatmullRomCurve3(pts), 30, 0.11, 4, false), MAT.steel);
+  const g = new THREE.Group(); g.add(blade, screw(0.4, 0.2, 0.3, 0.42));
+  tagMeshes(g, comp.name, comp.desc); comp.spinner.add(g);
+}
+
+// ============================================================================
+//  Dial + hour markers + small-seconds subdial
+// ============================================================================
+const DIAL_R = 14.6;
+const SUB_POS = [TRAIN.fourth.pos[0], TRAIN.fourth.pos[1]];
+const DATE_WR = DIAL_R - 3.2;   // radius of the date numerals / window centre (3 o'clock)
+const DATE_WW = 2.4, DATE_WH = 2.1;  // aperture size (radial × tangential)
+{
+  const comp = addComponent('Dial', 'The face of the watch with applied markers and a small-seconds register.',
+    new THREE.Vector3(0, 0, Z.dial), new THREE.Vector3(0, 0, Z.dial + 20));
+  const dial = new THREE.Group();
+  // dial plate with a date aperture cut at 3 o'clock
+  const dShape = new THREE.Shape(); dShape.absarc(0, 0, DIAL_R, 0, Math.PI * 2, false);
+  const hole = new THREE.Path();
+  hole.moveTo(DATE_WR - DATE_WW / 2, -DATE_WH / 2);
+  hole.lineTo(DATE_WR + DATE_WW / 2, -DATE_WH / 2);
+  hole.lineTo(DATE_WR + DATE_WW / 2, DATE_WH / 2);
+  hole.lineTo(DATE_WR - DATE_WW / 2, DATE_WH / 2);
+  hole.closePath(); dShape.holes.push(hole);
+  const discGeo = new THREE.ExtrudeGeometry(dShape, { depth: 0.5, bevelEnabled: false, curveSegments: 96 });
+  discGeo.translate(0, 0, -0.25); planarUV(discGeo, DIAL_R);
+  dial.add(new THREE.Mesh(discGeo, MAT.dial));
+  // polished window frame
+  const fr = new THREE.Group(), ft = 0.28;
+  const top = new THREE.Mesh(new THREE.BoxGeometry(DATE_WW + ft * 2, ft, 0.32), MAT.steel);
+  top.position.set(DATE_WR, DATE_WH / 2 + ft / 2, 0.36);
+  const bot = top.clone(); bot.position.y = -DATE_WH / 2 - ft / 2;
+  const lft = new THREE.Mesh(new THREE.BoxGeometry(ft, DATE_WH, 0.32), MAT.steel);
+  lft.position.set(DATE_WR - DATE_WW / 2 - ft / 2, 0, 0.36);
+  const rgt = lft.clone(); rgt.position.x = DATE_WR + DATE_WW / 2 + ft / 2;
+  fr.add(top, bot, lft, rgt); dial.add(fr);
+  // chapter ring
+  const ring = new THREE.Mesh(new THREE.TorusGeometry(DIAL_R - 1.1, 0.18, 8, 96), MAT.dialRing);
+  ring.position.z = 0.3; dial.add(ring);
+  // hour markers (applied gold batons, double at 12)
+  for (let i = 0; i < 12; i++) {
+    if (i === 3) continue;            // 3 o'clock replaced by the date window
+    const a = (i / 12) * Math.PI * 2;
+    const r = DIAL_R - 2.6;
+    const isQ = i % 3 === 0;
+    const mk = new THREE.Mesh(new THREE.BoxGeometry(isQ ? 0.7 : 0.45, 2.0, 0.5), MAT.gold);
+    mk.position.set(Math.sin(a) * r, Math.cos(a) * r, 0.5);
+    mk.rotation.z = -a; dial.add(mk);
+    const lm = new THREE.Mesh(new THREE.BoxGeometry(isQ ? 0.42 : 0.26, 1.25, 0.18), MAT.lume);
+    lm.position.set(Math.sin(a) * r, Math.cos(a) * r, 0.78); lm.rotation.z = -a; dial.add(lm);
+  }
+  // 12 o'clock double marker (with lume pips)
+  const dbl = new THREE.Mesh(new THREE.BoxGeometry(0.45, 2.0, 0.5), MAT.gold);
+  dbl.position.set(1.0, DIAL_R - 2.6, 0.5); dial.add(dbl);
+  const dbl2 = dbl.clone(); dbl2.position.x = -1.0; dial.add(dbl2);
+  for (const dx of [-1.0, 1.0]) {
+    const lp = new THREE.Mesh(new THREE.BoxGeometry(0.26, 1.25, 0.18), MAT.lume);
+    lp.position.set(dx, DIAL_R - 2.6, 0.78); dial.add(lp);
+  }
+  // small-seconds subdial (recessed)
+  const sub = new THREE.Mesh(new THREE.CylinderGeometry(3.2, 3.2, 0.2, 48), MAT.dialRing);
+  sub.rotation.x = Math.PI / 2; sub.position.set(SUB_POS[0], SUB_POS[1], 0.35); dial.add(sub);
+  const subRing = new THREE.Mesh(new THREE.TorusGeometry(3.2, 0.12, 8, 48), MAT.gold);
+  subRing.position.set(SUB_POS[0], SUB_POS[1], 0.5); dial.add(subRing);
+  for (let i = 0; i < 12; i++) {
+    const a = (i / 12) * Math.PI * 2;
+    const t = new THREE.Mesh(new THREE.BoxGeometry(0.16, 0.5, 0.3), MAT.gold);
+    t.position.set(SUB_POS[0] + Math.sin(a) * 2.6, SUB_POS[1] + Math.cos(a) * 2.6, 0.55);
+    t.rotation.z = -a; dial.add(t);
+  }
+  // dial feet (posts that fix the dial into the main plate)
+  for (const a of [Math.PI * 0.5, Math.PI * 1.5]) {
+    const foot = new THREE.Mesh(new THREE.CylinderGeometry(0.4, 0.4, 2.2, 10).rotateX(Math.PI / 2), MAT.brass);
+    foot.position.set(Math.cos(a) * (DIAL_R - 2), Math.sin(a) * (DIAL_R - 2), -1.3); dial.add(foot);
+  }
+  // printed overlay (minute track + brand + Swiss made) — circular to match the dial
+  const print = new THREE.Mesh(new THREE.CircleGeometry(DIAL_R, 128),
+    new THREE.MeshBasicMaterial({ map: dialPrintTexture(), transparent: true, depthWrite: false }));
+  print.position.z = 0.29; dial.add(print);
+  tagMeshes(dial, 'Dial', 'The face of the watch with applied markers and a small-seconds register.');
+  comp.spinner.add(dial);
+}
+
+// ============================================================================
+//  Hands
+// ============================================================================
+function handShape(len, baseW, tipW, tail) {
+  const s = new THREE.Shape();
+  s.moveTo(-baseW / 2, -tail);
+  s.lineTo(baseW / 2, -tail);
+  s.lineTo(tipW / 2, len);
+  s.lineTo(0, len + tipW * 1.6);
+  s.lineTo(-tipW / 2, len);
+  s.closePath();
+  return s;
+}
+function makeHand(len, baseW, tipW, tail, mat, lume = false) {
+  const geo = new THREE.ExtrudeGeometry(handShape(len, baseW, tipW, tail),
+    { depth: 0.45, bevelEnabled: true, bevelThickness: 0.08, bevelSize: 0.08, bevelSegments: 1, steps: 1 });
+  geo.translate(0, 0, -0.225);
+  const g = new THREE.Group();
+  const m = new THREE.Mesh(geo, mat); g.add(m);
+  // hub
+  const hub = new THREE.Mesh(new THREE.CylinderGeometry(baseW * 0.8, baseW * 0.8, 0.7, 18).rotateX(Math.PI / 2), mat);
+  g.add(hub);
+  // luminous fill running down the centre of the hand
+  if (lume) {
+    const li = new THREE.Mesh(new THREE.BoxGeometry(baseW * 0.42, len * 0.66, 0.2), MAT.lume);
+    li.position.set(0, len * 0.5, 0.26); g.add(li);
+  }
+  return g;
+}
+
+const hourHand = addComponent('Hour hand', 'Shows the hour; geared 1 turn per 12 hours.',
+  new THREE.Vector3(0, 0, Z.hourHand), new THREE.Vector3(0, 0, Z.hourHand + 22));
+{ const h = makeHand(7.0, 1.4, 0.9, 1.8, MAT.blued, true); tagMeshes(h, hourHand.name, hourHand.desc); hourHand.spinner.add(h); }
+
+const minHand = addComponent('Minute hand', 'Shows the minutes; geared 1 turn per hour.',
+  new THREE.Vector3(0, 0, Z.minHand), new THREE.Vector3(0, 0, Z.minHand + 26));
+{ const h = makeHand(11.0, 1.2, 0.7, 2.0, MAT.blued, true); tagMeshes(h, minHand.name, minHand.desc); minHand.spinner.add(h); }
+
+const secHand = addComponent('Small-seconds hand', 'Shows the seconds on the 6 o’clock register; 1 turn per minute.',
+  new THREE.Vector3(SUB_POS[0], SUB_POS[1], Z.secHand), new THREE.Vector3(SUB_POS[0] * 1.4, SUB_POS[1] * 1.4, Z.secHand + 18));
+{ const h = makeHand(2.6, 0.4, 0.25, 0.9, MAT.steel); tagMeshes(h, secHand.name, secHand.desc); secHand.spinner.add(h); }
+
+// ============================================================================
+//  Date complication: date disc (1–31), driving wheel and jumper
+// ============================================================================
+const DISC_R = DIAL_R - 0.4;
+const dateStep = Math.PI * 2 / 31;
+const dateDiscComp = addComponent('Date disc',
+  'A ring printed 1–31 that advances one step each day; the current date shows through the window at 3 o’clock.',
+  new THREE.Vector3(0, 0, Z.dial - 0.6), new THREE.Vector3(0, 0, Z.dial + 13));
+{
+  const dgeo = new THREE.ExtrudeGeometry(new THREE.Shape().absarc(0, 0, DISC_R, 0, Math.PI * 2, false),
+    { depth: 0.3, bevelEnabled: false, curveSegments: 96 });
+  dgeo.translate(0, 0, -0.15); planarUV(dgeo, DISC_R);
+  const dmat = new THREE.MeshStandardMaterial({ map: dateTexture(DISC_R, DATE_WR), roughness: 0.7, metalness: 0.0 });
+  const disc = new THREE.Mesh(dgeo, dmat);
+  // toothed inner ring (the date ring is driven on its inner teeth)
+  const teethRing = makeGear(31, 0.34, 0.3, DISC_R - 1.2, MAT.brass, { addendum: 0.6, dedendum: 0.8 });
+  teethRing.position.z = -0.35; teethRing.scale.set(1, 1, 1);
+  disc.add(teethRing);
+  tagMeshes(disc, dateDiscComp.name, dateDiscComp.desc);
+  dateDiscComp.spinner.add(disc);
+}
+const dateDriveComp = addComponent('Date driving wheel',
+  'Turns once every 24 hours and pushes the date ring forward one day at midnight.',
+  new THREE.Vector3(-2.2, DATE_WR - 1.8, Z.dial - 0.9), new THREE.Vector3(-6, DIAL_R + 3, Z.dial + 10));
+{
+  const w = makeGear(24, 0.16, 0.5, 0.5, MAT.steel, { addendum: 1.0, dedendum: 1.2 });
+  const finger = new THREE.Mesh(new THREE.BoxGeometry(0.4, 1.6, 0.5), MAT.steel); finger.position.y = 1.4;
+  w.add(finger);
+  tagMeshes(w, dateDriveComp.name, dateDriveComp.desc);
+  dateDriveComp.spinner.add(w); dateDriveComp.rps = 1 / 86400;
+}
+{
+  const comp = addComponent('Date jumper',
+    'A sprung lever whose tip drops between the ring teeth, snapping the date crisply into place.',
+    new THREE.Vector3(DATE_WR - 1.0, -2.4, Z.dial - 0.9), new THREE.Vector3(DIAL_R + 3, -6, Z.dial + 8));
+  const lever = new THREE.Mesh(new THREE.BoxGeometry(2.8, 0.6, 0.5), MAT.steel); lever.rotation.z = -0.8;
+  const tip = new THREE.Mesh(new THREE.ConeGeometry(0.4, 0.9, 4), MAT.steel);
+  tip.rotation.x = Math.PI / 2; tip.position.set(0.8, 1.0, 0);
+  const sp = [];
+  for (let i = 0; i <= 30; i++) { const t = i / 30; sp.push(new THREE.Vector3(-0.8 - t * 2.0, -0.6 - Math.sin(t * 2.2) * 0.8, 0)); }
+  const spr = new THREE.Mesh(new THREE.TubeGeometry(new THREE.CatmullRomCurve3(sp), 30, 0.1, 4, false), MAT.blued);
+  const g = new THREE.Group(); g.add(lever, tip, spr);
+  tagMeshes(g, comp.name, comp.desc);
+  comp.spinner.add(g);
+}
+
+// ============================================================================
+//  Case: band + bezel + caseback + crystal + crown + lugs
+// ============================================================================
+const CASE_OUT = 18.5;
+// Case middle (lathe profile)
+{
+  const comp = addComponent('Case', 'The 40 mm case middle, bezel and lugs that protect the movement.',
+    new THREE.Vector3(0, 0, 0), new THREE.Vector3(0, 0, 0)); // case stays put when exploding
+  const profile = [
+    new THREE.Vector2(DIAL_R + 0.6, -7.0),
+    new THREE.Vector2(CASE_OUT, -6.4),
+    new THREE.Vector2(CASE_OUT, 5.2),
+    new THREE.Vector2(DIAL_R + 1.6, 6.4),
+    new THREE.Vector2(DIAL_R + 0.6, 6.2),
+    new THREE.Vector2(DIAL_R + 0.6, -7.0),
+  ];
+  const band = new THREE.Mesh(new THREE.LatheGeometry(profile, 96), MAT.caseGold);
+  band.rotation.x = Math.PI / 2;
+  comp.spinner.add(band);
+  // lugs
+  const lugGeo = new THREE.BoxGeometry(2.4, 5.5, 6.0);
+  const lugAngles = [Math.PI * 0.32, Math.PI * 0.68, Math.PI * 1.32, Math.PI * 1.68];
+  for (const a of lugAngles) {
+    const l = new THREE.Mesh(lugGeo, MAT.caseGold);
+    l.position.set(Math.cos(a) * (CASE_OUT - 0.5), Math.sin(a) * (CASE_OUT - 0.5), -0.5);
+    l.rotation.z = a - Math.PI / 2; comp.spinner.add(l);
+  }
+  // crown tube at 3 o'clock (where the stem passes through the case)
+  const tube = new THREE.Mesh(new THREE.CylinderGeometry(1.0, 1.0, 2.6, 20), MAT.caseGold);
+  tube.rotation.z = Math.PI / 2; tube.position.set(CASE_OUT + 0.3, 0, 0); comp.spinner.add(tube);
+  // spring bars between each lug pair (where the strap attaches)
+  const rr = CASE_OUT + 1.7;
+  const sbar = (a1, a2) => rod(
+    new THREE.Vector3(Math.cos(a1) * rr, Math.sin(a1) * rr, -0.5),
+    new THREE.Vector3(Math.cos(a2) * rr, Math.sin(a2) * rr, -0.5), 0.35, MAT.steel);
+  comp.spinner.add(sbar(Math.PI * 0.32, Math.PI * 0.68), sbar(Math.PI * 1.32, Math.PI * 1.68));
+  tagMeshes(comp.spinner, 'Case', 'The 40 mm case middle, bezel and lugs that protect the movement.');
+}
+// Casing ring — holds the movement centred inside the case
+{
+  const comp = addComponent('Casing ring', 'Spacer ring that secures the movement inside the case.',
+    new THREE.Vector3(0, 0, -4.2), new THREE.Vector3(0, 0, -4.2 - 20));
+  const rs = new THREE.Shape(); rs.absarc(0, 0, DIAL_R + 0.3, 0, Math.PI * 2, false);
+  const rh = new THREE.Path(); rh.absarc(0, 0, MOVE_R - 0.3, 0, Math.PI * 2, true); rs.holes.push(rh);
+  const rgeo = new THREE.ExtrudeGeometry(rs, { depth: 1.3, bevelEnabled: false, curveSegments: 80 });
+  rgeo.translate(0, 0, -0.65);
+  const ring = new THREE.Mesh(rgeo, MAT.steelDark);
+  tagMeshes(ring, comp.name, comp.desc); comp.spinner.add(ring);
+}
+// Crown + stem at 3 o'clock
+{
+  const comp = addComponent('Crown', 'Winds the mainspring and sets the time via the keyless works.',
+    new THREE.Vector3(CASE_OUT + 1.4, 0, 0), new THREE.Vector3(CASE_OUT + 12, 0, 0));
+  const crown = new THREE.Group();
+  const body = new THREE.Mesh(new THREE.CylinderGeometry(1.8, 1.8, 2.2, 24), MAT.caseGold);
+  body.rotation.z = Math.PI / 2; crown.add(body);
+  for (let i = 0; i < 16; i++) {
+    const a = (i / 16) * Math.PI * 2;
+    const t = new THREE.Mesh(new THREE.BoxGeometry(2.2, 0.35, 0.35), MAT.caseGold);
+    t.position.set(0, Math.cos(a) * 1.8, Math.sin(a) * 1.8); crown.add(t);
+  }
+  const stem = new THREE.Mesh(new THREE.CylinderGeometry(0.5, 0.5, 4.5, 12), MAT.steel);
+  stem.rotation.z = Math.PI / 2; stem.position.x = -2.8; crown.add(stem);
+  tagMeshes(crown, 'Crown', 'Winds the mainspring and sets the time via the keyless works.');
+  comp.spinner.add(crown);
+}
+// Crystal (domed sapphire)
+{
+  const comp = addComponent('Sapphire crystal', 'Scratch-resistant domed crystal protecting the dial.',
+    new THREE.Vector3(0, 0, Z.crystal), new THREE.Vector3(0, 0, Z.crystal + 24));
+  const geo = new THREE.SphereGeometry(DIAL_R + 1.2, 64, 32, 0, Math.PI * 2, 0, Math.PI * 0.28);
+  const cry = new THREE.Mesh(geo, MAT.sapphire);
+  cry.rotation.x = Math.PI / 2; cry.scale.set(1, 0.5, 1); cry.position.z = -2.5;
+  tagMeshes(cry, comp.name, comp.desc);
+  comp.spinner.add(cry);
+}
+// Exhibition caseback (sapphire ring + glass)
+{
+  const comp = addComponent('Exhibition caseback', 'Sapphire caseback that reveals the movement from behind.',
+    new THREE.Vector3(0, 0, Z.caseback), new THREE.Vector3(0, 0, Z.caseback - 24));
+  const ring = new THREE.Mesh(new THREE.TorusGeometry(DIAL_R + 0.9, 1.1, 16, 80), MAT.caseGold);
+  comp.spinner.add(ring);
+  const glass = new THREE.Mesh(new THREE.CylinderGeometry(DIAL_R + 0.4, DIAL_R + 0.4, 0.6, 80), MAT.sapphire);
+  glass.rotation.x = Math.PI / 2; comp.spinner.add(glass);
+  // engraving on the inner bezel of the caseback (faces outward, -Z)
+  const eng = textDecal(['AVRELIA · GENÈVE', 'AUTOMATIC — 21 JEWELS', '28,800 A/h', 'SWISS MADE', 'N° 0001 / 250'], 17, 17, true);
+  eng.position.z = -0.45; eng.rotation.y = Math.PI; eng.scale.set(0.8, 0.8, 0.8); comp.spinner.add(eng);
+  // caseback retaining screws
+  for (let i = 0; i < 6; i++) {
+    const a = i / 6 * Math.PI * 2 + Math.PI / 6;
+    comp.spinner.add(screw(Math.cos(a) * (DIAL_R + 0.9), Math.sin(a) * (DIAL_R + 0.9), 0.5, 0.42));
+  }
+  tagMeshes(comp.spinner, comp.name, comp.desc);
+}
+
+// ============================================================================
+//  Interaction: explode, hover, buttons
+// ============================================================================
+let explodeTarget = 0, explodeNow = 0;
+const explodeSlider = document.getElementById('explode');
+const btnExplode = document.getElementById('toggleExplode');
+const btnSpin = document.getElementById('toggleSpin');
+const btnReset = document.getElementById('resetView');
+
+explodeSlider.addEventListener('input', () => { explodeTarget = parseFloat(explodeSlider.value); });
+btnExplode.addEventListener('click', () => {
+  explodeTarget = explodeTarget > 0.5 ? 0 : 1;
+  explodeSlider.value = explodeTarget;
+  btnExplode.classList.toggle('on', explodeTarget > 0.5);
+  btnExplode.textContent = explodeTarget > 0.5 ? 'Collapse' : 'Expand';
+});
+btnSpin.addEventListener('click', () => {
+  controls.autoRotate = !controls.autoRotate;
+  controls.autoRotateSpeed = 1.1;
+  btnSpin.classList.toggle('on', controls.autoRotate);
+});
+btnReset.addEventListener('click', () => {
+  camera.position.copy(HOME_CAM); controls.target.set(0, 0, 0); controls.update();
+  revealSlider.value = '0'; applyReveal(0);
+});
+
+// ---- Speed (time-lapse) so the whole gear train can be seen turning in unison ----
+let timeScale = 1;
+const speedSlider = document.getElementById('speed');
+const speedVal = document.getElementById('speedVal');
+const speedFromSlider = (v) => v <= 0.001 ? 1 : Math.round(Math.pow(3000, v));
+const fmtSpeed = (x) => x >= 1000 ? (x / 1000).toFixed(x >= 10000 ? 0 : 1) + 'k×' : x + '×';
+speedSlider.addEventListener('input', () => {
+  timeScale = speedFromSlider(parseFloat(speedSlider.value));
+  speedVal.textContent = fmtSpeed(timeScale);
+});
+
+// ---- Reveal slider — gradually fades every non-gear part so the wheels show through ----
+const GEAR_NAMES = new Set([
+  'Mainspring barrel', 'Centre wheel', 'Third wheel', 'Fourth wheel', 'Escape wheel',
+  'Balance wheel & hairspring', 'Pallet fork (lever)', 'Cannon pinion', 'Hour wheel', 'Minute wheel',
+  'Ratchet wheel', 'Crown wheel', 'Winding pinion', 'Sliding (clutch) pinion', 'Date driving wheel',
+  'Intermediate setting wheel', 'Setting wheel',
+]);
+const fadeComps = components.filter(c => !GEAR_NAMES.has(c.name));
+function ensureClones(c) {
+  if (c._cloned) return; c._cloned = true;
+  c.group.traverse(o => {
+    if (!o.isMesh) return;
+    const mt = o.material.clone();
+    mt.userData.baseOpacity = mt.opacity;
+    // Hashed (dithered) alpha fades in the opaque pass with proper depth, so there is
+    // no transparency-sorting flicker. Glass (transmission) keeps true blending.
+    if (!(mt.transmission > 0)) { mt.alphaHash = true; mt.transparent = false; mt.depthWrite = true; mt.needsUpdate = true; }
+    o.material = mt;
+  });
+}
+function applyReveal(t) {
+  // Metallic parts read as "gone" the moment they turn even slightly transparent,
+  // so hold opacity high across most of the slider and only fade out near the end.
+  let a = Math.pow(1 - t, 0.4);
+  if (t > 0.85) a *= Math.max(0, (1 - t) / 0.15);   // smooth final fade to zero
+  for (const c of fadeComps) {
+    ensureClones(c);
+    c.group.visible = t < 0.999;
+    if (!c.group.visible) continue;
+    c.group.traverse(o => {
+      if (!o.isMesh) return;
+      const base = o.material.userData.baseOpacity ?? 1;
+      o.material.opacity = base * a;
+      if (o.material.transmission > 0) o.material.transparent = t > 0.001; // glass only
+    });
+  }
+}
+const revealSlider = document.getElementById('reveal');
+revealSlider.addEventListener('input', () => applyReveal(parseFloat(revealSlider.value)));
+
+// Hover identification
+const raycaster = new THREE.Raycaster();
+const pointer = new THREE.Vector2();
+const partName = document.getElementById('partName');
+const partDesc = document.getElementById('partDesc');
+let hoverable = [];
+scene.traverse(o => { if (o.isMesh) hoverable.push(o); });
+addEventListener('pointermove', (e) => {
+  pointer.x = (e.clientX / innerWidth) * 2 - 1;
+  pointer.y = -(e.clientY / innerHeight) * 2 + 1;
+  raycaster.setFromCamera(pointer, camera);
+  const hits = raycaster.intersectObjects(hoverable, false);
+  const vis = (o) => { for (let p = o; p; p = p.parent) if (p.visible === false) return false; return true; };
+  const hit = hits.find(h => h.object.userData.partName && vis(h.object));
+  if (hit) { partName.textContent = hit.object.userData.partName; partDesc.textContent = hit.object.userData.partDesc || ''; }
+  else { partName.textContent = ''; partDesc.textContent = ''; }
+});
+
+// ============================================================================
+//  Animation
+// ============================================================================
+const clockEl = document.getElementById('clock');
+const TAU = Math.PI * 2;
+
+function setSpin(comp, angle) { if (comp && comp.spinner) comp.spinner.rotation.z = angle; }
+
+// Simulated clock — advances at `timeScale`× real time (1× tracks the wall clock exactly)
+let simMs = Date.now();
+let lastT = performance.now();
+
+function animate() {
+  const tNow = performance.now();
+  const dt = Math.min(0.1, (tNow - lastT) / 1000); lastT = tNow;
+  if (timeScale === 1) simMs = Date.now(); else simMs += dt * 1000 * timeScale;
+
+  const now = new Date(simMs);
+  const totalSec = simMs / 1000;
+  const sFull = totalSec % 60;
+  const m = (totalSec / 60) % 60;
+  const h = (totalSec / 3600) % 12;
+
+  // Hands
+  setSpin(hourHand, -TAU * (h / 12));
+  setSpin(minHand,  -TAU * (m / 60));
+  setSpin(secHand,  -TAU * (sFull / 60));
+
+  // Going train — every wheel locked to the simulated clock so they turn in unison
+  setSpin(trainParts.center, -TAU * (totalSec / 3600));
+  setSpin(trainParts.fourth, -TAU * (totalSec / 60));
+  setSpin(trainParts.third,  TAU * trainParts.third.rps * totalSec);
+  setSpin(trainParts.escape, TAU * trainParts.escape.rps * totalSec);
+  setSpin(trainParts.barrel, TAU * trainParts.barrel.rps * totalSec);
+
+  // Motion + winding + date works
+  setSpin(cannonComp, -TAU * (m / 60));
+  setSpin(hourWheelComp, -TAU * (h / 12));
+  setSpin(minuteWheelComp, TAU * minuteWheelComp.rps * totalSec);
+  setSpin(ratchetComp, TAU * ratchetComp.rps * totalSec);
+  setSpin(crownWheelComp, TAU * crownWheelComp.rps * totalSec);
+  setSpin(dateDriveComp, TAU * dateDriveComp.rps * totalSec);
+  setSpin(dateDiscComp, (now.getDate() - 1) * dateStep);
+
+  // Escapement stays on real time so the balance keeps a visible 4 Hz tick
+  const rt = tNow / 1000;
+  if (balanceComp) balanceComp.spinner.rotation.z = Math.sin(TAU * 4 * rt) * (Math.PI * 1.35);
+  if (palletComp) palletComp.spinner.rotation.z = Math.sin(TAU * 4 * rt + Math.PI / 2) * 0.16;
+
+  // Explode interpolation
+  explodeNow += (explodeTarget - explodeNow) * 0.08;
+  const e = explodeNow < 0.001 ? 0 : (explodeNow > 0.999 ? 1 : explodeNow);
+  const ease = e * e * (3 - 2 * e);
+  for (const c of components) {
+    if (c.group.visible) c.group.position.lerpVectors(c.home, c.boom, ease);
+  }
+
+  clockEl.textContent = now.toLocaleTimeString('en-GB') + (timeScale > 1 ? '   ·   ' + fmtSpeed(timeScale) : '');
+
+  controls.update();
+  renderer.render(scene, camera);
+  requestAnimationFrame(animate);
+}
+
+addEventListener('resize', () => {
+  camera.aspect = innerWidth / innerHeight; camera.updateProjectionMatrix();
+  renderer.setSize(innerWidth, innerHeight);
+});
+
+document.getElementById('loading').style.display = 'none';
+animate();
+</script>
+</body>
+</html>
