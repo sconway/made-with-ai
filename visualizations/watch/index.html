@@ -97,7 +97,7 @@ const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
 renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
 renderer.setSize(innerWidth, innerHeight);
 renderer.toneMapping = THREE.ACESFilmicToneMapping;
-renderer.toneMappingExposure = 1.05;
+renderer.toneMappingExposure = 0.92;
 renderer.outputColorSpace = THREE.SRGBColorSpace;
 
 const scene = new THREE.Scene();
@@ -120,9 +120,9 @@ scene.environment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
 
 // Key + rim lighting
 scene.add(new THREE.AmbientLight(0xffffff, 0.25));
-const key = new THREE.DirectionalLight(0xffffff, 2.4); key.position.set(20, 35, 50); scene.add(key);
-const rim = new THREE.DirectionalLight(0x9fc4ff, 1.1); rim.position.set(-30, -10, -40); scene.add(rim);
-const fill = new THREE.DirectionalLight(0xffe6c0, 0.7); fill.position.set(-25, 20, 30); scene.add(fill);
+const key = new THREE.DirectionalLight(0xffffff, 1.2); key.position.set(20, 35, 50); scene.add(key);
+const rim = new THREE.DirectionalLight(0x9fc4ff, 0.5); rim.position.set(-30, -10, -40); scene.add(rim);
+const fill = new THREE.DirectionalLight(0xffe6c0, 0.4); fill.position.set(-25, 20, 30); scene.add(fill);
 
 // ============================================================================
 //  Materials
@@ -137,12 +137,12 @@ const MAT = {
   plate:  new THREE.MeshStandardMaterial({ color: 0xbfc4cb, metalness: 1.0, roughness: 0.5 }),
   ruby:   new THREE.MeshPhysicalMaterial({ color: 0xd11440, metalness: 0.0, roughness: 0.12,
             transmission: 0.45, thickness: 0.6, ior: 1.76, emissive: 0x3a0010, emissiveIntensity: 0.4 }),
-  dial:   new THREE.MeshStandardMaterial({ color: 0x0a1326, metalness: 0.55, roughness: 0.42 }),
+  dial:   new THREE.MeshStandardMaterial({ color: 0x0a1326, metalness: 0.2, roughness: 0.62, envMapIntensity: 0.25 }),
   dialRing: new THREE.MeshStandardMaterial({ color: 0x121f3a, metalness: 0.6, roughness: 0.5 }),
   caseGold: new THREE.MeshStandardMaterial({ color: 0xcBa063, metalness: 1.0, roughness: 0.2 }),
-  sapphire: new THREE.MeshPhysicalMaterial({ color: 0xffffff, metalness: 0, roughness: 0.02,
+  sapphire: new THREE.MeshPhysicalMaterial({ color: 0xffffff, metalness: 0, roughness: 0.12,
             transmission: 1.0, thickness: 1.2, ior: 1.77, transparent: true, opacity: 1.0,
-            clearcoat: 1.0, clearcoatRoughness: 0.02 }),
+            clearcoat: 0.0, envMapIntensity: 0.1 }),
   lume:   new THREE.MeshStandardMaterial({ color: 0xeaf6e0, emissive: 0x9fd98c, emissiveIntensity: 0.6, roughness: 0.5, metalness: 0 }),
 };
 
@@ -411,7 +411,6 @@ const MOVE_R = 14.5;
   const geo = new THREE.CylinderGeometry(MOVE_R, MOVE_R, 1.4, 96);
   const plate = new THREE.Mesh(geo, MAT.plate);
   plate.rotation.x = Math.PI / 2;
-  // a few drilled holes for character
   tagMeshes(plate, 'Main plate', 'The base plate; every wheel and bridge is anchored to it.');
   comp.spinner.add(plate);
 }
@@ -1087,24 +1086,22 @@ speedSlider.addEventListener('input', () => {
   speedVal.textContent = fmtSpeed(timeScale);
 });
 
-// ---- Reveal slider — gradually fades every non-gear part so the wheels show through ----
-const GEAR_NAMES = new Set([
-  'Mainspring barrel', 'Centre wheel', 'Third wheel', 'Fourth wheel', 'Escape wheel',
-  'Balance wheel & hairspring', 'Pallet fork (lever)', 'Cannon pinion', 'Hour wheel', 'Minute wheel',
-  'Ratchet wheel', 'Crown wheel', 'Winding pinion', 'Sliding (clutch) pinion', 'Date driving wheel',
-  'Intermediate setting wheel', 'Setting wheel',
+// ---- Reveal slider — fades the case & dial so the full movement (bridges, jewels, gears) shows through ----
+const REVEAL_FADE_NAMES = new Set([
+  'Dial', 'Hour hand', 'Minute hand', 'Small-seconds hand', 'Date disc',
+  'Case', 'Sapphire crystal', 'Exhibition caseback', 'Casing ring', 'Crown',
 ]);
-const fadeComps = components.filter(c => !GEAR_NAMES.has(c.name));
+const fadeComps = components.filter(c => REVEAL_FADE_NAMES.has(c.name));
 function ensureClones(c) {
   if (c._cloned) return; c._cloned = true;
   c.group.traverse(o => {
     if (!o.isMesh) return;
     const mt = o.material.clone();
     mt.userData.baseOpacity = mt.opacity;
+    o.material = mt;
     // Hashed (dithered) alpha fades in the opaque pass with proper depth, so there is
     // no transparency-sorting flicker. Glass (transmission) keeps true blending.
     if (!(mt.transmission > 0)) { mt.alphaHash = true; mt.transparent = false; mt.depthWrite = true; mt.needsUpdate = true; }
-    o.material = mt;
   });
 }
 function applyReveal(t) {
@@ -1139,7 +1136,11 @@ addEventListener('pointermove', (e) => {
   pointer.y = -(e.clientY / innerHeight) * 2 + 1;
   raycaster.setFromCamera(pointer, camera);
   const hits = raycaster.intersectObjects(hoverable, false);
-  const vis = (o) => { for (let p = o; p; p = p.parent) if (p.visible === false) return false; return true; };
+  const vis = (o) => {
+    for (let p = o; p; p = p.parent) if (p.visible === false) return false;
+    if (o.material && o.material.opacity < 0.06) return false;
+    return true;
+  };
   const hit = hits.find(h => h.object.userData.partName && vis(h.object));
   if (hit) { partName.textContent = hit.object.userData.partName; partDesc.textContent = hit.object.userData.partDesc || ''; }
   else { partName.textContent = ''; partDesc.textContent = ''; }
