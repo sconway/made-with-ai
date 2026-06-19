@@ -1,10 +1,10 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
-import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import './style.css';
 
 // Global variables
 let scene, camera, renderer, controls;
+let isTabVisible = !document.hidden;
 let terrain, skybox;
 let player, playerTank;
 let obstacles = [];
@@ -15,6 +15,63 @@ let isGameActive = true;
 let clock = new THREE.Clock();
 let deltaTime;
 let isMobile = window.innerWidth < 768;
+
+const perf = {
+  pixelRatio: Math.min(window.devicePixelRatio, isMobile ? 1.25 : 2),
+  antialias: !isMobile,
+  shadowMapSize: isMobile ? 512 : 1024,
+  castShadows: !isMobile,
+  cloudSpheres: isMobile ? 4 : 7,
+  cloudSegments: isMobile ? 6 : 10,
+  terrainSegments: isMobile ? 20 : 32,
+  mountainSegments: isMobile ? 10 : 16,
+  treeSegments: isMobile ? 6 : 10,
+  tankSegments: isMobile ? 8 : 12
+};
+
+// Shared GPU resources to reduce draw-call overhead
+const sharedAssets = {
+  terrainMaterial: null,
+  terrainGeometry: null,
+  cloudMaterial: null,
+  cloudGeometry: null,
+  treeTrunkGeometry: null,
+  treeTrunkMaterial: null,
+  treeFoliageGeometry: null,
+  treeFoliageMaterial: null,
+  treeFoliageDarkMaterial: null,
+  crateMaterial: null,
+  crateTrimMaterial: null,
+  barrelMaterial: null,
+  barrelRingMaterial: null,
+  barrierMaterial: null,
+  barrierStripeMaterial: null,
+  mountainMaterial: null,
+  mountainRockMaterial: null,
+  snowMaterial: null,
+  rockMaterial: null,
+  bushMaterial: null,
+  tankLowerHullGeometry: null,
+  tankUpperHullGeometry: null,
+  tankGlacisGeometry: null,
+  tankTurretGeometry: null,
+  tankCupolaGeometry: null,
+  tankMantletGeometry: null,
+  tankBarrelGeometry: null,
+  tankMuzzleGeometry: null,
+  tankTrackPlateGeometry: null,
+  tankWheelGeometry: null,
+  tankExhaustGeometry: null,
+  tankAntennaGeometry: null,
+  tankHeadlightGeometry: null,
+  barrelRingGeometry: null,
+  rockGeometry: null,
+  bushGeometry: null
+};
+
+const _cloudMovement = new THREE.Vector3();
+const _interpPos = new THREE.Vector3();
+let lastHealthPercent = 100;
 let respawnQueue = [];
 let chunks = new Map(); // Store active terrain chunks
 const chunkSize = 200; // Size of each terrain chunk
@@ -106,20 +163,254 @@ const lightPool = {
   }
 };
 
+function initSharedAssets(textures = {}) {
+  sharedAssets.terrainMaterial = new THREE.MeshStandardMaterial({
+    map: textures.grass || null,
+    normalMap: textures.grassNormal || null,
+    normalScale: new THREE.Vector2(0.6, 0.6),
+    color: textures.grass ? 0xffffff : 0x4a7c3f,
+    roughness: 0.92,
+    metalness: 0.02
+  });
+
+  sharedAssets.terrainGeometry = new THREE.PlaneGeometry(
+    chunkSize,
+    chunkSize,
+    perf.terrainSegments,
+    perf.terrainSegments
+  );
+
+  sharedAssets.cloudMaterial = new THREE.MeshLambertMaterial({
+    color: 0xffffff,
+    transparent: true,
+    opacity: 0.88,
+    depthWrite: false
+  });
+  sharedAssets.cloudGeometry = new THREE.SphereGeometry(1, perf.cloudSegments, perf.cloudSegments);
+
+  sharedAssets.treeTrunkGeometry = new THREE.CylinderGeometry(0.9, 1.4, 10, perf.treeSegments);
+  sharedAssets.treeTrunkMaterial = new THREE.MeshStandardMaterial({ color: 0x5c3d2e, roughness: 0.95, metalness: 0 });
+  sharedAssets.treeFoliageGeometry = new THREE.ConeGeometry(1, 1, perf.treeSegments);
+  sharedAssets.treeFoliageMaterial = new THREE.MeshStandardMaterial({ color: 0x2d6a4f, roughness: 0.95, metalness: 0 });
+  sharedAssets.treeFoliageDarkMaterial = new THREE.MeshStandardMaterial({ color: 0x1b4332, roughness: 0.95, metalness: 0 });
+
+  sharedAssets.crateMaterial = new THREE.MeshStandardMaterial({
+    map: textures.crate || null,
+    color: textures.crate ? 0xffffff : 0x8b5a2b,
+    roughness: 0.82,
+    metalness: 0.08
+  });
+  sharedAssets.crateTrimMaterial = new THREE.MeshStandardMaterial({ color: 0x4e342e, roughness: 0.9, metalness: 0.05 });
+
+  sharedAssets.barrelMaterial = new THREE.MeshStandardMaterial({ color: 0xb71c1c, roughness: 0.45, metalness: 0.55 });
+  sharedAssets.barrelRingMaterial = new THREE.MeshStandardMaterial({ color: 0x424242, roughness: 0.35, metalness: 0.7 });
+
+  sharedAssets.barrierMaterial = new THREE.MeshStandardMaterial({ color: 0x757575, roughness: 0.88, metalness: 0.12 });
+  sharedAssets.barrierStripeMaterial = new THREE.MeshStandardMaterial({ color: 0xf9a825, roughness: 0.7, metalness: 0.1 });
+
+  sharedAssets.mountainMaterial = new THREE.MeshStandardMaterial({ color: 0x4a4f52, roughness: 0.95, metalness: 0.05, flatShading: true });
+  sharedAssets.mountainRockMaterial = new THREE.MeshStandardMaterial({ color: 0x3d4346, roughness: 0.98, metalness: 0.03, flatShading: true });
+  sharedAssets.snowMaterial = new THREE.MeshStandardMaterial({ color: 0xeceff1, roughness: 0.98, metalness: 0, flatShading: true });
+
+  sharedAssets.rockMaterial = new THREE.MeshStandardMaterial({ color: 0x616161, roughness: 0.95, metalness: 0.08, flatShading: true });
+  sharedAssets.bushMaterial = new THREE.MeshStandardMaterial({ color: 0x40916c, roughness: 0.95, metalness: 0 });
+  sharedAssets.rockGeometry = new THREE.DodecahedronGeometry(1, 0);
+  sharedAssets.bushGeometry = new THREE.IcosahedronGeometry(1, 0);
+
+  const ts = perf.tankSegments;
+  sharedAssets.tankLowerHullGeometry = new THREE.BoxGeometry(10.5, 3.2, 16);
+  sharedAssets.tankUpperHullGeometry = new THREE.BoxGeometry(8.5, 2.4, 11);
+  sharedAssets.tankGlacisGeometry = new THREE.BoxGeometry(9.5, 0.7, 4.5);
+  sharedAssets.tankTurretGeometry = new THREE.CylinderGeometry(3.8, 4.3, 3, ts);
+  sharedAssets.tankCupolaGeometry = new THREE.CylinderGeometry(1.3, 1.5, 1, Math.max(6, ts - 2));
+  sharedAssets.tankMantletGeometry = new THREE.CylinderGeometry(1.5, 1.5, 1.4, ts);
+  sharedAssets.tankBarrelGeometry = new THREE.CylinderGeometry(0.55, 0.6, 10, ts);
+  sharedAssets.tankMuzzleGeometry = new THREE.CylinderGeometry(0.75, 0.55, 2, ts);
+  sharedAssets.tankTrackPlateGeometry = new THREE.BoxGeometry(2.5, 4.2, 17);
+  sharedAssets.tankWheelGeometry = new THREE.CylinderGeometry(1.05, 1.05, 0.95, ts);
+  sharedAssets.tankExhaustGeometry = new THREE.BoxGeometry(0.9, 1.8, 0.9);
+  sharedAssets.tankAntennaGeometry = new THREE.CylinderGeometry(0.07, 0.07, 3.5, 4);
+  sharedAssets.tankHeadlightGeometry = new THREE.BoxGeometry(0.8, 0.5, 0.4);
+  sharedAssets.barrelRingGeometry = new THREE.TorusGeometry(2.55, 0.12, 6, perf.treeSegments);
+}
+
+function applyMeshShadows(mesh) {
+  mesh.castShadow = perf.castShadows;
+  mesh.receiveShadow = perf.castShadows;
+  return mesh;
+}
+
+function createDetailedTread(rubberMat, metalMat) {
+  const tread = new THREE.Group();
+  tread.add(applyMeshShadows(new THREE.Mesh(sharedAssets.tankTrackPlateGeometry, rubberMat)));
+
+  const wheelCount = isMobile ? 5 : 7;
+  for (let i = 0; i < wheelCount; i++) {
+    const wheel = applyMeshShadows(new THREE.Mesh(sharedAssets.tankWheelGeometry, metalMat));
+    wheel.rotation.x = Math.PI / 2;
+    wheel.position.set(0, -0.35, -7 + i * (14 / (wheelCount - 1)));
+    tread.add(wheel);
+  }
+
+  return tread;
+}
+
+function buildTankModel(colors) {
+  const tank = new THREE.Group();
+  const hullMat = new THREE.MeshStandardMaterial({ color: colors.hull, roughness: 0.52, metalness: 0.52 });
+  const hullDarkMat = new THREE.MeshStandardMaterial({ color: colors.hullDark, roughness: 0.58, metalness: 0.48 });
+  const metalMat = new THREE.MeshStandardMaterial({ color: colors.metal, roughness: 0.32, metalness: 0.82 });
+  const rubberMat = new THREE.MeshStandardMaterial({ color: 0x1a1a1a, roughness: 0.94, metalness: 0.04 });
+
+  const lowerHull = applyMeshShadows(new THREE.Mesh(sharedAssets.tankLowerHullGeometry, hullMat));
+  lowerHull.position.y = 2.6;
+  tank.add(lowerHull);
+
+  const upperHull = applyMeshShadows(new THREE.Mesh(sharedAssets.tankUpperHullGeometry, hullMat));
+  upperHull.position.set(0, 4.3, -0.8);
+  tank.add(upperHull);
+
+  const glacis = applyMeshShadows(new THREE.Mesh(sharedAssets.tankGlacisGeometry, hullDarkMat));
+  glacis.position.set(0, 3.9, 6.2);
+  glacis.rotation.x = -0.52;
+  tank.add(glacis);
+
+  const rearDeck = applyMeshShadows(new THREE.Mesh(sharedAssets.tankGlacisGeometry, hullDarkMat));
+  rearDeck.scale.set(0.85, 1, 0.7);
+  rearDeck.position.set(0, 4.8, -6.5);
+  rearDeck.rotation.x = 0.15;
+  tank.add(rearDeck);
+
+  const turret = applyMeshShadows(new THREE.Mesh(sharedAssets.tankTurretGeometry, hullMat));
+  turret.position.y = 7.6;
+  turret.rotation.x = Math.PI / 2;
+  tank.add(turret);
+
+  const cupola = applyMeshShadows(new THREE.Mesh(sharedAssets.tankCupolaGeometry, hullDarkMat));
+  cupola.position.set(0, 1.35, -0.6);
+  turret.add(cupola);
+
+  const mantlet = applyMeshShadows(new THREE.Mesh(sharedAssets.tankMantletGeometry, metalMat));
+  mantlet.position.set(0, 0, 1.6);
+  mantlet.rotation.x = Math.PI / 2;
+  turret.add(mantlet);
+
+  const barrel = applyMeshShadows(new THREE.Mesh(sharedAssets.tankBarrelGeometry, metalMat));
+  barrel.position.set(0, 0, 7.2);
+  barrel.rotation.x = Math.PI / 2;
+  turret.add(barrel);
+
+  const muzzle = applyMeshShadows(new THREE.Mesh(sharedAssets.tankMuzzleGeometry, metalMat));
+  muzzle.position.set(0, 0, 12.8);
+  muzzle.rotation.x = Math.PI / 2;
+  turret.add(muzzle);
+
+  const leftTread = createDetailedTread(rubberMat, metalMat);
+  leftTread.position.set(-5.9, 2, 0);
+  tank.add(leftTread);
+
+  const rightTread = createDetailedTread(rubberMat, metalMat);
+  rightTread.position.set(5.9, 2, 0);
+  tank.add(rightTread);
+
+  const exhaustLeft = applyMeshShadows(new THREE.Mesh(sharedAssets.tankExhaustGeometry, metalMat));
+  exhaustLeft.position.set(-2.2, 5.2, -7);
+  tank.add(exhaustLeft);
+
+  const exhaustRight = applyMeshShadows(new THREE.Mesh(sharedAssets.tankExhaustGeometry, metalMat));
+  exhaustRight.position.set(2.2, 5.2, -7);
+  tank.add(exhaustRight);
+
+  const antenna = applyMeshShadows(new THREE.Mesh(sharedAssets.tankAntennaGeometry, metalMat));
+  antenna.position.set(-1.8, 9.8, -0.8);
+  tank.add(antenna);
+
+  const headlightLeft = applyMeshShadows(new THREE.Mesh(sharedAssets.tankHeadlightGeometry, metalMat));
+  headlightLeft.position.set(-3.8, 3.6, 7.8);
+  tank.add(headlightLeft);
+
+  const headlightRight = applyMeshShadows(new THREE.Mesh(sharedAssets.tankHeadlightGeometry, metalMat));
+  headlightRight.position.set(3.8, 3.6, 7.8);
+  tank.add(headlightRight);
+
+  tank.userData.turret = turret;
+  return tank;
+}
+
+function createDisplacedTerrainGeometry(chunkX, chunkZ) {
+  const geometry = sharedAssets.terrainGeometry.clone();
+  const positions = geometry.attributes.position;
+  const originX = chunkX * chunkSize + chunkSize / 2;
+  const originZ = chunkZ * chunkSize + chunkSize / 2;
+
+  for (let i = 0; i < positions.count; i++) {
+    const localX = positions.getX(i);
+    const localY = positions.getY(i);
+    const worldX = originX + localX;
+    const worldZ = originZ - localY;
+    const height =
+      Math.sin(worldX * 0.025) * Math.cos(worldZ * 0.022) * 1.8 +
+      Math.sin(worldX * 0.08 + worldZ * 0.06) * 0.7 +
+      Math.cos(worldX * 0.015 - worldZ * 0.03) * 0.5;
+    positions.setZ(i, height);
+  }
+
+  positions.needsUpdate = true;
+  geometry.computeVertexNormals();
+  return geometry;
+}
+
+function createRock() {
+  const scale = 1.2 + Math.random() * 2.2;
+  const rock = applyMeshShadows(new THREE.Mesh(sharedAssets.rockGeometry, sharedAssets.rockMaterial));
+  rock.scale.setScalar(scale);
+  rock.rotation.set(Math.random() * Math.PI, Math.random() * Math.PI, Math.random() * Math.PI);
+  rock.userData.type = 'rock';
+  rock.userData.health = Infinity;
+  rock.userData.collisionRadius = scale * 0.9;
+  rock.userData.halfHeight = scale * 0.7;
+  rock.userData.isDestroyed = false;
+  rock.userData.originalScale = rock.scale.clone();
+  return rock;
+}
+
+function createBush() {
+  const bush = new THREE.Group();
+  const clusterCount = 2 + Math.floor(Math.random() * 2);
+
+  for (let i = 0; i < clusterCount; i++) {
+    const puff = applyMeshShadows(new THREE.Mesh(
+      sharedAssets.bushGeometry,
+      i % 2 === 0 ? sharedAssets.bushMaterial : sharedAssets.treeFoliageDarkMaterial
+    ));
+    const size = 0.8 + Math.random() * 0.8;
+    puff.scale.set(size * 1.2, size * 0.8, size);
+    puff.position.set((Math.random() - 0.5) * 2.5, size * 0.45, (Math.random() - 0.5) * 2.5);
+    bush.add(puff);
+  }
+
+  bush.userData.type = 'bush';
+  bush.userData.health = Infinity;
+  bush.userData.collisionRadius = 1.8;
+  bush.userData.halfHeight = 0.8;
+  bush.userData.isDestroyed = false;
+  bush.userData.originalScale = bush.scale.clone();
+  return bush;
+}
+
 // Initialize the game
 function init() {
   // Create loading manager
   const loadingManager = setupLoading();
 
   // For development, use placeholder textures
-  createPlaceholderTextures();
+  const textures = createPlaceholderTextures();
+  initSharedAssets(textures);
 
   // Create scene
   scene = new THREE.Scene();
-  scene.fog = new THREE.FogExp2(0xDFE9F3, 0.0025);
-
-  // Create UI elements
-  createGameUI();
+  scene.fog = new THREE.FogExp2(0xa8c4d4, 0.0022);
+  scene.background = new THREE.Color(0x7eb6d8);
 
   // Create camera
   camera = new THREE.PerspectiveCamera(
@@ -134,14 +425,17 @@ function init() {
   camera.lookAt(0, 3, 100);
 
   // Create renderer
-  renderer = new THREE.WebGLRenderer({ antialias: true });
+  renderer = new THREE.WebGLRenderer({
+    antialias: perf.antialias,
+    powerPreference: 'high-performance'
+  });
   renderer.setSize(window.innerWidth, window.innerHeight);
-  renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
-  renderer.shadowMap.enabled = true;
-  renderer.shadowMap.type = THREE.PCFSoftShadowMap;
-  renderer.outputEncoding = THREE.sRGBEncoding;
+  renderer.setPixelRatio(perf.pixelRatio);
+  renderer.shadowMap.enabled = perf.castShadows;
+  renderer.shadowMap.type = isMobile ? THREE.BasicShadowMap : THREE.PCFSoftShadowMap;
+  renderer.outputColorSpace = THREE.SRGBColorSpace;
   renderer.toneMapping = THREE.ACESFilmicToneMapping;
-  renderer.toneMappingExposure = 1.2;
+  renderer.toneMappingExposure = 1.15;
 
   // Add renderer to page with full viewport styling
   const container = document.getElementById('app');
@@ -177,10 +471,6 @@ function init() {
     }
   }
 
-  // Create obstacles
-  createObstacles();
-  createTrees();
-
   // Create player tank
   createPlayerTank();
 
@@ -195,10 +485,10 @@ function init() {
     loadingBarFill.style.width = '100%';
 
     setTimeout(() => {
-      loadingScreen.style.opacity = '0';
+      loadingScreen.classList.add('is-hidden');
       setTimeout(() => {
         loadingScreen.style.display = 'none';
-      }, 500);
+      }, 600);
 
       startGame();
     }, 500);
@@ -212,53 +502,66 @@ function init() {
 
 // Create lighting for the scene
 function setupLights() {
-  // Ambient light
-  const ambientLight = new THREE.AmbientLight(0xffffff, 0.4);
+  const ambientLight = new THREE.AmbientLight(0xdce8f0, 0.35);
   scene.add(ambientLight);
 
-  // Directional light (sun)
-  const directionalLight = new THREE.DirectionalLight(0xffffff, 0.8);
-  directionalLight.position.set(50, 200, 100);
-  directionalLight.castShadow = true;
+  const directionalLight = new THREE.DirectionalLight(0xfff4e0, 0.85);
+  directionalLight.position.set(80, 180, 60);
+  directionalLight.castShadow = perf.castShadows;
 
-  // Optimize shadow settings
-  directionalLight.shadow.mapSize.width = 1024;
-  directionalLight.shadow.mapSize.height = 1024;
-  directionalLight.shadow.camera.near = 10;
-  directionalLight.shadow.camera.far = 500;
-  directionalLight.shadow.camera.left = -200;
-  directionalLight.shadow.camera.right = 200;
-  directionalLight.shadow.camera.top = 200;
-  directionalLight.shadow.camera.bottom = -200;
+  if (perf.castShadows) {
+    directionalLight.shadow.mapSize.set(perf.shadowMapSize, perf.shadowMapSize);
+    directionalLight.shadow.camera.near = 10;
+    directionalLight.shadow.camera.far = 450;
+    directionalLight.shadow.camera.left = -160;
+    directionalLight.shadow.camera.right = 160;
+    directionalLight.shadow.camera.top = 160;
+    directionalLight.shadow.camera.bottom = -160;
+    directionalLight.shadow.bias = -0.0005;
+  }
 
   scene.add(directionalLight);
 
-  // Add hemisphere light for better ambient colors
-  const hemisphereLight = new THREE.HemisphereLight(0x87CEEB, 0x3D9970, 0.6);
+  const hemisphereLight = new THREE.HemisphereLight(0x8ecae6, 0x3d5a3e, 0.55);
   scene.add(hemisphereLight);
 }
 
 // Setup event listeners for controls
+function setControlFromKey(key, pressed) {
+  switch (key) {
+    case 'w':
+    case 'arrowup':
+      controls_state.moveForward = pressed;
+      break;
+    case 's':
+    case 'arrowdown':
+      controls_state.moveBackward = pressed;
+      break;
+    case 'a':
+    case 'arrowleft':
+      controls_state.rotateLeft = pressed;
+      break;
+    case 'd':
+    case 'arrowright':
+      controls_state.rotateRight = pressed;
+      break;
+    case ' ':
+      controls_state.shoot = pressed;
+      break;
+  }
+}
+
 function setupEventListeners() {
-  // Keyboard controls for desktop
   window.addEventListener('keydown', (e) => {
-    switch (e.key.toLowerCase()) {
-      case 'w': controls_state.moveForward = true; break;
-      case 's': controls_state.moveBackward = true; break;
-      case 'a': controls_state.rotateLeft = true; break;
-      case 'd': controls_state.rotateRight = true; break;
-      case ' ': controls_state.shoot = true; break;
+    const key = e.key.toLowerCase();
+    if (key.startsWith('arrow') || key === ' ') {
+      e.preventDefault();
     }
+    setControlFromKey(key, true);
   });
 
   window.addEventListener('keyup', (e) => {
-    switch (e.key.toLowerCase()) {
-      case 'w': controls_state.moveForward = false; break;
-      case 's': controls_state.moveBackward = false; break;
-      case 'a': controls_state.rotateLeft = false; break;
-      case 'd': controls_state.rotateRight = false; break;
-      case ' ': controls_state.shoot = false; break;
-    }
+    setControlFromKey(e.key.toLowerCase(), false);
   });
 
   // Touch controls for mobile
@@ -276,10 +579,10 @@ function setupEventListeners() {
     renderer.setSize(window.innerWidth, window.innerHeight);
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
 
-    // Update mobile status
     isMobile = window.innerWidth < 768;
+    perf.pixelRatio = Math.min(window.devicePixelRatio, isMobile ? 1.25 : 2);
+    renderer.setPixelRatio(perf.pixelRatio);
 
-    // Update mobile controls
     if (isMobile) {
       createMobileControls();
     }
@@ -291,8 +594,7 @@ function setupEventListeners() {
 
 // Create skybox for the scene
 function createSkybox() {
-  // Just set the background color, no walls or geometry
-  scene.background = new THREE.Color('#87CEEB');
+  scene.background = new THREE.Color(0x7eb6d8);
 }
 
 // Create terrain
@@ -351,107 +653,89 @@ function createClouds() {
 }
 
 function createCloud() {
-  // Create a group for cloud particles
   const cloudGroup = new THREE.Group();
-
-  // Cloud material
-  const cloudMaterial = new THREE.MeshStandardMaterial({
-    color: 0xffffff,
-    transparent: true,
-    opacity: 0.8,
-    roughness: 1.0,
-    metalness: 0.0
-  });
-
-  // Create multiple spheres for a fluffy look
-  const particleCount = 5 + Math.floor(Math.random() * 5);
+  const particleCount = perf.cloudSpheres + Math.floor(Math.random() * 4);
 
   for (let i = 0; i < particleCount; i++) {
-    const size = 5 + Math.random() * 10;
-    const geometry = new THREE.SphereGeometry(size, 7, 7);
-    const mesh = new THREE.Mesh(geometry, cloudMaterial);
-
-    // Position the sphere randomly within the cloud
+    const size = 4 + Math.random() * 12;
+    const mesh = new THREE.Mesh(sharedAssets.cloudGeometry, sharedAssets.cloudMaterial);
+    mesh.scale.set(size * 1.1, size * 0.65, size);
     mesh.position.set(
       (Math.random() - 0.5) * 15,
       (Math.random() - 0.5) * 5,
       (Math.random() - 0.5) * 15
     );
-
     cloudGroup.add(mesh);
   }
 
-  // Position the cloud randomly in the sky
   cloudGroup.position.set(
-    (Math.random() - 0.5) * settings.terrainSize,
+    (Math.random() - 0.5) * 800,
     80 + Math.random() * 40,
-    (Math.random() - 0.5) * settings.terrainSize
+    (Math.random() - 0.5) * 800
   );
 
-  // Random scale for variety
-  const scale = 1 + Math.random();
-  cloudGroup.scale.set(scale, scale, scale);
+  const scale = 0.85 + Math.random() * 0.5;
+  cloudGroup.scale.setScalar(scale);
 
-  // Add velocity for movement
   cloudGroup.userData.velocity = new THREE.Vector3(
     (Math.random() - 0.5) * 5,
     0,
     (Math.random() - 0.5) * 5
   );
 
-  // Add to scene and clouds array
   scene.add(cloudGroup);
   clouds.push(cloudGroup);
 }
 
 // Create mountains
 function createMountains() {
-  const mountainCount = isMobile ? 5 : 8;
+  const mountainCount = isMobile ? 6 : 10;
 
   for (let i = 0; i < mountainCount; i++) {
-    // Create a mountain using a cone geometry
-    const height = 80 + Math.random() * 120;
-    const radius = 60 + Math.random() * 80;
+    const mountainGroup = new THREE.Group();
+    const height = 90 + Math.random() * 130;
+    const radius = 65 + Math.random() * 85;
 
-    const mountainGeometry = new THREE.ConeGeometry(
-      radius,
-      height,
-      16,
-      4
+    const base = applyMeshShadows(new THREE.Mesh(
+      new THREE.ConeGeometry(radius, height, perf.mountainSegments, 3),
+      sharedAssets.mountainMaterial
+    ));
+    base.position.y = height / 2;
+    mountainGroup.add(base);
+
+    const ridge = applyMeshShadows(new THREE.Mesh(
+      new THREE.ConeGeometry(radius * 0.55, height * 0.55, perf.mountainSegments, 2),
+      sharedAssets.mountainRockMaterial
+    ));
+    ridge.position.set(radius * 0.15, height * 0.72, radius * 0.1);
+    mountainGroup.add(ridge);
+
+    if (height > 140) {
+      const snowCap = applyMeshShadows(new THREE.Mesh(
+        new THREE.ConeGeometry(radius * 0.28, height * 0.18, perf.mountainSegments, 1),
+        sharedAssets.snowMaterial
+      ));
+      snowCap.position.y = height * 0.92;
+      mountainGroup.add(snowCap);
+    }
+
+    const angle = (i / mountainCount) * Math.PI * 2 + Math.random() * 0.4;
+    const distance = 380 + Math.random() * 80;
+    mountainGroup.position.set(
+      Math.cos(angle) * distance,
+      0,
+      Math.sin(angle) * distance
     );
+    mountainGroup.rotation.y = Math.random() * Math.PI * 2;
 
-    // Create mountain material
-    const mountainMaterial = new THREE.MeshStandardMaterial({
-      color: 0x4B4B4B,
-      roughness: 0.9,
-      metalness: 0.1,
-      flatShading: true
-    });
+    mountainGroup.userData.type = 'mountain';
+    mountainGroup.userData.health = Infinity;
+    mountainGroup.userData.collisionRadius = radius * 0.9;
+    mountainGroup.userData.halfHeight = height / 2;
+    mountainGroup.userData.isDestroyed = false;
 
-    // Create mesh
-    const mountain = new THREE.Mesh(mountainGeometry, mountainMaterial);
-
-    // Position mountain around the starting area
-    const angle = (i / mountainCount) * Math.PI * 2;
-    const distance = 400; // Fixed distance from origin
-
-    mountain.position.x = Math.cos(angle) * distance;
-    mountain.position.z = Math.sin(angle) * distance;
-    mountain.position.y = height / 2;
-
-    // Rotate slightly for variation
-    mountain.rotation.y = Math.random() * Math.PI * 2;
-
-    // Add mountain data for collision detection
-    mountain.userData.type = 'mountain';
-    mountain.userData.health = Infinity;
-    mountain.userData.collisionRadius = radius * 0.9;
-    mountain.userData.halfHeight = height / 2;
-    mountain.userData.isDestroyed = false;
-
-    // Add mountain to scene and obstacles array
-    scene.add(mountain);
-    obstacles.push(mountain);
+    scene.add(mountainGroup);
+    obstacles.push(mountainGroup);
   }
 }
 
@@ -549,22 +833,31 @@ function createObstacles() {
 
 function createCrate() {
   const size = 5 + Math.random() * 3;
-  const geometry = new THREE.BoxGeometry(size, size, size);
+  const crate = new THREE.Group();
+  const body = applyMeshShadows(new THREE.Mesh(new THREE.BoxGeometry(size, size, size), sharedAssets.crateMaterial));
+  crate.add(body);
 
-  const textureLoader = new THREE.TextureLoader();
-  const crateTexture = textureLoader.load('/textures/crate.jpg');
+  const trimSize = size * 1.02;
+  const trimThickness = 0.18;
+  const trimGeo = new THREE.BoxGeometry(trimSize, trimThickness, trimThickness);
 
-  const material = new THREE.MeshStandardMaterial({
-    map: crateTexture,
-    roughness: 0.7,
-    metalness: 0.2
-  });
+  const trimFront = applyMeshShadows(new THREE.Mesh(trimGeo, sharedAssets.crateTrimMaterial));
+  trimFront.position.set(0, size * 0.25, size / 2);
+  crate.add(trimFront);
 
-  const crate = new THREE.Mesh(geometry, material);
-  crate.castShadow = true;
-  crate.receiveShadow = true;
+  const trimBack = trimFront.clone();
+  trimBack.position.z = -size / 2;
+  crate.add(trimBack);
 
-  // Store original properties for respawning
+  const trimSideGeo = new THREE.BoxGeometry(trimThickness, trimThickness, trimSize);
+  const trimLeft = applyMeshShadows(new THREE.Mesh(trimSideGeo, sharedAssets.crateTrimMaterial));
+  trimLeft.position.set(-size / 2, -size * 0.1, 0);
+  crate.add(trimLeft);
+
+  const trimRight = trimLeft.clone();
+  trimRight.position.x = size / 2;
+  crate.add(trimRight);
+
   crate.userData.originalScale = new THREE.Vector3().copy(crate.scale);
   crate.userData.type = 'crate';
   crate.userData.health = 30;
@@ -577,60 +870,65 @@ function createCrate() {
 
 function createBarrel() {
   const radiusTop = 2.5;
-  const radiusBottom = 2.5;
   const height = 7;
-  const geometry = new THREE.CylinderGeometry(
-    radiusTop,
-    radiusBottom,
-    height,
-    16
-  );
+  const barrelGroup = new THREE.Group();
 
-  const material = new THREE.MeshStandardMaterial({
-    color: 0xF04040,
-    roughness: 0.6,
-    metalness: 0.4
-  });
+  const body = applyMeshShadows(new THREE.Mesh(
+    new THREE.CylinderGeometry(radiusTop, radiusTop, height, perf.treeSegments),
+    sharedAssets.barrelMaterial
+  ));
+  body.position.y = height / 2;
+  barrelGroup.add(body);
 
-  const barrel = new THREE.Mesh(geometry, material);
-  barrel.castShadow = true;
-  barrel.receiveShadow = true;
+  for (const y of [1.8, 3.6, 5.4]) {
+    const ring = applyMeshShadows(new THREE.Mesh(sharedAssets.barrelRingGeometry, sharedAssets.barrelRingMaterial));
+    ring.rotation.x = Math.PI / 2;
+    ring.position.y = y;
+    barrelGroup.add(ring);
+  }
 
-  // Rotate randomly
-  barrel.rotation.y = Math.random() * Math.PI * 2;
+  barrelGroup.rotation.y = Math.random() * Math.PI * 2;
+  barrelGroup.userData.originalScale = new THREE.Vector3().copy(barrelGroup.scale);
+  barrelGroup.userData.type = 'barrel';
+  barrelGroup.userData.health = 20;
+  barrelGroup.userData.halfHeight = height / 2;
+  barrelGroup.userData.collisionRadius = radiusTop;
+  barrelGroup.userData.isDestroyed = false;
+  barrelGroup.userData.isExplosive = true;
 
-  // Store original properties for respawning
-  barrel.userData.originalScale = new THREE.Vector3().copy(barrel.scale);
-  barrel.userData.type = 'barrel';
-  barrel.userData.health = 20;
-  barrel.userData.halfHeight = height / 2;
-  barrel.userData.collisionRadius = radiusTop;
-  barrel.userData.isDestroyed = false;
-  barrel.userData.isExplosive = true;
-
-  return barrel;
+  return barrelGroup;
 }
 
 function createBarrier() {
   const width = 8;
   const height = 5;
   const depth = 3;
-  const geometry = new THREE.BoxGeometry(width, height, depth);
+  const barrier = new THREE.Group();
 
-  const material = new THREE.MeshStandardMaterial({
-    color: 0xCCCCCC,
-    roughness: 0.9,
-    metalness: 0.1
-  });
+  const block = applyMeshShadows(new THREE.Mesh(
+    new THREE.BoxGeometry(width, height, depth),
+    sharedAssets.barrierMaterial
+  ));
+  block.position.y = height / 2;
+  barrier.add(block);
 
-  const barrier = new THREE.Mesh(geometry, material);
-  barrier.castShadow = true;
-  barrier.receiveShadow = true;
+  for (let i = -1; i <= 1; i += 2) {
+    const stripe = applyMeshShadows(new THREE.Mesh(
+      new THREE.BoxGeometry(width * 0.85, height * 0.18, depth * 1.02),
+      sharedAssets.barrierStripeMaterial
+    ));
+    stripe.position.set(0, height * (0.35 + i * 0.22), 0);
+    barrier.add(stripe);
+  }
 
-  // Rotate randomly
+  const legGeo = new THREE.BoxGeometry(0.6, height * 0.55, 0.6);
+  for (const x of [-width * 0.35, width * 0.35]) {
+    const leg = applyMeshShadows(new THREE.Mesh(legGeo, sharedAssets.barrierMaterial));
+    leg.position.set(x, height * 0.28, 0);
+    barrier.add(leg);
+  }
+
   barrier.rotation.y = Math.random() * Math.PI * 2;
-
-  // Store original properties for respawning
   barrier.userData.originalScale = new THREE.Vector3().copy(barrier.scale);
   barrier.userData.type = 'barrier';
   barrier.userData.health = 50;
@@ -648,151 +946,64 @@ function createTrees() {
   }
 }
 
+function createFoliageCone(radius, height, material = sharedAssets.treeFoliageMaterial) {
+  const mesh = new THREE.Mesh(sharedAssets.treeFoliageGeometry, material);
+  mesh.scale.set(radius, height, radius);
+  mesh.castShadow = perf.castShadows;
+  return mesh;
+}
+
 function createTree() {
-  // Create tree group
   const treeGroup = new THREE.Group();
+  const scale = 0.85 + Math.random() * 0.45;
+  treeGroup.scale.setScalar(scale);
 
-  // Create trunk
-  const trunkGeometry = new THREE.CylinderGeometry(1, 1.5, 10, 8);
-  const trunkMaterial = new THREE.MeshStandardMaterial({
-    color: 0x8B4513,
-    roughness: 0.9,
-    metalness: 0.0
-  });
-
-  const trunk = new THREE.Mesh(trunkGeometry, trunkMaterial);
-  trunk.castShadow = true;
-  trunk.receiveShadow = true;
+  const trunk = applyMeshShadows(new THREE.Mesh(sharedAssets.treeTrunkGeometry, sharedAssets.treeTrunkMaterial));
   trunk.position.y = 5;
-
-  // Create foliage (4 cones for a stylized look)
-  const foliageMaterial = new THREE.MeshStandardMaterial({
-    color: 0x2E8B57,
-    roughness: 1.0,
-    metalness: 0.0
-  });
-
-  // Bottom foliage
-  const foliage1 = createFoliageCone(6, 8, foliageMaterial);
-  foliage1.position.y = 8;
-
-  // Middle foliage
-  const foliage2 = createFoliageCone(5, 7, foliageMaterial);
-  foliage2.position.y = 12;
-
-  // Top foliage
-  const foliage3 = createFoliageCone(3, 6, foliageMaterial);
-  foliage3.position.y = 15;
-
-  // Add all parts to the tree group
   treeGroup.add(trunk);
-  treeGroup.add(foliage1);
-  treeGroup.add(foliage2);
-  treeGroup.add(foliage3);
 
-  // Store tree data
+  const foliageLayers = [
+    { r: 6.5, h: 8.5, y: 8, mat: sharedAssets.treeFoliageMaterial },
+    { r: 5.2, h: 7.2, y: 12, mat: sharedAssets.treeFoliageMaterial },
+    { r: 3.8, h: 6.2, y: 15.5, mat: sharedAssets.treeFoliageDarkMaterial },
+    { r: 2.4, h: 4.8, y: 18.5, mat: sharedAssets.treeFoliageDarkMaterial }
+  ];
+
+  for (const layer of foliageLayers) {
+    const foliage = createFoliageCone(layer.r, layer.h, layer.mat);
+    foliage.position.y = layer.y;
+    foliage.rotation.y = Math.random() * Math.PI;
+    treeGroup.add(foliage);
+  }
+
   treeGroup.userData.type = 'tree';
   treeGroup.userData.health = 40;
   treeGroup.userData.originalScale = new THREE.Vector3().copy(treeGroup.scale);
-  treeGroup.userData.collisionRadius = 6;
-  treeGroup.userData.halfHeight = 10;
+  treeGroup.userData.collisionRadius = 6 * scale;
+  treeGroup.userData.halfHeight = 10 * scale;
   treeGroup.userData.isDestroyed = false;
-
-  // Add some random rotation
   treeGroup.rotation.y = Math.random() * Math.PI * 2;
 
-  return treeGroup; // Make sure to return the tree group
-}
-
-function createFoliageCone(radius, height, material) {
-  const geometry = new THREE.ConeGeometry(radius, height, 8);
-  const mesh = new THREE.Mesh(geometry, material);
-  mesh.castShadow = true;
-  return mesh;
+  return treeGroup;
 }
 
 // Create player tank
 function createPlayerTank() {
-  // Create tank group
-  player = new THREE.Group();
-
-  // Create tank body
-  const bodyGeometry = new THREE.BoxGeometry(10, 4, 15);
-  const bodyMaterial = new THREE.MeshStandardMaterial({
-    color: 0x4B5320,
-    roughness: 0.7,
-    metalness: 0.3
+  player = buildTankModel({
+    hull: 0x556b2f,
+    hullDark: 0x3d4a26,
+    metal: 0x8d8d8d
   });
 
-  const body = new THREE.Mesh(bodyGeometry, bodyMaterial);
-  body.castShadow = true;
-  body.receiveShadow = true;
-  body.position.y = 4;
-
-  // Create tank turret
-  const turretGeometry = new THREE.CylinderGeometry(4, 4, 3, 8);
-  const turretMaterial = new THREE.MeshStandardMaterial({
-    color: 0x4B5320,
-    roughness: 0.7,
-    metalness: 0.3
-  });
-
-  const turret = new THREE.Mesh(turretGeometry, turretMaterial);
-  turret.castShadow = true;
-  turret.receiveShadow = true;
-  turret.position.y = 7.5;
-  turret.rotation.x = Math.PI / 2;
-
-  // Create tank barrel
-  const barrelGeometry = new THREE.CylinderGeometry(0.8, 0.8, 12, 8);
-  const barrelMaterial = new THREE.MeshStandardMaterial({
-    color: 0x333333,
-    roughness: 0.6,
-    metalness: 0.4
-  });
-
-  const barrel = new THREE.Mesh(barrelGeometry, barrelMaterial);
-  barrel.castShadow = true;
-  barrel.receiveShadow = true;
-  barrel.position.z = 6;
-  barrel.rotation.x = Math.PI / 2;
-
-  // Add barrel to turret
-  turret.add(barrel);
-
-  // Create tank treads
-  const leftTread = createTankTread();
-  leftTread.position.set(-5.5, 2, 0);
-
-  const rightTread = createTankTread();
-  rightTread.position.set(5.5, 2, 0);
-
-  // Add all parts to the tank group
-  player.add(body);
-  player.add(turret);
-  player.add(leftTread);
-  player.add(rightTread);
-
-  // REMOVE hardcoded position - Server will set initial position via 'init' message
-  // player.position.set(0, 0, 0);
-
-  // Store turret for rotation
-  player.userData.turret = turret;
   player.userData.collisionRadius = 7.5;
   player.userData.health = settings.tankMaxHealth;
   player.userData.isDestroyed = false;
   player.userData.type = 'tank';
 
   scene.add(player);
-  playerTank = player; // Assign to global playerTank AFTER adding to scene
+  playerTank = player;
 
-  // Initialize orbital controls (but disable)
-  // controls.enabled = false; // OrbitControls might not be needed if camera is always third-person
-
-  // Create and set up the camera (initial setup)
   setupThirdPersonCamera();
-
-  console.log('Player tank created locally. Awaiting position from server...');
 }
 
 // Helper function to update camera position and orientation
@@ -843,7 +1054,7 @@ function updateCameraPosition() {
 
   // Calculate look target point (above the tank's turret)
   const lookTarget = playerTank.position.clone();
-  lookTarget.y = playerTank.position.y + 7.5; // Height of tank (4) + turret height (3.5)
+  lookTarget.y = playerTank.position.y + TURRET_HEIGHT;
 
   // Make camera look at the point above tank
   camera.lookAt(lookTarget);
@@ -854,98 +1065,32 @@ function updateCameraPosition() {
   }
 }
 
-function createTankTread() {
-  const treadGeometry = new THREE.BoxGeometry(2, 4, 16);
-  const treadMaterial = new THREE.MeshStandardMaterial({
-    color: 0x222222,
-    roughness: 0.8,
-    metalness: 0.2
-  });
-
-  const tread = new THREE.Mesh(treadGeometry, treadMaterial);
-  tread.castShadow = true;
-  tread.receiveShadow = true;
-
-  return tread;
-
-}
-
 // Create mobile controls interface
 function createMobileControls() {
-  // Clear any existing mobile controls
   const existingControls = document.getElementById('mobile-controls');
   if (existingControls) {
     existingControls.remove();
   }
 
-  // Create container for mobile controls
   const controlsContainer = document.createElement('div');
   controlsContainer.id = 'mobile-controls';
-  controlsContainer.style.position = 'absolute';
-  controlsContainer.style.bottom = '20px';
-  controlsContainer.style.left = '0';
-  controlsContainer.style.width = '100%';
-  controlsContainer.style.display = 'flex';
-  controlsContainer.style.justifyContent = 'space-between';
-  controlsContainer.style.padding = '0 20px';
-  controlsContainer.style.boxSizing = 'border-box';
-  controlsContainer.style.zIndex = '100';
-  controlsContainer.style.pointerEvents = 'none'; // Container itself doesn't catch events
 
-  // Create movement joystick div
   const movementJoystick = document.createElement('div');
   movementJoystick.id = 'movement-joystick';
-  movementJoystick.style.width = '120px';
-  movementJoystick.style.height = '120px';
-  movementJoystick.style.borderRadius = '60px';
-  movementJoystick.style.backgroundColor = 'rgba(255, 255, 255, 0.2)';
-  movementJoystick.style.border = '2px solid rgba(255, 255, 255, 0.5)';
-  movementJoystick.style.position = 'relative';
-  movementJoystick.style.pointerEvents = 'auto';
 
-  // Create joystick knob
   const joystickKnob = document.createElement('div');
   joystickKnob.id = 'joystick-knob';
-  joystickKnob.style.width = '50px';
-  joystickKnob.style.height = '50px';
-  joystickKnob.style.borderRadius = '25px';
-  joystickKnob.style.backgroundColor = 'rgba(255, 255, 255, 0.8)';
-  joystickKnob.style.position = 'absolute';
-  joystickKnob.style.top = '35px';
-  joystickKnob.style.left = '35px';
-  joystickKnob.style.pointerEvents = 'none';
-
   movementJoystick.appendChild(joystickKnob);
 
-  // Create shoot button
   const shootButton = document.createElement('div');
   shootButton.id = 'shoot-button';
-  shootButton.style.width = '80px';
-  shootButton.style.height = '80px';
-  shootButton.style.borderRadius = '40px';
-  shootButton.style.backgroundColor = 'rgba(255, 0, 0, 0.5)';
-  shootButton.style.border = '2px solid rgba(255, 255, 255, 0.5)';
-  shootButton.style.boxShadow = '0 0 10px rgba(255, 0, 0, 0.3)';
-  shootButton.style.textAlign = 'center';
-  shootButton.style.lineHeight = '80px';
-  shootButton.style.color = 'white';
-  shootButton.style.fontSize = '16px';
-  shootButton.style.fontWeight = 'bold';
-  shootButton.style.userSelect = 'none';
-  shootButton.style.pointerEvents = 'auto';
   shootButton.innerText = 'FIRE';
 
-  // Add elements to container
   controlsContainer.appendChild(movementJoystick);
   controlsContainer.appendChild(shootButton);
-
-  // Add container to document
   document.body.appendChild(controlsContainer);
 
-  // Set up joystick event handlers
   setupMobileJoystick(movementJoystick, joystickKnob);
-
-  // Set up shoot button event handlers
   setupShootButton(shootButton);
 }
 
@@ -1002,7 +1147,7 @@ function setupMobileJoystick(joystickElement, knobElement) {
     const knobY = distance * Math.sin(angle);
 
     // Update knob position
-    knobElement.style.transform = `translate(${knobX}px, ${knobY}px)`;
+    knobElement.style.transform = `translate(calc(-50% + ${knobX}px), calc(-50% + ${knobY}px))`;
 
     // Update control states
     if (distance > 10) {
@@ -1020,7 +1165,7 @@ function setupMobileJoystick(joystickElement, knobElement) {
 
   // Reset joystick position
   function resetJoystick() {
-    knobElement.style.transform = 'translate(0px, 0px)';
+    knobElement.style.transform = 'translate(-50%, -50%)';
     resetControlStates();
   }
 
@@ -1052,7 +1197,10 @@ function setupShootButton(buttonElement) {
 function animate() {
   requestAnimationFrame(animate);
 
-  // Calculate delta time
+  if (!isTabVisible) {
+    return;
+  }
+
   deltaTime = clock.getDelta();
 
   // Clear console logs after 5 seconds to avoid flooding
@@ -1078,7 +1226,8 @@ function animate() {
   if (isGameActive) {
     updatePlayerTank();
     updateProjectiles();
-    updateExplosions(deltaTime); // Update explosions in main loop
+    updateMuzzleFlash();
+    updateExplosions(deltaTime);
     updateRespawnEffects(deltaTime); // Update respawn effects in main loop
     updateClouds();
     updateRespawnQueue();
@@ -1132,23 +1281,17 @@ function updatePlayerTank() {
   }
 
   if (moveDistance !== 0) {
-    // Calculate new position
-    const moveVector = new THREE.Vector3(
+    _moveVector.set(
       Math.sin(playerTank.rotation.y) * moveDistance,
       0,
       Math.cos(playerTank.rotation.y) * moveDistance
     );
 
-    // Store current position
-    const oldPosition = playerTank.position.clone();
+    _oldPosition.copy(playerTank.position);
+    playerTank.position.add(_moveVector);
 
-    // Update position (no boundary checks)
-    playerTank.position.add(moveVector);
-
-    // Check obstacle collisions
     if (checkTankObstacleCollisions()) {
-      // Collision detected, revert to old position
-      playerTank.position.copy(oldPosition);
+      playerTank.position.copy(_oldPosition);
       positionChanged = false;
     }
   }
@@ -1221,33 +1364,104 @@ const objectPools = {
   projectiles: [],
   particles: [],
   maxProjectiles: 20,
-  maxParticles: 100
+  maxParticles: 80,
+  maxActiveExplosions: 12
 };
 
 // Active explosions tracked for main loop update
 const activeExplosions = [];
+const explosionFlashes = [];
+const MAX_EXPLOSION_FLASHES = 10;
 
-// Shared geometries for better performance
+// Shared geometries for projectiles and effects
 const sharedGeometries = {
-  projectile: new THREE.SphereGeometry(2, 12, 8),  // Balanced detail
-  particle: new THREE.SphereGeometry(0.3, 6, 4)    // Simple but effective particles
+  shellBody: new THREE.CylinderGeometry(0.42, 0.52, 1.5, 6),
+  shellNose: new THREE.CylinderGeometry(0.1, 0.42, 0.75, 6),
+  shellBand: new THREE.CylinderGeometry(0.53, 0.53, 0.12, 6),
+  particle: new THREE.SphereGeometry(0.35, 5, 4),
+  smokeParticle: new THREE.SphereGeometry(0.55, 5, 4),
+  muzzleFlash: new THREE.SphereGeometry(1.5, 6, 4),
+  explosionFlash: new THREE.SphereGeometry(1, 6, 4)
 };
 
-// Optimized materials with good visual quality
 const sharedMaterials = {
-  projectile: new THREE.MeshStandardMaterial({
-    color: 0xFFFF00,
-    emissive: 0xFFFF00,
-    emissiveIntensity: 2,
-    metalness: 0.3,
-    roughness: 0.2
+  shellBody: new THREE.MeshBasicMaterial({ color: 0xb8954a }),
+  shellNose: new THREE.MeshBasicMaterial({ color: 0x3d3d3d }),
+  shellBand: new THREE.MeshBasicMaterial({ color: 0x2a2a2a }),
+  muzzleFlash: new THREE.MeshBasicMaterial({
+    color: 0xffaa44,
+    transparent: true,
+    opacity: 0.85
   }),
   particle: new THREE.MeshBasicMaterial({
-    color: 0xFF5500,
+    color: 0xff6622,
     transparent: true,
-    opacity: 0.8
+    opacity: 0.9
+  }),
+  smokeParticle: new THREE.MeshBasicMaterial({
+    color: 0x555555,
+    transparent: true,
+    opacity: 0.55
+  }),
+  explosionFlash: new THREE.MeshBasicMaterial({
+    color: 0xffaa33,
+    transparent: true,
+    opacity: 0.85
   })
 };
+
+const TURRET_HEIGHT = 7.6;
+const BARREL_OFFSET = 12.8;
+const PROJECTILE_RADIUS = 1.8;
+const muzzleFlash = { mesh: null, until: 0 };
+const _shellUp = new THREE.Vector3(0, 1, 0);
+const _shellQuat = new THREE.Quaternion();
+const _explosionPos = new THREE.Vector3();
+
+function createShellProjectile() {
+  const shell = new THREE.Group();
+
+  const body = new THREE.Mesh(sharedGeometries.shellBody, sharedMaterials.shellBody);
+  body.position.y = -0.12;
+  shell.add(body);
+
+  const nose = new THREE.Mesh(sharedGeometries.shellNose, sharedMaterials.shellNose);
+  nose.position.y = 0.82;
+  shell.add(nose);
+
+  const band = new THREE.Mesh(sharedGeometries.shellBand, sharedMaterials.shellBand);
+  band.position.y = -0.52;
+  shell.add(band);
+
+  return shell;
+}
+
+function orientShell(projectile) {
+  if (!projectile.userData.direction) return;
+  _shellQuat.setFromUnitVectors(_shellUp, projectile.userData.direction);
+  projectile.quaternion.copy(_shellQuat);
+}
+
+function getExplosionFlash() {
+  for (const flash of explosionFlashes) {
+    if (!flash.userData.active) {
+      return flash;
+    }
+  }
+
+  if (explosionFlashes.length < MAX_EXPLOSION_FLASHES) {
+    const flash = new THREE.Mesh(
+      sharedGeometries.explosionFlash,
+      sharedMaterials.explosionFlash.clone()
+    );
+    flash.userData.active = false;
+    scene.add(flash);
+    explosionFlashes.push(flash);
+    return flash;
+  }
+
+  return null;
+}
 
 // Get or create pooled object
 function getPooledObject(type) {
@@ -1263,14 +1477,19 @@ function getPooledObject(type) {
 
   // Create new object if pool isn't full
   if (type === 'projectiles' && pool.length < objectPools.maxProjectiles) {
-    const obj = new THREE.Mesh(sharedGeometries.projectile, sharedMaterials.projectile);
+    const obj = createShellProjectile();
     obj.visible = true;
+    scene.add(obj);
     pool.push(obj);
     return obj;
   } else if (type === 'particles' && pool.length < objectPools.maxParticles) {
-    // Use shared material instead of cloning to avoid memory issues
-    const obj = new THREE.Mesh(sharedGeometries.particle, sharedMaterials.particle);
+    const useSmoke = pool.length % 3 === 0;
+    const obj = new THREE.Mesh(
+      useSmoke ? sharedGeometries.smokeParticle : sharedGeometries.particle,
+      useSmoke ? sharedMaterials.smokeParticle : sharedMaterials.particle
+    );
     obj.visible = true;
+    scene.add(obj);
     pool.push(obj);
     return obj;
   }
@@ -1282,15 +1501,35 @@ function getPooledObject(type) {
 function releasePooledObject(obj) {
   if (obj) {
     obj.visible = false;
-    if (obj.parent) {
-      obj.parent.remove(obj);
-    }
+    obj.scale.setScalar(1);
   }
 }
 
-// Reusable vectors for projectile firing to avoid allocations
+// Reusable vectors for movement and firing
 const _fireDirection = new THREE.Vector3();
-const _fireTurretPos = new THREE.Vector3();
+const _moveVector = new THREE.Vector3();
+const _oldPosition = new THREE.Vector3();
+
+function setProjectileMuzzlePosition(projectile, rotY, tankPosition) {
+  _fireDirection.set(Math.sin(rotY), 0, Math.cos(rotY));
+  projectile.position.set(
+    tankPosition.x + _fireDirection.x * BARREL_OFFSET,
+    tankPosition.y + TURRET_HEIGHT,
+    tankPosition.z + _fireDirection.z * BARREL_OFFSET
+  );
+}
+
+function attachProjectileToScene(projectile) {
+  if (!projectile.parent) {
+    scene.add(projectile);
+  }
+}
+
+function hideProjectile(projectile) {
+  projectile.visible = false;
+  projectile.quaternion.identity();
+  projectile.userData.light = null;
+}
 
 // Optimized projectile firing
 function fireProjectile() {
@@ -1299,135 +1538,81 @@ function fireProjectile() {
   const projectile = getPooledObject('projectiles');
   if (!projectile) return;
 
-  const turret = playerTank.userData.turret;
-
-  // Calculate direction without creating new vector
   const rotY = playerTank.rotation.y;
-  _fireDirection.set(Math.sin(rotY), 0, Math.cos(rotY));
+  setProjectileMuzzlePosition(projectile, rotY, playerTank.position);
 
-  // Get turret world position
-  turret.getWorldPosition(_fireTurretPos);
-
-  // Position projectile at barrel end
-  projectile.position.set(
-    _fireTurretPos.x + _fireDirection.x * 12,
-    _fireTurretPos.y,
-    _fireTurretPos.z + _fireDirection.z * 12
-  );
-
-  // Set projectile properties - store direction values directly
   projectile.userData.direction = projectile.userData.direction || new THREE.Vector3();
   projectile.userData.direction.copy(_fireDirection);
   projectile.userData.speed = settings.projectileSpeed;
   projectile.userData.lifetime = 0;
   projectile.userData.ownerId = clientId;
+  projectile.userData.light = null;
+  orientShell(projectile);
 
-  // Add light only if we have capacity
-  const light = lightPool.acquire(0xFFFF00, 3, 15);
-  if (light) {
-    projectile.userData.light = light;
-    light.position.copy(projectile.position);
-  }
-
-  scene.add(projectile);
+  attachProjectileToScene(projectile);
   projectiles.push(projectile);
 
-  // Quick muzzle flash - pass position directly
   createMuzzleFlash(projectile.position);
 
-  // Send network message asynchronously
   if (ws && ws.readyState === WebSocket.OPEN) {
-    const message = createClientMessage('projectile', {
+    const payload = createClientMessage('projectile', {
       position: { x: projectile.position.x, y: projectile.position.y, z: projectile.position.z },
       direction: { x: _fireDirection.x, y: _fireDirection.y, z: _fireDirection.z },
       speed: projectile.userData.speed
     });
-    ws.send(JSON.stringify(message));
+    queueMicrotask(() => {
+      if (ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify(payload));
+      }
+    });
   }
 }
 
-// Optimized muzzle flash - non-blocking
-let muzzleFlashLight = null;
-let muzzleFlashTimeout = null;
-
 function createMuzzleFlash(position) {
-  // Reuse existing muzzle flash light if available
-  if (!muzzleFlashLight) {
-    muzzleFlashLight = lightPool.acquire(0xFFAA00, 3, 8);
+  if (!muzzleFlash.mesh) {
+    muzzleFlash.mesh = new THREE.Mesh(sharedGeometries.muzzleFlash, sharedMaterials.muzzleFlash);
+    scene.add(muzzleFlash.mesh);
   }
-  if (muzzleFlashLight) {
-    muzzleFlashLight.position.copy(position);
-    muzzleFlashLight.visible = true;
 
-    // Clear any existing timeout
-    if (muzzleFlashTimeout) {
-      clearTimeout(muzzleFlashTimeout);
-    }
+  muzzleFlash.mesh.position.copy(position);
+  muzzleFlash.mesh.visible = true;
+  muzzleFlash.until = clock.elapsedTime + 0.06;
+}
 
-    // Schedule release
-    muzzleFlashTimeout = setTimeout(() => {
-      if (muzzleFlashLight) {
-        muzzleFlashLight.visible = false;
-      }
-    }, 50);
+function updateMuzzleFlash() {
+  if (muzzleFlash.mesh?.visible && clock.elapsedTime >= muzzleFlash.until) {
+    muzzleFlash.mesh.visible = false;
   }
 }
 
 // Efficient projectile update
 function updateProjectiles() {
   const removeList = [];
-  const currentTime = performance.now();
 
   for (const projectile of projectiles) {
     if (!projectile.visible) continue;
 
-    // Update position
     projectile.position.addScaledVector(projectile.userData.direction, projectile.userData.speed * deltaTime);
-
-    // Update light if present
-    if (projectile.userData.light) {
-      projectile.userData.light.position.copy(projectile.position);
-    }
-
+    orientShell(projectile);
     projectile.userData.lifetime += deltaTime;
 
-    // Check for lifetime expiration
     if (projectile.userData.lifetime > 3) {
-      projectile.visible = false; // Mark for removal
-      // Immediate cleanup for expired projectiles
-      if (projectile.userData.light) {
-        lightPool.release(projectile.userData.light);
-        projectile.userData.light = null;
-      }
-      scene.remove(projectile);
-      removeList.push(projectile); // Still add to list for array splice
-      continue; // Go to next projectile
+      hideProjectile(projectile);
+      removeList.push(projectile);
+      continue;
     }
 
-    // Check for collisions ONLY if still visible and not expired
     if (checkProjectileCollisions(projectile)) {
-      projectile.visible = false; // Mark for removal immediately
-      // Immediate cleanup for hit projectiles
-      console.log(`[Projectile Hit Cleanup] Immediately removing projectile after hit.`);
-      if (projectile.userData.light) {
-        lightPool.release(projectile.userData.light);
-        projectile.userData.light = null;
-      }
-      scene.remove(projectile);
-      removeList.push(projectile); // Still add to list for array splice
-      continue; // Skip further processing for this projectile this frame
+      hideProjectile(projectile);
+      removeList.push(projectile);
+      continue;
     }
   }
 
-  // Batch remove projectiles FROM THE ARRAY
   for (const projectile of removeList) {
-    // The actual mesh/light cleanup is already done above
     const index = projectiles.indexOf(projectile);
     if (index > -1) {
       projectiles.splice(index, 1);
-      // console.log(`[Cleanup Projectile Array] Projectile removed from array. New count: ${projectiles.length}`); // Reduce log noise
-    } else {
-      // console.log("[Cleanup Projectile Array] Projectile not found in array for removal.");
     }
   }
 }
@@ -1445,103 +1630,98 @@ function cleanupProjectile(projectile) {
   }
 }
 
-// Create explosion effect - now integrated with main game loop
+// Lightweight mesh-based explosion (no dynamic lights)
 function createExplosion(position, isLarge = false) {
-  const particleCount = isLarge ? 8 : 5;
-  const explosionForce = isLarge ? 10 : 6;
-  const maxLifetime = 0.4; // seconds
-
-  // Create explosion data object for tracking in main loop
-  const explosionData = {
-    position: position.clone(),
-    particles: [],
-    lifetime: 0,
-    maxLifetime: maxLifetime,
-    light: null,
-    lightReleased: false
-  };
-
-  // Quick bright flash using light pool
-  const light = lightPool.acquire(0xFF5500, isLarge ? 4 : 2, isLarge ? 15 : 10);
-  if (light) {
-    light.position.copy(position).add(new THREE.Vector3(0, 2, 0));
-    explosionData.light = light;
+  if (activeExplosions.length >= objectPools.maxActiveExplosions) {
+    return;
   }
 
-  // Create particles
+  const particleCount = isLarge ? 8 : 5;
+  const explosionForce = isLarge ? 9 : 6;
+  const maxLifetime = isLarge ? 0.45 : 0.32;
+  const flashScale = isLarge ? 2.4 : 1.5;
+
+  _explosionPos.copy(position);
+
+  const flash = getExplosionFlash();
+  if (flash) {
+    flash.position.copy(_explosionPos);
+    flash.scale.setScalar(flashScale);
+    flash.material.opacity = 0.9;
+    flash.visible = true;
+    flash.userData.active = true;
+  }
+
+  const explosionData = {
+    position: _explosionPos.clone(),
+    particles: [],
+    lifetime: 0,
+    maxLifetime,
+    flash,
+    flashScale
+  };
+
   for (let i = 0; i < particleCount; i++) {
     const particle = getPooledObject('particles');
     if (!particle) continue;
 
-    // Random position within explosion radius
     const angle = Math.random() * Math.PI * 2;
-    const radius = Math.random() * 2;
+    const radius = Math.random() * 1.5;
+    const upwardForce = 5 + Math.random() * 4;
 
-    // Set world position directly
     particle.position.set(
-      position.x + Math.cos(angle) * radius,
-      position.y + Math.random() * 2,
-      position.z + Math.sin(angle) * radius
+      _explosionPos.x + Math.cos(angle) * radius,
+      _explosionPos.y + Math.random() * 1.5,
+      _explosionPos.z + Math.sin(angle) * radius
     );
 
-    // Set velocity
-    const upwardForce = 6 + Math.random() * 4;
-    particle.userData.velocity = new THREE.Vector3(
-      Math.cos(angle) * explosionForce * Math.random(),
+    particle.userData.velocity = particle.userData.velocity || new THREE.Vector3();
+    particle.userData.velocity.set(
+      Math.cos(angle) * explosionForce * (0.4 + Math.random() * 0.6),
       upwardForce,
-      Math.sin(angle) * explosionForce * Math.random()
+      Math.sin(angle) * explosionForce * (0.4 + Math.random() * 0.6)
     );
 
-    particle.userData.startOpacity = 0.8;
-    scene.add(particle);
+    particle.userData.baseScale = 0.8 + Math.random() * 0.6;
+    particle.scale.setScalar(particle.userData.baseScale);
+    particle.visible = true;
     explosionData.particles.push(particle);
   }
 
-  // Add to active explosions for main loop processing
   activeExplosions.push(explosionData);
 }
 
-// Update all active explosions - called from main animation loop
 function updateExplosions(dt) {
   for (let i = activeExplosions.length - 1; i >= 0; i--) {
     const explosion = activeExplosions[i];
     explosion.lifetime += dt;
+    const progress = explosion.lifetime / explosion.maxLifetime;
 
-    // Release light after 100ms
-    if (!explosion.lightReleased && explosion.lifetime > 0.1 && explosion.light) {
-      lightPool.release(explosion.light);
-      explosion.lightReleased = true;
+    if (explosion.flash?.userData.active) {
+      explosion.flash.scale.setScalar(explosion.flashScale * (1 + progress * 1.8));
+      explosion.flash.material.opacity = Math.max(0, 0.9 * (1 - progress * 1.4));
+      if (progress >= 1) {
+        explosion.flash.visible = false;
+        explosion.flash.userData.active = false;
+      }
     }
 
-    // Check if explosion is finished
     if (explosion.lifetime >= explosion.maxLifetime) {
-      // Cleanup all particles
       for (const particle of explosion.particles) {
         releasePooledObject(particle);
       }
-      // Release light if not already released
-      if (!explosion.lightReleased && explosion.light) {
-        lightPool.release(explosion.light);
-      }
-      // Remove from active explosions
       activeExplosions.splice(i, 1);
       continue;
     }
 
-    // Update particles
-    const progress = explosion.lifetime / explosion.maxLifetime;
     for (const particle of explosion.particles) {
       if (!particle.visible) continue;
 
-      // Update position with velocity
       particle.position.addScaledVector(particle.userData.velocity, dt);
+      particle.userData.velocity.y -= 14 * dt;
 
-      // Apply gravity
-      particle.userData.velocity.y -= 15 * dt;
-
-      // Scale down over time
-      const scale = Math.max(0.1, 1 - progress);
-      particle.scale.setScalar(scale);
+      const baseScale = particle.userData.baseScale || 1;
+      particle.scale.setScalar(Math.max(0.05, (1 - progress) * baseScale));
     }
   }
 }
@@ -1556,7 +1736,7 @@ function checkProjectileCollisions(projectile) {
     return false; // Only process collisions for our own projectiles
   }
 
-  const projectileRadius = 3;
+  const projectileRadius = PROJECTILE_RADIUS;
   const px = projectile.position.x;
   const py = projectile.position.y;
   const pz = projectile.position.z;
@@ -1624,6 +1804,8 @@ function checkProjectileCollisions(projectile) {
     const combinedRadius = projectileRadius + obstacle.userData.collisionRadius;
 
     if (distSq < combinedRadius * combinedRadius) {
+      _collisionVec.set(px, py, pz);
+      createExplosion(_collisionVec, obstacle.userData.isExplosive);
       damageObstacle(obstacle, 1000);
       if (obstacle.userData.isExplosive) {
         applyExplosionDamage(obstacle.position, 25, 1000);
@@ -1728,10 +1910,8 @@ function applyExplosionDamage(position, radius, damage) {
 // Update cloud positions
 function updateClouds() {
   for (const cloud of clouds) {
-    // Move cloud based on its velocity
-    const movement = cloud.userData.velocity.clone();
-    movement.multiplyScalar(deltaTime * 0.2);
-    cloud.position.add(movement);
+    _cloudMovement.copy(cloud.userData.velocity).multiplyScalar(deltaTime * 0.2);
+    cloud.position.add(_cloudMovement);
 
     // Wrap clouds around when they get too far (relative to player position)
     if (playerTank) {
@@ -1762,28 +1942,39 @@ function checkTexturesLoaded() {
 
 // Update game UI
 function updateUI() {
-  // Update health bar
-  const healthBar = document.getElementById('health-bar');
-  if (healthBar) {
-    const healthPercent = Math.max(0, Math.min(100, gameState.health));
-    healthBar.style.width = `${healthPercent}%`;
+  const healthPercent = Math.max(0, Math.min(100, gameState.health));
+  const healthFill = document.getElementById('health-bar-fill');
+  const healthValue = document.getElementById('health-value');
 
-    // Update health bar color based on health level
-    healthBar.className = '';
+  if (healthFill) {
+    healthFill.style.width = `${healthPercent}%`;
+    healthFill.className = '';
     if (healthPercent <= 25) {
-      healthBar.classList.add('danger');
+      healthFill.classList.add('danger');
     } else if (healthPercent <= 50) {
-      healthBar.classList.add('warning');
+      healthFill.classList.add('warning');
     }
   }
 
-  // Update score display
-  const scoreDisplay = document.getElementById('score-display');
-  if (scoreDisplay) {
-    scoreDisplay.textContent = `Score: ${gameState.score}`;
+  if (healthValue) {
+    healthValue.textContent = `${Math.round(healthPercent)}%`;
   }
 
-  // Check for game over
+  if (healthPercent < lastHealthPercent) {
+    const overlay = document.getElementById('damage-overlay');
+    if (overlay) {
+      overlay.classList.add('visible');
+      clearTimeout(updateUI.damageTimeout);
+      updateUI.damageTimeout = setTimeout(() => overlay.classList.remove('visible'), 180);
+    }
+  }
+  lastHealthPercent = healthPercent;
+
+  const scoreDisplay = document.getElementById('score-display');
+  if (scoreDisplay) {
+    scoreDisplay.textContent = String(gameState.score);
+  }
+
   if (gameState.health <= 0 && !gameState.isGameOver) {
     gameOver();
   }
@@ -1791,89 +1982,44 @@ function updateUI() {
 
 // Game over function
 function gameOver(destroyedBy) {
-  console.log(`[Game Over] Called. Destroyed by: ${destroyedBy || 'unknown'}.`); // Log call
+  if (gameState.isGameOver) return;
+
   gameState.isGameOver = true;
   isGameActive = false;
 
-  // Explicitly close WebSocket connection if it exists and is open
   if (ws && ws.readyState === WebSocket.OPEN) {
-    console.log('[Game Over] Closing client WebSocket connection.');
     ws.close();
-    ws = null; // Prevent future attempts to use the closed socket
-  } else {
-    console.log(`[Game Over] WebSocket not open or doesn't exist. State: ${ws?.readyState}`);
+    ws = null;
   }
 
-  // Stop heartbeat
   if (heartbeatInterval) {
     clearInterval(heartbeatInterval);
     heartbeatInterval = null;
   }
 
-  // Show game over screen
-  const gameOverScreen = document.createElement('div');
-  gameOverScreen.id = 'game-over';
-  gameOverScreen.style.position = 'fixed';
-  gameOverScreen.style.top = '0';
-  gameOverScreen.style.left = '0';
-  gameOverScreen.style.width = '100%';
-  gameOverScreen.style.height = '100%';
-  gameOverScreen.style.backgroundColor = 'rgba(0, 0, 0, 0.8)';
-  gameOverScreen.style.display = 'flex';
-  gameOverScreen.style.flexDirection = 'column';
-  gameOverScreen.style.justifyContent = 'center';
-  gameOverScreen.style.alignItems = 'center';
-  gameOverScreen.style.color = 'white';
-  gameOverScreen.style.fontSize = '24px';
-  gameOverScreen.style.zIndex = '1000';
+  const gameOverScreen = document.getElementById('game-over');
+  const title = document.getElementById('game-over-title');
+  const finalScore = document.getElementById('final-score');
+  const restartButton = document.getElementById('restart-button');
 
-  const gameOverText = document.createElement('h1');
-  gameOverText.textContent = destroyedBy === clientId ? 'SELF DESTRUCTION!' : 'YOUR TANK WAS DESTROYED!';
-  gameOverText.style.marginBottom = '20px';
-  gameOverText.style.fontSize = '36px';
-  gameOverText.style.color = '#FF4444';
-  gameOverText.style.textAlign = 'center'; // Center text
-
-  const scoreText = document.createElement('p');
-  scoreText.textContent = `Final Score: ${gameState.score}`;
-  scoreText.style.marginBottom = '40px';
-  scoreText.style.fontSize = '24px';
-  scoreText.style.textAlign = 'center'; // Center text
-
-  const restartButton = document.createElement('button');
-  restartButton.textContent = 'Play Again';
-  restartButton.style.padding = '15px 30px';
-  restartButton.style.fontSize = '20px';
-  restartButton.style.backgroundColor = '#4CAF50';
-  restartButton.style.border = 'none';
-  restartButton.style.borderRadius = '5px';
-  restartButton.style.color = 'white';
-  restartButton.style.cursor = 'pointer';
-  restartButton.style.transition = 'background-color 0.2s';
-
-  restartButton.addEventListener('mouseover', () => {
-    restartButton.style.backgroundColor = '#45a049';
-  });
-
-  restartButton.addEventListener('mouseout', () => {
-    restartButton.style.backgroundColor = '#4CAF50';
-  });
-
-  restartButton.addEventListener('click', restartGame);
-
-  gameOverScreen.appendChild(gameOverText);
-  gameOverScreen.appendChild(scoreText);
-  gameOverScreen.appendChild(restartButton);
-  document.body.appendChild(gameOverScreen);
-  console.log('[Game Over] Screen displayed.'); // Log screen display
-
-  // Stop heartbeat is already done above
-  /*
-  if (heartbeatInterval) {
-    clearInterval(heartbeatInterval);
-    heartbeatInterval = null;
+  if (title) {
+    title.textContent = destroyedBy === clientId
+      ? 'Self Destruction'
+      : 'Tank Destroyed';
   }
-  */
+
+  if (finalScore) {
+    finalScore.textContent = String(gameState.score);
+  }
+
+  if (gameOverScreen) {
+    gameOverScreen.hidden = false;
+  }
+
+  if (restartButton && !restartButton.dataset.bound) {
+    restartButton.dataset.bound = 'true';
+    restartButton.addEventListener('click', restartGame);
+  }
 }
 
 // Restart game
@@ -1899,13 +2045,10 @@ function setupLoading() {
 
   // Handle loading complete
   manager.onLoad = function () {
-    // Hide loading screen
-    loadingScreen.style.opacity = '0';
+    loadingScreen.classList.add('is-hidden');
     setTimeout(() => {
       loadingScreen.style.display = 'none';
-    }, 500);
-
-    // Start game
+    }, 600);
     startGame();
   };
 
@@ -1914,23 +2057,20 @@ function setupLoading() {
 
 // Start game after assets are loaded
 function startGame() {
-  // Set up restart button
   const restartButton = document.getElementById('restart-button');
-  restartButton.addEventListener('click', restartGame);
+  if (restartButton && !restartButton.dataset.bound) {
+    restartButton.dataset.bound = 'true';
+    restartButton.addEventListener('click', restartGame);
+  }
 
-  // Start game loop
   isGameActive = true;
-
-  // First UI update
   updateUI();
-
   connectToServer();
 }
 
 // Add placeholder textures for development
 function createPlaceholderTextures() {
-  // Create a blank canvas for each texture
-  const createCanvasTexture = (color) => {
+  const createCanvasTexture = (color, accent = 'rgba(255, 255, 255, 0.15)') => {
     const canvas = document.createElement('canvas');
     canvas.width = 256;
     canvas.height = 256;
@@ -1938,92 +2078,56 @@ function createPlaceholderTextures() {
     ctx.fillStyle = color;
     ctx.fillRect(0, 0, 256, 256);
 
-    // Add some pattern
-    ctx.fillStyle = 'rgba(255, 255, 255, 0.2)';
-    for (let i = 0; i < 10; i++) {
-      for (let j = 0; j < 10; j++) {
+    ctx.fillStyle = accent;
+    for (let i = 0; i < 16; i++) {
+      for (let j = 0; j < 16; j++) {
         if ((i + j) % 2 === 0) {
-          ctx.fillRect(i * 25.6, j * 25.6, 25.6, 25.6);
+          ctx.fillRect(i * 16, j * 16, 16, 16);
         }
       }
     }
 
-    return new THREE.CanvasTexture(canvas);
+    for (let i = 0; i < 40; i++) {
+      ctx.fillStyle = `rgba(${40 + Math.random() * 30}, ${90 + Math.random() * 40}, ${40 + Math.random() * 20}, 0.15)`;
+      ctx.fillRect(Math.random() * 256, Math.random() * 256, 8 + Math.random() * 20, 4 + Math.random() * 10);
+    }
+
+    const texture = new THREE.CanvasTexture(canvas);
+    texture.wrapS = texture.wrapT = THREE.RepeatWrapping;
+    texture.repeat.set(6, 6);
+    return texture;
   };
 
-  // Create textures for different elements
-  const textures = {
-    grass: createCanvasTexture('#4CAF50'),
-    road: createCanvasTexture('#555555'),
-    crate: createCanvasTexture('#8B4513')
+  const createGrassNormalMap = () => {
+    const canvas = document.createElement('canvas');
+    canvas.width = 256;
+    canvas.height = 256;
+    const ctx = canvas.getContext('2d');
+    const imageData = ctx.createImageData(256, 256);
+
+    for (let i = 0; i < imageData.data.length; i += 4) {
+      const x = (i / 4) % 256;
+      const y = Math.floor(i / 4 / 256);
+      const noise = Math.sin(x * 0.2) * Math.cos(y * 0.17) * 0.5 + 0.5;
+      const strength = 120 + noise * 80;
+      imageData.data[i] = 128 + noise * 20;
+      imageData.data[i + 1] = 128 + noise * 15;
+      imageData.data[i + 2] = strength;
+      imageData.data[i + 3] = 255;
+    }
+
+    ctx.putImageData(imageData, 0, 0);
+    const texture = new THREE.CanvasTexture(canvas);
+    texture.wrapS = texture.wrapT = THREE.RepeatWrapping;
+    texture.repeat.set(6, 6);
+    return texture;
   };
 
-  // Override the original createSkybox function
-  window.originalCreateSkybox = createSkybox;
-  createSkybox = function () {
-    // Just set the background color, no walls or geometry
-    scene.background = new THREE.Color('#87CEEB');
-  };
-
-  // Override createTerrain function
-  createTerrain = function () {
-    // Create a large flat plane for the ground
-    const groundMaterial = new THREE.MeshStandardMaterial({
-      map: textures.grass,
-      roughness: 0.8,
-      metalness: 0.1
-    });
-
-    // Create geometry for initial chunk
-    const groundGeometry = new THREE.PlaneGeometry(chunkSize, chunkSize, 32, 32);
-
-    // Create mesh
-    const ground = new THREE.Mesh(groundGeometry, groundMaterial);
-    ground.rotation.x = -Math.PI / 2;
-    ground.receiveShadow = true;
-
-    // Add to scene
-    scene.add(ground);
-    terrain = ground;
-  };
-
-  // Override createRoads function
-  createRoads = function () {
-    const roadMaterial = new THREE.MeshStandardMaterial({
-      map: textures.road,
-      roughness: 0.7,
-      metalness: 0.1
-    });
-
-    // Create main roads
-    createSingleRoad(roadMaterial, new THREE.Vector3(-200, 0.1, 0), new THREE.Vector3(200, 0.1, 0));
-    createSingleRoad(roadMaterial, new THREE.Vector3(0, 0.1, -200), new THREE.Vector3(0, 0.1, 200));
-  };
-
-  // Override createCrate function
-  createCrate = function () {
-    const size = 5 + Math.random() * 3;
-    const geometry = new THREE.BoxGeometry(size, size, size);
-
-    const material = new THREE.MeshStandardMaterial({
-      map: textures.crate,
-      roughness: 0.7,
-      metalness: 0.2
-    });
-
-    const crate = new THREE.Mesh(geometry, material);
-    crate.castShadow = true;
-    crate.receiveShadow = true;
-
-    // Store original properties for respawning
-    crate.userData.originalScale = new THREE.Vector3().copy(crate.scale);
-    crate.userData.type = 'crate';
-    crate.userData.health = 30;
-    crate.userData.halfHeight = size / 2;
-    crate.userData.collisionRadius = size / 2;
-    crate.userData.isDestroyed = false;
-
-    return crate;
+  return {
+    grass: createCanvasTexture('#4a7c3f', 'rgba(255, 255, 255, 0.1)'),
+    grassNormal: createGrassNormalMap(),
+    road: createCanvasTexture('#4a4a4a'),
+    crate: createCanvasTexture('#7a4f2a', 'rgba(0, 0, 0, 0.12)')
   };
 }
 
@@ -2063,6 +2167,7 @@ function updateTerrainChunks() {
         }
       });
       scene.remove(chunk.terrain);
+      chunk.terrain.geometry.dispose();
       chunks.delete(chunkKey);
     }
   }
@@ -2073,18 +2178,13 @@ function createTerrainChunk(chunkX, chunkZ) {
   const posX = chunkX * chunkSize;
   const posZ = chunkZ * chunkSize;
 
-  // Create terrain for this chunk
-  const groundGeometry = new THREE.PlaneGeometry(chunkSize, chunkSize, 32, 32);
-  const groundMaterial = new THREE.MeshStandardMaterial({
-    color: 0x4CAF50,
-    roughness: 0.8,
-    metalness: 0.1
-  });
-
-  const ground = new THREE.Mesh(groundGeometry, groundMaterial);
+  const ground = new THREE.Mesh(
+    createDisplacedTerrainGeometry(chunkX, chunkZ),
+    sharedAssets.terrainMaterial
+  );
   ground.rotation.x = -Math.PI / 2;
   ground.position.set(posX + chunkSize / 2, 0, posZ + chunkSize / 2);
-  ground.receiveShadow = true;
+  ground.receiveShadow = perf.castShadows;
   scene.add(ground);
 
   // Create obstacles for this chunk
@@ -2196,6 +2296,49 @@ function createTerrainChunk(chunkX, chunkZ) {
       scene.add(tree);
       obstacles.push(tree);
       chunkObstacles.push(tree);
+    }
+  }
+
+  // Scatter rocks and bushes for ground detail
+  const scatterCount = 2 + Math.floor(Math.random() * 4);
+  for (let i = 0; i < scatterCount; i++) {
+    const prop = Math.random() > 0.45 ? createRock() : createBush();
+    let validPosition = false;
+    let attempts = 0;
+
+    while (!validPosition && attempts < 8) {
+      const testX = posX + Math.random() * chunkSize;
+      const testZ = posZ + Math.random() * chunkSize;
+      const distanceFromOrigin = Math.sqrt(testX * testX + testZ * testZ);
+
+      if (distanceFromOrigin < 50) {
+        attempts++;
+        continue;
+      }
+
+      let tooClose = false;
+      for (const obstacle of chunkObstacles) {
+        const dx = testX - obstacle.position.x;
+        const dz = testZ - obstacle.position.z;
+        if (Math.sqrt(dx * dx + dz * dz) < 10) {
+          tooClose = true;
+          break;
+        }
+      }
+
+      if (!tooClose) {
+        prop.position.set(testX, prop.userData.halfHeight, testZ);
+        prop.rotation.y = Math.random() * Math.PI * 2;
+        validPosition = true;
+      }
+
+      attempts++;
+    }
+
+    if (validPosition) {
+      scene.add(prop);
+      obstacles.push(prop);
+      chunkObstacles.push(prop);
     }
   }
 
@@ -2311,6 +2454,8 @@ function startHeartbeat() {
 
 // Modify the visibility change handler
 function handleVisibilityChange() {
+  isTabVisible = !document.hidden;
+
   if (document.hidden) {
     // Tab is hidden, stop heartbeat but keep connection
     if (heartbeatInterval) {
@@ -2471,18 +2616,14 @@ function handleServerMessage(message) {
       break;
 
     case 'tankDestroyed':
-      console.log(`Received tankDestroyed: Target=${message.id}, Destroyed by=${message.destroyedBy}`);
       if (message.id === clientId) {
-        // Our tank was destroyed - show game over and disconnect
         if (playerTank && !playerTank.userData.isDestroyed) {
-          // Set game over flag immediately upon receiving the message
-          gameState.isGameOver = true;
-          console.log('[Client Tank Destroyed] gameState.isGameOver set to true.');
-
           playerTank.userData.health = 0;
           playerTank.userData.isDestroyed = true;
           gameState.health = 0;
           createExplosion(playerTank.position, true);
+          updateUI();
+          gameOver(message.destroyedBy);
         }
       } else {
         const otherTank = otherPlayers.get(message.id);
@@ -2536,83 +2677,16 @@ function handleServerMessage(message) {
 
 // Create tank for other players
 function createOtherPlayerTank() {
-  // Create tank group
-  const otherTank = new THREE.Group();
-
-  // Create tank body
-  const bodyGeometry = new THREE.BoxGeometry(10, 4, 15);
-  const bodyMaterial = new THREE.MeshStandardMaterial({
-    color: 0x8B0000, // Different color to distinguish from main player
-    roughness: 0.7,
-    metalness: 0.3
+  const otherTank = buildTankModel({
+    hull: 0x8b1a1a,
+    hullDark: 0x5c1010,
+    metal: 0x9e9e9e
   });
 
-  const body = new THREE.Mesh(bodyGeometry, bodyMaterial);
-  body.castShadow = true;
-  body.receiveShadow = true;
-  body.position.y = 4;
-
-  // Create tank turret
-  const turretGeometry = new THREE.CylinderGeometry(4, 4, 3, 8);
-  const turretMaterial = new THREE.MeshStandardMaterial({
-    color: 0x8B0000,
-    roughness: 0.7,
-    metalness: 0.3
-  });
-
-  const turret = new THREE.Mesh(turretGeometry, turretMaterial);
-  turret.castShadow = true;
-  turret.receiveShadow = true;
-  turret.position.y = 7.5;
-  turret.rotation.x = Math.PI / 2;
-
-  // Create tank barrel
-  const barrelGeometry = new THREE.CylinderGeometry(0.8, 0.8, 12, 8);
-  const barrelMaterial = new THREE.MeshStandardMaterial({
-    color: 0x333333,
-    roughness: 0.6,
-    metalness: 0.4
-  });
-
-  const barrel = new THREE.Mesh(barrelGeometry, barrelMaterial);
-  barrel.castShadow = true;
-  barrel.receiveShadow = true;
-  barrel.position.z = 6;
-  barrel.rotation.x = Math.PI / 2;
-
-  // Add barrel to turret
-  turret.add(barrel);
-
-  // Create tank treads
-  const leftTread = createTankTread();
-  leftTread.position.set(-5.5, 2, 0);
-
-  const rightTread = createTankTread();
-  rightTread.position.set(5.5, 2, 0);
-
-  // Add all parts to the tank group
-  otherTank.add(body);
-  otherTank.add(turret);
-  otherTank.add(leftTread);
-  otherTank.add(rightTread);
-
-  // Store turret for rotation
-  otherTank.userData.turret = turret;
   otherTank.userData.collisionRadius = 7.5;
-  otherTank.userData.health = settings.tankMaxHealth; // Set same health as player tank
-  otherTank.userData.isDestroyed = false;
-  otherTank.userData.type = 'tank';
-
-  // Add to scene
-  scene.add(otherTank);
-
-  // Initialize health
   otherTank.userData.health = settings.tankMaxHealth;
   otherTank.userData.isDestroyed = false;
   otherTank.userData.type = 'tank';
-
-  console.log('Other tank created:', otherTank); // Log created tank object
-  console.log('Other tank visibility:', otherTank.visible);
 
   return otherTank;
 }
@@ -2717,12 +2791,12 @@ function updateOtherPlayers() {
       );
 
       // Smooth position interpolation
-      const interpolatedPosition = new THREE.Vector3().lerpVectors(
+      _interpPos.lerpVectors(
         tank.userData.startPosition,
         tank.userData.targetPosition,
         progress
       );
-      tank.position.copy(interpolatedPosition);
+      tank.position.copy(_interpPos);
 
       // Smooth rotation interpolation
       let startRot = tank.userData.startRotation;
@@ -2764,14 +2838,12 @@ function handleOtherPlayerProjectile(projectileData) {
   const projectile = getPooledObject('projectiles');
   if (!projectile) return;
 
-  // Set position directly without creating intermediate vector
   projectile.position.set(
     projectileData.position.x,
     projectileData.position.y,
     projectileData.position.z
   );
 
-  // Reuse or create direction vector
   projectile.userData.direction = projectile.userData.direction || new THREE.Vector3();
   projectile.userData.direction.set(
     projectileData.direction.x,
@@ -2782,15 +2854,10 @@ function handleOtherPlayerProjectile(projectileData) {
   projectile.userData.speed = projectileData.speed || settings.projectileSpeed;
   projectile.userData.lifetime = 0;
   projectile.userData.ownerId = projectileData.id;
+  projectile.userData.light = null;
+  orientShell(projectile);
 
-  // Add a temporary light if available
-  const light = lightPool.acquire(0xFFFF00, 3, 15);
-  if (light) {
-    projectile.userData.light = light;
-    light.position.copy(projectile.position);
-  }
-
-  scene.add(projectile);
+  attachProjectileToScene(projectile);
   projectiles.push(projectile);
 }
 
@@ -2832,7 +2899,6 @@ damageObstacle = function (obstacle, damageAmount) {
 const originalStartGame = startGame;
 startGame = function () {
   originalStartGame();
-  connectToServer();
 };
 
 // Initialize the game when the page loads
@@ -2840,44 +2906,6 @@ window.addEventListener('load', init);
 
 // Add visibility change handler at the top level with other event listeners
 window.addEventListener('visibilitychange', handleVisibilityChange);
-
-// Create game UI elements
-function createGameUI() {
-  // Remove any existing UI
-  const existingUI = document.getElementById('game-ui');
-  if (existingUI) {
-    existingUI.remove();
-  }
-
-  // Create game UI container
-  const gameUI = document.createElement('div');
-  gameUI.id = 'game-ui';
-
-  // Create health bar container
-  const healthBarContainer = document.createElement('div');
-  healthBarContainer.id = 'health-bar-container';
-
-  // Create health bar
-  const healthBar = document.createElement('div');
-  healthBar.id = 'health-bar';
-  healthBar.style.width = '100%';
-  healthBarContainer.appendChild(healthBar);
-
-  // Create score display
-  const scoreDisplay = document.createElement('div');
-  scoreDisplay.id = 'score-display';
-  scoreDisplay.textContent = 'Score: 0';
-
-  // Add elements to UI container
-  gameUI.appendChild(healthBarContainer);
-  gameUI.appendChild(scoreDisplay);
-
-  // Add UI container to document
-  document.body.appendChild(gameUI);
-
-  // Initial UI update
-  updateUI();
-}
 
 // Apply damage to a tank
 function damageTank(tank, damageAmount) {

@@ -1,172 +1,71 @@
 <!DOCTYPE html>
 <html lang="en">
-  <head>
-    <meta charset="UTF-8" />
-    <link rel="icon" type="image/svg+xml" href="/vite.svg" />
-    <meta
-      name="viewport"
-      content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no"
-    />
-    <title>3D Tank Simulator</title>
-    <style>
-      html,
-      body {
-        margin: 0;
-        padding: 0;
-        width: 100%;
-        height: 100%;
-        overflow: hidden;
-        background-color: #000;
-        font-family: Arial, sans-serif;
-        touch-action: none;
-      }
-      canvas {
-        display: block;
-        width: 100%;
-        height: 100%;
-      }
-      #loading-screen {
-        position: fixed;
-        top: 0;
-        left: 0;
-        width: 100%;
-        height: 100%;
-        background-color: #1a1a1a;
-        display: flex;
-        flex-direction: column;
-        justify-content: center;
-        align-items: center;
-        z-index: 999;
-        color: white;
-        transition: opacity 0.5s;
-      }
-      #loading-screen h1,
-      #loading-screen p {
-        text-align: center;
-      }
-      #loading-bar {
-        width: 300px;
-        height: 20px;
-        background-color: #333;
-        border-radius: 10px;
-        margin-top: 20px;
-        overflow: hidden;
-      }
-      #loading-bar-fill {
-        height: 100%;
-        width: 0%;
-        background-color: #4caf50;
-        transition: width 0.3s;
-      }
-      #game-ui {
-        position: absolute;
-        top: 0;
-        left: 0;
-        width: 100%;
-        height: 100%;
-        pointer-events: none;
-      }
-      #score-display {
-        position: absolute;
-        top: 20px;
-        left: 20px;
-        color: white;
-        font-size: 18px;
-        font-weight: bold;
-        text-shadow: 1px 1px 3px rgba(0, 0, 0, 0.7);
-      }
-      #health-bar {
-        position: absolute;
-        top: 50px;
-        left: 20px;
-        width: 200px;
-        height: 15px;
-        background-color: #333;
-        border-radius: 7px;
-        overflow: hidden;
-      }
-      #health-bar-fill {
-        height: 100%;
-        width: 100%;
-        background-color: #ff4444;
-        transition: width 0.3s;
-      }
-      #game-over {
-        position: fixed;
-        top: 0;
-        left: 0;
-        width: 100%;
-        height: 100%;
-        background-color: rgba(0, 0, 0, 0.7);
-        display: none;
-        flex-direction: column;
-        justify-content: center;
-        align-items: center;
-        z-index: 100;
-        color: white;
-      }
-      #restart-button {
-        margin-top: 30px;
-        padding: 10px 20px;
-        background-color: #4caf50;
-        border: none;
-        color: white;
-        font-size: 18px;
-        cursor: pointer;
-        border-radius: 5px;
-        pointer-events: auto;
-      }
-      #instructions {
-        position: absolute;
-        bottom: 20px;
-        left: 20px;
-        color: white;
-        font-size: 14px;
-        text-shadow: 1px 1px 3px rgba(0, 0, 0, 0.7);
-        background-color: rgba(0, 0, 0, 0.5);
-        padding: 10px;
-        border-radius: 5px;
-        max-width: 300px;
-      }
-      @media (max-width: 768px) {
-        #instructions {
-          display: none;
-        }
-      }
-    </style>
-    <script type="module" crossorigin src="/assets/index-DgBTzfQs.js"></script>
-    <link rel="stylesheet" crossorigin href="/assets/index-BtanebOX.css">
-  </head>
-  <body>
-    <div id="loading-screen">
-      <h1>3D Tank Simulator</h1>
-      <p>Loading game assets...</p>
+
+<head>
+  <meta charset="UTF-8" />
+  <link rel="icon" type="image/png" href="/assets/favicon-DzZ1BWTh.png" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <meta name="theme-color" content="#0a0f0a" />
+  <title>Battle Tanks</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@400;600;700&family=Share+Tech+Mono&display=swap" rel="stylesheet" />
+  <script type="module" crossorigin src="/assets/index-Bhcka4ei.js"></script>
+  <link rel="stylesheet" crossorigin href="/assets/index-JNp66VYC.css">
+</head>
+
+<body>
+  <div id="loading-screen">
+    <div class="loading-content">
+      <div class="loading-badge">COMBAT SIM</div>
+      <h1>Battle Tanks</h1>
+      <p>Initializing battlefield systems…</p>
       <div id="loading-bar">
         <div id="loading-bar-fill"></div>
       </div>
+      <span class="loading-hint">Loading terrain · syncing weapons · calibrating radar</span>
     </div>
+  </div>
 
-    <div id="app"></div>
+  <div id="app"></div>
 
-    <div id="game-ui">
-      <div id="score-display">Score: 0</div>
-      <div id="health-bar">
-        <div id="health-bar-fill"></div>
+  <div id="game-ui">
+    <header class="hud-panel">
+      <div class="hud-row">
+        <span class="hud-label">Score</span>
+        <span id="score-display">0</span>
       </div>
-      <div id="instructions">
-        <p><strong>Controls:</strong></p>
-        <p>W/S - Move forward/backward</p>
-        <p>A/D - Rotate tank left/right</p>
-        <p>SPACE - Fire</p>
-        <p>Destroy obstacles to score points!</p>
+      <div class="hud-row armor-row">
+        <span class="hud-label">Armor</span>
+        <div id="health-bar-track">
+          <div id="health-bar-fill"></div>
+        </div>
+        <span id="health-value">100%</span>
       </div>
-    </div>
+    </header>
 
-    <div id="game-over">
-      <h1>Game Over</h1>
-      <h2>Your Score: <span id="final-score">0</span></h2>
-      <button id="restart-button">Restart Game</button>
+    <div id="instructions" class="hud-panel">
+      <p class="instructions-title">Controls</p>
+      <ul>
+        <li><kbd>W</kbd> <kbd>S</kbd> or <kbd>↑</kbd> <kbd>↓</kbd> Move</li>
+        <li><kbd>A</kbd> <kbd>D</kbd> or <kbd>←</kbd> <kbd>→</kbd> Rotate</li>
+        <li><kbd>Space</kbd> Fire</li>
+      </ul>
+      <p class="instructions-tip">Destroy obstacles and enemy tanks to score.</p>
     </div>
+  </div>
 
-  </body>
+  <div id="damage-overlay" aria-hidden="true"></div>
+
+  <div id="game-over" hidden>
+    <div class="game-over-card">
+      <p class="game-over-badge">MISSION FAILED</p>
+      <h1 id="game-over-title">Tank Destroyed</h1>
+      <p class="game-over-score">Final Score: <span id="final-score">0</span></p>
+      <button id="restart-button" type="button">Deploy Again</button>
+    </div>
+  </div>
+
+</body>
+
 </html>
