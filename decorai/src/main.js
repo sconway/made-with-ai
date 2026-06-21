@@ -3107,7 +3107,9 @@ async function pollReplicatePrediction(predictionUrl, saveContext = null) {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
-                    ...(saveContext && currentSession
+                    // The poll proxy now requires auth (it carries the Replicate
+                    // token), so always send the bearer token when signed in.
+                    ...(currentSession?.access_token
                         ? { Authorization: `Bearer ${currentSession.access_token}` }
                         : {}),
                 },

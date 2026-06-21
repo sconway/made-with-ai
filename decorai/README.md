@@ -85,6 +85,33 @@ If either `SUPABASE_URL` or `SUPABASE_ANON_KEY` is missing, sign-in is disabled 
 
 Local development: run `npm run dev` (starts both Vite and the API server). Do not use `./run.sh` alone — it only serves static files and has no `/api/config` endpoint.
 
+## Security & abuse prevention
+
+Before opening the app to the public, complete this checklist:
+
+1. **Run the SQL migrations** in the Supabase SQL editor:
+   - `sql/credit_tokens_for_session.sql` (idempotent token crediting)
+   - `sql/atomic_credits.sql` — **required**: makes credit/quota spending atomic so
+     concurrent requests can't over-spend a user's credits or monthly cap.
+2. **Enable "Confirm email"** in Supabase (Authentication → Providers → Email). The
+   server also enforces this on every paid endpoint (`requireConfirmed`), so disposable
+   accounts can't farm the AI providers — but the dashboard toggle should be on too.
+3. **Set `ALLOWED_ORIGIN`** to your real domain in production (CORS otherwise falls
+   back to `*`).
+4. **Keep the Replicate model allowlist current.** The proxy only runs the models in
+   `REPLICATE_ALLOWED_MODELS` (default list in `server.js`). If you add a model, add its
+   version string there or via the env var — otherwise a user could otherwise invoke
+   arbitrary, expensive Replicate models on your account.
+5. **Tune the rate limits** (`RATE_LIMIT_*` in `render.yaml`) to your expected traffic.
+   They are in-memory per-instance — if you scale to multiple instances, move the
+   counters to a shared store (e.g. Redis).
+
+What's enforced in code: auth + email-verification + per-IP/per-account rate limits on
+all paid AI endpoints; a Replicate model allowlist; SSRF guards on the poll proxy
+(locked to `api.replicate.com`) and on server-side image fetches (host allowlist);
+atomic credit/quota accounting; Stripe webhook signature verification; and idempotent,
+ownership-checked purchase fulfillment.
+
 ## Technical Architecture
 
 This application follows a client-server architecture:

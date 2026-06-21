@@ -17,6 +17,10 @@ dotenv.config({ path: path.join(__dirname, '.env') });
 const app = express();
 const port = process.env.PORT || 3001;
 
+// Behind Render's load balancer: trust the first proxy hop so `req.ip` reflects
+// the real client address (used for rate limiting) rather than the proxy's.
+app.set('trust proxy', 1);
+
 // Initialize Stripe
 const stripe = new Stripe(process.env.STRIPE_SECRET_KEY || '');
 
@@ -81,6 +85,54 @@ const DESIGNS_STORAGE_BUCKET = process.env.SUPABASE_DESIGNS_BUCKET?.trim() || 'g
 const MAX_SAVED_DESIGNS_SUBSCRIBER = parseInt(process.env.MAX_SAVED_DESIGNS_SUBSCRIBER) || 200;
 const DESIGN_SIGNED_URL_TTL_SEC = parseInt(process.env.DESIGN_SIGNED_URL_TTL_SEC) || 3600;
 
+// ── Abuse-prevention configuration ─────────────────────────────────────────
+// Allowlist of Replicate model versions the proxy is permitted to run. Without
+// this, any authenticated user could invoke ANY Replicate model (including very
+// expensive video/LLM models) on the owner's account via /replicate/predictions.
+// Override with REPLICATE_ALLOWED_MODELS (comma-separated) if the app's models change.
+const DEFAULT_REPLICATE_MODELS = [
+  'stability-ai/stable-diffusion-3.5-large',
+  'stability-ai/stable-diffusion-xl-base-1.0',
+  'proplabs/virtual-staging:635d607efc6e3a6016ef6d655327cd35f3d792e84b8f110688b04498c6e94cfb',
+  'lllyasviel/sd-controlnet-depth',
+  'nightmareai/real-esrgan',
+  'google/nano-banana',
+];
+const REPLICATE_ALLOWED_MODELS = new Set(
+  process.env.REPLICATE_ALLOWED_MODELS
+    ? process.env.REPLICATE_ALLOWED_MODELS.split(',').map((s) => s.trim()).filter(Boolean)
+    : DEFAULT_REPLICATE_MODELS,
+);
+
+// Hosts the server may fetch remote images from when persisting designs (SSRF
+// guard). Replicate delivers generated images from replicate.delivery.
+const IMAGE_FETCH_ALLOWED_HOSTS = process.env.IMAGE_FETCH_ALLOWED_HOSTS
+  ? process.env.IMAGE_FETCH_ALLOWED_HOSTS.split(',').map((s) => s.trim().toLowerCase()).filter(Boolean)
+  : ['replicate.delivery', 'replicate.com'];
+
+// The only host whose prediction URLs may be polled. The poll proxy attaches the
+// Replicate API token, so the destination MUST be locked to Replicate itself —
+// otherwise a client-supplied URL would exfiltrate the token (SSRF / key leak).
+const REPLICATE_API_HOST = 'api.replicate.com';
+
+// Reject any remote image URL that isn't https + on the host allowlist (SSRF guard).
+function isAllowedRemoteImageUrl(urlStr) {
+  let u;
+  try { u = new URL(urlStr); } catch { return false; }
+  if (u.protocol !== 'https:') return false;
+  const host = u.hostname.toLowerCase();
+  return IMAGE_FETCH_ALLOWED_HOSTS.some((h) => host === h || host.endsWith('.' + h));
+}
+
+// Only allow polling Replicate's own prediction endpoints (SSRF + token-leak guard).
+function isValidReplicatePollUrl(urlStr) {
+  let u;
+  try { u = new URL(urlStr); } catch { return false; }
+  return u.protocol === 'https:' &&
+    u.hostname.toLowerCase() === REPLICATE_API_HOST &&
+    u.pathname.startsWith('/v1/predictions/');
+}
+
 // ── Generation quota helpers ──────────────────────────────────────────────
 // First day of the current month in UTC (e.g. 2026-05-01). Used as the bucket
 // key for subscriber monthly usage so the count auto-resets each calendar
@@ -129,6 +181,11 @@ async function resolveImageBuffer(imageSource) {
   }
 
   if (src.startsWith('http://') || src.startsWith('https://')) {
+    // SSRF guard: only fetch generated images from allowlisted hosts so a
+    // client-supplied URL can't make the server hit internal/metadata endpoints.
+    if (!isAllowedRemoteImageUrl(src)) {
+      throw new Error('Image URL host not allowed');
+    }
     const resp = await fetch(src);
     if (!resp.ok) {
       throw new Error(`Failed to fetch image (${resp.status})`);
@@ -282,34 +339,31 @@ async function reserveSubscriptionMonthlyGeneration(userId) {
   if (!sub) return { ok: false, reason: 'no_subscription' };
 
   const period = currentMonthStart();
-  const isNewMonth = sub.monthly_period_start !== period;
-  const usedSoFar = isNewMonth ? 0 : (sub.monthly_count || 0);
-
-  if (usedSoFar >= SUBSCRIPTION_MONTHLY_LIMIT) {
-    return {
-      ok: false,
-      reason: 'limit_reached',
-      used: usedSoFar,
-      limit: SUBSCRIPTION_MONTHLY_LIMIT,
-    };
-  }
-
-  const { error } = await supabase
-    .from('user_subscriptions')
-    .update({
-      monthly_count: usedSoFar + 1,
-      monthly_period_start: period,
-    })
-    .eq('user_id', userId);
+  // Atomic check-and-increment (see sql/atomic_credits.sql). Returns the new
+  // count, -1 if the cap is reached, or -2 if there's no subscription row.
+  const { data, error } = await supabase.rpc('reserve_subscription_generation', {
+    p_user_id: userId,
+    p_period: period,
+    p_limit: SUBSCRIPTION_MONTHLY_LIMIT,
+  });
 
   if (error) {
     console.error('Failed to reserve monthly quota:', error);
     return { ok: false, reason: 'db_error' };
   }
+  if (data === -2) return { ok: false, reason: 'no_subscription' };
+  if (data === -1) {
+    return {
+      ok: false,
+      reason: 'limit_reached',
+      used: SUBSCRIPTION_MONTHLY_LIMIT,
+      limit: SUBSCRIPTION_MONTHLY_LIMIT,
+    };
+  }
 
   return {
     ok: true,
-    used: usedSoFar + 1,
+    used: data,
     limit: SUBSCRIPTION_MONTHLY_LIMIT,
   };
 }
@@ -317,15 +371,12 @@ async function reserveSubscriptionMonthlyGeneration(userId) {
 // Refund a previously-reserved generation when the AI call fails so the user
 // isn't charged a slot for nothing. Only decrements within the same period.
 async function refundSubscriptionMonthlyGeneration(userId) {
-  const sub = await getActiveSubscription(userId);
-  if (!sub) return;
   const period = currentMonthStart();
-  if (sub.monthly_period_start !== period) return; // period rolled over; nothing to refund
-  const next = Math.max(0, (sub.monthly_count || 0) - 1);
-  await supabase
-    .from('user_subscriptions')
-    .update({ monthly_count: next })
-    .eq('user_id', userId);
+  // Atomic decrement, only within the current period (see sql/atomic_credits.sql).
+  await supabase.rpc('refund_subscription_generation', {
+    p_user_id: userId,
+    p_period: period,
+  });
 }
 
 // Idempotently credit purchased tokens for a completed checkout session.
@@ -349,47 +400,27 @@ async function creditTokensForSession({ userId, sessionId, paymentIntent, tokens
 }
 
 // Reserve a free-tier credit. Returns { ok, credits } or { ok:false, reason }.
+// Uses an atomic decrement (see sql/atomic_credits.sql) so concurrent requests
+// can't both spend the last credit.
 async function reserveFreeCredit(userId) {
-  const { data: row, error } = await supabase
-    .from('user_credits')
-    .select('credits')
-    .eq('user_id', userId)
-    .single();
-  if (error || !row) return { ok: false, reason: 'db_error' };
-  if (row.credits <= 0) return { ok: false, reason: 'no_credits', credits: 0 };
-  const { error: upErr } = await supabase
-    .from('user_credits')
-    .update({ credits: row.credits - 1 })
-    .eq('user_id', userId);
-  if (upErr) return { ok: false, reason: 'db_error' };
-  return { ok: true, credits: row.credits - 1 };
+  const { data, error } = await supabase.rpc('consume_credit', { p_user_id: userId });
+  if (error) {
+    console.error('consume_credit RPC error:', error);
+    return { ok: false, reason: 'db_error' };
+  }
+  if (data === null || data === -1) return { ok: false, reason: 'no_credits', credits: 0 };
+  return { ok: true, credits: data };
 }
 
 async function refundFreeCredit(userId) {
-  const { data: row } = await supabase
-    .from('user_credits')
-    .select('credits')
-    .eq('user_id', userId)
-    .single();
-  if (!row) return;
-  await supabase
-    .from('user_credits')
-    .update({ credits: row.credits + 1 })
-    .eq('user_id', userId);
+  const { error } = await supabase.rpc('refund_credit', { p_user_id: userId });
+  if (error) console.error('refund_credit RPC error:', error);
 }
 
 // Bump the lifetime `total_generations` counter (analytics only).
 async function incrementLifetimeGenerations(userId) {
-  const { data: row } = await supabase
-    .from('user_credits')
-    .select('total_generations')
-    .eq('user_id', userId)
-    .single();
-  if (!row) return;
-  await supabase
-    .from('user_credits')
-    .update({ total_generations: (row.total_generations || 0) + 1 })
-    .eq('user_id', userId);
+  const { error } = await supabase.rpc('increment_lifetime_generations', { p_user_id: userId });
+  if (error) console.error('increment_lifetime_generations RPC error:', error);
 }
 
 // Reserve a generation slot before forwarding to a paid AI provider.
@@ -399,7 +430,7 @@ async function incrementLifetimeGenerations(userId) {
 //   - refund() reverses the reservation if the AI call fails downstream
 // Sends an HTTP error response on failure and returns { ok: false }.
 async function reserveGenerationSlot(req, res) {
-  const user = await getAuthUser(req, res);
+  const user = await getAuthUser(req, res, { requireConfirmed: true });
   if (!user) return { ok: false };
 
   // Subscribers first: monthly cap.
@@ -460,6 +491,73 @@ async function reserveGenerationSlot(req, res) {
     refund: () => refundFreeCredit(user.id),
   };
 }
+
+// ── Rate limiting (in-memory, single-instance) ─────────────────────────────
+// Fixed-window counters keyed per-IP and/or per-account. Bounds how much a
+// single client can spend on the paid AI providers. NOTE: state is per-process —
+// for a horizontally-scaled deploy, swap the Map for a shared store (e.g. Redis).
+function createRateLimiter({ windowMs, max, keyFn, message }) {
+  const hits = new Map(); // key -> { count, resetAt }
+  let lastSweep = 0;
+  return function rateLimit(req, res, next) {
+    const now = Date.now();
+    if (now - lastSweep > windowMs) {
+      for (const [k, v] of hits) if (v.resetAt <= now) hits.delete(k);
+      lastSweep = now;
+    }
+    const key = keyFn(req);
+    if (!key) return next(); // unkeyable (e.g. no auth header on a user-keyed limiter) — let downstream auth handle it
+    let entry = hits.get(key);
+    if (!entry || entry.resetAt <= now) {
+      entry = { count: 0, resetAt: now + windowMs };
+      hits.set(key, entry);
+    }
+    entry.count += 1;
+    if (entry.count > max) {
+      res.set('Retry-After', String(Math.ceil((entry.resetAt - now) / 1000)));
+      return res.status(429).json({ error: message || 'Too many requests' });
+    }
+    return next();
+  };
+}
+
+const ipKey = (req) => `ip:${req.ip}`;
+// Best-effort per-account key from the (unverified) JWT `sub` claim. Forging it
+// only rate-limits the forger; the authoritative token check still happens in
+// getAuthUser, so this can't be used to bypass anything.
+function userKey(req) {
+  const h = req.headers.authorization;
+  if (!h || !h.startsWith('Bearer ')) return null;
+  const parts = h.slice(7).split('.');
+  if (parts.length < 2) return null;
+  try {
+    const payload = JSON.parse(Buffer.from(parts[1], 'base64url').toString('utf8'));
+    return payload?.sub ? `user:${payload.sub}` : null;
+  } catch { return null; }
+}
+
+const ONE_MIN = 60 * 1000;
+// General limiter: all API/proxy traffic per IP (covers frequent polling).
+const generalLimiter = createRateLimiter({
+  windowMs: parseInt(process.env.RATE_LIMIT_GENERAL_WINDOW_MS) || ONE_MIN,
+  max: parseInt(process.env.RATE_LIMIT_GENERAL_MAX) || 300,
+  keyFn: ipKey,
+  message: 'Too many requests — please slow down and try again shortly.',
+});
+// Generation limiters (stricter): only on endpoints that create paid AI work.
+const GEN_WINDOW_MS = parseInt(process.env.RATE_LIMIT_GEN_WINDOW_MS) || 10 * ONE_MIN;
+const genIpLimiter = createRateLimiter({
+  windowMs: GEN_WINDOW_MS,
+  max: parseInt(process.env.RATE_LIMIT_GEN_MAX_PER_IP) || 100,
+  keyFn: ipKey,
+  message: 'Generation rate limit reached for your network. Please try again later.',
+});
+const genUserLimiter = createRateLimiter({
+  windowMs: GEN_WINDOW_MS,
+  max: parseInt(process.env.RATE_LIMIT_GEN_MAX_PER_USER) || 40,
+  keyFn: userKey,
+  message: 'Generation rate limit reached for your account. Please try again later.',
+});
 
 // CORS configuration
 const corsOptions = {
@@ -564,6 +662,10 @@ app.post('/webhook/stripe', express.raw({ type: 'application/json' }), async (re
 });
 
 app.use(express.json({ limit: '50mb' }));
+
+// Apply the general IP rate limiter to everything below (the Stripe webhook is
+// registered above this line, so its delivery is never throttled).
+app.use(generalLimiter);
 
 // Lightweight liveness probe used by the client to verify connectivity
 // before retrying a failed request. Intentionally cheap — no DB, no auth.
@@ -841,11 +943,11 @@ if (process.env.NODE_ENV === 'production') {
 // All paid AI-call endpoints require auth AND a successful quota reservation
 // before the request is forwarded. The reservation is refunded if the
 // downstream AI call fails so the user isn't charged for a no-op.
-app.post('/replicate/predictions', async (req, res) => {
-  // Replicate (free model) calls never count against the user's monthly
-  // quota — only premium OpenAI generations do. We still require auth so
-  // anonymous traffic can't abuse the proxy.
-  const user = await getAuthUser(req, res);
+app.post('/replicate/predictions', genIpLimiter, genUserLimiter, async (req, res) => {
+  // Replicate calls don't count against the monthly token quota, but they DO
+  // cost the owner money per prediction. Require a confirmed account and cap
+  // volume via the rate limiters above so the proxy can't be abused.
+  const user = await getAuthUser(req, res, { requireConfirmed: true });
   if (!user) return;
 
   try {
@@ -853,6 +955,15 @@ app.post('/replicate/predictions', async (req, res) => {
     if (!apiKey) {
       console.error('REPLICATE_API_KEY not configured on server');
       return res.status(500).json({ error: 'Server API key not configured' });
+    }
+
+    // Allowlist guard: only run the specific models the app uses. Without this,
+    // a logged-in user could invoke ANY (potentially very expensive) Replicate
+    // model on the owner's account by passing an arbitrary `version`.
+    const requestedVersion = typeof req.body?.version === 'string' ? req.body.version : '';
+    if (!REPLICATE_ALLOWED_MODELS.has(requestedVersion)) {
+      console.warn(`[replicate] Rejected disallowed model version: ${requestedVersion.slice(0, 120)}`);
+      return res.status(400).json({ error: 'Unsupported model' });
     }
 
     // Some models (e.g. proplabs/virtual-staging) require the Replicate API
@@ -912,7 +1023,7 @@ app.post('/replicate/predictions', async (req, res) => {
 });
 
 // OpenAI image edit (gpt-image-2) — image-to-image generation
-app.post('/openai/image-edit', async (req, res) => {
+app.post('/openai/image-edit', genIpLimiter, genUserLimiter, async (req, res) => {
   const slot = await reserveGenerationSlot(req, res);
   if (!slot.ok) return;
 
@@ -992,6 +1103,12 @@ app.post('/openai/image-edit', async (req, res) => {
 });
 
 app.post('/replicate/poll', async (req, res) => {
+  // Auth required: this proxy attaches the Replicate API token to the outbound
+  // request. If it were callable anonymously against an arbitrary URL, an
+  // attacker could exfiltrate the token (SSRF). Require a confirmed account.
+  const user = await getAuthUser(req, res, { requireConfirmed: true });
+  if (!user) return;
+
   try {
     const apiKey = process.env.REPLICATE_API_KEY;
     if (!apiKey) {
@@ -1004,9 +1121,14 @@ app.post('/replicate/poll', async (req, res) => {
       console.error('No prediction URL provided');
       return res.status(400).json({ error: 'Prediction URL is required' });
     }
+    // SSRF + token-leak guard: only poll Replicate's own prediction endpoints,
+    // never a client-controlled host.
+    if (!isValidReplicatePollUrl(predictionUrl)) {
+      return res.status(400).json({ error: 'Invalid prediction URL' });
+    }
 
     console.log('Polling Replicate API:', predictionUrl);
-    
+
     const response = await fetch(predictionUrl, {
       headers: {
         'Authorization': `Token ${apiKey}`,
@@ -1031,25 +1153,18 @@ app.post('/replicate/poll', async (req, res) => {
 
     let savedDesignId = null;
     if (data.status === 'succeeded' && saveContext && supabase) {
-      const authHeader = req.headers.authorization;
-      if (authHeader?.startsWith('Bearer ')) {
-        const token = authHeader.split(' ')[1];
-        const { data: { user } } = await supabase.auth.getUser(token);
-        if (user) {
-          const imageUrl = extractReplicateImageUrl(data.output);
-          if (imageUrl) {
-            const saved = await persistGeneratedDesign(user.id, {
-              imageSource: imageUrl,
-              prompt: saveContext.prompt,
-              model: saveContext.model,
-              sourceType: saveContext.sourceType || 'room-design',
-              metadata: saveContext.metadata && typeof saveContext.metadata === 'object'
-                ? saveContext.metadata
-                : {},
-            });
-            savedDesignId = saved?.id || null;
-          }
-        }
+      const imageUrl = extractReplicateImageUrl(data.output);
+      if (imageUrl) {
+        const saved = await persistGeneratedDesign(user.id, {
+          imageSource: imageUrl,
+          prompt: saveContext.prompt,
+          model: saveContext.model,
+          sourceType: saveContext.sourceType || 'room-design',
+          metadata: saveContext.metadata && typeof saveContext.metadata === 'object'
+            ? saveContext.metadata
+            : {},
+        });
+        savedDesignId = saved?.id || null;
       }
     }
 
@@ -1064,9 +1179,9 @@ app.post('/replicate/poll', async (req, res) => {
 // Auth-only: prevents anonymous calls from abusing the paid Replicate
 // vectorizer. Does not count against the monthly image-generation cap
 // (this is a floor-plan vectorization, not a design generation).
-app.post('/api/image-to-svg', async (req, res) => {
+app.post('/api/image-to-svg', genIpLimiter, genUserLimiter, async (req, res) => {
   try {
-    const user = await getAuthUser(req, res);
+    const user = await getAuthUser(req, res, { requireConfirmed: true });
     if (!user) return; // 401 already sent
 
     const apiKey = process.env.REPLICATE_API_KEY;
@@ -1330,9 +1445,9 @@ function removeWhiteBackground(svgString) {
 }
 
 // Feng Shui Analysis endpoint — floor-plan layout (layout editor) or room photo (design flow)
-app.post('/api/feng-shui', async (req, res) => {
+app.post('/api/feng-shui', genIpLimiter, genUserLimiter, async (req, res) => {
   try {
-    const user = await getAuthUser(req, res);
+    const user = await getAuthUser(req, res, { requireConfirmed: true });
     if (!user) return;
 
     const apiKey = process.env.OPENAI_API_KEY;
@@ -1492,9 +1607,9 @@ Return this exact JSON structure:
 });
 
 // Convert an uploaded floor-plan image into a structured layout via Claude vision.
-app.post('/api/import-floor-plan', async (req, res) => {
+app.post('/api/import-floor-plan', genIpLimiter, genUserLimiter, async (req, res) => {
   try {
-    const user = await getAuthUser(req, res);
+    const user = await getAuthUser(req, res, { requireConfirmed: true });
     if (!user) return;
 
     const apiKey = process.env.ANTHROPIC_API_KEY;
@@ -1645,8 +1760,12 @@ app.get('/api/config', (req, res) => {
   });
 });
 
-// Helper: get authenticated user from Bearer token
-async function getAuthUser(req, res) {
+// Helper: get authenticated user from Bearer token.
+// Pass { requireConfirmed: true } on endpoints that spend money — it rejects
+// accounts whose email isn't verified, so disposable-email farming of the paid
+// AI providers is blocked server-side even if Supabase's "Confirm email" toggle
+// is ever turned off. (Keep that toggle ON in the Supabase dashboard too.)
+async function getAuthUser(req, res, { requireConfirmed = false } = {}) {
   if (!supabase) {
     res.status(503).json({ error: 'Auth service not configured' });
     return null;
@@ -1660,6 +1779,10 @@ async function getAuthUser(req, res) {
   const { data: { user }, error } = await supabase.auth.getUser(token);
   if (error || !user) {
     res.status(401).json({ error: 'Invalid token' });
+    return null;
+  }
+  if (requireConfirmed && !user.email_confirmed_at && !user.confirmed_at) {
+    res.status(403).json({ error: 'Email not verified. Please confirm your email before generating.' });
     return null;
   }
   return user;

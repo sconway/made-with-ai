@@ -18,8 +18,12 @@ services:
       - key: REPLICATE_API_KEY
         sync: false
 
-      # OpenAI (optional features)
+      # OpenAI (premium image edits + feng-shui analysis)
       - key: OPENAI_API_KEY
+        sync: false
+
+      # Anthropic (floor-plan image import via Claude vision)
+      - key: ANTHROPIC_API_KEY
         sync: false
 
       # Supabase
@@ -60,5 +64,24 @@ services:
         value: "5"
       - key: PRICE_AMOUNT
         value: "199"
-      - key: SUBSCRIPTION_DAILY_LIMIT
+      # Subscriber monthly image-generation cap (matches SUBSCRIPTION_MONTHLY_LIMIT in server.js)
+      - key: SUBSCRIPTION_MONTHLY_LIMIT
         value: "50"
+
+      # ── Abuse prevention (all optional — sensible defaults live in server.js) ──
+      # Comma-separated allowlist of Replicate model versions the proxy may run.
+      # - key: REPLICATE_ALLOWED_MODELS
+      #   sync: false
+      # Comma-separated host allowlist for server-side image fetches (SSRF guard).
+      # - key: IMAGE_FETCH_ALLOWED_HOSTS
+      #   value: "replicate.delivery,replicate.com"
+      # Rate limits. General = per-IP across all routes; Gen = per-IP/per-account
+      # on the paid AI endpoints over RATE_LIMIT_GEN_WINDOW_MS.
+      - key: RATE_LIMIT_GENERAL_MAX
+        value: "300"
+      - key: RATE_LIMIT_GEN_MAX_PER_IP
+        value: "100"
+      - key: RATE_LIMIT_GEN_MAX_PER_USER
+        value: "40"
+      - key: RATE_LIMIT_GEN_WINDOW_MS
+        value: "600000"
