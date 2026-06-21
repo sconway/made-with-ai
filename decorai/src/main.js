@@ -1556,6 +1556,7 @@ async function loadSavedDesignIntoResults(design) {
     };
     generatedDesigns = [savedDesign];
     displayDesigns(generatedDesigns);
+    updateResultsFengShuiButtonState();
 }
 
 async function deleteSavedDesignById(id) {
@@ -1702,6 +1703,7 @@ function hideAuthModal() {
         authModal.style.opacity = '';
         authModal.style.visibility = '';
     }
+    setLoginSubmitLoading(false);
     if (loginForm) loginForm.reset();
     if (signupForm) signupForm.reset();
     if (loginError) { loginError.classList.add('hidden'); loginError.textContent = ''; }
@@ -1728,6 +1730,23 @@ function hideLoginResendBlock() {
     if (loginResendMessage) { loginResendMessage.classList.add('hidden'); loginResendMessage.textContent = ''; }
 }
 
+function setLoginSubmitLoading(loading) {
+    const btn = document.getElementById('login-submit-btn');
+    if (!btn) return;
+    if (loading) {
+        if (!btn.dataset.defaultLabel) btn.dataset.defaultLabel = btn.textContent.trim();
+        btn.disabled = true;
+        btn.classList.add('auth-submit-btn--loading');
+        btn.setAttribute('aria-busy', 'true');
+        btn.innerHTML = '<span class="auth-submit-spinner" aria-hidden="true"></span><span>Signing in…</span>';
+    } else {
+        btn.disabled = false;
+        btn.classList.remove('auth-submit-btn--loading');
+        btn.removeAttribute('aria-busy');
+        btn.textContent = btn.dataset.defaultLabel || 'Sign In';
+    }
+}
+
 async function handleLogin(e) {
     e.preventDefault();
     const email = document.getElementById('login-email')?.value?.trim();
@@ -1749,6 +1768,7 @@ async function handleLogin(e) {
     }
     if (loginError) loginError.classList.add('hidden');
     hideLoginResendBlock();
+    setLoginSubmitLoading(true);
     try {
         const { error } = await supabase.auth.signInWithPassword({ email, password });
         if (error) throw error;
@@ -1756,6 +1776,8 @@ async function handleLogin(e) {
     } catch (err) {
         if (loginError) { loginError.textContent = err.message; loginError.classList.remove('hidden'); }
         if (isEmailNotConfirmedError(err)) showLoginResendBlock();
+    } finally {
+        setLoginSubmitLoading(false);
     }
 }
 
@@ -4861,6 +4883,7 @@ function selectHistoryEntry(id) {
     }
 
     renderDesignHistory();
+    updateResultsFengShuiButtonState();
 }
 
 function hideHintArrows(card) {
@@ -4969,12 +4992,23 @@ function setCachedFengShuiAnalysis(imageSource, entry) {
 }
 
 function getFengShuiAnalysisTarget() {
+    if (isDesignGenerationInProgress()) return null;
+
+    // Prefer the history-strip selection — it drives the visible generated image on results.
+    const historyEntry = getSelectedHistoryEntry();
+    if (historyEntry?.imageUrl) {
+        const label = historyEntry.isOriginal
+            ? 'original photo'
+            : (historyEntry.label || 'selected design');
+        return { src: historyEntry.imageUrl, label };
+    }
+
     const design = generatedDesigns?.[0];
     if (design?.imageUrl && !design.loading && !design.needsRetry) {
-        return { src: design.imageUrl, label: 'Generated design' };
+        return { src: design.imageUrl, label: 'generated design' };
     }
     if (currentUploadedImage) {
-        return { src: currentUploadedImage, label: 'Uploaded photo' };
+        return { src: currentUploadedImage, label: 'uploaded photo' };
     }
     return null;
 }
