@@ -55,6 +55,36 @@ chmod +x run.sh
 
 This will start a local web server and open the application in your default browser. The application will be available at `http://localhost:8080`.
 
+## Stripe token packs (production)
+
+One-time token purchases require Stripe Price IDs for each pack. The server reads:
+
+- `STRIPE_PRICE_ID_PACK_10` — 10 tokens ($4.99)
+- `STRIPE_PRICE_ID_PACK_20` — 20 tokens ($9.99)
+- `STRIPE_PRICE_ID_PACK_50` — 50 tokens ($19.99)
+
+If a price ID is missing, that pack is hidden in the UI and checkout returns an error.
+
+To create the prices in Stripe and print the env vars:
+
+```bash
+STRIPE_SECRET_KEY=sk_live_... npm run setup:stripe-prices
+```
+
+Add the printed values in your Render dashboard (**Environment → Environment Variables**), then redeploy. See `.env.example` for the full list of secrets.
+
+## Supabase auth (required for sign-in)
+
+The client loads Supabase credentials from `/api/config`. Set these in `.env` locally and in Render for production:
+
+- `SUPABASE_URL` — your project URL (Supabase dashboard → Settings → API)
+- `SUPABASE_ANON_KEY` — the **anon/public** key (safe for the browser)
+- `SUPABASE_SERVICE_ROLE_KEY` — service role key (server only; never expose to the client)
+
+If either `SUPABASE_URL` or `SUPABASE_ANON_KEY` is missing, sign-in is disabled and the login form shows a configuration error.
+
+Local development: run `npm run dev` (starts both Vite and the API server). Do not use `./run.sh` alone — it only serves static files and has no `/api/config` endpoint.
+
 ## Technical Architecture
 
 This application follows a client-server architecture:

@@ -1,21 +1,17 @@
 import feather from 'feather-icons';
+import { createClient } from '@supabase/supabase-js';
 import FloorPlanEditor from './floorPlanEditor.js';
 import WoodworkingEditor from './woodworking/editor.js';
 import './woodworking/styles.css';
 
-// Supabase loaded at runtime from CDN so the build does not depend on node_modules resolution (avoids Render CI issues)
-async function loadSupabase() {
-    const mod = await import('https://esm.sh/@supabase/supabase-js@2');
-    return mod.createClient;
-}
-
-// Server/API configuration (same pattern as Brandwise)
-const PROXY_SERVER_URL = window.location.hostname === 'localhost'
-    ? 'http://localhost:3001'
-    : '';
+// Same-origin API routes (Vite dev proxies /api to the backend; production serves both).
+const PROXY_SERVER_URL = '';
 
 // Supabase client and auth state (initialized in initializeApp)
 let supabase = null;
+let authInitError = null;
+/** False until the first auth/config check in initializeApp() finishes. */
+let authReady = false;
 let appConfig = null;
 let currentUser = null;
 let currentSession = null;
@@ -373,18 +369,63 @@ const OPENAI_IMAGE_EDIT_URL = `${PROXY_SERVER_URL}/openai/image-edit`;
 const FENG_SHUI_API_URL = `${PROXY_SERVER_URL}/api/feng-shui`;
 const REPLICATE_MODEL_VERSION = 'stability-ai/stable-diffusion-3.5-large'; // Example version, check replicate for latest/best
 
+function setHeaderActionsEnabled(enabled) {
+    for (const id of ['layout-editor-btn', 'woodworking-editor-btn', 'login-btn', 'signup-btn']) {
+        const el = document.getElementById(id);
+        if (!el) continue;
+        el.disabled = !enabled;
+        if (enabled) el.removeAttribute('aria-busy');
+        else el.setAttribute('aria-busy', 'true');
+    }
+}
+
+function setupProtectedHeaderActions() {
+    const layoutEditorBtn = document.getElementById('layout-editor-btn');
+    if (layoutEditorBtn) {
+        layoutEditorBtn.addEventListener('click', (e) => {
+            if (!requireEmailConfirmedForFeature('the layout editor')) {
+                e.preventDefault();
+                e.stopPropagation();
+                e.stopImmediatePropagation();
+            }
+        }, true);
+    }
+    const woodworkingBtn = document.getElementById('woodworking-editor-btn');
+    if (woodworkingBtn) {
+        woodworkingBtn.addEventListener('click', (e) => {
+            if (!requireEmailConfirmedForFeature('the woodworking editor')) {
+                e.preventDefault();
+                e.stopPropagation();
+                e.stopImmediatePropagation();
+            }
+        }, true);
+    }
+}
+
 // Initialize app: fetch config, Supabase client, and auth state (same pattern as Brandwise)
 async function initializeApp() {
+    authInitError = null;
+    authReady = false;
+    setHeaderActionsEnabled(false);
     try {
         const response = await fetch(`${PROXY_SERVER_URL}/api/config`);
+        if (!response.ok) {
+            authInitError = 'Could not load app configuration. Make sure the server is running, then refresh.';
+            throw new Error(`Config fetch failed (${response.status})`);
+        }
         appConfig = await response.json();
 
         // Populate purchase UI from config
         renderTokenPacks(appConfig.tokenPacks);
 
-        if (appConfig.supabaseUrl && appConfig.supabaseAnonKey) {
-            const createClient = await loadSupabase();
-            supabase = createClient(appConfig.supabaseUrl, appConfig.supabaseAnonKey);
+        if (!appConfig.supabaseUrl || !appConfig.supabaseAnonKey) {
+            authInitError = 'Sign-in is not configured on the server (missing Supabase keys).';
+            console.error('[auth] /api/config did not return supabaseUrl and supabaseAnonKey');
+            return;
+        }
+
+        supabase = createClient(appConfig.supabaseUrl, appConfig.supabaseAnonKey);
+        if (supabase) {
             // Expose for isolated modules (e.g. woodworking editor) that need auth without coupling to main.js internals.
             window.__decoraiSupabase = supabase;
             const { data: { session } } = await supabase.auth.getSession();
@@ -459,9 +500,13 @@ async function initializeApp() {
                 window.history.replaceState({}, document.title, window.location.pathname);
             }
         }
-        updateAuthUI();
     } catch (err) {
         console.error('Error initializing app:', err);
+        if (!authInitError) {
+            authInitError = 'Could not start sign-in. Please refresh and try again.';
+        }
+    } finally {
+        authReady = true;
         updateAuthUI();
     }
 }
@@ -784,7 +829,7 @@ async function handleCheckout(pack, cardEl) {
         }
     } catch (err) {
         console.error('handleCheckout error:', err);
-        showToastMessage('Error starting checkout. Please try again.', 'error');
+        showToastMessage(err.message || 'Error starting checkout. Please try again.', 'error');
         cards.forEach((c) => { c.disabled = false; });
         if (cardEl) cardEl.classList.remove('token-pack--loading');
     }
@@ -1236,8 +1281,333 @@ async function deleteLayoutById(id) {
     }
 }
 
+// ===== SAVED GENERATED DESIGNS (subscription-only) =====
+
+const DESIGN_SOURCE_LABELS = {
+    'room-design': 'Room design',
+    'quick-edit': 'Quick edit',
+    'feng-shui': 'Feng shui',
+    'room3d': '3D room render',
+};
+
+const DESIGN_EDIT_FLOW_LABELS = {
+    'room-design': 'Design Wizard',
+    'quick-edit': 'Quick Edit',
+    'feng-shui': 'Feng Shui Analysis',
+    'room3d': '3D Room Render',
+};
+
+const DESIGN_MODEL_LABELS = {
+    openai: 'Premium (GPT Image)',
+    'proplabs-staging': 'PropLabs Virtual Staging',
+    img2img: 'SD 3.5 Large',
+    'nano-banana': 'Nano Banana',
+};
+
+const DESIGN_ROOM_TYPE_LABELS = {
+    empty: 'Empty room',
+    furnished: 'Furnished room',
+};
+
+async function autoSaveGeneratedDesign(imageUrl, {
+    prompt = null,
+    model = null,
+    sourceType = 'room-design',
+    metadata = {},
+    savedDesignId = null,
+} = {}) {
+    if (!userHasSubscription || !currentSession?.access_token || !imageUrl) return savedDesignId || null;
+    if (savedDesignId) return savedDesignId;
+    try {
+        const res = await fetch(`${PROXY_SERVER_URL}/api/designs`, {
+            method: 'POST',
+            headers: {
+                Authorization: `Bearer ${currentSession.access_token}`,
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({ imageUrl, prompt, model, sourceType, metadata }),
+        });
+        if (!res.ok) {
+            console.warn('autoSaveGeneratedDesign failed:', res.status);
+            return null;
+        }
+        const data = await res.json();
+        return data.id || null;
+    } catch (err) {
+        console.warn('autoSaveGeneratedDesign error:', err);
+        return null;
+    }
+}
+
+async function onGenerationSuccess(imageUrl, saveMeta = {}) {
+    pushDesignHistory(imageUrl);
+    await autoSaveGeneratedDesign(imageUrl, saveMeta);
+}
+
+async function fetchSavedDesigns(bustCache = false) {
+    if (!currentSession?.access_token || !userHasSubscription) return [];
+    try {
+        const url = `${PROXY_SERVER_URL}/api/designs` + (bustCache ? `?_=${Date.now()}` : '');
+        const res = await fetch(url, {
+            headers: { Authorization: `Bearer ${currentSession.access_token}` },
+        });
+        if (!res.ok) return [];
+        const data = await res.json();
+        return Array.isArray(data.designs) ? data.designs : [];
+    } catch (e) {
+        console.error('Failed to fetch designs:', e);
+        return [];
+    }
+}
+
+function formatDesignSourceLabel(sourceType) {
+    return DESIGN_SOURCE_LABELS[sourceType] || 'Generated design';
+}
+
+function formatDesignTitle(design) {
+    const style = design?.metadata?.style;
+    if (typeof style === 'string' && style.trim()) return style.trim();
+    return formatDesignSourceLabel(design?.sourceType);
+}
+
+function formatDesignDate(iso) {
+    if (!iso) return '—';
+    const d = new Date(iso);
+    if (Number.isNaN(d.getTime())) return '—';
+    return d.toLocaleDateString(undefined, { month: 'numeric', day: 'numeric', year: 'numeric' });
+}
+
+function getDesignStyleLabel(design) {
+    const styleText = design?.metadata?.style?.trim();
+    if (styleText) {
+        const match = interiorDesignStyles.find(s => s.promptText === styleText);
+        return match?.name || styleText;
+    }
+    const stylePrompt = design?.metadata?.stylePrompt?.trim();
+    return stylePrompt || null;
+}
+
+function buildDesignPreviewRows(design) {
+    const rows = [
+        {
+            label: 'Edit flow',
+            value: DESIGN_EDIT_FLOW_LABELS[design.sourceType] || formatDesignSourceLabel(design.sourceType),
+        },
+        { label: 'Date', value: formatDesignDate(design.createdAt) },
+    ];
+
+    if (design.model) {
+        rows.push({
+            label: 'Model',
+            value: DESIGN_MODEL_LABELS[design.model] || design.model,
+        });
+    }
+
+    const roomType = design.metadata?.roomType;
+    if (roomType) {
+        rows.push({
+            label: 'Room type',
+            value: DESIGN_ROOM_TYPE_LABELS[roomType] || roomType,
+        });
+    }
+
+    const styleLabel = getDesignStyleLabel(design);
+    if (styleLabel) {
+        rows.push({ label: 'Style', value: styleLabel });
+    }
+
+    return rows;
+}
+
+function renderDesignPreviewDetails(design) {
+    const detailsEl = document.getElementById('my-designs-preview-details');
+    const promptWrap = document.getElementById('my-designs-preview-prompt-wrap');
+    const promptEl = document.getElementById('my-designs-preview-prompt');
+    if (!detailsEl) return;
+
+    detailsEl.innerHTML = '';
+    buildDesignPreviewRows(design).forEach(row => {
+        const rowEl = document.createElement('div');
+        rowEl.className = 'my-designs-detail-row';
+        rowEl.setAttribute('role', 'listitem');
+
+        const label = document.createElement('span');
+        label.className = 'my-designs-detail-label';
+        label.textContent = row.label;
+
+        const value = document.createElement('span');
+        value.className = 'my-designs-detail-value';
+        value.textContent = row.value;
+
+        rowEl.append(label, value);
+        detailsEl.appendChild(rowEl);
+    });
+
+    const prompt = design.prompt?.trim();
+    if (promptWrap && promptEl) {
+        if (prompt) {
+            promptEl.textContent = prompt;
+            promptWrap.classList.remove('hidden');
+        } else {
+            promptEl.textContent = '';
+            promptWrap.classList.add('hidden');
+        }
+    }
+}
+
+function refreshDesignsGallery(bustCache = false) {
+    const gridEl = document.getElementById('my-designs-grid');
+    if (!gridEl) return;
+    gridEl.innerHTML = '<p class="my-designs-loading" role="status" aria-live="polite"><span class="my-layouts-spinner" aria-hidden="true"></span>Loading your designs…</p>';
+    fetchSavedDesigns(bustCache).then(designs => {
+        gridEl.innerHTML = '';
+        if (designs.length === 0) {
+            gridEl.innerHTML = '<p class="my-designs-empty">No saved designs yet. Generate a room design and it will appear here automatically.</p>';
+            return;
+        }
+        designs.forEach(design => {
+            const card = document.createElement('button');
+            card.type = 'button';
+            card.className = 'my-designs-card';
+            card.dataset.designId = design.id;
+            card.setAttribute('aria-label', `View ${formatDesignTitle(design)} from ${formatLayoutDate(design.createdAt)}`);
+
+            const img = document.createElement('img');
+            img.className = 'my-designs-card-img';
+            img.alt = '';
+            img.loading = 'lazy';
+            img.src = design.imageUrl || '';
+            img.onerror = function () {
+                this.style.visibility = 'hidden';
+            };
+
+            const meta = document.createElement('span');
+            meta.className = 'my-designs-card-meta';
+            meta.textContent = formatLayoutDate(design.createdAt);
+
+            const label = document.createElement('span');
+            label.className = 'my-designs-card-label';
+            label.textContent = formatDesignTitle(design);
+
+            card.append(img, label, meta);
+            card.addEventListener('click', () => openSavedDesignPreview(design));
+            gridEl.appendChild(card);
+        });
+    }).catch(() => {
+        gridEl.innerHTML = '<p class="my-designs-empty">Couldn\u2019t load your designs. Try again in a moment.</p>';
+    });
+}
+
+function openSavedDesignPreview(design) {
+    const panel = document.getElementById('my-designs-preview');
+    const img = document.getElementById('my-designs-preview-img');
+    const openBtn = document.getElementById('my-designs-open-btn');
+    const deleteBtn = document.getElementById('my-designs-delete-btn');
+    if (!panel || !img) return;
+
+    img.src = design.imageUrl || '';
+    img.alt = formatDesignTitle(design);
+    renderDesignPreviewDetails(design);
+    panel.dataset.designId = design.id;
+    panel.classList.remove('hidden');
+
+    if (openBtn) {
+        openBtn.onclick = () => loadSavedDesignIntoResults(design);
+    }
+    if (deleteBtn) {
+        deleteBtn.onclick = () => deleteSavedDesignById(design.id);
+    }
+    if (typeof feather !== 'undefined') feather.replace();
+}
+
+function closeSavedDesignPreview() {
+    const panel = document.getElementById('my-designs-preview');
+    if (panel) panel.classList.add('hidden');
+}
+
+async function loadSavedDesignIntoResults(design) {
+    if (!design?.imageUrl) return;
+    closeSavedDesignPreview();
+    closeDesignsModal();
+
+    if (wizardContainer) wizardContainer.classList.add('hidden');
+    if (wizardProgress) wizardProgress.classList.add('hidden');
+    const uploadSection = document.getElementById('upload-section');
+    if (uploadSection) uploadSection.classList.add('hidden');
+    if (resultsSection) resultsSection.classList.remove('hidden');
+    if (backToOptionsBtn) backToOptionsBtn.classList.remove('hidden');
+
+    lastGeneratedImageUrl = design.imageUrl;
+    resetDesignHistory();
+    if (currentUploadedImage) seedDesignHistoryWithOriginal();
+    pushDesignHistory(design.imageUrl);
+
+    const savedDesign = {
+        id: 'design-saved',
+        title: formatDesignTitle(design),
+        description: design.prompt ? design.prompt.slice(0, 200) : 'Previously generated design',
+        imageUrl: design.imageUrl,
+        originalImageUrl: currentUploadedImage || design.imageUrl,
+        prompt: design.prompt || '',
+        loading: false,
+        isFallback: false,
+        modelUsed: design.model || null,
+        sourceImage: currentUploadedImage || design.imageUrl,
+    };
+    generatedDesigns = [savedDesign];
+    displayDesigns(generatedDesigns);
+}
+
+async function deleteSavedDesignById(id) {
+    if (!currentSession?.access_token || !id) return;
+    const proceed = await showConfirmDialog(
+        'Delete this saved design? This cannot be undone.',
+        'Delete design',
+        'Delete',
+        'Cancel'
+    );
+    if (!proceed) return;
+    try {
+        const res = await fetch(`${PROXY_SERVER_URL}/api/designs/${id}`, {
+            method: 'DELETE',
+            headers: { Authorization: `Bearer ${currentSession.access_token}` },
+        });
+        if (!res.ok) throw new Error('Failed to delete');
+        closeSavedDesignPreview();
+        refreshDesignsGallery(true);
+    } catch (e) {
+        showAlertDialog(e?.message || 'Failed to delete design');
+    }
+}
+
+function openDesignsModal() {
+    if (!userHasSubscription) {
+        showSubscribeModal();
+        return;
+    }
+    const panel = document.getElementById('my-designs-panel');
+    if (!panel) return;
+    panel.classList.remove('hidden');
+    panel.classList.add('show');
+    refreshDesignsGallery();
+    if (typeof feather !== 'undefined') feather.replace();
+}
+
+function closeDesignsModal() {
+    const panel = document.getElementById('my-designs-panel');
+    if (panel) {
+        panel.classList.remove('show');
+        panel.classList.add('hidden');
+    }
+    closeSavedDesignPreview();
+}
+
+window.__decoraiSaveGeneratedDesign = autoSaveGeneratedDesign;
+
 function updateAuthUI() {
     if (!authButtons || !userMenu) return;
+    setHeaderActionsEnabled(authReady);
+    if (!authReady) return;
     if (currentUser) {
         authButtons.classList.add('hidden');
         userMenu.classList.remove('hidden');
@@ -1246,6 +1616,8 @@ function updateAuthUI() {
         if (userEmailDisplay) userEmailDisplay.textContent = currentUser.email?.split('@')[0] || 'Account';
         updateTokensDisplay();
         updateSubscriptionUsageDisplay();
+        const myDesignsBtn = document.getElementById('my-designs-btn');
+        if (myDesignsBtn) myDesignsBtn.classList.toggle('hidden', !userHasSubscription);
     } else {
         authButtons.classList.remove('hidden');
         userMenu.classList.add('hidden');
@@ -1254,6 +1626,45 @@ function updateAuthUI() {
         syncDefaultModelToggles();
     }
     if (typeof feather !== 'undefined') feather.replace();
+}
+
+function submitAuthForm(form) {
+    if (!form || form.classList.contains('hidden')) return;
+    const submitBtn = form.querySelector('button[type="submit"], input[type="submit"]');
+    if (submitBtn) {
+        submitBtn.click();
+        return;
+    }
+    if (typeof form.requestSubmit === 'function') {
+        form.requestSubmit();
+        return;
+    }
+    form.dispatchEvent(new Event('submit', { cancelable: true, bubbles: true }));
+}
+
+/** Enter advances through empty fields; submits once all fields are filled. */
+function setupAuthFormEnterToSubmit(form) {
+    if (!form) return;
+    form.addEventListener('keydown', (e) => {
+        if (e.key !== 'Enter' || e.isComposing) return;
+        if (form.classList.contains('hidden')) return;
+
+        const inputs = Array.from(form.querySelectorAll('input:not([type="hidden"])'));
+        const index = inputs.indexOf(e.target);
+        if (index === -1) return;
+
+        const allFilled = inputs.every((input) => input.value.trim() !== '');
+        if (allFilled) {
+            e.preventDefault();
+            submitAuthForm(form);
+            return;
+        }
+
+        if (index < inputs.length - 1) {
+            e.preventDefault();
+            inputs[index + 1].focus();
+        }
+    });
 }
 
 function showAuthModal(mode = 'login') {
@@ -1319,10 +1730,23 @@ function hideLoginResendBlock() {
 
 async function handleLogin(e) {
     e.preventDefault();
-    if (!supabase) return;
-    const email = document.getElementById('login-email')?.value;
-    const password = document.getElementById('login-password')?.value;
-    if (!email || !password) return;
+    const email = document.getElementById('login-email')?.value?.trim();
+    const password = document.getElementById('login-password')?.value ?? '';
+    if (!email || !password) {
+        if (loginError) {
+            loginError.textContent = 'Please enter your email and password.';
+            loginError.classList.remove('hidden');
+        }
+        return;
+    }
+    if (!supabase) {
+        if (loginError) {
+            loginError.textContent = authInitError
+                || 'Sign-in is unavailable right now. Please refresh and try again.';
+            loginError.classList.remove('hidden');
+        }
+        return;
+    }
     if (loginError) loginError.classList.add('hidden');
     hideLoginResendBlock();
     try {
@@ -1500,6 +1924,7 @@ async function handleEmailMagicLink() {
 }
 
 function requireEmailConfirmedForFeature(featureName) {
+    if (!authReady) return false;
     if (!supabase) return true;
     if (!currentUser) {
         showAuthModal('login');
@@ -1657,8 +2082,10 @@ function resolveConfirmDialog(result) {
 
 // Expose confirm globally
 window.showConfirmDialog = showConfirmDialog;
+window.__decoraiRequireEmailConfirmed = requireEmailConfirmedForFeature;
 
 document.addEventListener('DOMContentLoaded', async () => {
+    setupProtectedHeaderActions();
     await initializeApp();
 
     // Populate design style grids on load
@@ -1792,8 +2219,10 @@ document.addEventListener('DOMContentLoaded', async () => {
         });
     }
     if (loginForm) loginForm.addEventListener('submit', handleLogin);
+    setupAuthFormEnterToSubmit(loginForm);
     if (loginResendBtn) loginResendBtn.addEventListener('click', handleLoginResendClick);
     if (signupForm) signupForm.addEventListener('submit', handleSignup);
+    setupAuthFormEnterToSubmit(signupForm);
     if (authSwitchBtn) {
         authSwitchBtn.addEventListener('click', () => {
             const isLogin = loginForm && !loginForm.classList.contains('hidden');
@@ -1807,15 +2236,6 @@ document.addEventListener('DOMContentLoaded', async () => {
     if (confirmEmailResendBtn) confirmEmailResendBtn.addEventListener('click', handleConfirmEmailResend);
     if (confirmEmailCloseBtn) confirmEmailCloseBtn.addEventListener('click', hideAuthModal);
     if (logoutBtn) logoutBtn.addEventListener('click', handleLogout);
-    const layoutEditorBtn = document.getElementById('layout-editor-btn');
-    if (layoutEditorBtn) {
-        layoutEditorBtn.addEventListener('click', (e) => {
-            if (!requireEmailConfirmedForFeature('the layout editor')) {
-                e.preventDefault();
-                e.stopPropagation();
-            }
-        }, true);
-    }
     // Enforce max length for layout name editable field
     const layoutNameDisplayEl = document.getElementById('layout-name-display');
     if (layoutNameDisplayEl) {
@@ -1869,6 +2289,24 @@ document.addEventListener('DOMContentLoaded', async () => {
         });
         document.addEventListener('keydown', (e) => {
             if (e.key === 'Escape' && myLayoutsPanel.classList.contains('show')) closeLayoutsModal();
+        });
+    }
+    const myDesignsBtn = document.getElementById('my-designs-btn');
+    const myDesignsPanel = document.getElementById('my-designs-panel');
+    const myDesignsClose = document.getElementById('my-designs-close');
+    const myDesignsPreviewClose = document.getElementById('my-designs-preview-close');
+    if (myDesignsBtn) myDesignsBtn.addEventListener('click', () => {
+        if (userDropdown) userDropdown.classList.add('hidden');
+        openDesignsModal();
+    });
+    if (myDesignsClose) myDesignsClose.addEventListener('click', closeDesignsModal);
+    if (myDesignsPreviewClose) myDesignsPreviewClose.addEventListener('click', closeSavedDesignPreview);
+    if (myDesignsPanel) {
+        myDesignsPanel.addEventListener('click', (e) => {
+            if (e.target === myDesignsPanel) closeDesignsModal();
+        });
+        document.addEventListener('keydown', (e) => {
+            if (e.key === 'Escape' && myDesignsPanel.classList.contains('show')) closeDesignsModal();
         });
     }
     if (userMenuBtn && userDropdown) {
@@ -2628,23 +3066,30 @@ async function fetchWithRetry(url, options = {}, maxRetries = 3, retryDelay = 20
 }
 
 // Helper function for polling Replicate API with improved error handling and adaptive timing
-async function pollReplicatePrediction(predictionUrl) {
+async function pollReplicatePrediction(predictionUrl, saveContext = null) {
     let prediction;
     let attempts = 0;
     const maxAttempts = 90; // Increased to 3 minutes (90 attempts * 2 seconds)
     let delay = 2000; // Start with 2 seconds, will adapt based on status
     let consecutiveErrors = 0;
     const maxConsecutiveErrors = 5;
+    let savedDesignId = null;
 
     while (attempts < maxAttempts) {
         attempts++;
         try {
+            const pollBody = { predictionUrl };
+            if (saveContext) pollBody.saveContext = saveContext;
+
             const response = await fetchWithRetry(REPLICATE_POLL_URL, {
                 method: 'POST',
                 headers: {
-                    'Content-Type': 'application/json'
+                    'Content-Type': 'application/json',
+                    ...(saveContext && currentSession
+                        ? { Authorization: `Bearer ${currentSession.access_token}` }
+                        : {}),
                 },
-                body: JSON.stringify({ predictionUrl })
+                body: JSON.stringify(pollBody),
             }, 2, 1000); // Reduced retries and delay for polling
 
             if (!response.ok) {
@@ -2677,7 +3122,8 @@ async function pollReplicatePrediction(predictionUrl) {
                 if (!prediction.output || prediction.output.length === 0) {
                     throw new Error('Replicate prediction succeeded but returned no output.');
                 }
-                return { imageUrls: prediction.output };
+                if (prediction.savedDesignId) savedDesignId = prediction.savedDesignId;
+                return { imageUrls: prediction.output, savedDesignId };
             } else if (prediction.status === 'failed') {
                 // Terminal — the model rejected the input. Mark the error so
                 // the outer retry loop bails out instead of polling forever.
@@ -3014,7 +3460,13 @@ async function generateImageWithControlNet(imageBase64, prompt, negativePrompt, 
 
             // Poll for completion
             console.log(`Polling for results from ${model.name}...`);
-            const result = await pollReplicatePrediction(prediction.urls.get);
+            const saveContext = {
+                prompt,
+                model: model.type,
+                sourceType: options.sourceType || 'room-design',
+                metadata: options.saveMetadata || {},
+            };
+            const result = await pollReplicatePrediction(prediction.urls.get, saveContext);
             console.log(`Successfully generated with ${model.name}`);
             // pollReplicatePrediction returns either a string or an array
             // depending on the model — normalize to an array so we can attach
@@ -3023,6 +3475,7 @@ async function generateImageWithControlNet(imageBase64, prompt, negativePrompt, 
             const imageUrls = Array.isArray(raw) ? raw.slice() : (raw ? [raw] : []);
             imageUrls.usedFallback = usedFallback;
             imageUrls.modelUsed = model.type;
+            imageUrls.savedDesignId = result.savedDesignId || null;
             return imageUrls;
 
         } catch (error) {
@@ -3062,7 +3515,11 @@ async function generateImageWithControlNet(imageBase64, prompt, negativePrompt, 
 window.__decoraiGenerateRoomRender = async function (guideBase64, opts = {}) {
     const stylePrompt = (opts && opts.stylePrompt) ? opts.stylePrompt.trim() : '';
     const prompt = `This image is a plain 3D blockout of a room: a wooden floor, blank walls and ceiling, and colored boxes that mark where furniture goes. Turn it into a photorealistic interior photograph of the same room. Keep the room's shape and the position, footprint and orientation of every furniture block — replace each colored box with a realistic, well-designed piece of furniture of the matching type standing in that exact spot. Style: ${stylePrompt || 'tasteful contemporary interior'}. Add realistic materials, textures, soft natural daylight and subtle shadows. Ultra photorealistic, interior design magazine photography, high detail, no text or labels.`;
-    return await callPremiumImageEdit(guideBase64, prompt);
+    const result = await callPremiumImageEdit(guideBase64, prompt, {
+        sourceType: 'room3d',
+        metadata: { stylePrompt: stylePrompt || null },
+    });
+    return result.imageUrl;
 };
 
 // Helper: Upscale image using Replicate (optional)
@@ -3327,24 +3784,39 @@ async function generateDesigns(options = {}) {
         let imageUrl = '';
         let usedFallback = false;
         let modelUsed = null;
+        let savedDesignId = null;
+        const designSourceType = fengShuiApply
+            ? 'feng-shui'
+            : (nanoEditPrompt ? 'quick-edit' : 'room-design');
 
         if (usePremium) {
             // Premium path — counts against quota. Endpoint reserves a slot.
-            imageUrl = await callPremiumImageEdit(sourceImage, fullPrompt);
+            const premiumResult = await callPremiumImageEdit(sourceImage, fullPrompt, {
+                sourceType: designSourceType,
+                metadata: { style, roomType: currentRoomType },
+            });
+            imageUrl = premiumResult.imageUrl;
+            savedDesignId = premiumResult.savedDesignId;
             modelUsed = 'openai';
         } else if (nanoEditPrompt) {
             // Free instruction-edit path — Nano Banana (Gemini 2.5 Flash Image)
             // preserves the rest of the room while applying the typed edit.
             // Used for Quick Edit and for refining a generated result with text.
             // Free to the user; never counts against quota.
-            imageUrl = await generateQuickEditWithNanoBanana(sourceImage, nanoEditPrompt);
+            const nanoResult = await generateQuickEditWithNanoBanana(sourceImage, nanoEditPrompt);
+            imageUrl = nanoResult.imageUrl;
+            savedDesignId = nanoResult.savedDesignId;
             modelUsed = 'nano-banana';
         } else {
-            const imageUrls = await generateImageWithControlNet(sourceImage, fullPrompt, negativePrompt);
+            const imageUrls = await generateImageWithControlNet(sourceImage, fullPrompt, negativePrompt, {
+                sourceType: designSourceType,
+                saveMetadata: { style, roomType: currentRoomType },
+            });
             if (Array.isArray(imageUrls)) {
                 imageUrl = imageUrls[0];
                 usedFallback = !!imageUrls.usedFallback;
                 modelUsed = imageUrls.modelUsed || null;
+                savedDesignId = imageUrls.savedDesignId || savedDesignId;
             } else if (typeof imageUrls === 'string') {
                 imageUrl = imageUrls;
             }
@@ -3364,7 +3836,13 @@ async function generateDesigns(options = {}) {
         // Remember this image for subsequent regenerations
         if (imageUrl) {
             lastGeneratedImageUrl = imageUrl;
-            pushDesignHistory(imageUrl);
+            await onGenerationSuccess(imageUrl, {
+                prompt: fullPrompt,
+                model: modelUsed,
+                sourceType: designSourceType,
+                metadata: { style, roomType: currentRoomType },
+                savedDesignId,
+            });
         }
 
         // Only premium runs consume a generation slot — refresh the badge.
@@ -3604,6 +4082,7 @@ async function retryImageGeneration() {
         let imageUrl;
         let usedFallback = false;
         let modelUsed = null;
+        let savedDesignId = null;
 
         // A typed refinement is an instruction edit → use Nano Banana so the
         // text is honored (proplabs has no free-form prompt). No text → keep the
@@ -3613,7 +4092,9 @@ async function retryImageGeneration() {
             : null;
 
         if (retryNanoPrompt) {
-            imageUrl = await generateQuickEditWithNanoBanana(retrySourceImage, retryNanoPrompt);
+            const nanoResult = await generateQuickEditWithNanoBanana(retrySourceImage, retryNanoPrompt);
+            imageUrl = nanoResult.imageUrl;
+            savedDesignId = nanoResult.savedDesignId;
             modelUsed = 'nano-banana';
         } else {
             let imageUrls = await generateImageWithControlNet(
@@ -3625,6 +4106,7 @@ async function retryImageGeneration() {
                 imageUrl = imageUrls[0];
                 usedFallback = !!imageUrls.usedFallback;
                 modelUsed = imageUrls.modelUsed || null;
+                savedDesignId = imageUrls.savedDesignId || null;
             } else if (typeof imageUrls === 'string') {
                 imageUrl = imageUrls;
             } else {
@@ -3644,7 +4126,13 @@ async function retryImageGeneration() {
         // Remember this image for subsequent regenerations
         if (imageUrl) {
             lastGeneratedImageUrl = imageUrl;
-            pushDesignHistory(imageUrl);
+            await onGenerationSuccess(imageUrl, {
+                prompt: retryPrompt,
+                model: modelUsed,
+                sourceType: retryNanoPrompt ? 'quick-edit' : 'room-design',
+                metadata: { roomType: currentRoomType },
+                savedDesignId,
+            });
         }
 
         console.log('Retry successful');
@@ -3871,14 +4359,18 @@ async function toDataUri(source) {
 }
 
 // Call the server-side OpenAI image-edit endpoint (gpt-image-1). Returns
-// the resulting image URL or throws — on a 429 the thrown error carries
-// `code: 'QUOTA_EXCEEDED'` so the caller can show the right messaging.
-// The endpoint reserves a generation slot, so a successful call counts
-// against the user's monthly quota.
-async function callPremiumImageEdit(sourceImage, prompt) {
+// the resulting image URL and optional savedDesignId — on a 429 the thrown
+// error carries `code: 'QUOTA_EXCEEDED'` so the caller can show the right
+// messaging. The endpoint reserves a generation slot, so a successful call
+// counts against the user's monthly quota.
+async function callPremiumImageEdit(sourceImage, prompt, saveOptions = {}) {
     const imageInput = await toDataUri(sourceImage);
     const outputSize = await pickGptImageSize(imageInput);
-    const framedPrompt = `${prompt} Keep the exact same camera framing, field of view, zoom level, and composition as the input image — do not crop, zoom in, or recompose. The output must show the entire original scene with no parts of the room cut off.`;
+    const sourceType = saveOptions.sourceType || 'room-design';
+    const skipPromptFraming = sourceType === 'quick-edit' || sourceType === 'feng-shui';
+    const apiPrompt = skipPromptFraming
+        ? prompt
+        : `${prompt} Keep the exact same camera framing, field of view, zoom level, and composition as the input image — do not crop, zoom in, or recompose. The output must show the entire original scene with no parts of the room cut off.`;
 
     // gpt-image-1 high-quality edits take 30–90s — never retry, each
     // retry would be a duplicate billable call.
@@ -3894,9 +4386,12 @@ async function callPremiumImageEdit(sourceImage, prompt) {
             },
             body: JSON.stringify({
                 imageBase64: imageInput,
-                prompt: framedPrompt,
+                prompt: apiPrompt,
+                savePrompt: prompt,
                 size: outputSize,
-                quality: 'high'
+                quality: 'high',
+                sourceType,
+                metadata: saveOptions.metadata || {},
             }),
             signal: controller.signal
         });
@@ -3927,7 +4422,10 @@ async function callPremiumImageEdit(sourceImage, prompt) {
         err.detail = 'no images returned';
         throw err;
     }
-    return data.imageUrls[0];
+    return {
+        imageUrl: data.imageUrls[0],
+        savedDesignId: data.savedDesignId || null,
+    };
 }
 
 // After the default model fails, ask the user how to proceed:
@@ -4029,9 +4527,11 @@ async function runFallbackOnDesign(designIndex, design, modelType = 'img2img') {
 
         let imageUrl = '';
         let modelUsed = null;
+        let savedDesignId = null;
         if (Array.isArray(imageUrls)) {
             imageUrl = imageUrls[0];
             modelUsed = imageUrls.modelUsed || null;
+            savedDesignId = imageUrls.savedDesignId || null;
         } else if (typeof imageUrls === 'string') {
             imageUrl = imageUrls;
         }
@@ -4042,7 +4542,12 @@ async function runFallbackOnDesign(designIndex, design, modelType = 'img2img') {
 
         if (imageUrl) {
             lastGeneratedImageUrl = imageUrl;
-            pushDesignHistory(imageUrl);
+            await onGenerationSuccess(imageUrl, {
+                prompt: design.prompt,
+                model: modelUsed,
+                sourceType: 'room-design',
+                savedDesignId,
+            });
         }
     } catch (error) {
         console.error('Free model failed:', error);
@@ -4126,14 +4631,21 @@ async function regenerateWithPremiumModel(designIndex) {
     updateResultsFengShuiButtonState();
 
     try {
-        const imageUrl = await callPremiumImageEdit(design.sourceImage, design.prompt);
-        design.imageUrl = imageUrl;
+        const premiumResult = await callPremiumImageEdit(design.sourceImage, design.prompt, {
+            sourceType: 'room-design',
+        });
+        design.imageUrl = premiumResult.imageUrl;
         design.loading = false;
         design.modelUsed = 'openai';
 
-        if (imageUrl) {
-            lastGeneratedImageUrl = imageUrl;
-            pushDesignHistory(imageUrl);
+        if (premiumResult.imageUrl) {
+            lastGeneratedImageUrl = premiumResult.imageUrl;
+            await onGenerationSuccess(premiumResult.imageUrl, {
+                prompt: design.prompt,
+                model: 'openai',
+                sourceType: 'room-design',
+                savedDesignId: premiumResult.savedDesignId,
+            });
         }
 
         // Premium run consumed a generation slot — refresh the badge.
@@ -4572,17 +5084,8 @@ function buildFengShuiGenerationPrompt(result) {
         .map((s) => s.description)
         .filter(Boolean);
 
-    const goals = suggestions.length > 0
-        ? suggestions.join(' ')
-        : (result?.summary || 'Improve overall feng shui balance and energy flow in the room.');
-
-    return (
-        'DO NOT change walls, floor, ceiling, windows, or doors. ' +
-        'Rearrange furniture, decor, and styling to improve feng shui while keeping the same room architecture. ' +
-        `${goals} ` +
-        'Preserve existing materials and colors where possible. ' +
-        'Keep the exact same camera framing, field of view, zoom level, and composition as the input image.'
-    );
+    if (suggestions.length > 0) return suggestions.join(' ');
+    return result?.summary || 'Improve overall feng shui balance and energy flow in the room.';
 }
 
 /** User-facing copy for the results card after a feng shui apply generation completes. */
@@ -4909,24 +5412,23 @@ async function generateQuickEditWithNanoBanana(sourceImage, prompt) {
     if (!prediction.urls || !prediction.urls.get) {
         throw new Error('Quick edit model did not return a polling URL.');
     }
-    const result = await pollReplicatePrediction(prediction.urls.get);
+    const saveContext = {
+        prompt,
+        model: 'nano-banana',
+        sourceType: 'quick-edit',
+    };
+    const result = await pollReplicatePrediction(prediction.urls.get, saveContext);
     const raw = result.imageUrls;
     const imageUrl = Array.isArray(raw) ? raw[0] : raw;
     if (!imageUrl) throw new Error('Quick edit model returned no image.');
-    return imageUrl;
+    return { imageUrl, savedDesignId: result.savedDesignId || null };
 }
 
-/** Wrap the user's free-text edit with guardrails to preserve the rest of the room. */
+/** Return the user's quick-edit text as-is — no guardrail wrapping. */
 function buildQuickEditPrompt(text) {
     const edit = (text || '').trim();
     if (!edit) return null;
-    const prompt =
-        `Make only this change to this room photo: ${edit}. ` +
-        `Keep every other element identical — all furniture, decor, fixtures, windows, ` +
-        `layout, perspective, and lighting must stay exactly the same. Do not move, add, ` +
-        `or remove any objects unless the change above explicitly requires it. ` +
-        `Photorealistic and seamless, consistent with the original photo.`;
-    return { prompt, label: edit };
+    return { prompt: edit, label: edit };
 }
 
 /** Enable/disable Apply based on whether there's any text. */

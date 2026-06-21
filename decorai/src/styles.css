@@ -154,6 +154,8 @@ input[type="reset"] {
 
 html {
   overflow-y: auto;
+  overflow-x: clip;
+  max-width: 100%;
   /* Stop horizontal trackpad swipes from chaining up to the browser's
      swipe-to-go-back gesture (most visible inside the layout editor where
      wheel events over the toolbar/sidebar aren't otherwise intercepted). */
@@ -162,6 +164,7 @@ html {
 
 body {
   overscroll-behavior-x: contain;
+  max-width: 100%;
   font-family: var(--font-sans);
   font-size: var(--text-base);
   line-height: var(--leading-normal);
@@ -221,6 +224,14 @@ a:hover {
 /* ── Wizard container ── */
 .wizard-container {
   width: 100%;
+  max-width: 100%;
+  overflow-x: clip;
+}
+
+.wizard-pane {
+  width: 100%;
+  max-width: 100%;
+  overflow-x: clip;
 }
 
 .wizard-upload-actions {
@@ -244,6 +255,9 @@ a:hover {
   align-items: flex-start;
   justify-content: center;
   gap: 0;
+  width: 100%;
+  max-width: 100%;
+  overflow-x: clip;
   padding: var(--space-4) var(--space-4) var(--space-3);
   border-top: 1px solid var(--border-subtle);
   background: var(--surface);
@@ -337,28 +351,27 @@ a:hover {
 
 @media (max-width: 520px) {
   .wizard-progress {
-    padding: var(--space-3) var(--space-5);
+    padding: var(--space-3) var(--space-2);
   }
   .wizard-step {
     min-width: 0;
-    width: 28px;
+    flex: 1 1 0;
+    width: auto;
     gap: var(--space-1);
   }
   .wizard-step-label {
-    font-size: 14px;
-    overflow: visible;
+    font-size: 0.6875rem;
+    max-width: 100%;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
   }
   .wizard-step-line {
-    flex: 1 1 auto;
-    min-width: 12px;
-    margin-left: 8px;
-    margin-right: 8px;
+    flex: 1 1 0;
+    min-width: 6px;
+    margin-left: 2px;
+    margin-right: 2px;
   }
-}
-
-/* Individual panes */
-.wizard-pane {
-  width: 100%;
 }
 
 .wizard-pane-title {
@@ -515,6 +528,9 @@ header {
   position: sticky;
   top: 0;
   z-index: 10;
+  width: 100%;
+  max-width: 100%;
+  overflow-x: clip;
 }
 
 .header-inner {
@@ -533,6 +549,8 @@ main {
   padding: 1.5rem 1rem 1rem;
   display: flex;
   flex-direction: column;
+  max-width: 100%;
+  overflow-x: clip;
 }
 
 /* Components */
@@ -545,6 +563,10 @@ main {
   text-decoration: none;
   color: inherit;
   cursor: pointer;
+}
+
+.logo:hover {
+  text-decoration: none;
 }
 
 .logo:hover h1 {
@@ -1675,6 +1697,31 @@ main {
     padding: 1.5rem 0.75rem 0.75rem;
   }
 
+  .upload-section,
+  .wizard-container {
+    max-width: 100%;
+    overflow-x: clip;
+  }
+
+  /* Avoid double horizontal padding inside the wizard panes. */
+  .room-type-selection,
+  .room-items-selection,
+  .design-style-selection,
+  .furnished-options {
+    padding-left: 0;
+    padding-right: 0;
+  }
+
+  .room-option {
+    min-width: 0;
+    width: 100%;
+  }
+
+  .image-preview-wrapper {
+    min-width: 0;
+    max-width: 100%;
+  }
+
   .upload-section {
     margin-bottom: 1rem;
   }
@@ -1693,6 +1740,7 @@ main {
   /* Smaller image preview — leaves room for controls below */
   .image-preview-wrapper {
     max-width: 100%;
+    min-width: 0;
     margin: 0;
   }
 
@@ -2170,7 +2218,8 @@ main {
 .room-option {
   position: relative;
   flex: 1;
-  min-width: min(320px, 100%);
+  min-width: 0;
+  width: 100%;
   display: flex;
   margin-bottom: 1rem;
 }
@@ -2716,7 +2765,7 @@ main {
   display: block;
   width: 100%;
   max-width: 600px;
-  min-width: 50%;
+  min-width: 0;
   margin: 0 auto;
   border-radius: var(--border-radius);
   overflow: hidden;
@@ -3448,6 +3497,14 @@ main {
   box-shadow: 0 4px 15px rgba(99, 102, 241, 0.4);
 }
 
+.layout-editor-btn:disabled,
+.woodworking-editor-btn:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+  transform: none;
+  box-shadow: none;
+}
+
 .layout-editor-btn svg,
 .woodworking-editor-btn svg {
   width: 18px;
@@ -3477,6 +3534,25 @@ main {
 
 .layout-editor-screen.hidden {
   display: none;
+}
+
+/* Sidebars use z-index 2–25 so they overlap the canvas. Modals inside the
+   editor screen must sit above them (my-layouts, future import dialogs, etc.). */
+.layout-editor-screen > .modal {
+  z-index: 10050;
+}
+
+/* Shared dialogs (alert, confirm, import choice, subscribe, …) live outside
+   the editor in the DOM but must stack above it while open — mirrors
+   body.woodworking-active .modal in woodworking/styles.css. */
+body.layout-editor-active .modal {
+  z-index: 10050;
+}
+
+/* Don't let sidebar hover stacking compete with an open modal overlay. */
+body.layout-editor-active:has(.modal.show) .layout-editor-screen .layout-sidebar,
+body.layout-editor-active:has(.modal.show) .layout-editor-screen .layout-sidebar:hover {
+  z-index: 1;
 }
 
 /* Editor Header */
@@ -4233,6 +4309,191 @@ main {
   background: #ef4444;
   color: white;
   border-color: #ef4444;
+}
+
+/* My Designs gallery (subscription) */
+.my-designs-modal .modal-content {
+  max-width: 720px;
+}
+
+.my-designs-intro {
+  margin: 0 0 16px;
+  font-size: 0.875rem;
+  color: var(--text-secondary);
+}
+
+.my-designs-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+  gap: 12px;
+  max-height: 55vh;
+  overflow-y: auto;
+}
+
+.my-designs-empty,
+.my-designs-loading {
+  margin: 0;
+  font-size: 0.875rem;
+  color: #888;
+  padding: 8px 0;
+  grid-column: 1 / -1;
+}
+
+.my-designs-loading {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.my-designs-card {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 0;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  background: var(--surface-sunken);
+  cursor: pointer;
+  overflow: hidden;
+  text-align: left;
+  transition: border-color 0.15s var(--ease-out), box-shadow 0.15s var(--ease-out);
+}
+
+.my-designs-card:hover {
+  border-color: var(--brand-400);
+  box-shadow: var(--shadow-sm);
+}
+
+.my-designs-card-img {
+  width: 100%;
+  aspect-ratio: 4 / 3;
+  object-fit: cover;
+  display: block;
+  background: var(--gray-200);
+}
+
+.my-designs-card-label,
+.my-designs-card-meta {
+  padding: 0 8px;
+  font-size: 0.75rem;
+  line-height: 1.2;
+}
+
+.my-designs-card-label {
+  color: var(--text-primary);
+  font-weight: 500;
+}
+
+.my-designs-card-meta {
+  color: var(--text-tertiary);
+  padding-bottom: 8px;
+}
+
+.my-designs-preview {
+  margin-top: 20px;
+  padding-top: 20px;
+  border-top: 1px solid var(--border-subtle);
+}
+
+.my-designs-preview-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.my-designs-preview-heading {
+  margin: 0;
+  font-size: 1rem;
+  font-weight: var(--weight-semibold, 600);
+  color: var(--text-primary);
+}
+
+.my-designs-preview-details {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: 14px 20px;
+  margin: 16px 0 0;
+  padding: 16px;
+  background: var(--surface-sunken);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+}
+
+.my-designs-detail-row {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 0;
+}
+
+.my-designs-detail-label {
+  margin: 0;
+  font-size: 0.6875rem;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-tertiary);
+}
+
+.my-designs-detail-value {
+  margin: 0;
+  font-size: 0.875rem;
+  line-height: 1.4;
+  color: var(--text-primary);
+}
+
+.my-designs-preview-prompt-wrap {
+  margin-top: 16px;
+}
+
+.my-designs-preview-prompt-wrap.hidden {
+  display: none;
+}
+
+.my-designs-preview-prompt-label {
+  margin: 0 0 8px;
+  font-size: 0.6875rem;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-tertiary);
+}
+
+.my-designs-preview-prompt {
+  margin: 0;
+  padding: 12px 14px;
+  background: var(--surface-sunken);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  font-size: 0.875rem;
+  line-height: 1.55;
+  color: var(--text-secondary);
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 180px;
+  overflow-y: auto;
+}
+
+.my-designs-preview-img {
+  width: 100%;
+  max-height: 50vh;
+  object-fit: contain;
+  border-radius: var(--radius-md);
+  background: var(--gray-100);
+}
+
+.my-designs-preview-actions {
+  display: flex;
+  gap: 10px;
+  margin-top: 16px;
+  flex-wrap: wrap;
+}
+
+.my-designs-delete-btn:hover {
+  border-color: var(--error-500);
+  color: var(--error-600);
 }
 
 .tool-list {

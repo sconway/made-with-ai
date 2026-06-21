@@ -689,7 +689,12 @@ const FloorPlanEditor = (() => {
     }
     
     function show() {
+        if (typeof window.__decoraiRequireEmailConfirmed === 'function'
+            && !window.__decoraiRequireEmailConfirmed('the layout editor')) {
+            return;
+        }
         layoutEditorScreen.classList.remove('hidden');
+        document.body.classList.add('layout-editor-active');
         document.body.style.overflow = 'hidden';
         const stateToRestore = typeof window.__decoraiGetLayoutStateToRestore === 'function' ? window.__decoraiGetLayoutStateToRestore() : null;
         if (stateToRestore) {
@@ -799,6 +804,7 @@ const FloorPlanEditor = (() => {
     function hide() {
         setToolHintMenuOpen(false);
         layoutEditorScreen.classList.add('hidden');
+        document.body.classList.remove('layout-editor-active');
         document.body.style.overflow = '';
     }
     

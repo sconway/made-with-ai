@@ -215,6 +215,10 @@ const WoodworkingEditor = (() => {
     }
 
     function show() {
+        if (typeof window.__decoraiRequireEmailConfirmed === 'function'
+            && !window.__decoraiRequireEmailConfirmed('the woodworking editor')) {
+            return;
+        }
         screenEl.classList.remove('hidden');
         document.body.classList.add('woodworking-active');
         if (!scene) buildScene();

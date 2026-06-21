@@ -181,8 +181,38 @@ CREATE TRIGGER update_user_subscriptions_updated_at
     BEFORE UPDATE ON user_subscriptions
     FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
 
+-- ============================================================
+-- Generated design history (subscription feature)
+-- See sql/user_generated_designs.sql for Storage bucket setup.
+-- ============================================================
+
+CREATE TABLE IF NOT EXISTS user_generated_designs (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id UUID NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
+    storage_path TEXT NOT NULL,
+    prompt TEXT,
+    model TEXT,
+    source_type TEXT NOT NULL DEFAULT 'room-design',
+    metadata JSONB DEFAULT '{}',
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS user_generated_designs_user_created_idx
+    ON user_generated_designs(user_id, created_at DESC);
+
+ALTER TABLE user_generated_designs ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "Users can manage own generated designs" ON user_generated_designs;
+CREATE POLICY "Users can manage own generated designs" ON user_generated_designs
+    FOR ALL USING (auth.uid() = user_id);
+
+DROP POLICY IF EXISTS "Service role can manage generated designs" ON user_generated_designs;
+CREATE POLICY "Service role can manage generated designs" ON user_generated_designs
+    FOR ALL USING (auth.role() = 'service_role');
+
 -- Permissions
 GRANT USAGE ON SCHEMA public TO anon, authenticated;
 GRANT SELECT ON user_credits TO authenticated;
 GRANT SELECT ON payments TO authenticated;
 GRANT SELECT ON user_subscriptions TO authenticated;
+GRANT SELECT ON user_generated_designs TO authenticated;

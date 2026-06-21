@@ -3,15 +3,16 @@ import fetch from 'node-fetch';
 import cors from 'cors';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import { randomUUID } from 'crypto';
 import dotenv from 'dotenv';
 import Stripe from 'stripe';
 import { createClient } from '@supabase/supabase-js';
 
-// Load environment variables
-dotenv.config();
-
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
+
+// Load environment variables from the project root (not whatever the shell cwd is).
+dotenv.config({ path: path.join(__dirname, '.env') });
 
 const app = express();
 const port = process.env.PORT || 3001;
@@ -19,11 +20,18 @@ const port = process.env.PORT || 3001;
 // Initialize Stripe
 const stripe = new Stripe(process.env.STRIPE_SECRET_KEY || '');
 
-// Initialize Supabase (set SUPABASE_URL, SUPABASE_ANON_KEY, SUPABASE_SERVICE_ROLE_KEY in .env for auth)
-const supabase = createClient(
-  process.env.SUPABASE_URL || '',
-  process.env.SUPABASE_SERVICE_ROLE_KEY || ''
-);
+// Initialize Supabase when credentials are present (server still starts without them).
+const SUPABASE_URL = process.env.SUPABASE_URL?.trim() || '';
+const SUPABASE_ANON_KEY = process.env.SUPABASE_ANON_KEY?.trim() || '';
+const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY?.trim() || '';
+let supabase = null;
+if (SUPABASE_URL && SUPABASE_SERVICE_ROLE_KEY) {
+  supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
+} else {
+  console.warn(
+    '[auth] Missing SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY — auth and database APIs are disabled until these are set',
+  );
+}
 
 // Token configuration
 const FREE_TOKENS = parseInt(process.env.FREE_TOKENS) || 2;
@@ -41,8 +49,37 @@ const TOKEN_PACKS = {
   '50': { tokens: 50, amount: 1999, priceId: process.env.STRIPE_PRICE_ID_PACK_50 || '' },
 };
 
+function getConfiguredTokenPacks() {
+  return Object.entries(TOKEN_PACKS)
+    .filter(([, pack]) => Boolean(pack.priceId))
+    .map(([id, pack]) => ({ id, tokens: pack.tokens, amount: pack.amount }));
+}
+
+function logTokenPackConfig() {
+  for (const [id, pack] of Object.entries(TOKEN_PACKS)) {
+    if (!pack.priceId) {
+      console.warn(
+        `[stripe] Missing price ID for the ${pack.tokens}-token pack — set STRIPE_PRICE_ID_PACK_${id} in the environment`,
+      );
+    }
+  }
+}
+
+logTokenPackConfig();
+
+if (!SUPABASE_URL || !SUPABASE_ANON_KEY) {
+  console.warn(
+    '[auth] Missing SUPABASE_URL or SUPABASE_ANON_KEY — client sign-in will be disabled until these are set',
+  );
+} else {
+  console.log('[auth] Supabase client sign-in configured');
+}
+
 // Subscription configuration
 const SUBSCRIPTION_PRICE_ID = process.env.STRIPE_SUBSCRIPTION_PRICE_ID || '';
+const DESIGNS_STORAGE_BUCKET = process.env.SUPABASE_DESIGNS_BUCKET?.trim() || 'generated-designs';
+const MAX_SAVED_DESIGNS_SUBSCRIBER = parseInt(process.env.MAX_SAVED_DESIGNS_SUBSCRIBER) || 200;
+const DESIGN_SIGNED_URL_TTL_SEC = parseInt(process.env.DESIGN_SIGNED_URL_TTL_SEC) || 3600;
 
 // ── Generation quota helpers ──────────────────────────────────────────────
 // First day of the current month in UTC (e.g. 2026-05-01). Used as the bucket
@@ -65,6 +102,176 @@ async function getActiveSubscription(userId) {
     data.current_period_end &&
     new Date(data.current_period_end) > new Date();
   return isActive ? data : null;
+}
+
+// ── Generated design persistence (subscription-only) ─────────────────────
+
+async function resolveImageBuffer(imageSource) {
+  if (!imageSource) return null;
+
+  if (imageSource.buffer && Buffer.isBuffer(imageSource.buffer)) {
+    return {
+      buffer: imageSource.buffer,
+      contentType: imageSource.contentType || 'image/jpeg',
+      ext: extensionForMime(imageSource.contentType || 'image/jpeg'),
+    };
+  }
+
+  const src = String(imageSource);
+  const dataMatch = src.match(/^data:(image\/[a-zA-Z0-9+.-]+);base64,(.+)$/);
+  if (dataMatch) {
+    const contentType = dataMatch[1];
+    return {
+      buffer: Buffer.from(dataMatch[2], 'base64'),
+      contentType,
+      ext: extensionForMime(contentType),
+    };
+  }
+
+  if (src.startsWith('http://') || src.startsWith('https://')) {
+    const resp = await fetch(src);
+    if (!resp.ok) {
+      throw new Error(`Failed to fetch image (${resp.status})`);
+    }
+    const contentType = resp.headers.get('content-type')?.split(';')[0]?.trim() || 'image/jpeg';
+    const buffer = Buffer.from(await resp.arrayBuffer());
+    return { buffer, contentType, ext: extensionForMime(contentType) };
+  }
+
+  // Raw base64 without data-URI prefix
+  return {
+    buffer: Buffer.from(src, 'base64'),
+    contentType: 'image/jpeg',
+    ext: 'jpg',
+  };
+}
+
+function extensionForMime(mime) {
+  if (!mime) return 'jpg';
+  if (mime.includes('png')) return 'png';
+  if (mime.includes('webp')) return 'webp';
+  if (mime.includes('gif')) return 'gif';
+  return 'jpg';
+}
+
+function extractReplicateImageUrl(output) {
+  if (!output) return null;
+  if (typeof output === 'string') return output;
+  if (Array.isArray(output)) {
+    const first = output[0];
+    if (typeof first === 'string') return first;
+    if (first && typeof first === 'object' && first.url) return first.url;
+    return null;
+  }
+  if (typeof output === 'object' && output.url) return output.url;
+  return null;
+}
+
+async function deleteDesignRecord(userId, row) {
+  if (!row) return;
+  if (row.storage_path) {
+    const { error: storageError } = await supabase.storage
+      .from(DESIGNS_STORAGE_BUCKET)
+      .remove([row.storage_path]);
+    if (storageError) {
+      console.error('Failed to delete design from storage:', storageError);
+    }
+  }
+  await supabase
+    .from('user_generated_designs')
+    .delete()
+    .eq('id', row.id)
+    .eq('user_id', userId);
+}
+
+async function enforceDesignRetentionLimit(userId) {
+  const { data: rows, error } = await supabase
+    .from('user_generated_designs')
+    .select('id, storage_path, created_at')
+    .eq('user_id', userId)
+    .order('created_at', { ascending: true });
+  if (error || !rows || rows.length < MAX_SAVED_DESIGNS_SUBSCRIBER) return;
+  const excess = rows.length - MAX_SAVED_DESIGNS_SUBSCRIBER + 1;
+  for (const row of rows.slice(0, excess)) {
+    await deleteDesignRecord(userId, row);
+  }
+}
+
+async function createSignedDesignUrl(storagePath) {
+  const { data, error } = await supabase.storage
+    .from(DESIGNS_STORAGE_BUCKET)
+    .createSignedUrl(storagePath, DESIGN_SIGNED_URL_TTL_SEC);
+  if (error) {
+    console.error('Failed to create signed URL:', error);
+    return null;
+  }
+  return data?.signedUrl || null;
+}
+
+/** Persist a generated image for a subscriber. Returns the DB row or null. */
+async function persistGeneratedDesign(userId, { imageSource, prompt, model, sourceType, metadata }) {
+  if (!supabase) return null;
+
+  const sub = await getActiveSubscription(userId);
+  if (!sub) return null;
+
+  try {
+    const resolved = await resolveImageBuffer(imageSource);
+    if (!resolved?.buffer?.length) {
+      console.error('persistGeneratedDesign: empty image buffer');
+      return null;
+    }
+
+    await enforceDesignRetentionLimit(userId);
+
+    const designId = randomUUID();
+    const storagePath = `${userId}/${designId}.${resolved.ext}`;
+    const { error: uploadError } = await supabase.storage
+      .from(DESIGNS_STORAGE_BUCKET)
+      .upload(storagePath, resolved.buffer, {
+        contentType: resolved.contentType,
+        upsert: false,
+      });
+    if (uploadError) {
+      console.error('Failed to upload generated design:', uploadError);
+      return null;
+    }
+
+    const row = {
+      id: designId,
+      user_id: userId,
+      storage_path: storagePath,
+      prompt: prompt ? String(prompt).slice(0, 4000) : null,
+      model: model || null,
+      source_type: sourceType || 'room-design',
+      metadata: metadata && typeof metadata === 'object' ? metadata : {},
+    };
+    const { data, error: insertError } = await supabase
+      .from('user_generated_designs')
+      .insert(row)
+      .select('id, storage_path, prompt, model, source_type, metadata, created_at')
+      .single();
+    if (insertError) {
+      console.error('Failed to insert generated design row:', insertError);
+      await supabase.storage.from(DESIGNS_STORAGE_BUCKET).remove([storagePath]);
+      return null;
+    }
+    return data;
+  } catch (err) {
+    console.error('persistGeneratedDesign error:', err);
+    return null;
+  }
+}
+
+async function requireActiveSubscription(req, res) {
+  const user = await getAuthUser(req, res);
+  if (!user) return null;
+  const sub = await getActiveSubscription(user.id);
+  if (!sub) {
+    res.status(403).json({ error: 'Active subscription required' });
+    return null;
+  }
+  return user;
 }
 
 // Reserve one generation against the subscriber's monthly quota.
@@ -717,7 +924,7 @@ app.post('/openai/image-edit', async (req, res) => {
       return res.status(500).json({ error: 'Server OpenAI key not configured' });
     }
 
-    const { imageBase64, prompt, size, quality } = req.body || {};
+    const { imageBase64, prompt, savePrompt, size, quality, sourceType, metadata } = req.body || {};
     if (!imageBase64 || !prompt) {
       await slot.refund();
       return res.status(400).json({ error: 'imageBase64 and prompt are required' });
@@ -763,7 +970,20 @@ app.post('/openai/image-edit', async (req, res) => {
       return res.status(500).json({ error: 'OpenAI returned no image data' });
     }
     await incrementLifetimeGenerations(slot.userId);
-    res.json({ imageUrls: [`data:image/png;base64,${b64Out}`] });
+
+    const outBuf = Buffer.from(b64Out, 'base64');
+    const saved = await persistGeneratedDesign(slot.userId, {
+      imageSource: { buffer: outBuf, contentType: 'image/png' },
+      prompt: savePrompt || prompt,
+      model: 'openai',
+      sourceType: sourceType || 'room-design',
+      metadata: metadata && typeof metadata === 'object' ? metadata : {},
+    });
+
+    res.json({
+      imageUrls: [`data:image/png;base64,${b64Out}`],
+      savedDesignId: saved?.id || null,
+    });
   } catch (error) {
     console.error('Error in /openai/image-edit:', error);
     await slot.refund();
@@ -779,7 +999,7 @@ app.post('/replicate/poll', async (req, res) => {
       return res.status(500).json({ error: 'Server API key not configured' });
     }
 
-    const { predictionUrl } = req.body;
+    const { predictionUrl, saveContext } = req.body;
     if (!predictionUrl) {
       console.error('No prediction URL provided');
       return res.status(400).json({ error: 'Prediction URL is required' });
@@ -808,7 +1028,32 @@ app.post('/replicate/poll', async (req, res) => {
 
     const data = await response.json();
     console.log('Replicate API polling response:', data);
-    res.json(data);
+
+    let savedDesignId = null;
+    if (data.status === 'succeeded' && saveContext && supabase) {
+      const authHeader = req.headers.authorization;
+      if (authHeader?.startsWith('Bearer ')) {
+        const token = authHeader.split(' ')[1];
+        const { data: { user } } = await supabase.auth.getUser(token);
+        if (user) {
+          const imageUrl = extractReplicateImageUrl(data.output);
+          if (imageUrl) {
+            const saved = await persistGeneratedDesign(user.id, {
+              imageSource: imageUrl,
+              prompt: saveContext.prompt,
+              model: saveContext.model,
+              sourceType: saveContext.sourceType || 'room-design',
+              metadata: saveContext.metadata && typeof saveContext.metadata === 'object'
+                ? saveContext.metadata
+                : {},
+            });
+            savedDesignId = saved?.id || null;
+          }
+        }
+      }
+    }
+
+    res.json({ ...data, savedDesignId });
   } catch (error) {
     console.error('Error in /replicate/poll:', error);
     res.status(500).json({ error: 'Failed to poll prediction' });
@@ -1391,21 +1636,21 @@ Skip decorations: hatching, dimension lines, north arrows, title blocks, page bo
 // Config endpoint for client-side auth (Supabase URL and anon key)
 app.get('/api/config', (req, res) => {
   res.json({
-    supabaseUrl: process.env.SUPABASE_URL || '',
-    supabaseAnonKey: process.env.SUPABASE_ANON_KEY || '',
+    supabaseUrl: SUPABASE_URL,
+    supabaseAnonKey: SUPABASE_ANON_KEY,
     stripePublishableKey: process.env.STRIPE_PUBLISHABLE_KEY || '',
     tokensPerPurchase: TOKENS_PER_PURCHASE,
     priceAmount: parseInt(process.env.PRICE_AMOUNT) || 199,
-    tokenPacks: Object.entries(TOKEN_PACKS).map(([id, p]) => ({
-      id,
-      tokens: p.tokens,
-      amount: p.amount,
-    }))
+    tokenPacks: getConfiguredTokenPacks(),
   });
 });
 
 // Helper: get authenticated user from Bearer token
 async function getAuthUser(req, res) {
+  if (!supabase) {
+    res.status(503).json({ error: 'Auth service not configured' });
+    return null;
+  }
   const authHeader = req.headers.authorization;
   if (!authHeader || !authHeader.startsWith('Bearer ')) {
     res.status(401).json({ error: 'Unauthorized' });
@@ -1682,6 +1927,145 @@ app.put('/api/layout', async (req, res) => {
     res.json({ success: true, id: inserted.id });
   } catch (err) {
     console.error('Error in PUT /api/layout:', err);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+// ── Generated designs (subscription-only) ─────────────────────────────────
+
+function formatDesignForClient(row, imageUrl) {
+  return {
+    id: row.id,
+    prompt: row.prompt,
+    model: row.model,
+    sourceType: row.source_type,
+    metadata: row.metadata || {},
+    createdAt: row.created_at,
+    imageUrl,
+  };
+}
+
+async function attachSignedUrls(designs) {
+  const results = [];
+  for (const row of designs) {
+    const imageUrl = await createSignedDesignUrl(row.storage_path);
+    results.push(formatDesignForClient(row, imageUrl));
+  }
+  return results;
+}
+
+// List saved generated designs for the current subscriber
+app.get('/api/designs', async (req, res) => {
+  try {
+    const user = await requireActiveSubscription(req, res);
+    if (!user) return;
+
+    const limit = Math.min(parseInt(req.query.limit) || 50, 100);
+    const offset = Math.max(parseInt(req.query.offset) || 0, 0);
+
+    const { data, error } = await supabase
+      .from('user_generated_designs')
+      .select('id, storage_path, prompt, model, source_type, metadata, created_at')
+      .eq('user_id', user.id)
+      .order('created_at', { ascending: false })
+      .range(offset, offset + limit - 1);
+
+    if (error) {
+      console.error('Error fetching designs:', error);
+      return res.status(500).json({ error: 'Failed to fetch designs' });
+    }
+
+    const list = await attachSignedUrls(data || []);
+    res.json({ designs: list });
+  } catch (err) {
+    console.error('Error in GET /api/designs:', err);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+// Get one saved design with a signed image URL
+app.get('/api/designs/:id', async (req, res) => {
+  try {
+    const user = await requireActiveSubscription(req, res);
+    if (!user) return;
+
+    const { id } = req.params;
+    const { data, error } = await supabase
+      .from('user_generated_designs')
+      .select('id, storage_path, prompt, model, source_type, metadata, created_at')
+      .eq('id', id)
+      .eq('user_id', user.id)
+      .maybeSingle();
+
+    if (error) {
+      console.error('Error fetching design:', error);
+      return res.status(500).json({ error: 'Failed to fetch design' });
+    }
+    if (!data) return res.status(404).json({ error: 'Design not found' });
+
+    const imageUrl = await createSignedDesignUrl(data.storage_path);
+    res.json(formatDesignForClient(data, imageUrl));
+  } catch (err) {
+    console.error('Error in GET /api/designs/:id:', err);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+// Save a generated design (used for Replicate / client-side generation paths)
+app.post('/api/designs', async (req, res) => {
+  try {
+    const user = await requireActiveSubscription(req, res);
+    if (!user) return;
+
+    const { imageUrl, prompt, model, sourceType, metadata } = req.body || {};
+    if (!imageUrl || typeof imageUrl !== 'string') {
+      return res.status(400).json({ error: 'imageUrl is required' });
+    }
+
+    const saved = await persistGeneratedDesign(user.id, {
+      imageSource: imageUrl,
+      prompt,
+      model,
+      sourceType: sourceType || 'room-design',
+      metadata: metadata && typeof metadata === 'object' ? metadata : {},
+    });
+
+    if (!saved) {
+      return res.status(500).json({ error: 'Failed to save design' });
+    }
+
+    const signedUrl = await createSignedDesignUrl(saved.storage_path);
+    res.status(201).json(formatDesignForClient(saved, signedUrl));
+  } catch (err) {
+    console.error('Error in POST /api/designs:', err);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+// Delete a saved design
+app.delete('/api/designs/:id', async (req, res) => {
+  try {
+    const user = await requireActiveSubscription(req, res);
+    if (!user) return;
+
+    const { id } = req.params;
+    const { data, error } = await supabase
+      .from('user_generated_designs')
+      .select('id, storage_path')
+      .eq('id', id)
+      .eq('user_id', user.id)
+      .maybeSingle();
+
+    if (error) {
+      console.error('Error fetching design for delete:', error);
+      return res.status(500).json({ error: 'Failed to delete design' });
+    }
+    if (!data) return res.status(404).json({ error: 'Design not found' });
+
+    await deleteDesignRecord(user.id, data);
+    res.status(204).send();
+  } catch (err) {
+    console.error('Error in DELETE /api/designs/:id:', err);
     res.status(500).json({ error: 'Server error' });
   }
 });
