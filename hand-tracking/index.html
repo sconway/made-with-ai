@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Hand Tracking</title>
+    <link rel="stylesheet" href="/src/style.css" />
+  </head>
+  <body>
+    <main class="app">
+      <header class="header">
+        <h1>Hand Tracking</h1>
+        <p class="subtitle">Hold your hands up to the camera — each fingertip gets its own color.</p>
+      </header>
+
+      <div class="stage">
+        <video id="webcam" autoplay playsinline muted></video>
+        <canvas id="overlay"></canvas>
+        <div id="status" class="status">Starting camera…</div>
+      </div>
+
+      <aside class="legend" aria-label="Finger colors">
+        <div class="legend-item"><span class="swatch thumb"></span> Thumb</div>
+        <div class="legend-item"><span class="swatch index"></span> Index</div>
+        <div class="legend-item"><span class="swatch middle"></span> Middle</div>
+        <div class="legend-item"><span class="swatch ring"></span> Ring</div>
+        <div class="legend-item"><span class="swatch pinky"></span> Pinky</div>
+      </aside>
+    </main>
+
+    <script type="module" src="/src/main.js"></script>
+  </body>
+</html>

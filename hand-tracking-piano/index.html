@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Hand Tracking Piano</title>
+    <link rel="stylesheet" href="/src/style.css" />
+  </head>
+  <body>
+    <main class="app">
+      <header class="header">
+        <h1>Hand Tracking Piano</h1>
+        <p class="subtitle">Hover over a key to highlight it, then press downward to play</p>
+      </header>
+
+      <div class="stage">
+        <video id="webcam" autoplay playsinline muted></video>
+        <canvas id="overlay"></canvas>
+        <div id="status" class="status">Starting camera…</div>
+      </div>
+
+      <aside class="hint" aria-label="How to play">
+        <p>Keys glow in your finger color when hovered. Press down while over a key to play the note.</p>
+      </aside>
+    </main>
+
+    <script type="module" src="/src/main.js"></script>
+  </body>
+</html>

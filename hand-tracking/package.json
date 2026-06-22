@@ -1,0 +1,19 @@
+{
+  "name": "hand-tracking",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {
+    "setup": "node scripts/setup-assets.mjs",
+    "postinstall": "node scripts/setup-assets.mjs",
+    "dev": "vite",
+    "build": "node scripts/setup-assets.mjs && vite build",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "@mediapipe/tasks-vision": "^0.10.21"
+  },
+  "devDependencies": {
+    "vite": "^6.1.0"
+  }
+}
