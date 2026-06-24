@@ -28,6 +28,7 @@ npm run preview
 
 - Uses the browser webcam via `getUserMedia`
 - Tracks up to two hands with [MediaPipe Hand Landmarker](https://ai.google.dev/edge/mediapipe/solutions/vision/hand_landmarker)
-- Renders a two-octave piano keyboard at the bottom of the screen
-- Detects when a fingertip is pressing down over a key and plays the matching note via the Web Audio API
-- Keys light up while held
+- Renders a 3D piano keyboard with [three.js](https://threejs.org/), tilted up slightly so the key tops stay in view, composited over the mirrored webcam feed
+- Maps each fingertip's on-screen position to a key by raycasting into the 3D scene, so hover/press targeting matches the perspective view exactly (including black-key-over-white priority)
+- Detects when a fingertip presses down — using the tip's downward motion relative to the rest of the hand, so moving your whole hand down doesn't trigger a note — and plays the matching note via the Web Audio API
+- Keys glow in your finger color on hover, then light up gold and physically depress when pressed

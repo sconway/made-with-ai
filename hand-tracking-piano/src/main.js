@@ -1,13 +1,9 @@
 import { FilesetResolver, HandLandmarker } from '@mediapipe/tasks-vision';
 import { PianoAudio } from './audio.js';
-import {
-  drawKeyboard,
-  getHitTestMetrics,
-  getKeyboardBounds,
-  hitTestKeyAt,
-} from './keyboard.js';
+import { Keyboard3D } from './keyboard3d.js';
 import { PressDetector } from './pressDetector.js';
 import { isFingerVisible } from './fingerVisibility.js';
+import { PointSmoother } from './smoothing.js';
 
 const FINGERS = [
   { name: 'thumb', tip: 4, pip: 3, mcp: 2, color: '#ff6b6b' },
@@ -23,14 +19,20 @@ const WASM_PATH = `${import.meta.env.BASE_URL}wasm`;
 const MODEL_PATH = `${import.meta.env.BASE_URL}models/hand_landmarker.task`;
 
 const video = document.getElementById('webcam');
-const canvas = document.getElementById('overlay');
+const sceneCanvas = document.getElementById('scene');
+const overlay = document.getElementById('overlay');
 const statusEl = document.getElementById('status');
-const ctx = canvas.getContext('2d');
+const overlayCtx = overlay.getContext('2d');
 const pianoAudio = new PianoAudio();
 const pressDetector = new PressDetector();
+const keyboard = new Keyboard3D(sceneCanvas);
+// Smooths each fingertip's screen position to remove tracking jitter, keyed by
+// `${handSide}-${finger}`. Stabilizes both the drawn dots and the key hover/press.
+const tipSmoother = new PointSmoother();
 
 let handLandmarker;
 let animationFrameId;
+let lastVideoTime = -1;
 const activeMidis = new Set();
 
 function setStatus(message, { hidden = false, error = false } = {}) {
@@ -39,17 +41,21 @@ function setStatus(message, { hidden = false, error = false } = {}) {
   statusEl.classList.toggle('error', error);
 }
 
-function resizeCanvas() {
-  const { clientWidth, clientHeight } = canvas;
-  canvas.width = clientWidth;
-  canvas.height = clientHeight;
+function resize() {
+  const width = overlay.clientWidth;
+  const height = overlay.clientHeight;
+  overlay.width = width;
+  overlay.height = height;
+  keyboard.resize(width, height);
+  keyboard.render();
   pressDetector.reset();
-  pressDetector.setKeyMetrics(getHitTestMetrics());
+  tipSmoother.reset();
+  shownFingers.clear();
 }
 
 function getVideoCoverTransform() {
-  const displayWidth = canvas.clientWidth;
-  const displayHeight = canvas.clientHeight;
+  const displayWidth = overlay.clientWidth;
+  const displayHeight = overlay.clientHeight;
   const videoWidth = video.videoWidth || displayWidth;
   const videoHeight = video.videoHeight || displayHeight;
 
@@ -76,12 +82,23 @@ function getVideoCoverTransform() {
   return { drawWidth, drawHeight, offsetX, offsetY };
 }
 
+// MediaPipe landmarks are in the un-mirrored video frame. The webcam is shown
+// mirrored, so we flip X to get the on-screen pixel position the user sees.
 function toScreen(point) {
   const { drawWidth, drawHeight, offsetX, offsetY } = getVideoCoverTransform();
 
   return {
     x: (1 - point.x) * drawWidth + offsetX,
     y: point.y * drawHeight + offsetY,
+  };
+}
+
+// Convert a screen-pixel position to normalized device coordinates for the
+// 3D raycaster. The scene canvas covers the same box as the overlay.
+function toNdc(screenX, screenY) {
+  return {
+    x: (screenX / overlay.clientWidth) * 2 - 1,
+    y: -(screenY / overlay.clientHeight) * 2 + 1,
   };
 }
 
@@ -92,36 +109,48 @@ function getHandSide(handIndex, handedness) {
   return handIndex;
 }
 
-function shouldTrackFinger(hand, handSide, finger, tipY, keyboardBounds) {
-  if (isFingerVisible(hand, finger.name)) return true;
+// Stretched-out fingers shown last frame, keyed by `${handSide}-${finger}`. Used
+// for visibility hysteresis so a finger doesn't flicker off as it bends slightly.
+const shownFingers = new Set();
 
-  const hovering = pressDetector.getHoverMidi(handSide, finger.name) != null;
-  const isPressed = pressDetector.isPressed(handSide, finger.name);
-  return (hovering || isPressed) && tipY >= keyboardBounds.y;
+function resolveActive(hand, handSide, finger, stateKey) {
+  // Hysteresis band: a finger must clear the strict bar to switch on, but once on
+  // it only needs the lenient bar (i.e. "not curled into a fist") to stay on, so
+  // bending slightly inward to press a key doesn't drop it. A finger actively
+  // holding a note is also kept so a sustained press never cuts out.
+  const active =
+    isFingerVisible(hand, finger.name) ||
+    pressDetector.isPressed(handSide, finger.name) ||
+    (shownFingers.has(stateKey) && isFingerVisible(hand, finger.name, { lenient: true }));
+
+  if (active) shownFingers.add(stateKey);
+  else shownFingers.delete(stateKey);
+  return active;
 }
 
-function resolveKeyHit(tipX, tipY) {
-  return hitTestKeyAt(tipX, tipY, canvas.width, canvas.height);
-}
-
-function updatePresses(landmarks, handedness) {
+// Single pass over the hands: feed the press detector and collect the keys
+// that are currently hovered (per finger color) and pressed.
+function updateHands(landmarks, handedness, now) {
   const activeKeys = new Set();
-  const keyboardBounds = getKeyboardBounds(canvas.width, canvas.height);
+  const hoverMidis = new Map();
+  const tipPositions = new Map();
 
   landmarks.forEach((hand, handIndex) => {
     const handSide = getHandSide(handIndex, handedness);
     const wrist = toScreen(hand[0]);
 
     for (const finger of FINGERS) {
-      const tip = toScreen(hand[finger.tip]);
-      if (!shouldTrackFinger(hand, handSide, finger, tip.y, keyboardBounds)) continue;
-
-      const mcp = toScreen(hand[finger.mcp]);
       const stateKey = `${handSide}-${finger.name}`;
-      activeKeys.add(stateKey);
+      if (!resolveActive(hand, handSide, finger, stateKey)) continue;
 
-      const hit =
-        tip.y >= keyboardBounds.y ? resolveKeyHit(tip.x, tip.y) : null;
+      const rawTip = toScreen(hand[finger.tip]);
+      const tip = tipSmoother.smooth(stateKey, rawTip.x, rawTip.y, now);
+      const mcp = toScreen(hand[finger.mcp]);
+      const ndc = toNdc(tip.x, tip.y);
+      const hit = keyboard.hitTest(ndc.x, ndc.y);
+
+      activeKeys.add(stateKey);
+      tipPositions.set(stateKey, tip);
 
       pressDetector.update({
         handIndex: handSide,
@@ -130,33 +159,16 @@ function updatePresses(landmarks, handedness) {
         tipY: tip.y,
         mcpY: mcp.y,
         wristY: wrist.y,
-        midi: hit?.note.midi ?? null,
+        midi: hit?.midi ?? null,
       });
+
+      if (hit) hoverMidis.set(hit.midi, finger.color);
     }
   });
 
   pressDetector.pruneMissing(activeKeys);
-  return pressDetector.getActiveMidis();
-}
-
-function getHoverMidis(landmarks, handedness) {
-  const hoverMidis = new Map();
-  const keyboardBounds = getKeyboardBounds(canvas.width, canvas.height);
-
-  landmarks.forEach((hand, handIndex) => {
-    const handSide = getHandSide(handIndex, handedness);
-
-    for (const finger of FINGERS) {
-      const tip = toScreen(hand[finger.tip]);
-      if (!shouldTrackFinger(hand, handSide, finger, tip.y, keyboardBounds)) continue;
-      if (tip.y < keyboardBounds.y) continue;
-
-      const hit = resolveKeyHit(tip.x, tip.y);
-      if (hit) hoverMidis.set(hit.note.midi, finger.color);
-    }
-  });
-
-  return hoverMidis;
+  tipSmoother.prune(activeKeys);
+  return { pressedMidis: pressDetector.getActiveMidis(), hoverMidis, tipPositions };
 }
 
 function syncAudio(nextMidis) {
@@ -172,7 +184,28 @@ function syncAudio(nextMidis) {
   for (const midi of nextMidis) activeMidis.add(midi);
 }
 
-function drawFingerDots(landmarks, handedness) {
+function drawNoteLabels(activeMidis, hoverMidis) {
+  const anchors = keyboard.getLabelAnchors();
+  overlayCtx.textAlign = 'center';
+  overlayCtx.textBaseline = 'middle';
+
+  for (const anchor of anchors) {
+    const active = activeMidis.has(anchor.midi);
+    const hovered = hoverMidis.has(anchor.midi);
+    const highlighted = active || hovered;
+
+    overlayCtx.font = `600 ${highlighted ? 12 : 10}px Inter, system-ui, sans-serif`;
+    overlayCtx.fillStyle = highlighted
+      ? 'rgba(255, 255, 255, 0.95)'
+      : 'rgba(255, 255, 255, 0.45)';
+    overlayCtx.shadowColor = 'rgba(0, 0, 0, 0.8)';
+    overlayCtx.shadowBlur = 3;
+    overlayCtx.fillText(anchor.name, anchor.x, anchor.y);
+  }
+  overlayCtx.shadowBlur = 0;
+}
+
+function drawFingerDots(landmarks, handedness, tipPositions) {
   landmarks.forEach((hand, handIndex) => {
     const handSide = getHandSide(handIndex, handedness);
 
@@ -180,41 +213,53 @@ function drawFingerDots(landmarks, handedness) {
       const point = hand[finger.tip];
       if (!point) continue;
 
-      const { x, y } = toScreen(point);
-      if (!isFingerVisible(hand, finger.name) && !pressDetector.getHoverMidi(handSide, finger.name)) {
-        continue;
-      }
+      // Draw exactly the fingers updateHands resolved as active this frame, so a
+      // curled fist finger is hidden while a slightly-bent playing finger stays.
+      const stateKey = `${handSide}-${finger.name}`;
+      if (!shownFingers.has(stateKey)) continue;
 
+      // Reuse the smoothed tip from updateHands so the dot matches the hover/press
+      // position; fall back to the raw landmark if this finger wasn't tracked.
+      const { x, y } = tipPositions.get(stateKey) ?? toScreen(point);
       const pressing = pressDetector.isPressed(handSide, finger.name);
       const hovering = pressDetector.getHoverMidi(handSide, finger.name) != null;
 
-      ctx.beginPath();
-      ctx.arc(x, y, pressing || hovering ? DOT_RADIUS + 2 : DOT_RADIUS, 0, Math.PI * 2);
-      ctx.fillStyle = finger.color;
-      ctx.fill();
+      overlayCtx.beginPath();
+      overlayCtx.arc(x, y, pressing || hovering ? DOT_RADIUS + 2 : DOT_RADIUS, 0, Math.PI * 2);
+      overlayCtx.fillStyle = finger.color;
+      overlayCtx.fill();
 
-      ctx.lineWidth = pressing ? 4 : hovering ? 3.5 : 3;
-      ctx.strokeStyle = pressing || hovering ? '#ffffff' : 'rgba(255, 255, 255, 0.85)';
-      ctx.stroke();
+      overlayCtx.lineWidth = pressing ? 4 : hovering ? 3.5 : 3;
+      overlayCtx.strokeStyle = pressing || hovering ? '#ffffff' : 'rgba(255, 255, 255, 0.85)';
+      overlayCtx.stroke();
     }
   });
 }
 
 function drawFrame(landmarks, handedness) {
-  const hoverMidis = getHoverMidis(landmarks, handedness);
-  const pressedKeys = updatePresses(landmarks, handedness);
-  syncAudio(pressedKeys);
+  const now = performance.now();
+  const { pressedMidis, hoverMidis, tipPositions } = updateHands(landmarks, handedness, now);
+  syncAudio(pressedMidis);
 
-  ctx.clearRect(0, 0, canvas.width, canvas.height);
-  drawKeyboard(ctx, canvas.width, canvas.height, { activeMidis: pressedKeys, hoverMidis });
-  drawFingerDots(landmarks, handedness);
+  keyboard.render({ activeMidis: pressedMidis, hoverMidis });
+
+  overlayCtx.clearRect(0, 0, overlay.width, overlay.height);
+  drawNoteLabels(pressedMidis, hoverMidis);
+  drawFingerDots(landmarks, handedness, tipPositions);
 }
 
 function renderLoop() {
+  animationFrameId = requestAnimationFrame(renderLoop);
+
   if (!handLandmarker || video.readyState < HTMLMediaElement.HAVE_CURRENT_DATA) {
-    animationFrameId = requestAnimationFrame(renderLoop);
     return;
   }
+
+  // The camera produces frames slower than the display refreshes. Only run
+  // inference when a genuinely new video frame is ready — re-detecting a repeated
+  // frame wastes compute and feeds the press detector duplicate samples.
+  if (video.currentTime === lastVideoTime) return;
+  lastVideoTime = video.currentTime;
 
   const results = handLandmarker.detectForVideo(video, performance.now());
 
@@ -222,12 +267,13 @@ function renderLoop() {
     drawFrame(results.landmarks, results.handedness);
   } else {
     pressDetector.reset();
+    tipSmoother.reset();
+    shownFingers.clear();
     syncAudio(new Set());
-    ctx.clearRect(0, 0, canvas.width, canvas.height);
-    drawKeyboard(ctx, canvas.width, canvas.height);
+    keyboard.render();
+    overlayCtx.clearRect(0, 0, overlay.width, overlay.height);
+    drawNoteLabels(new Set(), new Map());
   }
-
-  animationFrameId = requestAnimationFrame(renderLoop);
 }
 
 function withTimeout(promise, timeoutMs, message) {
@@ -304,8 +350,8 @@ async function initHandLandmarker() {
 
 async function init() {
   try {
-    resizeCanvas();
-    window.addEventListener('resize', resizeCanvas);
+    resize();
+    window.addEventListener('resize', resize);
 
     setStatus('Requesting camera access…');
     await initCamera();
@@ -314,7 +360,7 @@ async function init() {
     await initHandLandmarker();
     await pianoAudio.init();
 
-    setStatus('Ready — hover over a key, then press downward to play', { hidden: true });
+    setStatus('Ready — hover a fingertip over a key, then press downward to play', { hidden: true });
     renderLoop();
   } catch (error) {
     console.error(error);
