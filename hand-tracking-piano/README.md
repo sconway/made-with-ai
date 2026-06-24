@@ -2,6 +2,8 @@
 
 A Guitar Hero-style piano teaching app. Hold your hands over the on-screen keyboard and press down with your fingertips to play notes.
 
+**Live demo:** https://sconway.github.io/made-with-ai/hand-tracker-piano/
+
 ## Run locally
 
 ```bash
