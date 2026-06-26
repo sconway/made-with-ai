@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Hand Tracking Piano</title>
+    <script type="module" crossorigin src="/made-with-ai/hand-tracker-piano/assets/index-C7x89IBZ.js"></script>
+    <link rel="stylesheet" crossorigin href="/made-with-ai/hand-tracker-piano/assets/index-BeZGwumQ.css">
+  </head>
+  <body>
+    <main class="app">
+      <header class="header">
+        <h1>Hand Tracking Piano</h1>
+        <p class="subtitle">Hover a fingertip over a 3D key, then press downward to play</p>
+      </header>
+
+      <div class="stage">
+        <video id="webcam" autoplay playsinline muted></video>
+        <canvas id="scene"></canvas>
+        <canvas id="overlay"></canvas>
+        <div id="status" class="status">Starting camera…</div>
+      </div>
+
+      <aside class="hint" aria-label="How to play">
+        <p>Keys glow in your finger color when a fingertip hovers over them. Press down with that finger to play the note.</p>
+      </aside>
+    </main>
+
+  </body>
+</html>
