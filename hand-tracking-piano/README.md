@@ -2,7 +2,7 @@
 
 A Guitar Hero-style piano teaching app. Hold your hands over the on-screen keyboard and press down with your fingertips to play notes.
 
-**Live demo:** https://sconway.github.io/made-with-ai/hand-tracking-piano/dist/
+**Live demo:** https://sconway.github.io/made-with-ai/hand-tracking-piano/
 
 ## Run locally
 
@@ -28,17 +28,17 @@ npm run preview
 
 ## Deploy to GitHub Pages
 
-From the `gh-pages` branch, build and commit the `dist/` folder like the other Vite apps in this repo:
+From the `gh-pages` branch:
 
 ```bash
 cd hand-tracking-piano
-npm run build
-git add dist
+npm run pages
+git add index.html assets wasm models index.source.html package.json scripts vite.config.js README.md
 git commit -m "Update hand-tracking-piano build"
 git push origin gh-pages
 ```
 
-The app is served from `/made-with-ai/hand-tracking-piano/dist/`.
+`npm run pages` builds with the correct base path and copies the production bundle to the project root so the app is served from `/made-with-ai/hand-tracking-piano/`.
 
 ## How it works
 

@@ -6,8 +6,9 @@
   "scripts": {
     "setup": "node scripts/setup-assets.mjs",
     "postinstall": "node scripts/setup-assets.mjs",
-    "dev": "vite",
-    "build": "node scripts/setup-assets.mjs && vite build",
+    "dev": "node scripts/use-dev-index.mjs && vite",
+    "build": "node scripts/setup-assets.mjs && node scripts/use-dev-index.mjs && vite build",
+    "pages": "npm run build && node scripts/publish-pages.mjs",
     "preview": "vite preview"
   },
   "dependencies": {
