@@ -1,18 +1,32 @@
 const HISTORY_LENGTH = 10;
 const PRESS_WINDOW = 3;
-const PRESS_DOWN_PX = 12;
-const MIN_TIP_DOWN_PX = 8;
+const DEFAULT_PRESS_DOWN_PX = 12;
 const MIN_RELATIVE_RATIO = 0.5;
-const RELEASE_UP_PX = 6;
 const MIN_FRAMES_OVER_KEY = 3;
+
+// The tip-travel and release thresholds scale with the press-down threshold so
+// the press/release feel stays balanced as the user adjusts sensitivity.
+const TIP_DOWN_RATIO = 8 / 12;
+const RELEASE_UP_RATIO = 6 / 12;
 
 export class PressDetector {
   #history = new Map();
   #state = new Map();
+  #pressDownPx = DEFAULT_PRESS_DOWN_PX;
+  #minTipDownPx = DEFAULT_PRESS_DOWN_PX * TIP_DOWN_RATIO;
+  #releaseUpPx = DEFAULT_PRESS_DOWN_PX * RELEASE_UP_RATIO;
 
   reset() {
     this.#history.clear();
     this.#state.clear();
+  }
+
+  /** Downward tip travel (in px, relative to the hand) that counts as a press. */
+  setPressThreshold(px) {
+    const clamped = Math.max(4, Math.min(40, px));
+    this.#pressDownPx = clamped;
+    this.#minTipDownPx = clamped * TIP_DOWN_RATIO;
+    this.#releaseUpPx = clamped * RELEASE_UP_RATIO;
   }
 
   setKeyMetrics() {
@@ -66,8 +80,8 @@ export class PressDetector {
 
     return (
       sameKey &&
-      relativeDown >= PRESS_DOWN_PX &&
-      tipDelta >= MIN_TIP_DOWN_PX &&
+      relativeDown >= this.#pressDownPx &&
+      tipDelta >= this.#minTipDownPx &&
       relativeDown >= Math.abs(tipDelta) * MIN_RELATIVE_RATIO
     );
   }
@@ -80,7 +94,7 @@ export class PressDetector {
     const past = history.at(-1 - PRESS_WINDOW);
     const relativeUp = current.tipY - past.tipY - this.#handDelta(current, past);
 
-    return relativeUp <= -RELEASE_UP_PX || current.midi == null;
+    return relativeUp <= -this.#releaseUpPx || current.midi == null;
   }
 
   update({ handIndex, fingerName, tipX, tipY, mcpY, wristY, midi }) {

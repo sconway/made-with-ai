@@ -4,6 +4,8 @@ import { Keyboard3D } from './keyboard3d.js';
 import { PressDetector } from './pressDetector.js';
 import { isFingerCurled, isFingerVisible } from './fingerVisibility.js';
 import { PointSmoother } from './smoothing.js';
+import { HandSlotTracker } from './handTracker.js';
+import { initSettings } from './settings.js';
 
 const FINGERS = [
   { name: 'thumb', tip: 4, pip: 3, mcp: 2, color: '#ff6b6b' },
@@ -29,14 +31,19 @@ const keyboard = new Keyboard3D(sceneCanvas);
 // Smooths each fingertip's screen position to remove tracking jitter, keyed by
 // `${handSide}-${finger}`. Stabilizes both the drawn dots and the key hover/press.
 const tipSmoother = new PointSmoother();
+// Gives each detected hand a stable slot id by spatial continuity, so tracking
+// identity survives MediaPipe's Left/Right label flipping over the keys.
+const handTracker = new HandSlotTracker();
 
 let handLandmarker;
 let animationFrameId;
 let lastVideoTime = -1;
 const activeMidis = new Set();
+// Fingers the user has chosen to track, by name. Updated from the settings panel.
+const enabledFingers = new Set(FINGERS.map((finger) => finger.name));
 
 let cachedLandmarks = null;
-let cachedHandedness = null;
+let cachedHandSlots = null;
 let cachedPressedMidis = new Set();
 let cachedTipPositions = new Map();
 
@@ -105,16 +112,14 @@ function toNdc(screenX, screenY) {
   };
 }
 
-function getHandSide(handIndex, handedness) {
-  const label = handedness?.[handIndex]?.[0]?.categoryName;
-  if (label === 'Left') return 0;
-  if (label === 'Right') return 1;
-  return handIndex;
-}
-
 // Stretched-out fingers shown last frame, keyed by `${handSide}-${finger}`. Used
 // for visibility hysteresis so a finger doesn't flicker off as it bends slightly.
 const shownFingers = new Set();
+// Consecutive detections a shown finger has read as clearly curled, keyed the
+// same way. We only hide once it stays curled for CURL_HIDE_FRAMES in a row so
+// one noisy frame over the keyboard can't blink the dot off.
+const curledStreak = new Map();
+const CURL_HIDE_FRAMES = 4;
 
 function resolveActive(hand, handSide, finger, stateKey) {
   const pressed = pressDetector.isPressed(handSide, finger.name);
@@ -123,30 +128,36 @@ function resolveActive(hand, handSide, finger, stateKey) {
 
   if (pressed || extended) {
     shownFingers.add(stateKey);
+    curledStreak.set(stateKey, 0);
     return true;
   }
 
-  // Keep showing a finger that was recently extended until it clearly curls away.
-  if (shownFingers.has(stateKey) && !curled) {
-    return true;
+  // Keep showing a finger that was recently extended until it stays clearly
+  // curled for several frames — debounces single-frame tracking dropouts.
+  if (shownFingers.has(stateKey)) {
+    const streak = curled ? (curledStreak.get(stateKey) ?? 0) + 1 : 0;
+    curledStreak.set(stateKey, streak);
+    if (streak < CURL_HIDE_FRAMES) return true;
   }
 
   shownFingers.delete(stateKey);
+  curledStreak.delete(stateKey);
   return false;
 }
 
 // Single pass over the hands: feed the press detector and collect the keys
 // that are currently hovered (per finger color) and pressed.
-function updateHands(landmarks, handedness, now) {
+function updateHands(landmarks, handSlots, now) {
   const activeKeys = new Set();
   const hoverMidis = new Map();
   const tipPositions = new Map();
 
   landmarks.forEach((hand, handIndex) => {
-    const handSide = getHandSide(handIndex, handedness);
+    const handSide = handSlots[handIndex];
     const wrist = toScreen(hand[0]);
 
     for (const finger of FINGERS) {
+      if (!enabledFingers.has(finger.name)) continue;
       const stateKey = `${handSide}-${finger.name}`;
       if (!resolveActive(hand, handSide, finger, stateKey)) continue;
 
@@ -178,13 +189,14 @@ function updateHands(landmarks, handedness, now) {
   return { pressedMidis: pressDetector.getActiveMidis(), hoverMidis, tipPositions };
 }
 
-function computeHoverMidis(landmarks, handedness, tipPositions) {
+function computeHoverMidis(landmarks, handSlots, tipPositions) {
   const hoverMidis = new Map();
 
   landmarks.forEach((hand, handIndex) => {
-    const handSide = getHandSide(handIndex, handedness);
+    const handSide = handSlots[handIndex];
 
     for (const finger of FINGERS) {
+      if (!enabledFingers.has(finger.name)) continue;
       const stateKey = `${handSide}-${finger.name}`;
       if (!shownFingers.has(stateKey)) continue;
 
@@ -213,12 +225,32 @@ function getDisplayTipPositions(now) {
   return display;
 }
 
+// Apply the finger on/off choices from the settings panel. Disabled fingers are
+// dropped from the live tracking sets so any lingering dot clears immediately;
+// their press state is pruned on the next detection frame, releasing held notes.
+function applyEnabledFingers(fingers) {
+  enabledFingers.clear();
+  for (const [name, on] of Object.entries(fingers)) {
+    if (on) enabledFingers.add(name);
+  }
+
+  for (const stateKey of [...shownFingers]) {
+    const fingerName = stateKey.slice(stateKey.indexOf('-') + 1);
+    if (!enabledFingers.has(fingerName)) {
+      shownFingers.delete(stateKey);
+      curledStreak.delete(stateKey);
+    }
+  }
+}
+
 function resetTrackingState() {
   pressDetector.reset();
   tipSmoother.reset();
+  handTracker.reset();
   shownFingers.clear();
+  curledStreak.clear();
   cachedLandmarks = null;
-  cachedHandedness = null;
+  cachedHandSlots = null;
   cachedPressedMidis = new Set();
   cachedTipPositions = new Map();
   syncAudio(new Set());
@@ -258,11 +290,12 @@ function drawNoteLabels(activeMidis, hoverMidis) {
   overlayCtx.shadowBlur = 0;
 }
 
-function drawFingerDots(landmarks, handedness, tipPositions) {
+function drawFingerDots(landmarks, handSlots, tipPositions) {
   landmarks.forEach((hand, handIndex) => {
-    const handSide = getHandSide(handIndex, handedness);
+    const handSide = handSlots[handIndex];
 
     for (const finger of FINGERS) {
+      if (!enabledFingers.has(finger.name)) continue;
       const point = hand[finger.tip];
       if (!point) continue;
 
@@ -297,10 +330,10 @@ function runDetection(now) {
 
   if (results.landmarks?.length) {
     cachedLandmarks = results.landmarks;
-    cachedHandedness = results.handedness;
+    cachedHandSlots = handTracker.assign(results.landmarks);
     const { pressedMidis, tipPositions } = updateHands(
       cachedLandmarks,
-      cachedHandedness,
+      cachedHandSlots,
       now,
     );
     cachedPressedMidis = pressedMidis;
@@ -315,7 +348,7 @@ function runDetection(now) {
 function renderFrame(now) {
   const tipPositions = cachedLandmarks ? getDisplayTipPositions(now) : new Map();
   const hoverMidis = cachedLandmarks
-    ? computeHoverMidis(cachedLandmarks, cachedHandedness, tipPositions)
+    ? computeHoverMidis(cachedLandmarks, cachedHandSlots, tipPositions)
     : new Map();
 
   keyboard.render({ activeMidis: cachedPressedMidis, hoverMidis });
@@ -324,7 +357,7 @@ function renderFrame(now) {
   drawNoteLabels(cachedPressedMidis, hoverMidis);
 
   if (cachedLandmarks) {
-    drawFingerDots(cachedLandmarks, cachedHandedness, tipPositions);
+    drawFingerDots(cachedLandmarks, cachedHandSlots, tipPositions);
   }
 }
 
@@ -359,6 +392,7 @@ async function initCamera() {
       facingMode: 'user',
       width: { ideal: 1280 },
       height: { ideal: 720 },
+      frameRate: { ideal: 60 },
     },
     audio: false,
   });
@@ -419,6 +453,13 @@ async function init() {
   try {
     resize();
     window.addEventListener('resize', resize);
+
+    // Wire up settings first so the panel is usable while the camera loads.
+    initSettings({
+      onFingersChange: applyEnabledFingers,
+      onThresholdChange: (px) => pressDetector.setPressThreshold(px),
+      onInstrumentChange: (id) => pianoAudio.setInstrument(id),
+    });
 
     setStatus('Requesting camera access…');
     await initCamera();
