@@ -20,11 +20,20 @@ const STRICT = {
   thumbAbduct: 0.75, // thumb tip splay from the index knuckle, in palm widths
 };
 const LENIENT = {
-  digitStraight: 0.6,
-  digitExtended: 0.97,
-  digitNotTucked: 0.78,
-  thumbStraight: 0.78,
-  thumbAbduct: 0.55,
+  digitStraight: 0.52,
+  digitExtended: 0.94,
+  digitNotTucked: 0.72,
+  thumbStraight: 0.72,
+  thumbAbduct: 0.48,
+};
+
+// Hide the dot only when a finger is clearly curled into the palm / fist.
+const CURLED = {
+  digitStraight: 0.38,
+  digitExtended: 0.86,
+  digitNotTucked: 0.62,
+  thumbStraight: 0.62,
+  thumbAbduct: 0.38,
 };
 
 function dist3(a, b) {
@@ -116,6 +125,15 @@ export function isFingerVisible(hand, fingerName, { lenient = false } = {}) {
   const t = lenient ? LENIENT : STRICT;
   if (fingerName === 'thumb') return isThumbVisible(hand, joints, t);
   return isDigitVisible(hand, joints, t);
+}
+
+/** True when the finger is tucked enough that we should stop drawing its dot. */
+export function isFingerCurled(hand, fingerName) {
+  const joints = FINGER_JOINTS[fingerName];
+  if (!joints) return true;
+
+  if (fingerName === 'thumb') return !isThumbVisible(hand, joints, CURLED);
+  return !isDigitVisible(hand, joints, CURLED);
 }
 
 export function getVisibleFingers(hand) {

@@ -2,7 +2,7 @@ import { FilesetResolver, HandLandmarker } from '@mediapipe/tasks-vision';
 import { PianoAudio } from './audio.js';
 import { Keyboard3D } from './keyboard3d.js';
 import { PressDetector } from './pressDetector.js';
-import { isFingerVisible } from './fingerVisibility.js';
+import { isFingerCurled, isFingerVisible } from './fingerVisibility.js';
 import { PointSmoother } from './smoothing.js';
 
 const FINGERS = [
@@ -35,6 +35,11 @@ let animationFrameId;
 let lastVideoTime = -1;
 const activeMidis = new Set();
 
+let cachedLandmarks = null;
+let cachedHandedness = null;
+let cachedPressedMidis = new Set();
+let cachedTipPositions = new Map();
+
 function setStatus(message, { hidden = false, error = false } = {}) {
   statusEl.textContent = message;
   statusEl.classList.toggle('hidden', hidden);
@@ -48,9 +53,7 @@ function resize() {
   overlay.height = height;
   keyboard.resize(width, height);
   keyboard.render();
-  pressDetector.reset();
-  tipSmoother.reset();
-  shownFingers.clear();
+  resetTrackingState();
 }
 
 function getVideoCoverTransform() {
@@ -114,18 +117,22 @@ function getHandSide(handIndex, handedness) {
 const shownFingers = new Set();
 
 function resolveActive(hand, handSide, finger, stateKey) {
-  // Hysteresis band: a finger must clear the strict bar to switch on, but once on
-  // it only needs the lenient bar (i.e. "not curled into a fist") to stay on, so
-  // bending slightly inward to press a key doesn't drop it. A finger actively
-  // holding a note is also kept so a sustained press never cuts out.
-  const active =
-    isFingerVisible(hand, finger.name) ||
-    pressDetector.isPressed(handSide, finger.name) ||
-    (shownFingers.has(stateKey) && isFingerVisible(hand, finger.name, { lenient: true }));
+  const pressed = pressDetector.isPressed(handSide, finger.name);
+  const extended = isFingerVisible(hand, finger.name, { lenient: true });
+  const curled = isFingerCurled(hand, finger.name);
 
-  if (active) shownFingers.add(stateKey);
-  else shownFingers.delete(stateKey);
-  return active;
+  if (pressed || extended) {
+    shownFingers.add(stateKey);
+    return true;
+  }
+
+  // Keep showing a finger that was recently extended until it clearly curls away.
+  if (shownFingers.has(stateKey) && !curled) {
+    return true;
+  }
+
+  shownFingers.delete(stateKey);
+  return false;
 }
 
 // Single pass over the hands: feed the press detector and collect the keys
@@ -169,6 +176,52 @@ function updateHands(landmarks, handedness, now) {
   pressDetector.pruneMissing(activeKeys);
   tipSmoother.prune(activeKeys);
   return { pressedMidis: pressDetector.getActiveMidis(), hoverMidis, tipPositions };
+}
+
+function computeHoverMidis(landmarks, handedness, tipPositions) {
+  const hoverMidis = new Map();
+
+  landmarks.forEach((hand, handIndex) => {
+    const handSide = getHandSide(handIndex, handedness);
+
+    for (const finger of FINGERS) {
+      const stateKey = `${handSide}-${finger.name}`;
+      if (!shownFingers.has(stateKey)) continue;
+
+      const tip = tipPositions.get(stateKey);
+      if (!tip) continue;
+
+      const ndc = toNdc(tip.x, tip.y);
+      const hit = keyboard.hitTest(ndc.x, ndc.y);
+      if (hit) hoverMidis.set(hit.midi, finger.color);
+    }
+  });
+
+  return hoverMidis;
+}
+
+function getDisplayTipPositions(now) {
+  const display = new Map();
+
+  for (const stateKey of shownFingers) {
+    const predicted = tipSmoother.predict(stateKey, now);
+    const cached = cachedTipPositions.get(stateKey);
+    if (predicted) display.set(stateKey, predicted);
+    else if (cached) display.set(stateKey, cached);
+  }
+
+  return display;
+}
+
+function resetTrackingState() {
+  pressDetector.reset();
+  tipSmoother.reset();
+  shownFingers.clear();
+  cachedLandmarks = null;
+  cachedHandedness = null;
+  cachedPressedMidis = new Set();
+  cachedTipPositions = new Map();
+  syncAudio(new Set());
 }
 
 function syncAudio(nextMidis) {
@@ -236,16 +289,43 @@ function drawFingerDots(landmarks, handedness, tipPositions) {
   });
 }
 
-function drawFrame(landmarks, handedness) {
-  const now = performance.now();
-  const { pressedMidis, hoverMidis, tipPositions } = updateHands(landmarks, handedness, now);
-  syncAudio(pressedMidis);
+function runDetection(now) {
+  if (video.currentTime === lastVideoTime) return;
+  lastVideoTime = video.currentTime;
 
-  keyboard.render({ activeMidis: pressedMidis, hoverMidis });
+  const results = handLandmarker.detectForVideo(video, now);
+
+  if (results.landmarks?.length) {
+    cachedLandmarks = results.landmarks;
+    cachedHandedness = results.handedness;
+    const { pressedMidis, tipPositions } = updateHands(
+      cachedLandmarks,
+      cachedHandedness,
+      now,
+    );
+    cachedPressedMidis = pressedMidis;
+    cachedTipPositions = tipPositions;
+    syncAudio(pressedMidis);
+    return;
+  }
+
+  resetTrackingState();
+}
+
+function renderFrame(now) {
+  const tipPositions = cachedLandmarks ? getDisplayTipPositions(now) : new Map();
+  const hoverMidis = cachedLandmarks
+    ? computeHoverMidis(cachedLandmarks, cachedHandedness, tipPositions)
+    : new Map();
+
+  keyboard.render({ activeMidis: cachedPressedMidis, hoverMidis });
 
   overlayCtx.clearRect(0, 0, overlay.width, overlay.height);
-  drawNoteLabels(pressedMidis, hoverMidis);
-  drawFingerDots(landmarks, handedness, tipPositions);
+  drawNoteLabels(cachedPressedMidis, hoverMidis);
+
+  if (cachedLandmarks) {
+    drawFingerDots(cachedLandmarks, cachedHandedness, tipPositions);
+  }
 }
 
 function renderLoop() {
@@ -255,25 +335,9 @@ function renderLoop() {
     return;
   }
 
-  // The camera produces frames slower than the display refreshes. Only run
-  // inference when a genuinely new video frame is ready — re-detecting a repeated
-  // frame wastes compute and feeds the press detector duplicate samples.
-  if (video.currentTime === lastVideoTime) return;
-  lastVideoTime = video.currentTime;
-
-  const results = handLandmarker.detectForVideo(video, performance.now());
-
-  if (results.landmarks?.length) {
-    drawFrame(results.landmarks, results.handedness);
-  } else {
-    pressDetector.reset();
-    tipSmoother.reset();
-    shownFingers.clear();
-    syncAudio(new Set());
-    keyboard.render();
-    overlayCtx.clearRect(0, 0, overlay.width, overlay.height);
-    drawNoteLabels(new Set(), new Map());
-  }
+  const now = performance.now();
+  runDetection(now);
+  renderFrame(now);
 }
 
 function withTimeout(promise, timeoutMs, message) {
@@ -322,6 +386,9 @@ async function createHandLandmarker(vision, delegate) {
     },
     runningMode: 'VIDEO',
     numHands: 2,
+    minHandDetectionConfidence: 0.35,
+    minHandPresenceConfidence: 0.35,
+    minTrackingConfidence: 0.35,
   });
 }
 

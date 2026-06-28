@@ -5,12 +5,12 @@
 // Reference: Casiez, Roussel & Vogel, "1€ Filter" (CHI 2012).
 
 // --- Tunable smoothing (lower = steadier but laggier, higher = snappier) ---
-// Baseline cutoff frequency (Hz) used when the fingertip is roughly still. Lower
-// it for calmer dots; raise it if hovering feels sluggish.
-const MIN_CUTOFF = 1.2;
-// How aggressively the filter loosens as the fingertip moves faster. Raise it if
-// fast presses feel laggy; lower it if quick motion looks noisy.
-const BETA = 0.015;
+// Baseline cutoff when the fingertip is roughly still.
+const MIN_CUTOFF = 2.4;
+// How aggressively the filter loosens as the fingertip moves faster.
+const BETA = 0.08;
+// Stop extrapolating beyond this gap so a dropped hand doesn't fly off-screen.
+const MAX_PREDICT_MS = 80;
 // Cutoff for the internal speed estimate; 1.0 is the standard default.
 const D_CUTOFF = 1.0;
 
@@ -76,15 +76,43 @@ export class PointSmoother {
         x: new OneEuroFilter(this.#options),
         y: new OneEuroFilter(this.#options),
         t: timestampMs,
+        px: x,
+        py: y,
+        vx: 0,
+        vy: 0,
+        sx: x,
+        sy: y,
       };
       this.#filters.set(key, entry);
     }
 
     let dt = (timestampMs - entry.t) / 1000;
     if (!(dt > MIN_DT)) dt = DEFAULT_DT; // first sample or a backwards/zero step
-    entry.t = timestampMs;
 
-    return { x: entry.x.filter(x, dt), y: entry.y.filter(y, dt) };
+    entry.vx = (x - entry.px) / dt;
+    entry.vy = (y - entry.py) / dt;
+    entry.px = x;
+    entry.py = y;
+    entry.t = timestampMs;
+    entry.sx = entry.x.filter(x, dt);
+    entry.sy = entry.y.filter(y, dt);
+
+    return { x: entry.sx, y: entry.sy };
+  }
+
+  /** Extrapolate the last smoothed position for display frames between detections. */
+  predict(key, timestampMs) {
+    const entry = this.#filters.get(key);
+    if (!entry) return null;
+
+    const dtMs = timestampMs - entry.t;
+    if (dtMs <= 0) return { x: entry.sx, y: entry.sy };
+
+    const dt = Math.min(dtMs, MAX_PREDICT_MS) / 1000;
+    return {
+      x: entry.sx + entry.vx * dt,
+      y: entry.sy + entry.vy * dt,
+    };
   }
 
   prune(activeKeys) {
