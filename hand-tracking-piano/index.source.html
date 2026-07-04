@@ -18,6 +18,53 @@
         <canvas id="scene"></canvas>
         <canvas id="overlay"></canvas>
         <div id="status" class="status">Starting camera…</div>
+
+        <button
+          id="settings-toggle"
+          class="settings-toggle"
+          type="button"
+          aria-label="Open settings"
+          aria-expanded="false"
+          aria-controls="settings-panel"
+        >
+          <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true">
+            <path
+              fill="currentColor"
+              d="M19.43 12.98c.04-.32.07-.64.07-.98s-.03-.66-.07-.98l2.11-1.65a.5.5 0 0 0 .12-.64l-2-3.46a.5.5 0 0 0-.61-.22l-2.49 1a7.03 7.03 0 0 0-1.69-.98l-.38-2.65A.5.5 0 0 0 13.5 1h-4a.5.5 0 0 0-.49.42l-.38 2.65c-.61.25-1.17.59-1.69.98l-2.49-1a.5.5 0 0 0-.61.22l-2 3.46a.5.5 0 0 0 .12.64l2.11 1.65c-.04.32-.07.65-.07.98s.03.66.07.98l-2.11 1.65a.5.5 0 0 0-.12.64l2 3.46c.14.24.42.32.61.22l2.49-1c.52.39 1.08.73 1.69.98l.38 2.65c.04.24.25.42.49.42h4c.24 0 .45-.18.49-.42l.38-2.65c.61-.25 1.17-.59 1.69-.98l2.49 1c.19.1.47.02.61-.22l2-3.46a.5.5 0 0 0-.12-.64l-2.11-1.65ZM12 15.5A3.5 3.5 0 1 1 12 8.5a3.5 3.5 0 0 1 0 7Z"
+            />
+          </svg>
+        </button>
+
+        <div id="settings-panel" class="settings-panel" role="dialog" aria-label="Settings">
+          <h2 class="settings-title">Settings</h2>
+
+          <section class="settings-group">
+            <h3 class="settings-label">Detect fingers</h3>
+            <div id="finger-options" class="finger-options"></div>
+          </section>
+
+          <section class="settings-group">
+            <h3 class="settings-label">
+              Press threshold
+              <span id="press-threshold-value" class="settings-value">12 px</span>
+            </h3>
+            <input
+              id="press-threshold"
+              class="settings-range"
+              type="range"
+              min="4"
+              max="30"
+              step="1"
+              value="12"
+            />
+            <p class="settings-hint">Downward motion needed to play a note. Lower = more sensitive.</p>
+          </section>
+
+          <section class="settings-group">
+            <h3 class="settings-label">Instrument</h3>
+            <select id="instrument-select" class="settings-select"></select>
+          </section>
+        </div>
       </div>
 
       <aside class="hint" aria-label="How to play">

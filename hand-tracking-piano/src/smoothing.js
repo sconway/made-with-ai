@@ -13,6 +13,9 @@ const BETA = 0.08;
 const MAX_PREDICT_MS = 80;
 // Cutoff for the internal speed estimate; 1.0 is the standard default.
 const D_CUTOFF = 1.0;
+// How much each new velocity sample moves the running velocity used for
+// between-frame prediction. Lower = steadier extrapolation, less wobble.
+const VEL_ALPHA = 0.5;
 
 const DEFAULT_DT = 1 / 60; // assumed frame delta for the first sample
 const MIN_DT = 1 / 240; // floor so a clock hiccup can't blow up the speed term
@@ -76,8 +79,6 @@ export class PointSmoother {
         x: new OneEuroFilter(this.#options),
         y: new OneEuroFilter(this.#options),
         t: timestampMs,
-        px: x,
-        py: y,
         vx: 0,
         vy: 0,
         sx: x,
@@ -89,13 +90,21 @@ export class PointSmoother {
     let dt = (timestampMs - entry.t) / 1000;
     if (!(dt > MIN_DT)) dt = DEFAULT_DT; // first sample or a backwards/zero step
 
-    entry.vx = (x - entry.px) / dt;
-    entry.vy = (y - entry.py) / dt;
-    entry.px = x;
-    entry.py = y;
+    const newSx = entry.x.filter(x, dt);
+    const newSy = entry.y.filter(y, dt);
+
+    // Derive the prediction velocity from the *smoothed* trajectory, not the raw
+    // landmark deltas, then low-pass it again. Otherwise raw per-frame jitter
+    // gets injected into every extrapolated display frame and the dot visibly
+    // wobbles back and forth between detections (worst over the busy keyboard).
+    const rawVx = (newSx - entry.sx) / dt;
+    const rawVy = (newSy - entry.sy) / dt;
+    entry.vx = VEL_ALPHA * rawVx + (1 - VEL_ALPHA) * entry.vx;
+    entry.vy = VEL_ALPHA * rawVy + (1 - VEL_ALPHA) * entry.vy;
+
+    entry.sx = newSx;
+    entry.sy = newSy;
     entry.t = timestampMs;
-    entry.sx = entry.x.filter(x, dt);
-    entry.sy = entry.y.filter(y, dt);
 
     return { x: entry.sx, y: entry.sy };
   }
