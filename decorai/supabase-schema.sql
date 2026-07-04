@@ -62,7 +62,7 @@ CREATE POLICY "Service role can manage saved layouts" ON user_saved_layouts
 CREATE TABLE IF NOT EXISTS user_credits (
     id UUID DEFAULT uuid_generate_v4() PRIMARY KEY,
     user_id UUID REFERENCES auth.users(id) ON DELETE CASCADE UNIQUE NOT NULL,
-    credits INTEGER DEFAULT 2 NOT NULL,         -- Start with 2 free tokens
+    credits INTEGER DEFAULT 0 NOT NULL,         -- Granted by app server (FREE_TOKENS) on first /api/credits
     total_generations INTEGER DEFAULT 0 NOT NULL, -- Lifetime count of successful generations
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
@@ -80,21 +80,8 @@ CREATE TABLE IF NOT EXISTS payments (
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
 
--- Automatically create a credits row (2 free tokens) when a new user signs up
-CREATE OR REPLACE FUNCTION public.handle_new_user()
-RETURNS TRIGGER AS $$
-BEGIN
-    INSERT INTO public.user_credits (user_id, credits)
-    VALUES (NEW.id, 2)
-    ON CONFLICT (user_id) DO NOTHING;
-    RETURN NEW;
-END;
-$$ LANGUAGE plpgsql SECURITY DEFINER;
-
-DROP TRIGGER IF EXISTS on_auth_user_created ON auth.users;
-CREATE TRIGGER on_auth_user_created
-    AFTER INSERT ON auth.users
-    FOR EACH ROW EXECUTE FUNCTION public.handle_new_user();
+-- Signup credits: no DB trigger. The app server creates user_credits on the
+-- first GET /api/credits using the FREE_TOKENS environment variable (see server.js).
 
 -- Auto-update updated_at on user_credits changes
 CREATE OR REPLACE FUNCTION update_updated_at_column()

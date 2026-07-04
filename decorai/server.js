@@ -37,11 +37,18 @@ if (SUPABASE_URL && SUPABASE_SERVICE_ROLE_KEY) {
   );
 }
 
-// Token configuration
-const FREE_TOKENS = parseInt(process.env.FREE_TOKENS) || 2;
-const TOKENS_PER_PURCHASE = parseInt(process.env.TOKENS_PER_PURCHASE) || 5;
+// Token configuration — parseEnvInt allows 0 (|| would treat 0 as missing).
+function parseEnvInt(name, defaultValue) {
+  const raw = process.env[name];
+  if (raw === undefined || raw === '') return defaultValue;
+  const n = parseInt(raw, 10);
+  return Number.isNaN(n) ? defaultValue : n;
+}
+
+const FREE_TOKENS = parseEnvInt('FREE_TOKENS', 2);
+const TOKENS_PER_PURCHASE = parseEnvInt('TOKENS_PER_PURCHASE', 5);
 // Subscribers get up to this many image generations per calendar month.
-const SUBSCRIPTION_MONTHLY_LIMIT = parseInt(process.env.SUBSCRIPTION_MONTHLY_LIMIT) || 50;
+const SUBSCRIPTION_MONTHLY_LIMIT = parseEnvInt('SUBSCRIPTION_MONTHLY_LIMIT', 50);
 
 // One-time token packs. Each maps to a Stripe Price (set the IDs in .env).
 // `tokens` is the number of generations granted; `amount` is in cents and is

@@ -59,7 +59,7 @@ services:
       - key: ALLOWED_ORIGIN
         sync: false
       - key: FREE_TOKENS
-        value: "2"
+        value: "0"
       - key: TOKENS_PER_PURCHASE
         value: "5"
       - key: PRICE_AMOUNT
