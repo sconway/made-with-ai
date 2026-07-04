@@ -1619,6 +1619,8 @@ function updateAuthUI() {
         updateSubscriptionUsageDisplay();
         const myDesignsBtn = document.getElementById('my-designs-btn');
         if (myDesignsBtn) myDesignsBtn.classList.toggle('hidden', !userHasSubscription);
+        const subscribeDropdownBtn = document.getElementById('subscribe-dropdown-btn');
+        if (subscribeDropdownBtn) subscribeDropdownBtn.classList.toggle('hidden', userHasSubscription);
     } else {
         authButtons.classList.remove('hidden');
         userMenu.classList.add('hidden');
@@ -2191,6 +2193,10 @@ document.addEventListener('DOMContentLoaded', async () => {
     // Token / payment listeners
     if (buyTokensBtn) buyTokensBtn.addEventListener('click', showBuyTokensModal);
     if (closeBuyTokensModalBtn) closeBuyTokensModalBtn.addEventListener('click', hideBuyTokensModal);
+    const tokensModalSubscribeBtn = document.getElementById('tokens-modal-subscribe-btn');
+    if (tokensModalSubscribeBtn) tokensModalSubscribeBtn.addEventListener('click', () => { hideBuyTokensModal(); showSubscribeModal(); });
+    const subscribeDropdownBtn = document.getElementById('subscribe-dropdown-btn');
+    if (subscribeDropdownBtn) subscribeDropdownBtn.addEventListener('click', () => { userDropdown?.classList.add('hidden'); showSubscribeModal(); });
     // Subscribers can click their monthly-usage badge to buy overflow token packs.
     if (subscriptionUsageDisplay) subscriptionUsageDisplay.addEventListener('click', showBuyTokensModal);
     // Close modal when clicking outside
@@ -4337,10 +4343,37 @@ function syncDefaultModelToggles() {
 
     const toggles = [...defaultModelToggles];
     if (fengShuiApplyPremiumToggle) toggles.push(fengShuiApplyPremiumToggle);
+    if (quickEditPremiumToggle) toggles.push(quickEditPremiumToggle);
 
     toggles.forEach((el) => {
         el.checked = checked;
-        el.closest('.model-pref-row')?.classList.toggle('hidden', !canUsePremium);
+        el.disabled = !canUsePremium;
+        el.closest('.model-pref-toggle')?.classList.toggle('model-pref-disabled', !canUsePremium);
+        const row = el.closest('.model-pref-row');
+        if (!row) return;
+        // Always show the row — locked users see it with an upsell nudge.
+        row.classList.remove('hidden');
+        // Rebuild the upsell message on every sync (avoids stale event listeners).
+        row.querySelector('.model-pref-upsell')?.remove();
+        if (!canUsePremium) {
+            const upsell = document.createElement('p');
+            upsell.className = 'model-pref-upsell';
+            if (!currentUser) {
+                upsell.innerHTML =
+                    '<button type="button" class="model-pref-upsell-btn">Sign in</button>' +
+                    ' and purchase tokens or a monthly subscription to use the premium model.';
+                upsell.querySelector('.model-pref-upsell-btn').addEventListener('click', () => showAuthModal('login'));
+            } else {
+                upsell.innerHTML =
+                    'No tokens remaining — ' +
+                    '<button type="button" class="model-pref-upsell-btn" data-upsell="buy">buy tokens</button>' +
+                    ' or <button type="button" class="model-pref-upsell-btn" data-upsell="subscribe">get a subscription</button>' +
+                    ' to unlock the premium model.';
+                upsell.querySelector('[data-upsell="buy"]').addEventListener('click', () => showBuyTokensModal());
+                upsell.querySelector('[data-upsell="subscribe"]').addEventListener('click', () => showSubscribeModal());
+            }
+            row.appendChild(upsell);
+        }
     });
 }
 syncDefaultModelToggles();
@@ -4738,7 +4771,7 @@ function displayDesigns(designs) {
                 </div>
                 ${disclaimer}
             </div>
-            <div class="model-status${design.loading ? '' : ' hidden'}" aria-live="polite">Generating your design — this usually takes 30–60 seconds.</div>
+            <div class="model-status${design.loading ? '' : ' hidden'}" aria-live="polite">Generating your design — this can take up to a minute for premium model generations.</div>
             ${showRevealSlider ? `
                 <div class="reveal-checkbox-container">
                     <label class="reveal-checkbox-label">
@@ -5483,10 +5516,8 @@ function openQuickEdit() {
     if (!requireEmailConfirmedForFeature('quick edit')) return;
     clearQuickEditInput();
     // Default to the free model every time — premium is an explicit opt-in.
-    if (quickEditPremiumToggle) {
-        quickEditPremiumToggle.checked = false;
-        quickEditPremiumToggle.closest('.model-pref-row')?.classList.toggle('hidden', !hasPremiumGenerationsAvailable());
-    }
+    // syncDefaultModelToggles manages row visibility and the upsell message.
+    if (quickEditPremiumToggle) quickEditPremiumToggle.checked = false;
     if (quickEditModal) quickEditModal.classList.add('show');
     // Focus the box so the user can start typing right away.
     requestAnimationFrame(() => quickEditInput?.focus());

@@ -69,6 +69,10 @@
                             <i data-feather="image"></i>
                             <span>My Designs</span>
                         </button>
+                        <button id="subscribe-dropdown-btn" class="dropdown-item dropdown-item--subscribe hidden" type="button">
+                            <i data-feather="star"></i>
+                            <span>Subscribe</span>
+                        </button>
                         <button id="logout-btn" class="dropdown-item" type="button">
                             <i data-feather="log-out"></i>
                             <span>Sign Out</span>
@@ -312,8 +316,7 @@
                 <div class="results-display">
                     <div class="loading-indicator hidden" id="loading-indicator">
                         <div class="spinner"></div>
-                        <p>Generating your design</p>
-                        <p class="loading-subtext">This usually takes 30–60 seconds.</p>
+                        <p>Generating your design — this can take up to a minute for premium model generations.</p>
                     </div>
                     <div class="design-carousel" id="design-carousel">
                         <!-- Design variants will be inserted here by JavaScript -->
@@ -1064,6 +1067,19 @@
                 </div>
                 <div class="token-packs" id="token-packs">
                     <!-- Pack options injected from /api/config -->
+                </div>
+                <div class="tokens-modal-divider">
+                    <span>or</span>
+                </div>
+                <div class="tokens-modal-subscribe">
+                    <div class="tokens-modal-subscribe-text">
+                        <strong>Monthly subscription</strong>
+                        <span>50 premium generations/month + floor plan editor, saved layouts &amp; designs</span>
+                    </div>
+                    <button id="tokens-modal-subscribe-btn" class="primary-btn tokens-modal-subscribe-btn" type="button">
+                        <i data-feather="star"></i>
+                        <span>Subscribe — $19.99/mo</span>
+                    </button>
                 </div>
                 <p class="tokens-footer">Payments are processed securely by Stripe.</p>
             </div>
