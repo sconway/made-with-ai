@@ -215,8 +215,8 @@ const WoodworkingEditor = (() => {
     }
 
     function show() {
-        if (typeof window.__decoraiRequireEmailConfirmed === 'function'
-            && !window.__decoraiRequireEmailConfirmed('the woodworking editor')) {
+        if (typeof window.__decoraitRequireEmailConfirmed === 'function'
+            && !window.__decoraitRequireEmailConfirmed('the woodworking editor')) {
             return;
         }
         screenEl.classList.remove('hidden');
@@ -1073,7 +1073,7 @@ const WoodworkingEditor = (() => {
     }
 
     async function getAccessToken() {
-        const sb = window.__decoraiSupabase;
+        const sb = window.__decoraitSupabase;
         if (!sb) return null;
         try {
             const { data: { session } } = await sb.auth.getSession();

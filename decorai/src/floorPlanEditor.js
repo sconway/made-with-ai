@@ -201,8 +201,8 @@ const FloorPlanEditor = (() => {
         document.querySelectorAll('.floor-tool').forEach(btn => {
             btn.addEventListener('click', () => {
                 if (btn.getAttribute('data-subscription-locked') === '1') {
-                    if (typeof window.__decoraiShowSubscribeModal === 'function') {
-                        window.__decoraiShowSubscribeModal();
+                    if (typeof window.__decoraitShowSubscribeModal === 'function') {
+                        window.__decoraitShowSubscribeModal();
                     }
                     return;
                 }
@@ -223,7 +223,7 @@ const FloorPlanEditor = (() => {
         // Export
         document.getElementById('layout-export-btn')?.addEventListener('click', () => {
             if (document.getElementById('layout-export-btn').getAttribute('data-subscription-locked') === '1') {
-                if (typeof window.__decoraiShowSubscribeModal === 'function') window.__decoraiShowSubscribeModal();
+                if (typeof window.__decoraitShowSubscribeModal === 'function') window.__decoraitShowSubscribeModal();
                 return;
             }
             toggleExportMenu();
@@ -338,8 +338,8 @@ const FloorPlanEditor = (() => {
         // Furniture categories - toggle on/off
         document.querySelectorAll('.category-btn').forEach(btn => {
             btn.addEventListener('click', () => {
-                if (window.__decoraiHasSubscription !== true) {
-                    if (typeof window.__decoraiShowSubscribeModal === 'function') window.__decoraiShowSubscribeModal();
+                if (window.__decoraitHasSubscription !== true) {
+                    if (typeof window.__decoraitShowSubscribeModal === 'function') window.__decoraitShowSubscribeModal();
                     return;
                 }
                 btn.classList.toggle('active');
@@ -349,14 +349,14 @@ const FloorPlanEditor = (() => {
 
         // Search furniture
         document.getElementById('furniture-search')?.addEventListener('input', () => {
-            if (window.__decoraiHasSubscription !== true) return;
+            if (window.__decoraitHasSubscription !== true) return;
             updateFurnitureGrid();
         });
 
         // Furniture panel click-through guard
         document.querySelector('.furniture-panel')?.addEventListener('click', (e) => {
-            if (window.__decoraiHasSubscription !== true) {
-                if (typeof window.__decoraiShowSubscribeModal === 'function') window.__decoraiShowSubscribeModal();
+            if (window.__decoraitHasSubscription !== true) {
+                if (typeof window.__decoraitShowSubscribeModal === 'function') window.__decoraitShowSubscribeModal();
             }
         });
         
@@ -380,7 +380,7 @@ const FloorPlanEditor = (() => {
         if (typeof feather !== 'undefined') feather.replace();
     }
 
-    const LAYOUT_SIDEBAR_STORAGE_KEY = 'decorai-layout-sidebar-state';
+    const LAYOUT_SIDEBAR_STORAGE_KEY = 'decorait-layout-sidebar-state';
 
     function initSidebarCollapse() {
         const leftBar = document.getElementById('layout-toolbar');
@@ -689,21 +689,21 @@ const FloorPlanEditor = (() => {
     }
     
     function show() {
-        if (typeof window.__decoraiRequireEmailConfirmed === 'function'
-            && !window.__decoraiRequireEmailConfirmed('the layout editor')) {
+        if (typeof window.__decoraitRequireEmailConfirmed === 'function'
+            && !window.__decoraitRequireEmailConfirmed('the layout editor')) {
             return;
         }
         layoutEditorScreen.classList.remove('hidden');
         document.body.classList.add('layout-editor-active');
         document.body.style.overflow = 'hidden';
-        const stateToRestore = typeof window.__decoraiGetLayoutStateToRestore === 'function' ? window.__decoraiGetLayoutStateToRestore() : null;
+        const stateToRestore = typeof window.__decoraitGetLayoutStateToRestore === 'function' ? window.__decoraitGetLayoutStateToRestore() : null;
         if (stateToRestore) {
             const state = stateToRestore && (stateToRestore.state !== undefined ? stateToRestore.state : stateToRestore);
             if (state) restoreState(state);
-            if (stateToRestore && stateToRestore.layoutId) window.__decoraiCurrentLayoutId = stateToRestore.layoutId;
+            if (stateToRestore && stateToRestore.layoutId) window.__decoraitCurrentLayoutId = stateToRestore.layoutId;
         }
         const layoutName = (stateToRestore && stateToRestore.name) || 'Untitled layout';
-        if (typeof window.__decoraiOnLayoutEditorShown === 'function') window.__decoraiOnLayoutEditorShown({ name: layoutName });
+        if (typeof window.__decoraitOnLayoutEditorShown === 'function') window.__decoraitOnLayoutEditorShown({ name: layoutName });
         feather.replace();
         initRulers();
         setInitialZoom();
@@ -712,7 +712,7 @@ const FloorPlanEditor = (() => {
     }
 
     function applySubscriptionRestrictions() {
-        const hasSubscription = window.__decoraiHasSubscription === true;
+        const hasSubscription = window.__decoraitHasSubscription === true;
 
         // ── Tool buttons: lock everything except 'wall' ──────────────────────────
         document.querySelectorAll('.floor-tool').forEach(btn => {
@@ -770,8 +770,8 @@ const FloorPlanEditor = (() => {
                     banner.className = 'layout-subscription-banner';
                     banner.innerHTML = '<i data-feather="zap"></i><span>Subscribe for full access — $19.99/mo</span>';
                     banner.addEventListener('click', () => {
-                        if (typeof window.__decoraiShowSubscribeModal === 'function') {
-                            window.__decoraiShowSubscribeModal();
+                        if (typeof window.__decoraitShowSubscribeModal === 'function') {
+                            window.__decoraitShowSubscribeModal();
                         }
                     });
                     toolbar.prepend(banner);
@@ -1738,8 +1738,8 @@ const FloorPlanEditor = (() => {
         // Check if this is a furniture drop
         const furnitureType = e.dataTransfer.getData('furnitureType');
         if (furnitureType) {
-            if (window.__decoraiHasSubscription !== true) {
-                if (typeof window.__decoraiShowSubscribeModal === 'function') window.__decoraiShowSubscribeModal();
+            if (window.__decoraitHasSubscription !== true) {
+                if (typeof window.__decoraitShowSubscribeModal === 'function') window.__decoraitShowSubscribeModal();
                 return;
             }
             // Get drop position relative to canvas (account for pan and zoom)
@@ -1767,7 +1767,7 @@ const FloorPlanEditor = (() => {
         }
         if (!file.type.startsWith('image/')) {
             if (window.showAlertDialog) {
-                window.showAlertDialog('Drop an image (PNG, JPG), an SVG floor plan, or a DecorAI layout file.');
+                window.showAlertDialog('Drop an image (PNG, JPG), an SVG floor plan, or a DecorAIt layout file.');
             }
             return;
         }
@@ -1870,7 +1870,7 @@ const FloorPlanEditor = (() => {
         const controls = document.createElement('div');
         controls.className = 'ref-image-controls';
         const tipsDismissed = (() => {
-            try { return localStorage.getItem('decorai-ref-image-tips-dismissed') === '1'; }
+            try { return localStorage.getItem('decorait-ref-image-tips-dismissed') === '1'; }
             catch { return false; }
         })();
 
@@ -1956,7 +1956,7 @@ const FloorPlanEditor = (() => {
             if (toggleBtn) {
                 toggleBtn.setAttribute('aria-label', willCollapse ? 'Show tracing tips' : 'Hide tracing tips');
             }
-            try { localStorage.setItem('decorai-ref-image-tips-dismissed', willCollapse ? '1' : '0'); }
+            try { localStorage.setItem('decorait-ref-image-tips-dismissed', willCollapse ? '1' : '0'); }
             catch { /* ignore quota / private-mode failures */ }
         });
         
@@ -4667,18 +4667,18 @@ const FloorPlanEditor = (() => {
             div.setAttribute('aria-label', `Add ${item.name} to the plan—click to place at center, or drag onto the canvas`);
             
             div.addEventListener('dragstart', (e) => {
-                if (window.__decoraiHasSubscription !== true) {
+                if (window.__decoraitHasSubscription !== true) {
                     e.preventDefault();
-                    if (typeof window.__decoraiShowSubscribeModal === 'function') window.__decoraiShowSubscribeModal();
+                    if (typeof window.__decoraitShowSubscribeModal === 'function') window.__decoraitShowSubscribeModal();
                     return;
                 }
                 e.dataTransfer.setData('furnitureType', item.id);
             });
 
             div.addEventListener('click', (e) => {
-                if (window.__decoraiHasSubscription !== true) {
+                if (window.__decoraitHasSubscription !== true) {
                     e.stopPropagation();
-                    if (typeof window.__decoraiShowSubscribeModal === 'function') window.__decoraiShowSubscribeModal();
+                    if (typeof window.__decoraitShowSubscribeModal === 'function') window.__decoraitShowSubscribeModal();
                     return;
                 }
                 // Add furniture at center of visible canvas area
@@ -6383,7 +6383,8 @@ const FloorPlanEditor = (() => {
     }
     
     // Layout file format (for save-as-file and drop-to-load)
-    const LAYOUT_FILE_FORMAT = 'decorai-layout';
+    const LAYOUT_FILE_FORMAT = 'decorait-layout';
+    const LEGACY_LAYOUT_FILE_FORMAT = 'decorai-layout';
     const LAYOUT_FILE_VERSION = 1;
     
     function downloadLayoutFile() {
@@ -6391,7 +6392,7 @@ const FloorPlanEditor = (() => {
         const payload = { format: LAYOUT_FILE_FORMAT, version: LAYOUT_FILE_VERSION, state };
         const json = JSON.stringify(payload, null, 2);
         const blob = new Blob([json], { type: 'application/json' });
-        const name = `decorai-layout-${new Date().toISOString().slice(0, 10)}.decorai-layout.json`;
+        const name = `decorait-layout-${new Date().toISOString().slice(0, 10)}.decorait-layout.json`;
         const url = URL.createObjectURL(blob);
         const a = document.createElement('a');
         a.href = url;
@@ -6420,7 +6421,7 @@ const FloorPlanEditor = (() => {
     
     function isLayoutFile(file) {
         const n = (file.name || '').toLowerCase();
-        return n.endsWith('.decorai-layout.json') || (n.endsWith('.json') && (file.type === 'application/json' || file.type === ''));
+        return n.endsWith('.decorait-layout.json') || n.endsWith('.decorai-layout.json') || (n.endsWith('.json') && (file.type === 'application/json' || file.type === ''));
     }
 
     function isSVGFile(file) {
@@ -6651,11 +6652,12 @@ const FloorPlanEditor = (() => {
         reader.onload = () => {
             try {
                 const data = JSON.parse(reader.result);
-                if (data && data.format === LAYOUT_FILE_FORMAT && data.state && Array.isArray(data.state.corners) && Array.isArray(data.state.walls)) {
+                if (data && data.state && Array.isArray(data.state.corners) && Array.isArray(data.state.walls)
+                    && (data.format === LAYOUT_FILE_FORMAT || data.format === LEGACY_LAYOUT_FILE_FORMAT)) {
                     restoreState(data.state);
                     showLayoutFileMessage('Layout loaded from file.');
                 } else {
-                    showLayoutFileMessage('Not a valid DecorAI layout file.');
+                    showLayoutFileMessage('Not a valid DecorAIt layout file.');
                 }
             } catch (err) {
                 showLayoutFileMessage('Could not read layout file.');
@@ -7228,7 +7230,7 @@ const FloorPlanEditor = (() => {
 
     async function generateRoom3D() {
         if (room3dBusy || !room3dGuideDataUrl) return;
-        if (typeof window.__decoraiGenerateRoomRender !== 'function') {
+        if (typeof window.__decoraitGenerateRoomRender !== 'function') {
             showLayoutFileMessage('Image generation is unavailable right now.');
             return;
         }
@@ -7244,7 +7246,7 @@ const FloorPlanEditor = (() => {
 
         try {
             const preset = ROOM3D_PRESETS.find(p => p.id === room3dStyle) || ROOM3D_PRESETS[0];
-            const url = await window.__decoraiGenerateRoomRender(room3dGuideDataUrl, { stylePrompt: preset.prompt });
+            const url = await window.__decoraitGenerateRoomRender(room3dGuideDataUrl, { stylePrompt: preset.prompt });
             if (!url) throw new Error('No image returned.');
             room3dResultUrl = url;
             if (resultImg) {
@@ -7257,9 +7259,9 @@ const FloorPlanEditor = (() => {
             if (re) re.disabled = false;
         } catch (err) {
             console.error('3D room generation failed:', err);
-            if (err && err.code === 'QUOTA_EXCEEDED' && typeof window.__decoraiShowSubscribeModal === 'function') {
+            if (err && err.code === 'QUOTA_EXCEEDED' && typeof window.__decoraitShowSubscribeModal === 'function') {
                 closeRoom3DModal();
-                window.__decoraiShowSubscribeModal();
+                window.__decoraitShowSubscribeModal();
             } else if (placeholder) {
                 placeholder.classList.remove('hidden');
                 placeholder.textContent = (err && err.message) ? err.message : 'Could not generate the room. Try again.';

@@ -1,4 +1,4 @@
--- DecorAI Database Schema for Supabase
+-- DecorAIt Database Schema for Supabase
 -- Run this SQL in your Supabase SQL Editor (Database → SQL Editor) if you need custom tables.
 -- For email sign up / login only, Supabase Auth (auth.users) is used automatically; no custom tables required.
 

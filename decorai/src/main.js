@@ -427,7 +427,7 @@ async function initializeApp() {
         supabase = createClient(appConfig.supabaseUrl, appConfig.supabaseAnonKey);
         if (supabase) {
             // Expose for isolated modules (e.g. woodworking editor) that need auth without coupling to main.js internals.
-            window.__decoraiSupabase = supabase;
+            window.__decoraitSupabase = supabase;
             const { data: { session } } = await supabase.auth.getSession();
             if (session) {
                 currentUser = session.user;
@@ -449,11 +449,11 @@ async function initializeApp() {
                     savedLayoutName = null;
                     userTokens = 0;
                     userHasSubscription = false;
-                    window.__decoraiHasSubscription = false;
+                    window.__decoraitHasSubscription = false;
                 }
                 updateAuthUI();
             });
-            window.__decoraiGetLayoutStateToRestore = function () {
+            window.__decoraitGetLayoutStateToRestore = function () {
                 const s = savedLayoutState;
                 const id = savedLayoutId;
                 const name = savedLayoutName;
@@ -543,7 +543,7 @@ async function fetchUserSubscription() {
         console.error('fetchUserSubscription error:', err);
     }
     // Expose to the floor plan editor via the window bridge
-    window.__decoraiHasSubscription = userHasSubscription;
+    window.__decoraitHasSubscription = userHasSubscription;
 
     // Pull monthly usage so the badge can render up-to-date counts.
     if (userHasSubscription) {
@@ -963,8 +963,8 @@ async function handleSubscribeCheckout() {
 }
 
 // Exposed so floorPlanEditor can open the modal
-window.__decoraiShowSubscribeModal = showSubscribeModal;
-window.__decoraiGetAccessToken = () => currentSession?.access_token || null;
+window.__decoraitShowSubscribeModal = showSubscribeModal;
+window.__decoraitGetAccessToken = () => currentSession?.access_token || null;
 
 /** Lightweight toast notification (no external dependency) */
 let _activeToast = null;
@@ -1070,7 +1070,7 @@ async function handleSaveLayout() {
 
         if (targetId) {
             currentLayoutId = targetId;
-            if (typeof window.__decoraiCurrentLayoutId !== 'undefined') window.__decoraiCurrentLayoutId = targetId;
+            if (typeof window.__decoraitCurrentLayoutId !== 'undefined') window.__decoraitCurrentLayoutId = targetId;
         }
         showLayoutSaveToast('Layout saved.');
         if (typeof FloorPlanEditor.markSaved === 'function') FloorPlanEditor.markSaved();
@@ -1106,7 +1106,7 @@ function setLayoutNameDisplay(name) {
     el.textContent = value;
 }
 
-window.__decoraiOnLayoutEditorShown = function (opts) {
+window.__decoraitOnLayoutEditorShown = function (opts) {
     setLayoutNameDisplay(opts?.name || DEFAULT_LAYOUT_NAME);
 };
 
@@ -1246,7 +1246,7 @@ async function loadLayoutById(id) {
         const data = await res.json();
         FloorPlanEditor.loadState(data.state);
         currentLayoutId = id;
-        if (typeof window.__decoraiCurrentLayoutId !== 'undefined') window.__decoraiCurrentLayoutId = id;
+        if (typeof window.__decoraitCurrentLayoutId !== 'undefined') window.__decoraitCurrentLayoutId = id;
         setLayoutNameDisplay(data.name || DEFAULT_LAYOUT_NAME);
         showLayoutSaveToast('Layout loaded.');
         const panel = document.getElementById('my-layouts-panel');
@@ -1273,7 +1273,7 @@ async function deleteLayoutById(id) {
         });
         if (!res.ok) throw new Error('Failed to delete');
         if (currentLayoutId === id) currentLayoutId = null;
-        if (typeof window.__decoraiCurrentLayoutId !== 'undefined' && window.__decoraiCurrentLayoutId === id) window.__decoraiCurrentLayoutId = null;
+        if (typeof window.__decoraitCurrentLayoutId !== 'undefined' && window.__decoraitCurrentLayoutId === id) window.__decoraitCurrentLayoutId = null;
         refreshLayoutsList();
         showLayoutSaveToast('Layout deleted.');
     } catch (e) {
@@ -1603,7 +1603,7 @@ function closeDesignsModal() {
     closeSavedDesignPreview();
 }
 
-window.__decoraiSaveGeneratedDesign = autoSaveGeneratedDesign;
+window.__decoraitSaveGeneratedDesign = autoSaveGeneratedDesign;
 
 function updateAuthUI() {
     if (!authButtons || !userMenu) return;
@@ -2106,7 +2106,7 @@ function resolveConfirmDialog(result) {
 
 // Expose confirm globally
 window.showConfirmDialog = showConfirmDialog;
-window.__decoraiRequireEmailConfirmed = requireEmailConfirmedForFeature;
+window.__decoraitRequireEmailConfirmed = requireEmailConfirmedForFeature;
 
 document.addEventListener('DOMContentLoaded', async () => {
     setupProtectedHeaderActions();
@@ -3542,7 +3542,7 @@ async function generateImageWithControlNet(imageBase64, prompt, negativePrompt, 
 // photoreal eye-level interior. Uses the premium gpt-image-2 edit path: it
 // follows the blockout's room shape, camera and furniture placement while
 // producing a fully photorealistic result. Counts against the monthly quota.
-window.__decoraiGenerateRoomRender = async function (guideBase64, opts = {}) {
+window.__decoraitGenerateRoomRender = async function (guideBase64, opts = {}) {
     const stylePrompt = (opts && opts.stylePrompt) ? opts.stylePrompt.trim() : '';
     const prompt = `This image is a plain 3D blockout of a room: a wooden floor, blank walls and ceiling, and colored boxes that mark where furniture goes. Turn it into a photorealistic interior photograph of the same room. Keep the room's shape and the position, footprint and orientation of every furniture block — replace each colored box with a realistic, well-designed piece of furniture of the matching type standing in that exact spot. Style: ${stylePrompt || 'tasteful contemporary interior'}. Add realistic materials, textures, soft natural daylight and subtle shadows. Ultra photorealistic, interior design magazine photography, high detail, no text or labels.`;
     const result = await callPremiumImageEdit(guideBase64, prompt, {
@@ -4311,7 +4311,7 @@ function updateDesignCard(cardData, index) {
 // ── Default-model preference ───────────────────────────────────────────────
 // Stored per-device in localStorage. Values: 'free' (proplabs) or 'premium'
 // (OpenAI gpt-image-1). Free is the conservative default for new users.
-const DEFAULT_MODEL_PREF_KEY = 'decorai.defaultModel';
+const DEFAULT_MODEL_PREF_KEY = 'decorait.defaultModel';
 
 function getDefaultModelPref() {
     try {
@@ -5625,7 +5625,7 @@ function saveCurrentDesign() {
         const designImage = selectedDesign.querySelector('.design-image.generated-image');
         if (designImage && designImage.src) {
             const link = document.createElement('a');
-            link.download = 'decorai-design.jpg';
+            link.download = 'decorait-design.jpg';
 
             // Create a temporary canvas to convert the image to downloadable format
             const canvas = document.createElement('canvas');

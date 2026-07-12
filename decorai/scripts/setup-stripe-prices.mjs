@@ -38,4 +38,4 @@ for (const pack of PACKS) {
   console.log(`${pack.envKey}=${price.id}`);
 }
 
-console.log('\nAdd these environment variables in Render, then redeploy the decorai service.');
+console.log('\nAdd these environment variables in Render, then redeploy the decorait service.');

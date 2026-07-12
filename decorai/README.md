@@ -1,6 +1,6 @@
-# DecorAI - AI-Powered Interior Design
+# DecorAIt - AI-Powered Interior Design
 
-DecorAI is a mobile-first web application that uses AI to generate interior design concepts based on user-uploaded room photos. Whether you have an empty room or a furnished space, DecorAI transforms _your actual room_ with furniture rearrangements or additions to help you visualize new design possibilities.
+DecorAIt is a mobile-first web application that uses AI to generate interior design concepts based on user-uploaded room photos. Whether you have an empty room or a furnished space, DecorAIt transforms _your actual room_ with furniture rearrangements or additions to help you visualize new design possibilities.
 
 ## Features
 
@@ -40,10 +40,10 @@ The application uses different prompts with various AI models depending on the t
 
 ## Running the Application
 
-You can run DecorAI with a single command:
+You can run DecorAIt with a single command:
 
 ```bash
-# Navigate to the decorai directory
+# Navigate to the decorai project directory (DecorAIt app)
 cd /path/to/made-with-ai/decorai
 
 # Make the run script executable (first time only)

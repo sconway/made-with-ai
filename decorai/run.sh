@@ -1,6 +1,6 @@
 #!/bin/bash
 
-echo "Starting DecorAI application server..."
+echo "Starting DecorAIt application server..."
 
 # Try to find the best available server option
 if command -v npx &> /dev/null; then

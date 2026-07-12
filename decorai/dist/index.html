@@ -3,15 +3,15 @@
 
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>DecorAI - AI-Powered Interior Design</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+    <title>DecorAIt - AI-Powered Interior Design</title>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
     <link rel="icon" href="/assets/favicon-0noC-j7T.png" />
     <script src="https://unpkg.com/feather-icons"></script>
-  <script type="module" crossorigin src="/assets/index-BKgSovc0.js"></script>
-  <link rel="stylesheet" crossorigin href="/assets/index-Ddla_AXr.css">
+  <script type="module" crossorigin src="/assets/index-DdG1-aWN.js"></script>
+  <link rel="stylesheet" crossorigin href="/assets/index-QtrW5x3_.css">
 </head>
 
 <body>
@@ -22,21 +22,21 @@
                 <span class="tagline">Reimagine Your Space</span>
             </a>
             <div class="header-actions">
-                <button type="button" id="layout-editor-btn" class="layout-editor-btn" title="Open the floor plan editor—draw walls, add furniture, and export your layout">
+                <button type="button" id="layout-editor-btn" class="layout-editor-btn" title="Open the floor plan editor—draw walls, add furniture, and export your layout" disabled aria-busy="true">
                     <i data-feather="layout"></i>
                     <span>Layout Editor</span>
                 </button>
-                <button type="button" id="woodworking-editor-btn" class="woodworking-editor-btn" title="Open the woodworking 3D editor—design furniture out of boards and get a cut list">
+                <button type="button" id="woodworking-editor-btn" class="woodworking-editor-btn" title="Open the woodworking 3D editor—design furniture out of boards and get a cut list" disabled aria-busy="true">
                     <i data-feather="box"></i>
                     <span>Woodworking</span>
                 </button>
                 <!-- Auth Buttons (shown when logged out) -->
                 <div id="auth-buttons" class="auth-buttons">
-                    <button id="login-btn" class="secondary-btn" type="button">
+                    <button id="login-btn" class="secondary-btn" type="button" disabled aria-busy="true">
                         <i data-feather="log-in"></i>
                         <span>Sign In</span>
                     </button>
-                    <button id="signup-btn" class="primary-btn" type="button">
+                    <button id="signup-btn" class="primary-btn" type="button" disabled aria-busy="true">
                         <span>Sign Up</span>
                     </button>
                 </div>
@@ -66,6 +66,14 @@
                         <i data-feather="chevron-down"></i>
                     </button>
                     <div id="user-dropdown" class="user-dropdown hidden">
+                        <button id="my-designs-btn" class="dropdown-item hidden" type="button">
+                            <i data-feather="image"></i>
+                            <span>My Designs</span>
+                        </button>
+                        <button id="subscribe-dropdown-btn" class="dropdown-item dropdown-item--subscribe hidden" type="button">
+                            <i data-feather="star"></i>
+                            <span>Subscribe</span>
+                        </button>
                         <button id="logout-btn" class="dropdown-item" type="button">
                             <i data-feather="log-out"></i>
                             <span>Sign Out</span>
@@ -309,8 +317,7 @@
                 <div class="results-display">
                     <div class="loading-indicator hidden" id="loading-indicator">
                         <div class="spinner"></div>
-                        <p>Generating your design</p>
-                        <p class="loading-subtext">This usually takes 30–60 seconds.</p>
+                        <p>Generating your design — this can take up to a minute for premium model generations.</p>
                     </div>
                     <div class="design-carousel" id="design-carousel">
                         <!-- Design variants will be inserted here by JavaScript -->
@@ -511,7 +518,7 @@
     <div class="layout-editor-screen hidden" id="layout-editor-screen">
         <div class="layout-editor-header">
             <div class="layout-editor-title">
-                <button type="button" id="layout-editor-back-btn" class="back-btn" data-tooltip="Back to DecorAI" aria-label="Back to DecorAI (close floor plan editor)">
+                <button type="button" id="layout-editor-back-btn" class="back-btn" data-tooltip="Back to DecorAIt" aria-label="Back to DecorAIt (close floor plan editor)">
                     <i data-feather="arrow-left"></i>
                 </button>
                 <div class="layout-editor-title-text">
@@ -563,7 +570,7 @@
                         <div class="export-buttons">
                             <button type="button" id="export-png-btn" data-tooltip="Export as PNG image" aria-label="Export the current view as a PNG image">Export as PNG</button>
                             <button type="button" id="export-svg-btn" data-tooltip="Export as SVG" aria-label="Export the floor plan as SVG">Export as SVG</button>
-                            <button type="button" id="export-layout-file-btn" data-tooltip="Save layout file" aria-label="Download layout as a .decorai-layout.json file">Save layout as file</button>
+                            <button type="button" id="export-layout-file-btn" data-tooltip="Save layout file" aria-label="Download layout as a .decorait-layout.json file">Save layout as file</button>
                             <button type="button" id="generate-3d-room-btn" data-tooltip="Generate a photoreal 3D room from this floor plan" aria-label="Generate a photorealistic 3D room view from the floor plan">Generate 3D room</button>
                         </div>
                     </div>
@@ -646,19 +653,6 @@
                         <label>Wall Thickness</label>
                         <input type="range" id="wall-thickness" min="4" max="16" value="8">
                         <span id="wall-thickness-value">8px</span>
-                    </div>
-                </div>
-                <div id="my-layouts-panel" class="modal my-layouts-modal hidden" role="dialog" aria-modal="true" aria-labelledby="my-layouts-modal-title">
-                    <div class="modal-content">
-                        <div class="modal-header">
-                            <h2 id="my-layouts-modal-title">My Layouts</h2>
-                            <button type="button" id="my-layouts-close" class="close-modal-btn" aria-label="Close">
-                                <i data-feather="x"></i>
-                            </button>
-                        </div>
-                        <div class="modal-body">
-                            <div id="my-layouts-list" class="my-layouts-list"></div>
-                        </div>
                     </div>
                 </div>
                 </div>
@@ -838,6 +832,20 @@
                 </button>
             </div>
         </div>
+
+        <div id="my-layouts-panel" class="modal my-layouts-modal hidden" role="dialog" aria-modal="true" aria-labelledby="my-layouts-modal-title">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h2 id="my-layouts-modal-title">My Layouts</h2>
+                    <button type="button" id="my-layouts-close" class="close-modal-btn" aria-label="Close">
+                        <i data-feather="x"></i>
+                    </button>
+                </div>
+                <div class="modal-body">
+                    <div id="my-layouts-list" class="my-layouts-list"></div>
+                </div>
+            </div>
+        </div>
     </div>
 
     <!-- Auth Modal (Sign In / Sign Up) -->
@@ -864,7 +872,7 @@
                         <button type="button" id="login-resend-btn" class="secondary-btn">Resend verification email</button>
                         <div id="login-resend-message" class="auth-email-exists-message hidden"></div>
                     </div>
-                    <button type="submit" class="primary-btn auth-submit-btn">Sign In</button>
+                    <button type="submit" id="login-submit-btn" class="primary-btn auth-submit-btn">Sign In</button>
                 </form>
                 <form id="signup-form" class="auth-form hidden">
                     <div class="form-group">
@@ -1056,10 +1064,23 @@
                         <i data-feather="zap"></i>
                     </div>
                     <p class="tokens-current">You have <strong id="modal-tokens-count">0</strong> token(s) remaining.</p>
-                    <p class="tokens-description">Each AI-generated layout design uses 1 token. Tokens are only used when a design is successfully generated — failed attempts are free.</p>
+                    <p class="tokens-description">Each premium AI-generated layout design uses 1 token. Lower quality models will be used when users are out of tokens or premium models are unavailable. Tokens are only used when a design is successfully generated.</p>
                 </div>
                 <div class="token-packs" id="token-packs">
                     <!-- Pack options injected from /api/config -->
+                </div>
+                <div class="tokens-modal-divider">
+                    <span>or</span>
+                </div>
+                <div class="tokens-modal-subscribe">
+                    <div class="tokens-modal-subscribe-text">
+                        <strong>Monthly subscription</strong>
+                        <span>50 premium generations/month + floor plan editor, saved layouts &amp; designs</span>
+                    </div>
+                    <button id="tokens-modal-subscribe-btn" class="primary-btn tokens-modal-subscribe-btn" type="button">
+                        <i data-feather="star"></i>
+                        <span>Subscribe — $19.99/mo</span>
+                    </button>
                 </div>
                 <p class="tokens-footer">Payments are processed securely by Stripe.</p>
             </div>
@@ -1093,6 +1114,10 @@
                     </div>
                     <div class="subscribe-feature">
                         <i data-feather="check-circle"></i>
+                        <span>Auto-save all your generated room designs</span>
+                    </div>
+                    <div class="subscribe-feature">
+                        <i data-feather="check-circle"></i>
                         <span>Save unlimited layouts to your account</span>
                     </div>
                     <div class="subscribe-feature">
@@ -1111,11 +1136,44 @@
                     </div>
                     <button id="subscribe-checkout-btn" class="primary-btn subscribe-btn" type="button">
                         <i data-feather="zap"></i>
-                        <span>Subscribe — $19.99/mo</span>
+                        <span>Subscribe</span>
                     </button>
                     <p class="subscribe-note">Free wall tool always available. Cancel anytime.</p>
                 </div>
                 <p class="tokens-footer">Payments are processed securely by Stripe.</p>
+            </div>
+        </div>
+    </div>
+
+    <div class="modal hidden" id="my-designs-panel" role="dialog" aria-modal="true" aria-labelledby="my-designs-modal-title">
+        <div class="modal-content my-designs-modal">
+            <div class="modal-header">
+                <h2 id="my-designs-modal-title">My Designs</h2>
+                <button type="button" id="my-designs-close" class="close-modal-btn" aria-label="Close">
+                    <i data-feather="x"></i>
+                </button>
+            </div>
+            <div class="modal-body">
+                <p class="my-designs-intro">Your generated room designs are saved automatically while you have an active subscription.</p>
+                <div id="my-designs-grid" class="my-designs-grid"></div>
+                <div id="my-designs-preview" class="my-designs-preview hidden">
+                    <div class="my-designs-preview-header">
+                        <h3 class="my-designs-preview-heading">Design details</h3>
+                        <button type="button" id="my-designs-preview-close" class="close-modal-btn" aria-label="Close preview">
+                            <i data-feather="x"></i>
+                        </button>
+                    </div>
+                    <img id="my-designs-preview-img" class="my-designs-preview-img" alt="Saved generated design">
+                    <div id="my-designs-preview-details" class="my-designs-preview-details" role="list"></div>
+                    <div id="my-designs-preview-prompt-wrap" class="my-designs-preview-prompt-wrap hidden">
+                        <h4 class="my-designs-preview-prompt-label">Prompt</h4>
+                        <p id="my-designs-preview-prompt" class="my-designs-preview-prompt"></p>
+                    </div>
+                    <div class="my-designs-preview-actions">
+                        <button type="button" id="my-designs-open-btn" class="primary-btn">Open in results</button>
+                        <button type="button" id="my-designs-delete-btn" class="secondary-btn my-designs-delete-btn">Delete</button>
+                    </div>
+                </div>
             </div>
         </div>
     </div>
