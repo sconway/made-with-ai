@@ -6,6 +6,7 @@ import { fileURLToPath } from 'url';
 import { randomUUID } from 'crypto';
 import dotenv from 'dotenv';
 import Stripe from 'stripe';
+import nodemailer from 'nodemailer';
 import { createClient } from '@supabase/supabase-js';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -564,6 +565,13 @@ const genUserLimiter = createRateLimiter({
   max: parseInt(process.env.RATE_LIMIT_GEN_MAX_PER_USER) || 40,
   keyFn: userKey,
   message: 'Generation rate limit reached for your account. Please try again later.',
+});
+// Feedback limiter: sends real email, so keep it tight.
+const feedbackLimiter = createRateLimiter({
+  windowMs: parseInt(process.env.RATE_LIMIT_FEEDBACK_WINDOW_MS) || 10 * ONE_MIN,
+  max: parseInt(process.env.RATE_LIMIT_FEEDBACK_MAX) || 5,
+  keyFn: ipKey,
+  message: 'Too much feedback at once — please try again in a few minutes.',
 });
 
 // CORS configuration
@@ -1765,6 +1773,80 @@ app.get('/api/config', (req, res) => {
     priceAmount: parseInt(process.env.PRICE_AMOUNT) || 199,
     tokenPacks: getConfiguredTokenPacks(),
   });
+});
+
+// ── Feedback ────────────────────────────────────────────────────────────────
+// Emails user feedback to FEEDBACK_TO_EMAIL via Gmail SMTP. The destination
+// address lives only in env vars so it is never exposed to the client.
+// Required env: FEEDBACK_SMTP_USER (gmail address), FEEDBACK_SMTP_PASS (app
+// password). Optional: FEEDBACK_TO_EMAIL (defaults to FEEDBACK_SMTP_USER).
+const FEEDBACK_SMTP_USER = process.env.FEEDBACK_SMTP_USER?.trim() || '';
+const FEEDBACK_SMTP_PASS = process.env.FEEDBACK_SMTP_PASS?.trim() || '';
+const FEEDBACK_TO_EMAIL = process.env.FEEDBACK_TO_EMAIL?.trim() || FEEDBACK_SMTP_USER;
+let feedbackTransporter = null;
+if (FEEDBACK_SMTP_USER && FEEDBACK_SMTP_PASS) {
+  feedbackTransporter = nodemailer.createTransport({
+    service: 'gmail',
+    auth: { user: FEEDBACK_SMTP_USER, pass: FEEDBACK_SMTP_PASS },
+  });
+} else {
+  console.warn('[feedback] Missing FEEDBACK_SMTP_USER or FEEDBACK_SMTP_PASS — /api/feedback is disabled until these are set');
+}
+
+app.post('/api/feedback', feedbackLimiter, async (req, res) => {
+  try {
+    const { message, email, page, website } = req.body || {};
+
+    // Honeypot: real users never fill this hidden field. Pretend success so
+    // bots don't learn they were caught.
+    if (typeof website === 'string' && website.trim() !== '') {
+      return res.json({ ok: true });
+    }
+
+    const text = typeof message === 'string' ? message.trim() : '';
+    if (!text) return res.status(400).json({ error: 'Feedback message is required' });
+    if (text.length > 5000) return res.status(400).json({ error: 'Feedback is too long (5000 character max)' });
+
+    const replyTo = typeof email === 'string' ? email.trim().slice(0, 200) : '';
+    if (replyTo && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(replyTo)) {
+      return res.status(400).json({ error: 'Please enter a valid email address' });
+    }
+
+    if (!feedbackTransporter) {
+      return res.status(503).json({ error: 'Feedback is not available right now. Please try again later.' });
+    }
+
+    // Best-effort: identify the signed-in user without requiring auth.
+    let accountEmail = '';
+    const authHeader = req.headers.authorization;
+    if (supabase && authHeader?.startsWith('Bearer ')) {
+      try {
+        const { data: { user } } = await supabase.auth.getUser(authHeader.slice(7));
+        accountEmail = user?.email || '';
+      } catch { /* anonymous feedback is fine */ }
+    }
+
+    const meta = [
+      accountEmail && `Account: ${accountEmail}`,
+      replyTo && `Reply-to: ${replyTo}`,
+      typeof page === 'string' && page.trim() && `Page: ${page.trim().slice(0, 300)}`,
+      `Received: ${new Date().toISOString()}`,
+    ].filter(Boolean).join('\n');
+
+    // Plain-text body only — user content is never rendered as HTML.
+    await feedbackTransporter.sendMail({
+      from: `"DecorAIt Feedback" <${FEEDBACK_SMTP_USER}>`,
+      to: FEEDBACK_TO_EMAIL,
+      replyTo: replyTo || accountEmail || undefined,
+      subject: 'DecorAIt feedback',
+      text: `${text}\n\n---\n${meta}`,
+    });
+
+    res.json({ ok: true });
+  } catch (err) {
+    console.error('Feedback error:', err);
+    res.status(500).json({ error: 'Failed to send feedback. Please try again later.' });
+  }
 });
 
 // Helper: get authenticated user from Bearer token.

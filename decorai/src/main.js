@@ -986,6 +986,71 @@ function showToastMessage(message, type = 'info') {
 
 // ── End token helpers ──────────────────────────────────────────────────────────
 
+// ── Feedback widget ────────────────────────────────────────────────────────────
+function initFeedbackWidget() {
+    const fab = document.getElementById('feedback-fab');
+    const modal = document.getElementById('feedback-modal');
+    const form = document.getElementById('feedback-form');
+    const messageInput = document.getElementById('feedback-message');
+    const emailInput = document.getElementById('feedback-email');
+    const honeypotInput = document.getElementById('feedback-website');
+    const errorEl = document.getElementById('feedback-error');
+    const submitBtn = document.getElementById('feedback-submit-btn');
+    const successEl = document.getElementById('feedback-success');
+    if (!fab || !modal || !form) return;
+
+    const openModal = () => {
+        form.classList.remove('hidden');
+        successEl.classList.add('hidden');
+        errorEl.classList.add('hidden');
+        modal.classList.add('show');
+        messageInput.focus();
+    };
+    const closeModal = () => modal.classList.remove('show');
+
+    fab.addEventListener('click', openModal);
+    document.getElementById('feedback-close-btn')?.addEventListener('click', closeModal);
+    document.getElementById('feedback-done-btn')?.addEventListener('click', closeModal);
+    modal.addEventListener('click', (e) => {
+        if (e.target === modal) closeModal();
+    });
+
+    form.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        errorEl.classList.add('hidden');
+        submitBtn.disabled = true;
+        submitBtn.textContent = 'Sending…';
+        try {
+            const headers = { 'Content-Type': 'application/json' };
+            if (currentSession?.access_token) headers.Authorization = `Bearer ${currentSession.access_token}`;
+            const res = await fetch(`${PROXY_SERVER_URL}/api/feedback`, {
+                method: 'POST',
+                headers,
+                body: JSON.stringify({
+                    message: messageInput.value,
+                    email: emailInput.value,
+                    page: window.location.href,
+                    website: honeypotInput?.value || '',
+                }),
+            });
+            if (!res.ok) {
+                const data = await res.json().catch(() => ({}));
+                throw new Error(data.error || 'Failed to send feedback. Please try again.');
+            }
+            form.reset();
+            form.classList.add('hidden');
+            successEl.classList.remove('hidden');
+            if (typeof feather !== 'undefined') feather.replace();
+        } catch (err) {
+            errorEl.textContent = err.message;
+            errorEl.classList.remove('hidden');
+        } finally {
+            submitBtn.disabled = false;
+            submitBtn.textContent = 'Send Feedback';
+        }
+    });
+}
+
 async function fetchSavedLayout() {
     if (!currentSession?.access_token) return;
     try {
@@ -2110,6 +2175,7 @@ window.__decoraitRequireEmailConfirmed = requireEmailConfirmedForFeature;
 
 document.addEventListener('DOMContentLoaded', async () => {
     setupProtectedHeaderActions();
+    initFeedbackWidget();
     await initializeApp();
 
     // Populate design style grids on load

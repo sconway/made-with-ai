@@ -1226,6 +1226,47 @@
         </div>
     </div>
 
+    <!-- Feedback -->
+    <button type="button" id="feedback-fab" class="feedback-fab" aria-label="Send feedback">
+        <i data-feather="message-circle"></i>
+        <span class="feedback-fab-label">Feedback</span>
+    </button>
+
+    <div class="modal" id="feedback-modal" role="dialog" aria-modal="true" aria-labelledby="feedback-modal-title">
+        <div class="modal-content feedback-modal-content">
+            <div class="modal-header">
+                <h2 id="feedback-modal-title">Send Feedback</h2>
+                <button type="button" id="feedback-close-btn" class="close-modal-btn" aria-label="Close">
+                    <i data-feather="x"></i>
+                </button>
+            </div>
+            <div class="modal-body">
+                <form id="feedback-form">
+                    <div class="form-group">
+                        <label for="feedback-message">What's on your mind?</label>
+                        <textarea id="feedback-message" rows="5" maxlength="5000" placeholder="Ideas, issues, or anything else — we read every message." required></textarea>
+                    </div>
+                    <div class="form-group">
+                        <label for="feedback-email">Email <span class="feedback-optional">(optional, if you'd like a reply)</span></label>
+                        <input type="email" id="feedback-email" placeholder="you@example.com" autocomplete="email">
+                    </div>
+                    <!-- Honeypot: hidden from real users, catches bots -->
+                    <input type="text" id="feedback-website" name="website" class="feedback-honeypot" tabindex="-1" autocomplete="off" aria-hidden="true">
+                    <div id="feedback-error" class="auth-error hidden"></div>
+                    <button type="submit" id="feedback-submit-btn" class="primary-btn feedback-submit-btn">Send Feedback</button>
+                </form>
+                <div id="feedback-success" class="auth-success hidden">
+                    <div class="success-icon">
+                        <i data-feather="check-circle"></i>
+                    </div>
+                    <h3>Thanks for the feedback!</h3>
+                    <p>We read every message and appreciate you taking the time.</p>
+                    <button type="button" id="feedback-done-btn" class="primary-btn">Done</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
     <script type="module" src="/src/main.js"></script>
 </body>
 

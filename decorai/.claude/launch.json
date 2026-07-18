@@ -8,6 +8,12 @@
       "port": 5173
     },
     {
+      "name": "decorait-api",
+      "runtimeExecutable": "/Users/scottconway/.nvm/versions/node/v20.12.2/bin/node",
+      "runtimeArgs": ["server.js"],
+      "port": 3001
+    },
+    {
       "name": "portfolio",
       "runtimeExecutable": "/Library/Frameworks/Python.framework/Versions/3.13/bin/python3",
       "runtimeArgs": ["-m", "http.server", "8090", "--directory", ".."],

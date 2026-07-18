@@ -7718,6 +7718,110 @@ body.layout-editor-active:has(.modal.show) .layout-editor-screen .layout-sidebar
   gap: 10px;
 }
 .toast-info    { border-left: 4px solid #6366f1; }
+
+/* ============================================================
+   Feedback widget
+   ============================================================ */
+.feedback-fab {
+  position: fixed;
+  right: 20px;
+  bottom: max(20px, env(safe-area-inset-bottom, 0px));
+  z-index: 1500; /* above page chrome, below modals (2000) and toasts (3000) */
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 16px;
+  border: none;
+  border-radius: 999px;
+  background: var(--brand-600);
+  color: #fff;
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+  box-shadow: 0 8px 20px rgba(79, 70, 229, 0.35);
+  transition: background 0.2s var(--ease-out), transform 0.2s var(--ease-out), box-shadow 0.2s var(--ease-out);
+}
+
+.feedback-fab:hover {
+  background: var(--brand-700);
+  transform: translateY(-2px);
+  box-shadow: 0 12px 26px rgba(79, 70, 229, 0.4);
+}
+
+.feedback-fab svg {
+  width: 18px;
+  height: 18px;
+}
+
+.feedback-modal-content {
+  max-width: 440px;
+}
+
+.feedback-modal-content .form-group {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  margin-bottom: 1rem;
+}
+
+.feedback-modal-content .form-group label {
+  color: var(--text-color);
+  font-weight: 500;
+  font-size: 14px;
+}
+
+.feedback-optional {
+  color: var(--text-light);
+  font-weight: 400;
+}
+
+.feedback-modal-content .form-group input,
+.feedback-modal-content .form-group textarea {
+  background: var(--background-color);
+  border: 1px solid var(--border-color);
+  border-radius: var(--border-radius);
+  padding: 12px;
+  color: var(--text-color);
+  font-size: 15px;
+  font-family: inherit;
+}
+
+.feedback-modal-content .form-group textarea {
+  resize: vertical;
+  min-height: 110px;
+}
+
+.feedback-modal-content .form-group input:focus,
+.feedback-modal-content .form-group textarea:focus {
+  outline: none;
+  border-color: var(--primary-color);
+}
+
+.feedback-honeypot {
+  position: absolute;
+  left: -9999px;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.feedback-submit-btn {
+  width: 100%;
+  margin-top: 0.5rem;
+}
+
+@media (max-width: 640px) {
+  /* Icon-only on small screens so it doesn't cover content */
+  .feedback-fab {
+    padding: 12px;
+  }
+
+  .feedback-fab-label {
+    display: none;
+  }
+}
+
 /* ============================================================
    Accessibility — honor reduced-motion preference
    Neutralizes non-essential motion app-wide while keeping
