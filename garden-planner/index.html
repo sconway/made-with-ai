@@ -1,0 +1,212 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Heliotrope — Sun-Mapped Garden Planner</title>
+  <meta name="description" content="Plan your garden on real satellite imagery. Simulate sun and shadow for any date, compute sun-hours maps, and check every plant against the light it will actually get." />
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🌻</text></svg>" />
+
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,600;9..144,700&family=Spline+Sans+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
+
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+    integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="" />
+  <link rel="stylesheet" href="styles.css?v=2" />
+</head>
+<body>
+  <div id="map"></div>
+  <canvas id="overlay"></canvas>
+
+  <!-- ======== top bar ======== -->
+  <div id="topbar">
+    <div id="brand" class="panel">
+      <span class="name">Heliotrope<span class="glyph">&nbsp;☀</span></span>
+      <span class="tag">sun-mapped garden planning</span>
+    </div>
+    <div id="searchwrap">
+      <div id="searchbox" class="panel">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/>
+        </svg>
+        <input id="search" type="text" autocomplete="off" spellcheck="false"
+          placeholder="Find your yard — address, city, or landmark…" />
+        <button id="locbtn" title="Use my location">◎</button>
+      </div>
+      <div id="results" class="panel"></div>
+    </div>
+    <div id="topactions">
+      <a class="chip" href="help.html" title="How to use Heliotrope">✦ Guide</a>
+      <button class="chip" id="exportbtn" title="Download garden as JSON">⇩ Export</button>
+      <button class="chip" id="importbtn" title="Load garden from JSON">⇧ Import</button>
+      <button class="chip" id="clearbtn" title="Clear the whole garden">✕ Clear</button>
+      <input id="importfile" type="file" accept=".json,application/json" hidden />
+    </div>
+  </div>
+
+  <!-- ======== tool rail ======== -->
+  <div id="toolrail" class="panel">
+    <button class="tool on" data-tool="select">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round">
+        <path d="M6 3l12 8.5-5.2 1.1L15 19l-2.6 1.2-2.2-6.4L6 17V3z"/>
+      </svg>
+      <span class="tip">Select &amp; move<b>V</b></span>
+    </button>
+    <div class="rail-rule"></div>
+    <button class="tool" data-tool="bed">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round">
+        <path d="M4 8l16-3v11l-16 3V8z"/><path d="M8 7.2v11M13 6.3v11M18 5.4v11" opacity="0.55"/>
+      </svg>
+      <span class="tip">Draw garden bed<b>B</b></span>
+    </button>
+    <button class="tool" data-tool="plant">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M12 21v-8"/><path d="M12 13c0-4 2.5-6.5 7-7-.5 4.5-3 7-7 7z"/>
+        <path d="M12 11C12 7.7 10 5.6 6 5c.4 3.8 2.4 6 6 6z"/>
+      </svg>
+      <span class="tip">Plant from library<b>P</b></span>
+    </button>
+    <div class="rail-rule"></div>
+    <button class="tool" data-tool="tree">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M12 21v-5"/><path d="M12 3l5.5 7h-3l3.5 6H6l3.5-6h-3L12 3z"/>
+      </svg>
+      <span class="tip">Tree (casts shade)<b>T</b></span>
+    </button>
+    <button class="tool" data-tool="building">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round">
+        <path d="M4 21V10l8-6 8 6v11"/><path d="M4 21h16"/><path d="M10 21v-6h4v6" opacity="0.55"/>
+      </svg>
+      <span class="tip">Building / structure<b>U</b></span>
+    </button>
+    <button class="tool" data-tool="fence">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round">
+        <path d="M5 20V7l1.5-2L8 7v13M11 20V7l1.5-2L14 7v13M17 20V7l1.5-2L20 7v13"/>
+        <path d="M3 11h18M3 16h18" opacity="0.55"/>
+      </svg>
+      <span class="tip">Fence / wall<b>F</b></span>
+    </button>
+    <button class="tool" data-tool="probe">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round">
+        <circle cx="12" cy="12" r="5.5"/><circle cx="12" cy="12" r="1" fill="currentColor" stroke="none"/>
+        <path d="M12 2.5v3M12 18.5v3M2.5 12h3M18.5 12h3"/>
+      </svg>
+      <span class="tip">Light probe — chart a spot's sun<b>L</b></span>
+    </button>
+    <div class="rail-rule"></div>
+    <button class="tool" data-tool="erase">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round">
+        <path d="M8 19l-4.5-4.5a1.5 1.5 0 010-2.1l8-8a1.5 1.5 0 012.1 0L19 9.8a1.5 1.5 0 010 2.1L12 19H8z"/>
+        <path d="M8 19h13" opacity="0.55"/>
+      </svg>
+      <span class="tip">Erase<b>E</b></span>
+    </button>
+    <button class="tool" data-tool="undo" data-momentary="1">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M8 5L3 10l5 5"/><path d="M3 10h11a6 6 0 016 6v3"/>
+      </svg>
+      <span class="tip">Undo<b>⌘Z</b></span>
+    </button>
+  </div>
+
+  <!-- ======== plant drawer ======== -->
+  <div id="plantdrawer" class="panel">
+    <header>
+      <h2 class="paneltitle">Plant library</h2>
+      <input id="plantsearch" type="text" placeholder="Search plants…" autocomplete="off" spellcheck="false" />
+    </header>
+    <div id="plantcats"></div>
+    <div id="plantlist"></div>
+  </div>
+
+  <!-- ======== right column ======== -->
+  <div id="rightcol">
+    <div id="inspector" class="panel"></div>
+    <div id="summary" class="panel">
+      <h2 class="paneltitle">Garden ledger</h2>
+      <div class="stats">
+        <div class="stat"><div class="n" id="st-beds">0</div><div class="l">beds</div></div>
+        <div class="stat"><div class="n" id="st-area">0</div><div class="l">sq ft</div></div>
+        <div class="stat"><div class="n" id="st-plants">0</div><div class="l">plants</div></div>
+      </div>
+      <div id="warnings"></div>
+    </div>
+  </div>
+
+  <!-- ======== bottom dock ======== -->
+  <div id="dock" class="panel">
+    <div class="row">
+      <button id="playbtn" title="Animate the day">▶</button>
+      <div class="sliderwrap">
+        <div class="lab"><span id="riselab">—</span><span class="cur" id="timelab">12:00pm</span><span id="setlab">—</span></div>
+        <input id="timeslider" class="fat" type="range" min="0" max="24" step="0.05" value="12" />
+      </div>
+      <div class="sliderwrap" style="max-width:230px">
+        <div class="lab"><span>JAN</span><span class="cur" id="datelab">Jun 21</span><span>DEC</span></div>
+        <input id="dateslider" class="fat" type="range" min="1" max="365" step="1" value="172" />
+      </div>
+    </div>
+    <div class="row">
+      <div id="seasons">
+        <button class="season" data-doy="80">Spring eqx</button>
+        <button class="season on" data-doy="172">Summer sol</button>
+        <button class="season" data-doy="266">Fall eqx</button>
+        <button class="season" data-doy="355">Winter sol</button>
+      </div>
+      <div style="flex:1"></div>
+      <div id="toggles">
+        <button class="tog on" data-show="shadows"><span class="dot"></span>Shadows</button>
+        <button class="tog" data-show="heatmap"><span class="dot"></span>Sun map</button>
+        <button class="tog" data-show="best"><span class="dot"></span>Best sun</button>
+        <button class="tog" data-show="trails"><span class="dot"></span>Trails</button>
+        <button class="tog on" data-show="spread"><span class="dot"></span>Spread</button>
+        <button class="tog on" data-show="labels"><span class="dot"></span>Labels</button>
+      </div>
+    </div>
+    <div id="legend">
+      <span class="lg-label">DIRECT SUN</span>
+      <div class="ramp-outer"><div class="ramp" id="rampbar"><div class="ticks" id="rampticks"></div></div></div>
+      <span class="lg-label" id="lg-note">on this date</span>
+    </div>
+  </div>
+
+  <!-- ======== sun dial ======== -->
+  <div id="sundial" class="panel">
+    <h2 class="paneltitle" style="font-size:13px">Sun dial</h2>
+    <svg id="dialbox" width="128" height="128" viewBox="0 0 128 128"></svg>
+    <div id="sunfacts">
+      <span>alt<b id="f-alt">—</b></span>
+      <span>azi<b id="f-az">—</b></span>
+      <span>day<b id="f-day">—</b></span>
+    </div>
+    <div id="sunwarn">clear-sky model · local solar time</div>
+  </div>
+
+  <div id="hint"></div>
+  <div id="toast"></div>
+
+  <!-- ======== intro ======== -->
+  <div id="intro">
+    <div id="introcard" class="panel">
+      <h1>Heliotrope
+        <span class="sub">sun-mapped garden planning · on real satellite imagery</span>
+      </h1>
+      <div class="steps">
+        <div class="step"><span class="num">1</span><span><b>Find your yard.</b> Search your address — the map flies to a satellite view of your actual garden, and the sun math locks to your latitude.</span></div>
+        <div class="step"><span class="num">2</span><span><b>Trace what's there.</b> Draw beds over the soil you can see, then outline trees, buildings and fences with their real heights — they will cast the shadows.</span></div>
+        <div class="step"><span class="num">3</span><span><b>Plant by the light.</b> Scrub through the day and the seasons, switch on the sun-hours map, and Heliotrope flags every plant that won't get the light it needs.</span></div>
+      </div>
+      <button id="introgo">Begin — find my garden</button>
+      <p class="fine" style="text-align:center"><a href="help.html" style="color:var(--brass); font-size:11px; letter-spacing:0.08em">☞ New here? Read the two-minute field guide</a></p>
+      <p class="fine">Imagery © Esri &amp; partners · Geocoding © OpenStreetMap/Nominatim · Clear-sky solar model — real light varies with weather and terrain. Your design saves in this browser automatically.</p>
+    </div>
+  </div>
+
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+    integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
+  <script src="js/sun.js?v=2"></script>
+  <script src="js/plants.js?v=2"></script>
+  <script src="js/app.js?v=2"></script>
+</body>
+</html>

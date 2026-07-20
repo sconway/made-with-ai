@@ -1,0 +1,563 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Heliotrope Field Guide — How to Use the Sun-Mapped Garden Planner</title>
+  <meta name="description" content="How to use Heliotrope: find your yard on satellite imagery, trace what casts shade, and read the sun like an instrument. Recipes for scouting beds, shade gardens, seasonal checks and more." />
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🌻</text></svg>" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,600;9..144,700&family=Spline+Sans+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
+  <style>
+    :root {
+      --chrome: #14170e;
+      --panel: #191d11;
+      --panel-edge: #3b4126;
+      --panel-edge-lit: #5a6138;
+      --ink: #ece7d4;
+      --ink-dim: #b5b098;
+      --ink-faint: #7d795f;
+      --brass: #e8b64c;
+      --brass-bright: #ffd97a;
+      --leaf: #a4c465;
+      --ok: #9ec46a;
+      --warn: #e8a53a;
+      --bad: #e0684b;
+      --font-display: 'Fraunces', Georgia, serif;
+      --font-mono: 'Spline Sans Mono', ui-monospace, Menlo, monospace;
+    }
+    * { box-sizing: border-box; }
+    html { scroll-behavior: smooth; }
+    body {
+      margin: 0;
+      background:
+        radial-gradient(ellipse 90% 40% at 50% -5%, rgba(232, 182, 76, 0.08), transparent),
+        #101308;
+      color: var(--ink);
+      font-family: var(--font-mono);
+      font-size: 14px;
+      line-height: 1.7;
+    }
+    .wrap { max-width: 880px; margin: 0 auto; padding: 0 28px 90px; }
+
+    /* ---------- header ---------- */
+    header { padding: 64px 0 20px; text-align: center; }
+    header .kicker {
+      font-size: 11px;
+      letter-spacing: 0.28em;
+      text-transform: uppercase;
+      color: var(--ink-faint);
+    }
+    header h1 {
+      font-family: var(--font-display);
+      font-size: clamp(40px, 7vw, 64px);
+      font-weight: 700;
+      margin: 10px 0 6px;
+      color: var(--brass-bright);
+      font-variation-settings: 'SOFT' 40, 'WONK' 1;
+      line-height: 1.02;
+    }
+    header .sub { color: var(--ink-dim); max-width: 560px; margin: 0 auto; }
+    .backlink {
+      display: inline-block;
+      margin-top: 22px;
+      padding: 11px 22px;
+      background: linear-gradient(160deg, var(--brass-bright), var(--brass));
+      color: #241b06;
+      border-radius: 8px;
+      font-weight: 600;
+      font-size: 12px;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+      text-decoration: none;
+      box-shadow: 0 6px 24px rgba(232, 182, 76, 0.22);
+    }
+    .backlink:hover { filter: brightness(1.07); }
+
+    /* ---------- table of contents ---------- */
+    nav.toc {
+      margin: 44px 0 0;
+      padding: 20px 26px;
+      background: var(--panel);
+      border: 1px solid var(--panel-edge);
+      border-radius: 12px;
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px 22px;
+      justify-content: center;
+      font-size: 12px;
+    }
+    nav.toc a { color: var(--ink-dim); text-decoration: none; }
+    nav.toc a:hover { color: var(--brass-bright); }
+    nav.toc a::before { content: '☞ '; color: var(--brass); }
+
+    /* ---------- sections ---------- */
+    section { margin-top: 72px; }
+    h2 {
+      font-family: var(--font-display);
+      font-size: 30px;
+      font-weight: 600;
+      color: var(--brass);
+      margin: 0 0 4px;
+      font-variation-settings: 'SOFT' 40;
+    }
+    h2 .no {
+      color: var(--ink-faint);
+      font-size: 16px;
+      vertical-align: super;
+      margin-right: 8px;
+      font-family: var(--font-mono);
+    }
+    .lede { color: var(--ink-dim); max-width: 640px; margin: 0 0 24px; }
+    h3 {
+      font-family: var(--font-display);
+      font-size: 19px;
+      font-weight: 600;
+      color: var(--ink);
+      margin: 30px 0 8px;
+    }
+    p { margin: 0 0 14px; color: var(--ink-dim); }
+    p b, li b { color: var(--ink); font-weight: 500; }
+    .gold { color: var(--brass-bright); }
+    .green { color: var(--leaf); }
+    kbd {
+      display: inline-block;
+      border: 1px solid var(--panel-edge-lit);
+      border-bottom-width: 2px;
+      border-radius: 4px;
+      padding: 0 7px;
+      font: 11px var(--font-mono);
+      color: var(--brass);
+      background: rgba(0, 0, 0, 0.3);
+    }
+
+    /* ---------- cards ---------- */
+    .cards { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin-top: 20px; }
+    @media (max-width: 700px) { .cards { grid-template-columns: 1fr; } }
+    .card {
+      background: var(--panel);
+      border: 1px solid var(--panel-edge);
+      border-radius: 12px;
+      padding: 20px 22px;
+    }
+    .card h4 {
+      margin: 0 0 8px;
+      font-family: var(--font-display);
+      font-size: 16px;
+      font-weight: 600;
+      color: var(--ink);
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+    .card h4 .ic {
+      flex: none;
+      width: 30px; height: 30px;
+      display: grid; place-items: center;
+      border: 1px solid var(--panel-edge-lit);
+      border-radius: 7px;
+      color: var(--brass);
+      font-size: 14px;
+    }
+    .card p { font-size: 12.5px; margin-bottom: 8px; }
+    .card .tip { font-size: 11.5px; color: var(--leaf); }
+    .card .tip::before { content: '☞ '; }
+
+    /* ---------- steps ---------- */
+    .steps { counter-reset: step; margin-top: 24px; display: flex; flex-direction: column; gap: 14px; }
+    .step {
+      counter-increment: step;
+      display: flex;
+      gap: 18px;
+      background: var(--panel);
+      border: 1px solid var(--panel-edge);
+      border-radius: 12px;
+      padding: 18px 22px;
+    }
+    .step::before {
+      content: counter(step);
+      flex: none;
+      width: 32px; height: 32px;
+      border: 1px solid rgba(232, 182, 76, 0.4);
+      border-radius: 50%;
+      display: grid; place-items: center;
+      color: var(--brass);
+      font-family: var(--font-display);
+      font-size: 16px;
+      margin-top: 2px;
+    }
+    .step p { margin: 0; font-size: 13px; }
+    .step b { display: block; color: var(--ink); margin-bottom: 3px; font-weight: 500; }
+
+    /* ---------- recipes ---------- */
+    .recipe {
+      background: var(--panel);
+      border: 1px solid var(--panel-edge);
+      border-left: 3px solid var(--brass);
+      border-radius: 12px;
+      padding: 24px 28px;
+      margin-top: 20px;
+    }
+    .recipe h3 { margin: 0 0 4px; }
+    .recipe .goal { font-size: 11px; letter-spacing: 0.14em; text-transform: uppercase; color: var(--ink-faint); }
+    .recipe ol { margin: 14px 0 0; padding-left: 20px; color: var(--ink-dim); font-size: 13px; }
+    .recipe ol li { margin-bottom: 9px; padding-left: 4px; }
+    .recipe ol li::marker { color: var(--brass); font-weight: 600; }
+    .recipe .why {
+      margin-top: 14px;
+      padding-top: 12px;
+      border-top: 1px dashed var(--panel-edge);
+      font-size: 12px;
+      color: var(--leaf);
+    }
+    .recipe .why::before { content: 'Why it works · '; color: var(--ink-faint); }
+
+    /* ---------- inline illustrations ---------- */
+    .fig {
+      margin: 22px 0;
+      padding: 20px;
+      background: rgba(0, 0, 0, 0.25);
+      border: 1px solid var(--panel-edge);
+      border-radius: 12px;
+      text-align: center;
+      overflow-x: auto;
+    }
+    .fig figcaption { font-size: 11px; color: var(--ink-faint); margin-top: 10px; }
+
+    /* ---------- legend strip demo ---------- */
+    .stripdemo { display: flex; height: 16px; border-radius: 4px; overflow: hidden; border: 1px solid rgba(0,0,0,0.6); margin: 14px 0 4px; }
+    .striplab { display: flex; justify-content: space-between; font-size: 10px; color: var(--ink-faint); }
+
+    /* ---------- table ---------- */
+    table { border-collapse: collapse; margin-top: 18px; width: 100%; max-width: 480px; font-size: 12.5px; }
+    td { padding: 7px 14px 7px 0; border-bottom: 1px solid rgba(59, 65, 38, 0.5); color: var(--ink-dim); }
+    td:first-child { width: 120px; }
+
+    /* ---------- footer ---------- */
+    footer {
+      margin-top: 90px;
+      padding-top: 26px;
+      border-top: 1px solid var(--panel-edge);
+      text-align: center;
+      font-size: 11px;
+      color: var(--ink-faint);
+      line-height: 1.8;
+    }
+    footer a { color: var(--ink-dim); }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <header>
+      <div class="kicker">Heliotrope ☀ Field Guide</div>
+      <h1>Read the sun.<br/>Then plant.</h1>
+      <p class="sub">Heliotrope turns a satellite photo of your yard into a solar instrument.
+        This guide covers every tool — and the recipes that squeeze the most out of them.</p>
+      <a class="backlink" href="./">Open Heliotrope →</a>
+      <nav class="toc">
+        <a href="#start">Quick start</a>
+        <a href="#tools">The tools</a>
+        <a href="#instruments">Sun instruments</a>
+        <a href="#recipes">Recipes</a>
+        <a href="#keyboard">Keyboard</a>
+        <a href="#accuracy">Accuracy</a>
+      </nav>
+    </header>
+
+    <!-- ================= QUICK START ================= -->
+    <section id="start">
+      <h2><span class="no">01</span>Quick start</h2>
+      <p class="lede">Three minutes from address to answer. The golden rule throughout:
+        <b>Heliotrope only knows about shade-casters you trace</b> — the app can see your yard,
+        but you must tell it how tall things are.</p>
+      <div class="steps">
+        <div class="step"><p><b>Search your address</b>
+          The map flies to a satellite view of your actual yard and every sunrise, shadow and
+          sun-hour locks to your latitude. Use the ◎ button to jump to your current location.</p></div>
+        <div class="step"><p><b>Trace the shade-casters first</b>
+          Before drawing a single bed, outline what blocks light: trees (<kbd>T</kbd>) with their real
+          height and canopy, buildings (<kbd>U</kbd>), fences and walls (<kbd>F</kbd>). Heights are set in the
+          inspector after placing — eyeball a two-story house at ~20&nbsp;ft, a mature maple at 40–60&nbsp;ft.</p></div>
+        <div class="step"><p><b>Draw beds where the light is</b>
+          Switch on <b class="gold">Best sun</b>, find the gold, trace beds (<kbd>B</kbd>) over it, then
+          open the plant library (<kbd>P</kbd>) and plant. The Garden Ledger will warn you if anything
+          is starved of light, crowded, or next to a bad companion.</p></div>
+      </div>
+    </section>
+
+    <!-- ================= TOOLS ================= -->
+    <section id="tools">
+      <h2><span class="no">02</span>The tool rail</h2>
+      <p class="lede">Left side of the screen, top to bottom. Every tool has a one-key shortcut.</p>
+      <div class="cards">
+        <div class="card"><h4><span class="ic">➤</span>Select &amp; move <kbd>V</kbd></h4>
+          <p>Click anything to inspect it; drag to move it. Selected beds and buildings grow white
+            corner handles — drag a handle to reshape. Trees get a radius handle on the canopy edge.</p>
+          <p class="tip">Click a warning in the Garden Ledger to fly straight to the offending plant.</p></div>
+        <div class="card"><h4><span class="ic">▦</span>Garden bed <kbd>B</kbd></h4>
+          <p>Click the corners of the bed over the soil you can see; close with <kbd>Enter</kbd>,
+            a double-click, or by clicking the first corner again. Area in ft² updates live.</p>
+          <p class="tip">Name beds in the inspector — "Tomato row", "Shade corner" — the labels render on the map.</p></div>
+        <div class="card"><h4><span class="ic">🌳</span>Tree <kbd>T</kbd></h4>
+          <p>One click plants it. Set <b>height</b>, <b>canopy radius</b>, and — crucially —
+            <b>deciduous vs. evergreen</b>. Deciduous trees barely block winter sun once leafless;
+            evergreens shade year-round.</p>
+          <p class="tip">Match the canopy circle to the tree's real crown in the imagery — it's usually bigger than you think.</p></div>
+        <div class="card"><h4><span class="ic">⌂</span>Building <kbd>U</kbd></h4>
+          <p>Trace the footprint, set the height. Buildings cast full extruded shadows — the north
+            side of a two-story house is a serious shade zone.</p>
+          <p class="tip">Trace the <b>neighbor's</b> house and trees too. Their shade doesn't respect property lines.</p></div>
+        <div class="card"><h4><span class="ic">╫</span>Fence / wall <kbd>F</kbd></h4>
+          <p>Click along the line, double-click to finish, set the height. A 6&nbsp;ft privacy fence
+            shades a surprising strip — morning on its west side, evening on its east.</p>
+          <p class="tip">Fences are where cool-season greens hide from brutal afternoon sun.</p></div>
+        <div class="card"><h4><span class="ic">🌱</span>Plant <kbd>P</kbd></h4>
+          <p>Opens the 40-plant library — search or filter by category, click a plant to arm it, then
+            click the map to place. Spread circles show mature size; a <b class="gold">!</b> badge
+            appears on any plant not getting the light it needs.</p>
+          <p class="tip">Select any plant to read spacing, sowing windows, companions and a growing tip.</p></div>
+        <div class="card"><h4><span class="ic">⌖</span>Light probe <kbd>L</kbd></h4>
+          <p>Click any spot to chart its personal day of sunlight. Covered in depth below —
+            this is the most precise instrument in the app.</p>
+          <p class="tip">The probe is draggable with Select and survives reloads.</p></div>
+        <div class="card"><h4><span class="ic">◇</span>Erase <kbd>E</kbd> &amp; Undo <kbd>⌘Z</kbd></h4>
+          <p>Erase removes whatever you click. Undo walks back the last 40 changes.
+            <b>✕ Clear</b> in the top bar wipes the whole design (undoable this session).</p>
+          <p class="tip">Duplicate in the inspector clones any object — fastest way to plant a row of anything.</p></div>
+      </div>
+    </section>
+
+    <!-- ================= INSTRUMENTS ================= -->
+    <section id="instruments">
+      <h2><span class="no">03</span>The five sun instruments</h2>
+      <p class="lede">Bottom dock, right-hand toggles. Each answers a different question —
+        the craft is knowing which one to reach for.</p>
+
+      <h3>☀ Shadows — <i>"what does the yard look like right now?"</i></h3>
+      <p>Live shadows drawn on the imagery for the exact date and time on the sliders. Drag the time
+        slider or press <b>▶</b> (or <kbd>Space</kbd>) to animate the whole day in a few seconds —
+        dawn tint, sweeping shadows, golden hour, dusk. The <b>sun dial</b> (bottom right) shows the
+        sun's compass position, altitude, and the full arc it will travel today.</p>
+
+      <h3>▤ Sun map — <i>"how many hours does every square foot get?"</i></h3>
+      <p>The full analysis: the day is simulated at 48 sun positions and every ~half-meter cell is
+        scored by hours of direct sun, painted dark (shade) through gold (full sun). Hover anywhere
+        to read the exact hours at the cursor in the legend. The thresholds that matter are marked:</p>
+      <div class="stripdemo">
+        <div style="flex:4; background:#2a1a4a"></div>
+        <div style="flex:2; background:#8f2781"></div>
+        <div style="flex:3; background:#e85c56"></div>
+        <div style="flex:3; background:#fcfdbf"></div>
+      </div>
+      <div class="striplab"><span>0h — deep shade</span><span>4h — part sun</span><span>6h — full sun</span><span>12h+</span></div>
+
+      <h3 style="margin-top:34px">◉ Best sun — <i>"just show me the good spots"</i></h3>
+      <p>Same analysis, opposite presentation: the imagery stays clean and only the strong light is
+        painted — <b class="gold">glowing gold where a spot earns 6h+ of full sun</b>, faint amber
+        for the 4–6h part-sun band, nothing below. When you're zoomed to yard scale it analyzes
+        <b>everything on screen</b> and follows as you pan — so you can scout an empty yard before
+        drawing anything at all.</p>
+
+      <h3>◠ Trails — <i>"where will the shadow be at 9am? At 3pm?"</i></h3>
+      <p>The whole day's shadow choreography in a single view. Every obstacle draws an outline of
+        where its shade reaches at each hour — <span style="color:#6fa8ff">cool blue mornings</span>
+        through <span style="color:#ff9a4d">warm orange evenings</span>, labeled <b>6a … 12p … 6p</b>.
+        A tree's trails fan out like a sundial around it: long west-pointing morning ellipses, a tight
+        ring at noon, long east-pointing evening ones.</p>
+      <figure class="fig">
+        <svg width="440" height="150" viewBox="0 0 440 150" xmlns="http://www.w3.org/2000/svg" style="max-width:100%">
+          <circle cx="290" cy="85" r="22" fill="rgba(84,132,58,0.4)" stroke="#9ec46a" stroke-width="1.2"/>
+          <circle cx="290" cy="85" r="2.5" fill="#5a3d22" stroke="#9ec46a"/>
+          <ellipse cx="80" cy="118" rx="26" ry="15" fill="none" stroke="#6fa8ff" stroke-width="1.4" transform="rotate(-10 80 118)"/>
+          <text x="80" y="122" fill="#6fa8ff" font-size="10" text-anchor="middle" font-family="monospace">6a</text>
+          <ellipse cx="163" cy="103" rx="24" ry="15" fill="none" stroke="#93a8e8" stroke-width="1.4"/>
+          <text x="163" y="107" fill="#93a8e8" font-size="10" text-anchor="middle" font-family="monospace">8a</text>
+          <ellipse cx="235" cy="72" rx="23" ry="15" fill="none" stroke="#c9a3a8" stroke-width="1.4"/>
+          <text x="235" y="76" fill="#c9a3a8" font-size="10" text-anchor="middle" font-family="monospace">10a</text>
+          <ellipse cx="290" cy="52" rx="22" ry="14" fill="none" stroke="#e8a06b" stroke-width="1.4"/>
+          <text x="290" y="56" fill="#e8a06b" font-size="10" text-anchor="middle" font-family="monospace">12p</text>
+          <ellipse cx="345" cy="70" rx="23" ry="15" fill="none" stroke="#f59a58" stroke-width="1.4"/>
+          <text x="345" y="74" fill="#f59a58" font-size="10" text-anchor="middle" font-family="monospace">2p</text>
+          <ellipse cx="405" cy="100" rx="26" ry="15" fill="none" stroke="#ff9a4d" stroke-width="1.4"/>
+          <text x="405" y="104" fill="#ff9a4d" font-size="10" text-anchor="middle" font-family="monospace">4p</text>
+        </svg>
+        <figcaption>A deciduous tree's shadow trails on a summer day — morning shade falls west, evening shade east.
+          The gap the ellipses never touch? That ground is in sun all day.</figcaption>
+      </figure>
+
+      <h3>⌖ Light probe — <i>"tell me about this exact spot"</i></h3>
+      <p>Click a spot with the probe tool and get its <b>minute-by-minute sun timeline</b> for the
+        chosen date: a sunrise-to-sunset strip (gold = direct sun, slate = shaded, amber = filtered
+        winter canopy), total direct-sun hours with a full/part/shade verdict, and — the key part —
+        <b>every shaded stretch listed with its cause</b>:</p>
+      <figure class="fig">
+        <svg width="440" height="86" viewBox="0 0 440 86" xmlns="http://www.w3.org/2000/svg" style="max-width:100%">
+          <rect x="10" y="14" width="42" height="22" fill="#262b45" rx="2"/>
+          <rect x="52" y="14" width="30" height="22" fill="#ffd97a"/>
+          <rect x="82" y="14" width="52" height="22" fill="#262b45"/>
+          <rect x="134" y="14" width="250" height="22" fill="#ffd97a"/>
+          <rect x="384" y="14" width="46" height="22" fill="#262b45" rx="2"/>
+          <rect x="228" y="8" width="1.5" height="34" fill="rgba(236,231,212,0.8)"/>
+          <text x="10" y="54" fill="#7d795f" font-size="10" font-family="monospace">4:10am</text>
+          <text x="228" y="54" fill="#7d795f" font-size="10" text-anchor="middle" font-family="monospace">noon</text>
+          <text x="430" y="54" fill="#7d795f" font-size="10" text-anchor="end" font-family="monospace">7:20pm</text>
+          <text x="10" y="76" fill="#b5b098" font-size="11" font-family="monospace">◐ 6:23am–7:48am · tree, 26 ft&#160;&#160;&#160;☀ 13.1h total — full sun</text>
+        </svg>
+        <figcaption>A probe west of a tree: it loses early morning light to the canopy, then runs gold until sunset.</figcaption>
+      </figure>
+      <p>The probe recomputes instantly when you scrub the date slider — hold it on a spot and drag
+        through the year to watch a "full sun" verdict collapse to "part sun" in October.</p>
+    </section>
+
+    <!-- ================= RECIPES ================= -->
+    <section id="recipes">
+      <h2><span class="no">04</span>Recipes</h2>
+      <p class="lede">Worked examples that chain the instruments together. Each one is a real
+        planning question answered in a few minutes.</p>
+
+      <div class="recipe">
+        <div class="goal">Recipe № 1 · Before building anything</div>
+        <h3>Scout the sunniest ground in an empty yard</h3>
+        <ol>
+          <li>Search your address and zoom until your whole yard fills the screen.</li>
+          <li>Trace every shade-caster: your house, the garage, the big trees — <b>and the neighbor's</b>.
+            Get heights roughly right; they matter more than footprint precision.</li>
+          <li>Set the date to a <b>shoulder season</b> — click <b>Spring eqx</b>. (Anywhere sunny at the
+            equinox is glorious in June; June-only sun can fool you.)</li>
+          <li>Toggle <b class="gold">Best sun</b>. The gold is your shortlist.</li>
+          <li>Drop the <b>probe</b> (<kbd>L</kbd>) on the two or three best patches and compare their
+            hour totals and shade windows before committing.</li>
+          <li>Trace beds over the winner. Done — you've sited a garden the way landscape architects do.</li>
+        </ol>
+        <div class="why">Sun is the one thing you can't amend later. Soil can be fixed; a garage shadow can't.</div>
+      </div>
+
+      <div class="recipe">
+        <div class="goal">Recipe № 2 · Full-sun crops</div>
+        <h3>Place the tomatoes (and keep them happy)</h3>
+        <ol>
+          <li>Turn on the <b>Sun map</b> on the summer solstice preset and hover the bed — you want
+            8h+ cells for tomatoes, peppers, squash.</li>
+          <li>Plant tall crops — <b>corn, sunflowers, trellised peas</b> — on the bed's <b>north edge</b>.
+            Toggle <b>Trails</b> to prove it: their shadow ellipses should sweep over the path, not the bed.</li>
+          <li>Arm the tomato in the library and plant; leave the spread circles just barely kissing.
+            The ledger flags crowding at a glance.</li>
+          <li>Check the tomato's card: basil, marigold and carrot are friends — tuck them into the gaps.
+            Keep potatoes and fennel in another bed entirely.</li>
+          <li>Scrub the date to <b>Fall eqx</b> with the plants selected — if your tomato drops below
+            6h in September, that's your cue for an early-ripening variety.</li>
+        </ol>
+        <div class="why">A ⚠ badge on a plant means the analysis says it's light-starved on this date — the fix is moving the plant, raising the canopy, or changing the crop.</div>
+      </div>
+
+      <div class="recipe">
+        <div class="goal">Recipe № 3 · The shady corner</div>
+        <h3>Turn the dark zone under a tree into a garden</h3>
+        <ol>
+          <li>Toggle <b>Trails</b> around your big tree and find the ground its ellipses cover most of
+            the day — that's the deep-shade core.</li>
+          <li>Probe it. Under 4h? That's <b class="green">hosta and ostrich fern</b> country — both in
+            the library, both flagged "Shade ok".</li>
+          <li>Probe the fringe where morning ellipses reach but afternoon ones don't: 4–6h of gentle
+            morning light is perfect for <b>lettuce, spinach, mint, cilantro</b> — cool-season greens
+            that bolt in full afternoon sun.</li>
+          <li>Plant the fringe with greens and the core with shade perennials. The same tree that ruins
+            tomatoes just gave you a salad bar.</li>
+        </ol>
+        <div class="why">"Shade" is really two habitats: morning-lit fringe and true deep shade. The trails view is the only instrument that separates them by time of day.</div>
+      </div>
+
+      <div class="recipe">
+        <div class="goal">Recipe № 4 · Seasons</div>
+        <h3>The four-season audit (and the deciduous trick)</h3>
+        <ol>
+          <li>With your design done, click the four season presets in order:
+            <b>Spring eqx → Summer sol → Fall eqx → Winter sol</b>, watching the Sun map and ledger each time.</li>
+          <li>Notice the deciduous trees: their canopy goes <b>dashed</b> in winter and nearly stops
+            blocking sun. Ground that's shaded all summer may be winter-bright —
+            ideal for <b>garlic</b> (planted October, up before the leaves return) and spring bulbs.</li>
+          <li>Evergreens never let up. Anything within their trails needs true shade tolerance year-round.</li>
+          <li>Winter-sun check for structures: probe your greenhouse or cold-frame spot on <b>Winter sol</b> —
+            December's 9h day with a low sun makes building shadows three times longer than June's.</li>
+        </ol>
+        <div class="why">The sun drops ~47° between solstices. A yard is four different yards a year; the presets let you audit all four in under a minute.</div>
+      </div>
+
+      <div class="recipe">
+        <div class="goal">Recipe № 5 · Beyond the vegetables</div>
+        <h3>Site a patio, greenhouse, or reading bench</h3>
+        <ol>
+          <li>For an <b>evening patio</b>: turn on Trails and find ground the warm-orange 5p/6p ellipses
+            never touch — then probe it and confirm the strip stays gold past 5pm.</li>
+          <li>For a <b>greenhouse</b>: you want winter sun above all. Winter sol preset + Best sun,
+            and take the gold that sits clear of building shadows.</li>
+          <li>For a <b>shade bench</b>: reverse the search — you <i>want</i> the 2p–4p ellipses.
+            The east side of a big deciduous tree gives morning sun and afternoon refuge.</li>
+          <li>Drag the time slider through the day with Shadows on for the final gut-check — watching
+            your future patio fall into shade at 4:30pm is worth a thousand heat maps.</li>
+        </ol>
+        <div class="why">Every "where should X go" question is a sunlight question wearing different clothes — the same five instruments answer all of them.</div>
+      </div>
+
+      <div class="recipe">
+        <div class="goal">Recipe № 6 · Housekeeping</div>
+        <h3>Save, share, and iterate designs</h3>
+        <ol>
+          <li>Everything auto-saves to this browser — close the tab and pick up where you left off.</li>
+          <li><b>⇩ Export</b> downloads the whole design as JSON; <b>⇧ Import</b> restores it. Trade
+            files with the other gardener in your household and argue with data.</li>
+          <li>Duplicate a bed, drag the copy elsewhere, and compare probes: an A/B test for garden plots.</li>
+          <li>Made a mess? <kbd>⌘Z</kbd> undoes the last 40 moves.</li>
+        </ol>
+        <div class="why">Exported files are plain JSON — version them in git if you're that kind of gardener. (You're reading a field guide for a satellite sun simulator. You are.)</div>
+      </div>
+    </section>
+
+    <!-- ================= KEYBOARD ================= -->
+    <section id="keyboard">
+      <h2><span class="no">05</span>Keyboard reference</h2>
+      <table>
+        <tr><td><kbd>V</kbd></td><td>Select &amp; move</td></tr>
+        <tr><td><kbd>B</kbd></td><td>Draw garden bed</td></tr>
+        <tr><td><kbd>P</kbd></td><td>Plant from library</td></tr>
+        <tr><td><kbd>T</kbd></td><td>Tree</td></tr>
+        <tr><td><kbd>U</kbd></td><td>Building / structure</td></tr>
+        <tr><td><kbd>F</kbd></td><td>Fence / wall</td></tr>
+        <tr><td><kbd>L</kbd></td><td>Light probe</td></tr>
+        <tr><td><kbd>E</kbd></td><td>Erase</td></tr>
+        <tr><td><kbd>Enter</kbd> / dbl-click</td><td>Close a polygon or fence line</td></tr>
+        <tr><td><kbd>Esc</kbd></td><td>Cancel drawing · deselect</td></tr>
+        <tr><td><kbd>⌫</kbd></td><td>Delete selection</td></tr>
+        <tr><td><kbd>Space</kbd></td><td>Play / pause the day</td></tr>
+        <tr><td><kbd>⌘Z</kbd> / <kbd>Ctrl Z</kbd></td><td>Undo</td></tr>
+      </table>
+    </section>
+
+    <!-- ================= ACCURACY ================= -->
+    <section id="accuracy">
+      <h2><span class="no">06</span>What to trust (and what to check outside)</h2>
+      <p><b>Trust the geometry.</b> Sun positions come from the standard solar ephemeris and are
+        accurate to a fraction of a degree; shadow lengths and directions follow directly. Sunrise,
+        sunset and day length are exact for your latitude.</p>
+      <p><b>Remember the model's edges.</b> It's a clear-sky model — clouds, fog and your climate's
+        marine layer are yours to factor in. Times are approximate local <i>solar</i> time (no DST).
+        Terrain is flat: a yard on a north slope gets less than the map shows. And the golden rule
+        one last time: <b>untraced objects cast no shade</b> — if the gold covers a forest you didn't
+        outline, the forest wins in real life.</p>
+      <p><b>Calibrate once.</b> Pick a shadow you can see in the satellite photo itself (most imagery
+        is shot mid-morning). Set the time slider until the drawn shadows of your traced objects line
+        up with the photographed ones — if they agree, every other hour of the simulation is on rails.</p>
+      <p style="text-align:center; margin-top:44px">
+        <a class="backlink" href="./">Start planning →</a>
+      </p>
+    </section>
+
+    <footer>
+      Heliotrope · a <a href="../">Made With AI</a> project ·
+      Imagery © Esri, Maxar, Earthstar Geographics · Geocoding © OpenStreetMap/Nominatim ·
+      Your designs never leave your browser.
+    </footer>
+  </div>
+</body>
+</html>
