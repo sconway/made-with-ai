@@ -525,7 +525,15 @@
   function requestRender() {
     if (renderQueued) return;
     renderQueued = true;
-    requestAnimationFrame(() => { renderQueued = false; draw(); });
+    const run = () => {
+      if (!renderQueued) return;
+      renderQueued = false;
+      draw();
+    };
+    // rAF for smoothness, with a timer fallback — some environments throttle
+    // or pause rAF entirely (background tabs, battery saver, embedded panes)
+    requestAnimationFrame(run);
+    setTimeout(run, 90);
   }
 
   const CP = (ll) => map.latLngToContainerPoint(ll);
@@ -539,8 +547,9 @@
     const month = monthOfDoy(state.doy);
     const showDetail = pxm > 1.2;
 
-    // --- heat / best-sun raster ---
+    // --- heat / best-sun raster (accumulated up to the time slider) ---
     if ((state.show.heatmap || state.show.best) && state.heat) {
+      ensureHeatColors();
       const nw = CP(state.heat.bounds.getNorthWest());
       const se = CP(state.heat.bounds.getSouthEast());
       ctx.save();
@@ -582,7 +591,8 @@
       const V = (eM, nM) => [eM * pxm, -nM * pxm];
       drawShadows(shadowCtx, P, V, sun, month);
       ctx.save();
-      ctx.globalAlpha = 0.42;
+      // over the saturated heat colors, shadows need extra weight to read
+      ctx.globalAlpha = heatModeOn() ? 0.52 : 0.42;
       ctx.drawImage(shadowCv, 0, 0, w, h);
       ctx.restore();
     }
@@ -1402,9 +1412,12 @@
   map.on('mousemove', (e) => {
     if (state.drawing) { state.drawing.cursor = e.latlng; requestRender(); }
     if (heatModeOn() && state.heat) {
-      const hrs = sampleSunHours(e.latlng);
-      document.getElementById('lg-note').textContent =
-        hrs === null ? `on ${dateLabel(state.doy)}` : `${hrs.toFixed(1)} h here`;
+      const hrs = sampleBankedHours(e.latlng);
+      if (hrs !== null) {
+        const partial = heatCutoffIdx() < state.heat.nSamples;
+        document.getElementById('lg-note').textContent =
+          `${hrs.toFixed(1)}h here${partial ? ` by ${Sun.formatHour(Math.max(state.time, state.heat.t0))}` : ''}`;
+      }
     }
     if (state.tool === 'select' && !state.drag) {
       const hit = handleAt(e.containerPoint) || hitTest(e.containerPoint, e.latlng);
@@ -1610,16 +1623,16 @@
       scheduleSave();
     }));
 
-  // playback
-  let playRAF = null, lastTick = 0;
+  // playback — interval-driven so it survives rAF throttling
+  let playTimer = null, lastTick = 0;
   function togglePlay() { state.playing ? stopPlay() : startPlay(); }
   function startPlay() {
     state.playing = true;
     document.getElementById('playbtn').textContent = '❚❚';
     lastTick = performance.now();
-    const step = (now) => {
-      if (!state.playing) return;
-      const dt = (now - lastTick) / 1000;
+    playTimer = setInterval(() => {
+      const now = performance.now();
+      const dt = Math.min((now - lastTick) / 1000, 0.25);
       lastTick = now;
       const d = state.day;
       const t0 = d && d.sunrise !== null ? d.sunrise - 1 : 5;
@@ -1629,14 +1642,12 @@
       timeSlider.value = state.time;
       updateDock();
       requestRender();
-      playRAF = requestAnimationFrame(step);
-    };
-    playRAF = requestAnimationFrame(step);
+    }, 33);
   }
   function stopPlay() {
     state.playing = false;
     document.getElementById('playbtn').textContent = '▶';
-    if (playRAF) cancelAnimationFrame(playRAF);
+    if (playTimer) { clearInterval(playTimer); playTimer = null; }
   }
   document.getElementById('playbtn').addEventListener('click', togglePlay);
 
