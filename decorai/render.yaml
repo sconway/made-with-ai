@@ -58,6 +58,9 @@ services:
         sync: false
       - key: ALLOWED_ORIGIN
         sync: false
+      # Google Analytics 4 Measurement ID (e.g. G-XXXXXXXXXX). Leave unset to disable.
+      - key: GA_MEASUREMENT_ID
+        sync: false
       - key: FREE_TOKENS
         value: "0"
       - key: TOKENS_PER_PURCHASE

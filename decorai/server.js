@@ -1772,6 +1772,8 @@ app.get('/api/config', (req, res) => {
     tokensPerPurchase: TOKENS_PER_PURCHASE,
     priceAmount: parseInt(process.env.PRICE_AMOUNT) || 199,
     tokenPacks: getConfiguredTokenPacks(),
+    // Public GA4 Measurement ID (e.g. G-XXXXXXXXXX). Empty disables analytics.
+    gaMeasurementId: process.env.GA_MEASUREMENT_ID?.trim() || '',
   });
 });
 

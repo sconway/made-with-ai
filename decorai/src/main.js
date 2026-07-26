@@ -402,6 +402,24 @@ function setupProtectedHeaderActions() {
     }
 }
 
+/** Load GA4 when a Measurement ID is configured (via /api/config). No-op if unset. */
+function initGoogleAnalytics(measurementId) {
+    const id = typeof measurementId === 'string' ? measurementId.trim() : '';
+    if (!id || !/^G-[A-Z0-9]+$/i.test(id) || typeof window.gtag === 'function') return;
+
+    window.dataLayer = window.dataLayer || [];
+    window.gtag = function gtag() {
+        window.dataLayer.push(arguments);
+    };
+    window.gtag('js', new Date());
+    window.gtag('config', id);
+
+    const script = document.createElement('script');
+    script.async = true;
+    script.src = `https://www.googletagmanager.com/gtag/js?id=${encodeURIComponent(id)}`;
+    document.head.appendChild(script);
+}
+
 // Initialize app: fetch config, Supabase client, and auth state (same pattern as Brandwise)
 async function initializeApp() {
     authInitError = null;
@@ -414,6 +432,8 @@ async function initializeApp() {
             throw new Error(`Config fetch failed (${response.status})`);
         }
         appConfig = await response.json();
+
+        initGoogleAnalytics(appConfig.gaMeasurementId);
 
         // Populate purchase UI from config
         renderTokenPacks(appConfig.tokenPacks);
