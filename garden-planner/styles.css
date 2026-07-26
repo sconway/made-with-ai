@@ -423,7 +423,83 @@ a.chip { text-decoration: none; }
 .sunbadge.bad { background: rgba(224, 104, 75, 0.14); color: var(--bad); }
 .sunbadge.na { background: rgba(125, 121, 95, 0.14); color: var(--ink-faint); }
 
-#summary { padding: 14px 16px; overflow-y: auto; scrollbar-width: thin; }
+/* ---------- getting-started checklist ---------- */
+#guide { padding: 12px 14px; flex: none; display: none; }
+#guide.open { display: block; }
+.guide-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.guide-x {
+  flex: none;
+  background: none;
+  border: none;
+  color: var(--ink-faint);
+  font: 12px var(--font-mono);
+  line-height: 1;
+  padding: 3px 4px;
+  cursor: pointer;
+}
+.guide-x:hover { color: var(--brass-bright); }
+#guidesteps { margin-top: 9px; display: flex; flex-direction: column; gap: 1px; }
+.gstep {
+  display: grid;
+  grid-template-columns: 15px 1fr;
+  gap: 8px;
+  align-items: baseline;
+  width: 100%;
+  text-align: left;
+  padding: 5px 7px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: none;
+  color: var(--ink-dim);
+  font: 12px var(--font-mono);
+  cursor: pointer;
+}
+.gstep:hover { background: rgba(0, 0, 0, 0.3); }
+.gstep .gmark { color: var(--ink-faint); }
+.gstep .glabel { display: block; line-height: 1.35; }
+.gstep .ghint {
+  display: block;
+  margin-top: 4px;
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--ink-faint);
+}
+.gstep .gnote { display: block; margin-top: 3px; font-size: 10.5px; color: var(--leaf-deep); }
+.gstep.done { color: var(--ink-faint); }
+.gstep.done .gmark { color: var(--ok); }
+.gstep.done .glabel { text-decoration: line-through; text-decoration-color: var(--panel-edge-lit); }
+.gstep.now {
+  color: var(--ink);
+  border-color: var(--brass-dim);
+  background: rgba(232, 182, 76, 0.07);
+}
+.gstep.now .gmark { color: var(--brass-bright); }
+.guide-rule {
+  margin-top: 10px;
+  padding-top: 9px;
+  border-top: 1px solid var(--panel-edge);
+  font-size: 10.5px;
+  line-height: 1.55;
+  color: var(--ink-faint);
+}
+.guide-allset { margin-top: 8px; color: var(--ok); font-size: 11px; line-height: 1.5; }
+/* lives outside the ledger: that panel is hidden on narrower screens, and a
+   dismissed checklist still needs a way back */
+.guide-relink {
+  align-self: flex-end;
+  flex: none;
+  padding: 5px 11px;
+  background: var(--chrome-85);
+  border: 1px solid var(--panel-edge);
+  border-radius: 999px;
+  color: var(--ink-faint);
+  font: 11px var(--font-mono);
+  cursor: pointer;
+  box-shadow: var(--shadow-lg);
+}
+.guide-relink:hover { color: var(--brass-bright); border-color: var(--panel-edge-lit); }
+
+#summary { padding: 14px 16px; overflow-y: auto; scrollbar-width: thin; min-height: 0; }
 #summary .stats {
   display: grid;
   grid-template-columns: repeat(3, 1fr);
@@ -666,7 +742,10 @@ input[type='range'].fat::-moz-range-thumb {
   pointer-events: none;
   opacity: 0;
   transition: opacity 0.2s;
-  white-space: nowrap;
+  /* the dock grows a row when the legend opens, so JS pins this above it */
+  max-width: calc(100vw - 32px);
+  text-align: center;
+  line-height: 1.5;
 }
 #hint.show { opacity: 1; }
 #hint b { color: var(--brass); font-weight: 400; }
@@ -750,7 +829,13 @@ input[type='range'].fat::-moz-range-thumb {
 /* ---------- responsive ---------- */
 @media (max-width: 1100px) {
   /* keep the inspector (plant cards, light probe) — drop only the ledger */
-  #rightcol { width: 264px; bottom: auto; max-height: calc(100vh - 260px); }
+  #rightcol {
+    width: 264px;
+    bottom: auto;
+    max-height: calc(100vh - 260px);
+    overflow-y: auto; /* checklist + a long plant card can outrun the column */
+    scrollbar-width: thin;
+  }
   #summary { display: none; }
   #dock { width: min(720px, calc(100vw - 200px)); }
 }

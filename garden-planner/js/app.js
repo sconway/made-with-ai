@@ -7,6 +7,16 @@
 
   const YEAR = new Date().getFullYear();
   const R = Math.PI / 180;
+  /* Below this altitude the sun is behind the neighborhood's own horizon —
+     the far treeline, roofs, the slope of the land — none of which this app
+     models. Shadow geometry there is technically h/tan(2°) ≈ 29× the object's
+     height, which paints the whole map with slabs nobody's yard ever sees.
+     The sun-hours math has always called this blocked; the render now agrees. */
+  const HORIZON = 2 * R;
+  /* A canopy shadow stretches as 1/sin(altitude); at the horizon cutoff that
+     is its longest, so nothing is ever clamped inside the drawn range. */
+  const MAX_STRETCH = 1 / Math.sin(HORIZON);
+  const canopyStretch = (alt) => Math.min(1 / Math.sin(alt), MAX_STRETCH);
   const FT = 3.28084;
   const SAVE_KEY = 'heliotrope-v1';
   const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
@@ -28,12 +38,14 @@
     rev: 0,                     // bumped on any object mutation
     selection: null,            // { type, id }
     drawing: null,              // { type, pts: [latlng], cursor: latlng }
+    rectDraw: null,             // { type, start, cur, moved, shift } — drag-to-draw
     drag: null,
     doy: 172,
     time: 12,
     playing: false,
-    show: { shadows: true, heatmap: false, best: false, trails: false, spread: true, labels: true },
+    show: { shadows: true, heatmap: false, best: false, trails: false, spread: true, labels: true, snap: true },
     probe: null,                // { latlng } — the light-probe marker
+    snap: null,                 // { at: latlng, marks: [...] } — live snap feedback
     loc: { lat: 39.8283, lng: -98.5795 },
     day: null,                  // Sun.dayInfo cache
     heat: null,                 // { canvas, bounds, grid, cell, nx, ny, rev, doy }
@@ -119,6 +131,14 @@
     }
     return inside;
   }
+  function polyCenterLL(pts) {
+    let lat = 0, lng = 0;
+    pts.forEach((p) => { lat += p.lat; lng += p.lng; });
+    return L.latLng(lat / pts.length, lng / pts.length);
+  }
+  function bearingFrom(c, ll) {
+    return Math.atan2((ll.lat - c.lat) * M_PER_DEG_LAT, (ll.lng - c.lng) * mPerDegLng(c.lat));
+  }
   function distToSegPx(p, a, b) {
     const dx = b.x - a.x, dy = b.y - a.y;
     const len2 = dx * dx + dy * dy;
@@ -150,23 +170,35 @@
     if (type !== 'deciduous') return 1;
     return month >= 4 && month <= 10 ? 1 : 0.2;
   }
+  /** Height of the canopy ball's center: its top sits at the tree's height. */
+  const canopyCenterH = (t) => Math.max(t.height - t.canopy, t.height * 0.5);
 
   /* ============================================================
      Shadow geometry — shared between the screen and the heat grid.
      P(latlng) -> [x, y] in target space; V(eastM, northM) -> [dx, dy].
      ============================================================ */
   function drawShadows(g, P, V, sun, month, opts = {}) {
-    if (sun.altitude <= 0.5 * R) return false;
+    if (sun.altitude < HORIZON) return false;
     const tanA = Math.tan(sun.altitude);
     const bearing = sun.azimuth + Math.PI;
     const off = (h) => {
-      const len = Math.min(h / tanA, 400);
+      const len = Math.min(h / tanA, 1000); // safety valve, not a realism knob
       return V(len * Math.sin(bearing), len * Math.cos(bearing));
     };
     const unit = V(1, 0);
     const s = Math.hypot(unit[0], unit[1]); // units per meter
     const stroke = !!opts.stroke; // trails mode: outline where shadows reach
     let drew = false;
+
+    // A canopy is a ball of leaves, so its ground shadow is an ellipse: the
+    // cross-sun width stays the canopy width, but the along-sun length grows
+    // as 1/sin(altitude) — round overhead, long and reaching back toward the
+    // trunk at dusk, the same way a building's shadow stretches.
+    const stretch = canopyStretch(sun.altitude);
+    const dirV = V(Math.sin(bearing), Math.cos(bearing));
+    const sunAngle = Math.atan2(dirV[1], dirV[0]); // shadow heading in target space
+    const canopyEllipse = (cx, cy, r) =>
+      g.ellipse(cx, cy, r * s * stretch, r * s, sunAngle, 0, Math.PI * 2);
 
     const poly = (pts, forceStroke) => {
       g.beginPath();
@@ -224,27 +256,25 @@
     for (const t of state.objects.trees) {
       const lf = leafFactor(t.type, month);
       const p = P(t.latlng);
-      const canopyH = Math.max(t.height - t.canopy * 0.6, t.height * 0.55);
+      const canopyH = canopyCenterH(t);
       const [dx, dy] = off(canopyH);
       if (stroke) {
         g.save();
         if (lf < 1) g.setLineDash([3, 3]);
         g.beginPath();
-        g.ellipse(p[0] + dx, p[1] + dy, t.canopy * s, t.canopy * s * 0.92, 0, 0, Math.PI * 2);
+        canopyEllipse(p[0] + dx, p[1] + dy, t.canopy);
         g.stroke();
         g.restore();
         timeLabel(p[0] + dx, p[1] + dy);
       } else {
-        // trunk
+        // Canopy only — the trunk's own sliver of shade is left unmodelled, as
+        // it is in shadeAtPoint. The stretched canopy ellipse already reaches
+        // back over most of the ground a trunk shadow would cover.
         g.save();
-        g.lineWidth = Math.max(1, 0.35 * s);
-        g.strokeStyle = g.fillStyle;
-        const [tdx, tdy] = off(t.height * 0.35);
-        g.beginPath(); g.moveTo(p[0], p[1]); g.lineTo(p[0] + tdx, p[1] + tdy); g.stroke();
-        // canopy disc (leafless deciduous trees barely block winter sun)
+        // leafless deciduous trees barely block winter sun
         g.globalAlpha = g.globalAlpha * lf;
         g.beginPath();
-        g.ellipse(p[0] + dx, p[1] + dy, t.canopy * s, t.canopy * s * 0.92, 0, 0, Math.PI * 2);
+        canopyEllipse(p[0] + dx, p[1] + dy, t.canopy);
         g.fill();
         g.restore();
       }
@@ -258,11 +288,11 @@
      Returns { block: 0..1, by: label } for a lat/lng at a sun position.
      ============================================================ */
   function shadeAtPoint(ll, sun, month) {
-    if (sun.altitude <= 0.5 * R) return { block: 1, by: 'night' };
+    if (sun.altitude < HORIZON) return { block: 1, by: 'horizon' };
     const tanA = Math.tan(sun.altitude);
     const bearing = sun.azimuth + Math.PI;
     const off = (h) => {
-      const len = Math.min(h / tanA, 400);
+      const len = Math.min(h / tanA, 1000);
       return [len * Math.sin(bearing), len * Math.cos(bearing)];
     };
     const kx = mPerDegLng(ll.lat);
@@ -297,13 +327,19 @@
         }
       }
     }
+    // same stretched-ellipse canopy shadow the renderer draws
+    const stretch = canopyStretch(sun.altitude);
     for (const t of state.objects.trees) {
       const lf = leafFactor(t.type, month);
       if (lf <= block) continue;
       const [px, py] = rel(t.latlng);
-      const canopyH = Math.max(t.height - t.canopy * 0.6, t.height * 0.55);
-      const [dx, dy] = off(canopyH);
-      if (Math.hypot(px + dx, py + dy) <= t.canopy) {
+      const [dx, dy] = off(canopyCenterH(t));
+      // vector from this point to the shadow's center, split along / across sun
+      const ex = px + dx, ny = py + dy;
+      const along = ex * Math.sin(bearing) + ny * Math.cos(bearing);
+      const across = ex * Math.cos(bearing) - ny * Math.sin(bearing);
+      const a = t.canopy * stretch, b = t.canopy;
+      if ((along * along) / (a * a) + (across * across) / (b * b) <= 1) {
         block = lf;
         by = `${t.type === 'evergreen' ? 'evergreen' : 'tree'}, ${fmtFt(t.height)}${lf < 1 ? ' (leafless)' : ''}`;
       }
@@ -380,7 +416,7 @@
     for (let i = 0; i < nSamples; i++) {
       const t = t0 + (i + 0.5) * dtH;
       const sun = Sun.position(Sun.localDate(YEAR, state.doy, t, tz()), state.loc.lat, state.loc.lng);
-      if (sun.altitude < 2 * R) continue; // grazing light: treat as blocked by horizon
+      if (sun.altitude < HORIZON) continue; // grazing light: blocked by the horizon
       gridCtx.setTransform(1, 0, 0, 1, 0, 0);
       gridCtx.globalAlpha = 1;
       gridCtx.fillStyle = '#fff';
@@ -543,6 +579,7 @@
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     ctx.clearRect(0, 0, w, h);
     const sun = sunNow();
+    const altD = sun.altitude / R;
     const pxm = pxPerMeter();
     const month = monthOfDoy(state.doy);
     const showDetail = pxm > 1.2;
@@ -582,7 +619,7 @@
     }
 
     // --- shadows ---
-    if (state.show.shadows && sun.altitude > 0) {
+    if (state.show.shadows && sun.altitude >= HORIZON) {
       shadowCtx.setTransform(1, 0, 0, 1, 0, 0);
       shadowCtx.clearRect(0, 0, w, h);
       shadowCtx.fillStyle = '#0a1428';
@@ -592,7 +629,10 @@
       drawShadows(shadowCtx, P, V, sun, month);
       ctx.save();
       // over the saturated heat colors, shadows need extra weight to read
-      ctx.globalAlpha = heatModeOn() ? 0.52 : 0.42;
+      // low sun is dim and diffuse: fade the layer toward the horizon cutoff
+      // instead of letting hundred-meter slabs blink off at full strength
+      const dim = Math.min(1, (altD - HORIZON / R) / 4);
+      ctx.globalAlpha = (heatModeOn() ? 0.52 : 0.42) * dim;
       ctx.drawImage(shadowCv, 0, 0, w, h);
       ctx.restore();
     }
@@ -608,7 +648,7 @@
       ctx.globalAlpha = 0.85;
       for (let hr = Math.ceil(t0 + 0.25); hr <= Math.floor(t1 - 0.25); hr++) {
         const sp = Sun.position(Sun.localDate(YEAR, state.doy, hr, tz()), state.loc.lat, state.loc.lng);
-        if (sp.altitude < 2 * R) continue;
+        if (sp.altitude < HORIZON) continue;
         const k = (hr - t0) / (t1 - t0);
         const col = `rgb(${cool.map((c, i) => Math.round(c + (warm[i] - c) * k)).join(',')})`;
         const h12 = ((hr + 11) % 12) + 1;
@@ -722,6 +762,40 @@
       ctx.restore();
     }
 
+    // --- drag-to-draw preview, with live dimensions ---
+    if (state.rectDraw && state.rectDraw.moved) {
+      const r = state.rectDraw;
+      const geo = rectShapePoints(r);
+      const pts = geo.map((p) => CP(L.latLng(p.lat, p.lng)));
+      ctx.save();
+      ctx.strokeStyle = '#ffd97a';
+      ctx.lineWidth = 1.8;
+      ctx.setLineDash([6, 5]);
+      ctx.beginPath();
+      pts.forEach((p, i) => (i ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y)));
+      if (r.type !== 'fence') {
+        ctx.closePath();
+        ctx.fillStyle = r.type === 'bed' ? 'rgba(122,84,48,0.28)' : 'rgba(105,110,122,0.28)';
+        ctx.fill();
+      }
+      ctx.stroke();
+      ctx.setLineDash([]);
+      pts.forEach((p) => dot(p.x, p.y, 3.5, '#ffd97a', '#14170e'));
+      const G = (i) => L.latLng(geo[i].lat, geo[i].lng);
+      if (r.type === 'fence') {
+        label(fmtFt(metersBetween(G(0), G(1))),
+          (pts[0].x + pts[1].x) / 2, (pts[0].y + pts[1].y) / 2 - 12, '#ffd97a');
+      } else {
+        const wM = metersBetween(G(0), G(1));
+        const hM = metersBetween(G(1), G(2));
+        label(fmtFt(wM), (pts[0].x + pts[1].x) / 2, pts[0].y - 11, '#ffd97a');
+        label(fmtFt(hM), pts[1].x + 30, (pts[1].y + pts[2].y) / 2, '#ffd97a');
+        const c = polyCenterPx(pts);
+        label(`${Math.round(wM * hM * 10.7639)} ft²`, c.x, c.y, '#ffd97a');
+      }
+      ctx.restore();
+    }
+
     // --- in-progress drawing ---
     if (state.drawing) {
       const d = state.drawing;
@@ -740,11 +814,48 @@
       pts.forEach((p) => dot(p.x, p.y, 3.5, '#ffd97a', '#14170e'));
     }
 
+    // --- snap feedback: a ring on the corner grabbed, dashed guides for
+    //     points merely lined up with ---
+    if (state.snap) {
+      const p = CP(state.snap.at);
+      const onPoint = state.snap.marks.some((m) => m.kind === 'point');
+      ctx.save();
+      ctx.strokeStyle = '#7ee7ff';
+      state.snap.marks.forEach((m) => {
+        if (m.kind !== 'guide') return;
+        const r = CP(m.ll);
+        ctx.globalAlpha = 0.75;
+        ctx.lineWidth = 1;
+        ctx.setLineDash([4, 4]);
+        ctx.beginPath();
+        ctx.moveTo(r.x, r.y);
+        ctx.lineTo(p.x, p.y);
+        ctx.stroke();
+        ctx.setLineDash([]);
+        ctx.beginPath();
+        ctx.arc(r.x, r.y, 2.5, 0, Math.PI * 2);
+        ctx.stroke();
+      });
+      ctx.globalAlpha = 1;
+      ctx.lineWidth = 1.6;
+      if (onPoint) {
+        ctx.beginPath();
+        ctx.arc(p.x, p.y, 7, 0, Math.PI * 2);
+        ctx.stroke();
+        ctx.beginPath();
+        ctx.moveTo(p.x - 3.5, p.y - 3.5); ctx.lineTo(p.x + 3.5, p.y + 3.5);
+        ctx.moveTo(p.x + 3.5, p.y - 3.5); ctx.lineTo(p.x - 3.5, p.y + 3.5);
+        ctx.stroke();
+      } else {
+        ctx.strokeRect(p.x - 4.5, p.y - 4.5, 9, 9);
+      }
+      ctx.restore();
+    }
+
     // --- selection handles ---
     if (state.selection && showDetail) drawHandles();
 
     // --- dusk / dawn / night tint ---
-    const altD = sun.altitude / R;
     if (altD < 10) {
       const night = Math.min(1, Math.max(0, (2 - altD) / 11)); // 0 at +2°, 1 at -9°
       if (night > 0) {
@@ -795,6 +906,15 @@
     return state.objects[state.selection.type].find((o) => o.id === state.selection.id) || null;
   }
 
+  /** Screen position of the rotate grip: centered above the shape's top edge. */
+  function rotHandle(o) {
+    if (!o || !o.pts || o.pts.length < 2) return null;
+    const pts = o.pts.map(CP);
+    const c = polyCenterPx(pts);
+    const top = Math.min(...pts.map((p) => p.y));
+    return { x: c.x, y: top - 20, anchorY: top };
+  }
+
   function drawHandles() {
     const o = selectedObj();
     if (!o) return;
@@ -807,6 +927,25 @@
         ctx.fillRect(p.x - 4, p.y - 4, 8, 8);
         ctx.strokeRect(p.x - 4, p.y - 4, 8, 8);
       });
+      const rh = rotHandle(o);
+      if (rh) {
+        ctx.save();
+        ctx.strokeStyle = 'rgba(255,217,122,0.65)';
+        ctx.lineWidth = 1.2;
+        ctx.setLineDash([3, 3]);
+        ctx.beginPath();
+        ctx.moveTo(rh.x, rh.anchorY);
+        ctx.lineTo(rh.x, rh.y);
+        ctx.stroke();
+        ctx.setLineDash([]);
+        dot(rh.x, rh.y, 6, '#14170e', '#ffd97a');
+        ctx.strokeStyle = '#ffd97a';
+        ctx.lineWidth = 1.3;
+        ctx.beginPath();
+        ctx.arc(rh.x, rh.y, 3.2, -0.65 * Math.PI, 0.85 * Math.PI);
+        ctx.stroke();
+        ctx.restore();
+      }
     } else if (state.selection.type === 'trees') {
       const p = CP(o.latlng);
       const hp = CP(destLatLng(o.latlng, o.canopy, 0));
@@ -961,6 +1100,105 @@
   const warnDate = () => ` on ${dateLabel(state.doy)}`;
 
   /* ============================================================
+     Getting started — the order that actually works, ticked off
+     from the real design rather than from a tour script. Clicking
+     a step arms the tool it is asking for.
+     ============================================================ */
+  const guideEl = document.getElementById('guide');
+  const guideStepsEl = document.getElementById('guidesteps');
+  const guideReopen = document.getElementById('guide-reopen');
+  let guideOff = false;
+  let guideAllSetAt = 0;
+
+  const shadeCasters = () =>
+    state.objects.trees.length + state.objects.buildings.length + state.objects.fences.length;
+
+  const GUIDE = [
+    {
+      label: 'Find your yard',
+      hint: 'Search your address up top, or press ◎ for your location. The map flies in and the sun math locks to your latitude.',
+      done: () => map.getZoom() >= 17,
+      go: () => { searchEl.focus(); searchEl.select(); },
+    },
+    {
+      label: 'Trace what casts shade',
+      hint: 'Trees (T), the house and sheds (U), fences (F) — then set each one\'s real height in the inspector. Neighbours\' trees count.',
+      note: () => (shadeCasters() ? `${shadeCasters()} traced` : ''),
+      done: () => shadeCasters() > 0,
+      go: () => setTool('tree'),
+    },
+    {
+      label: 'Switch on Best sun',
+      hint: 'Gold marks ground that clears 6 hours of direct light on this date. Drag the date slider to compare seasons.',
+      done: () => state.show.best || state.show.heatmap,
+      go: () => {
+        if (!heatModeOn()) document.querySelector('.tog[data-show="best"]').click();
+      },
+    },
+    {
+      label: 'Draw a bed on the gold',
+      hint: 'Drag a rectangle over good ground (B). Corners snap to what you have already drawn.',
+      done: () => state.objects.beds.length > 0,
+      go: () => setTool('bed'),
+    },
+    {
+      label: 'Plant it',
+      hint: 'Pick from the library (P), then click inside the bed. The ledger flags anything that won\'t get the light it needs.',
+      done: () => state.objects.plants.length > 0,
+      go: () => setTool('plant'),
+    },
+  ];
+
+  function refreshGuide() {
+    const flags = GUIDE.map((s) => s.done());
+    const left = flags.indexOf(false);
+    const allSet = left < 0;
+
+    if (guideReopen) guideReopen.hidden = !(guideOff && !allSet);
+    if (guideOff) { guideEl.classList.remove('open'); return; }
+    guideEl.classList.add('open');
+
+    guideStepsEl.innerHTML = '';
+    GUIDE.forEach((s, i) => {
+      const now = i === left;
+      const b = document.createElement('button');
+      b.className = `gstep${flags[i] ? ' done' : ''}${now ? ' now' : ''}`;
+      const note = !now && s.note ? s.note() : '';
+      b.innerHTML = `<span class="gmark">${flags[i] ? '✓' : now ? '▸' : '○'}</span>
+        <span><span class="glabel">${i + 1}. ${esc(s.label)}</span>
+        ${now ? `<span class="ghint">${esc(s.hint)}</span>` : ''}
+        ${note ? `<span class="gnote">${esc(note)}</span>` : ''}</span>`;
+      b.addEventListener('click', () => { s.go(); refreshGuide(); });
+      guideStepsEl.appendChild(b);
+    });
+
+    if (allSet) {
+      const el = document.createElement('div');
+      el.className = 'guide-allset';
+      el.textContent = '✓ That is the whole loop. Keep scrubbing the time and date sliders — the ledger re-checks every plant as you go.';
+      guideStepsEl.appendChild(el);
+      // let it be read, then get out of the way for good
+      if (!guideAllSetAt) guideAllSetAt = Date.now();
+      setTimeout(() => {
+        if (guideAllSetAt && Date.now() - guideAllSetAt >= 9000) hideGuide();
+      }, 9200);
+    }
+  }
+
+  function hideGuide() {
+    guideOff = true;
+    refreshGuide();
+    scheduleSave();
+  }
+  document.getElementById('guide-close').addEventListener('click', hideGuide);
+  guideReopen.addEventListener('click', () => {
+    guideOff = false;
+    guideAllSetAt = 0;
+    refreshGuide();
+    scheduleSave();
+  });
+
+  /* ============================================================
      Light probe — a spot's minute-by-minute sun through the day
      ============================================================ */
   function probeDay(ll) {
@@ -976,7 +1214,7 @@
       const t = t0 + (i + 0.5) * dt;
       const sun = Sun.position(Sun.localDate(YEAR, state.doy, t, tz()), state.loc.lat, state.loc.lng);
       let block = 1, by = 'horizon';
-      if (sun.altitude >= 2 * R) ({ block, by } = shadeAtPoint(ll, sun, month));
+      if (sun.altitude >= HORIZON) ({ block, by } = shadeAtPoint(ll, sun, month));
       sunH += (1 - block) * dt;
       samples.push({ t, block, by });
     }
@@ -1211,6 +1449,7 @@
   function touch() {
     state.rev++; // geometry and height changes both affect shadows
     updateSummary();
+    refreshGuide();
     scheduleHeat(600);
     if (state.selection && state.selection.type === 'probe') openInspector();
     requestRender();
@@ -1222,9 +1461,9 @@
      ============================================================ */
   const mapEl = document.getElementById('map');
   const HINTS = {
-    bed: 'Click to trace the bed\'s corners · <b>double-click</b> or <b>Enter</b> to close · <b>Esc</b> cancels',
-    building: 'Trace the structure\'s footprint · <b>double-click</b> or <b>Enter</b> to close',
-    fence: 'Click along the fence line · <b>double-click</b> or <b>Enter</b> to finish',
+    bed: '<b>Drag</b> a rectangle, or <b>click</b> corner by corner · <b>Shift</b> squares it · corners snap (<b>Alt</b> to free)',
+    building: '<b>Drag</b> the footprint, or <b>click</b> corners · corners snap to what you have drawn (<b>Alt</b> to free)',
+    fence: '<b>Drag</b> a straight run, or <b>click</b> along the line · <b>Shift</b> snaps the angle · ends snap to corners',
     tree: 'Click to place a tree — set its height &amp; canopy in the inspector',
     plant: 'Pick a plant on the left, then click inside a bed to plant it',
     probe: 'Click any spot to chart its sunlight through the whole day',
@@ -1239,9 +1478,18 @@
     document.getElementById('plantdrawer').classList.toggle('open', tool === 'plant');
     mapEl.style.cursor = tool === 'select' ? '' : tool === 'erase' ? 'not-allowed' : 'crosshair';
     const hint = document.getElementById('hint');
-    if (HINTS[tool]) { hint.innerHTML = HINTS[tool]; hint.classList.add('show'); }
+    if (HINTS[tool]) { hint.innerHTML = HINTS[tool]; hint.classList.add('show'); positionHint(); }
     else hint.classList.remove('show');
   }
+
+  /** Keep the hint clear of the dock, which changes height as rows wrap. */
+  function positionHint() {
+    const hint = document.getElementById('hint');
+    if (!hint.classList.contains('show')) return;
+    const d = document.getElementById('dock').getBoundingClientRect();
+    hint.style.bottom = `${Math.round(window.innerHeight - d.top + 10)}px`;
+  }
+  window.addEventListener('resize', positionHint);
 
   document.querySelectorAll('.tool').forEach((b) => {
     b.addEventListener('click', () => {
@@ -1252,21 +1500,18 @@
 
   function cancelDrawing() {
     state.drawing = null;
+    state.snap = null;
+    if (state.rectDraw) { state.rectDraw = null; map.dragging.enable(); }
     requestRender();
   }
 
-  function finishDrawing() {
-    const d = state.drawing;
-    if (!d) return;
-    const minPts = d.type === 'fence' ? 2 : 3;
-    if (d.pts.length < minPts) return; // not enough corners yet — keep drawing (Esc cancels)
+  function createShape(type, pts) {
     pushUndo();
-    const pts = d.pts.map((ll) => ({ lat: ll.lat, lng: ll.lng }));
-    if (d.type === 'bed') {
+    if (type === 'bed') {
       const bed = { id: nextId(), name: `Bed ${state.objects.beds.length + 1}`, pts };
       state.objects.beds.push(bed);
       state.selection = { type: 'beds', id: bed.id };
-    } else if (d.type === 'building') {
+    } else if (type === 'building') {
       const bl = { id: nextId(), pts, height: 5 };
       state.objects.buildings.push(bl);
       state.selection = { type: 'buildings', id: bl.id };
@@ -1276,8 +1521,140 @@
       state.selection = { type: 'fences', id: f.id };
     }
     state.drawing = null;
+    state.rectDraw = null;
+    state.snap = null;
     openInspector();
     touch();
+  }
+
+  function finishDrawing() {
+    const d = state.drawing;
+    if (!d) return;
+    const minPts = d.type === 'fence' ? 2 : 3;
+    if (d.pts.length < minPts) return; // not enough corners yet — keep drawing (Esc cancels)
+    createShape(d.type, d.pts.map((ll) => ({ lat: ll.lat, lng: ll.lng })));
+  }
+
+  /* ---- drag-to-draw: a rectangle from two opposite corners, a fence from
+     two endpoints. Shift squares the rectangle / snaps the fence to 15°. ---- */
+  function rectPoints(r) {
+    let corner = r.cur;
+    if (r.shift) {
+      const eSign = r.cur.lng >= r.start.lng ? 1 : -1;
+      const nSign = r.cur.lat >= r.start.lat ? 1 : -1;
+      const wM = metersBetween(r.start, L.latLng(r.start.lat, r.cur.lng));
+      const hM = metersBetween(r.start, L.latLng(r.cur.lat, r.start.lng));
+      const s = Math.max(wM, hM);
+      corner = destLatLng(r.start, eSign * s, nSign * s);
+    }
+    const n = Math.max(r.start.lat, corner.lat), s = Math.min(r.start.lat, corner.lat);
+    const w = Math.min(r.start.lng, corner.lng), e = Math.max(r.start.lng, corner.lng);
+    return [{ lat: n, lng: w }, { lat: n, lng: e }, { lat: s, lng: e }, { lat: s, lng: w }];
+  }
+
+  function fencePoints(r) {
+    let end = r.cur;
+    if (r.shift) {
+      const kx = mPerDegLng(r.start.lat);
+      const dx = (r.cur.lng - r.start.lng) * kx, dy = (r.cur.lat - r.start.lat) * M_PER_DEG_LAT;
+      const step = 15 * R;
+      const a = Math.round(Math.atan2(dy, dx) / step) * step;
+      const len = Math.hypot(dx, dy);
+      end = destLatLng(r.start, Math.cos(a) * len, Math.sin(a) * len);
+    }
+    return [{ lat: r.start.lat, lng: r.start.lng }, { lat: end.lat, lng: end.lng }];
+  }
+
+  const rectShapePoints = (r) => (r.type === 'fence' ? fencePoints(r) : rectPoints(r));
+
+  function rectDragPx(r) {
+    const a = CP(r.start), b = CP(r.cur);
+    return Math.hypot(b.x - a.x, b.y - a.y);
+  }
+
+  let dragTipShown = false;
+  function commitRect(r) {
+    const pts = rectShapePoints(r);
+    const far = pts[r.type === 'fence' ? 1 : 2];
+    // a hand-tremor smudge is a mis-click, not a shape
+    if (metersBetween(L.latLng(pts[0].lat, pts[0].lng), L.latLng(far.lat, far.lng)) < 0.3) return;
+    createShape(r.type, pts);
+    if (!dragTipShown) {
+      toast('Drag again for another · press V to pan the map and select what you have drawn.', 4500);
+      dragTipShown = true;
+    }
+  }
+
+  /* ---- snapping ------------------------------------------------
+     Hand-tracing over imagery never lands twice on the same spot, so new
+     points are pulled onto nearby corners — or into line with them — while
+     drawing and while dragging a vertex. Alt draws free for one gesture. ---- */
+  const SNAP_PX = 11;   // corner-to-corner grab radius
+  const ALIGN_PX = 8;   // how close counts as "in line with"
+  let snapOff = false;  // Alt held
+
+  const snapOn = () => state.show.snap && !snapOff;
+
+  /** Every corner a new point may latch onto, in lat/lng. */
+  function snapTargets(exclude) {
+    const out = [];
+    for (const key of ['beds', 'buildings', 'fences']) {
+      for (const o of state.objects[key]) {
+        o.pts.forEach((p, i) => {
+          if (exclude && exclude.obj === o && exclude.index === i) return;
+          out.push(p);
+        });
+      }
+    }
+    // corners of the shape being traced right now, minus the one just placed
+    // (snapping back onto it would only make a zero-length edge)
+    if (state.drawing) out.push(...state.drawing.pts.slice(0, -1));
+    return out;
+  }
+
+  /** Snap a lat/lng, record the feedback marks, and return the adjusted point. */
+  function applySnap(latlng, exclude) {
+    state.snap = null;
+    if (!snapOn()) return latlng;
+    const targets = snapTargets(exclude);
+    if (!targets.length) return latlng;
+    const cp = CP(latlng);
+
+    // 1. land straight on a corner
+    let best = null, bestD = SNAP_PX;
+    for (const t of targets) {
+      const p = CP(t);
+      const d = Math.hypot(p.x - cp.x, p.y - cp.y);
+      if (d < bestD) { bestD = d; best = t; }
+    }
+    if (best) {
+      const at = L.latLng(best.lat, best.lng);
+      state.snap = { at, marks: [{ kind: 'point', ll: at }] };
+      return at;
+    }
+
+    // 2. otherwise line up with a corner on either axis (north-up map, so
+    //    a shared lng is a shared screen x)
+    let bx = ALIGN_PX, by = ALIGN_PX, cx = null, cy = null;
+    for (const t of targets) {
+      const p = CP(t);
+      const dx = Math.abs(p.x - cp.x), dy = Math.abs(p.y - cp.y);
+      if (dx < bx) { bx = dx; cx = t; }
+      if (dy < by) { by = dy; cy = t; }
+    }
+    if (!cx && !cy) return latlng;
+    const at = L.latLng(cy ? cy.lat : latlng.lat, cx ? cx.lng : latlng.lng);
+    const marks = [];
+    if (cx) marks.push({ kind: 'guide', ll: cx });
+    if (cy) marks.push({ kind: 'guide', ll: cy });
+    state.snap = { at, marks };
+    return at;
+  }
+
+  function clearSnap() {
+    if (!state.snap) return false;
+    state.snap = null;
+    return true;
   }
 
   function hitTest(cp, latlng) {
@@ -1316,6 +1693,8 @@
     const o = selectedObj();
     if (!o) return null;
     if (o.pts) {
+      const rh = rotHandle(o);
+      if (rh && Math.hypot(cp.x - rh.x, cp.y - rh.y) < 9) return { kind: 'rotate' };
       for (let i = 0; i < o.pts.length; i++) {
         const p = CP(o.pts[i]);
         if (Math.hypot(cp.x - p.x, cp.y - p.y) < 8) return { kind: 'vertex', index: i };
@@ -1334,8 +1713,11 @@
   }
 
   let lastClick = { t: 0, x: -99, y: -99 };
+  let suppressClickUntil = 0;
   map.on('click', (e) => {
     if (state.drag && state.drag.moved) return;
+    // a drag-drawn shape still ends in a DOM click — don't also start a polygon
+    if (performance.now() < suppressClickUntil) { suppressClickUntil = 0; return; }
     // some input paths (trackpad taps, synthetic events) fire bursts of
     // click events — collapse anything within 350ms of the same spot
     const now = performance.now();
@@ -1347,12 +1729,14 @@
       if (!requireZoom(16, 'draw')) return;
       if (!state.drawing) state.drawing = { type: tool, pts: [], cursor: null };
       const d = state.drawing;
+      snapOff = e.originalEvent.altKey;
+      const ll = applySnap(e.latlng);
       // close polygon by clicking near the first vertex
       if (d.pts.length > 2 && d.type !== 'fence') {
-        const p0 = CP(d.pts[0]);
-        if (Math.hypot(e.containerPoint.x - p0.x, e.containerPoint.y - p0.y) < 10) { finishDrawing(); return; }
+        const p0 = CP(d.pts[0]), ps = CP(ll);
+        if (Math.hypot(ps.x - p0.x, ps.y - p0.y) < 10) { finishDrawing(); return; }
       }
-      d.pts.push(e.latlng);
+      d.pts.push(ll);
       requestRender();
     } else if (tool === 'tree') {
       if (!requireZoom(16, 'place trees')) return;
@@ -1410,7 +1794,11 @@
   });
 
   map.on('mousemove', (e) => {
-    if (state.drawing) { state.drawing.cursor = e.latlng; requestRender(); }
+    if (state.drawing) {
+      snapOff = e.originalEvent.altKey;
+      state.drawing.cursor = applySnap(e.latlng);
+      requestRender();
+    } else if (!state.rectDraw && !state.drag && clearSnap()) requestRender();
     if (heatModeOn() && state.heat) {
       const hrs = sampleBankedHours(e.latlng);
       if (hrs !== null) {
@@ -1420,17 +1808,36 @@
       }
     }
     if (state.tool === 'select' && !state.drag) {
-      const hit = handleAt(e.containerPoint) || hitTest(e.containerPoint, e.latlng);
-      mapEl.style.cursor = hit ? 'pointer' : '';
+      const h = handleAt(e.containerPoint);
+      const hit = h || hitTest(e.containerPoint, e.latlng);
+      mapEl.style.cursor = h && h.kind === 'rotate' ? 'grab' : hit ? 'pointer' : '';
     }
   });
 
-  // ---- dragging objects / handles ----
+  // ---- drag-to-draw / dragging objects & handles ----
   map.on('mousedown', (e) => {
-    if (state.tool !== 'select') return;
+    const tool = state.tool;
+    if (tool === 'bed' || tool === 'building' || tool === 'fence') {
+      // mid-polygon (2+ corners down), clicks keep placing corners
+      if (state.drawing && state.drawing.pts.length > 1) return;
+      if (!requireZoom(16, 'draw')) return;
+      snapOff = e.originalEvent.altKey;
+      const start = applySnap(e.latlng);
+      state.rectDraw = { type: tool, start, cur: start, moved: false, shift: e.originalEvent.shiftKey };
+      map.dragging.disable();
+      L.DomEvent.stop(e.originalEvent);
+      return;
+    }
+    if (tool !== 'select') return;
     const handle = handleAt(e.containerPoint);
     const hit = handle ? { type: state.selection.type, obj: selectedObj() } : hitTest(e.containerPoint, e.latlng);
     if (!hit) return;
+    if (handle && handle.kind === 'rotate') {
+      const c = polyCenterLL(hit.obj.pts);
+      handle.center = c;
+      handle.orig = hit.obj.pts.map((p) => ({ lat: p.lat, lng: p.lng }));
+      handle.startAngle = bearingFrom(c, e.latlng);
+    }
     pushUndo();
     state.drag = { hit, handle, start: e.latlng, moved: false };
     map.dragging.disable();
@@ -1438,13 +1845,42 @@
   });
 
   window.addEventListener('mousemove', (e) => {
+    snapOff = e.altKey;
+    if (state.rectDraw) {
+      const r = state.rectDraw;
+      r.shift = e.shiftKey;
+      // shift already pins the far corner (square / 15° run), so leave it free
+      const ll = map.mouseEventToLatLng(e);
+      r.cur = r.shift ? (clearSnap(), ll) : applySnap(ll);
+      if (!r.moved && rectDragPx(r) > 5) {
+        r.moved = true;
+        state.drawing = null; // a lone stray corner gives way to the drag
+      }
+      requestRender();
+      return;
+    }
     if (!state.drag) return;
     const ll = map.mouseEventToLatLng(e);
     const d = state.drag;
+    if (!d.handle || d.handle.kind !== 'vertex') clearSnap();
     const dLat = ll.lat - d.start.lat, dLng = ll.lng - d.start.lng;
     if (Math.abs(dLat) + Math.abs(dLng) > 1e-7) d.moved = true;
-    if (d.handle && d.handle.kind === 'vertex') {
-      d.hit.obj.pts[d.handle.index] = { lat: ll.lat, lng: ll.lng };
+    if (d.handle && d.handle.kind === 'rotate') {
+      const c = d.handle.center;
+      const kx = mPerDegLng(c.lat);
+      let da = bearingFrom(c, ll) - d.handle.startAngle;
+      if (e.shiftKey) { const st = 15 * R; da = Math.round(da / st) * st; }
+      const cos = Math.cos(da), sin = Math.sin(da);
+      d.hit.obj.pts = d.handle.orig.map((p) => {
+        const x = (p.lng - c.lng) * kx, y = (p.lat - c.lat) * M_PER_DEG_LAT;
+        return {
+          lat: c.lat + (x * sin + y * cos) / M_PER_DEG_LAT,
+          lng: c.lng + (x * cos - y * sin) / kx,
+        };
+      });
+    } else if (d.handle && d.handle.kind === 'vertex') {
+      const s = applySnap(ll, { obj: d.hit.obj, index: d.handle.index });
+      d.hit.obj.pts[d.handle.index] = { lat: s.lat, lng: s.lng };
     } else if (d.handle && d.handle.kind === 'radius') {
       d.hit.obj.canopy = Math.max(0.5, Math.min(15, metersBetween(d.hit.obj.latlng, ll)));
     } else if (d.hit.obj.pts) {
@@ -1457,11 +1893,33 @@
     requestRender();
   });
 
-  window.addEventListener('mouseup', () => {
+  window.addEventListener('mouseup', (e) => {
+    if (state.rectDraw) {
+      const r = state.rectDraw;
+      state.rectDraw = null;
+      map.dragging.enable();
+      // read the far corner off the mouseup itself: a fast flick can outrun
+      // the mousemove stream entirely
+      if (e && typeof e.clientX === 'number') {
+        r.shift = e.shiftKey;
+        snapOff = e.altKey;
+        const ll = map.mouseEventToLatLng(e);
+        r.cur = r.shift ? ll : applySnap(ll);
+      }
+      clearSnap();
+      // a click that never travelled falls through to corner-by-corner tracing
+      if (r.moved || rectDragPx(r) > 5) {
+        commitRect(r);
+        suppressClickUntil = performance.now() + 400;
+      }
+      requestRender();
+      return;
+    }
     if (!state.drag) return;
     const moved = state.drag.moved;
     if (!moved) state.undoStack.pop(); // no-op drag: drop the snapshot
     state.drag = null;
+    clearSnap();
     map.dragging.enable();
     if (moved) { touch(); openInspector(); }
   });
@@ -1605,6 +2063,8 @@
       if (key === 'heatmap' || key === 'best') {
         document.getElementById('legend').classList.toggle('open', heatModeOn());
         buildLegend();
+        positionHint();
+        setTimeout(positionHint, 350); // after the legend finishes opening
         if (heatModeOn()) {
           if (!heatRegion()) {
             toast('Zoom in to your yard first — then the sun analysis covers everything on screen.');
@@ -1619,6 +2079,7 @@
         }
         updateSummary();
       }
+      refreshGuide();
       requestRender();
       scheduleSave();
     }));
@@ -1752,7 +2213,7 @@
       localStorage.setItem(SAVE_KEY, JSON.stringify({
         v: 1, center: { lat: c.lat, lng: c.lng }, zoom: map.getZoom(),
         objects: state.objects, doy: state.doy, time: state.time, show: state.show,
-        probe: state.probe,
+        probe: state.probe, guideOff,
       }));
     } catch { /* storage may be unavailable */ }
   }
@@ -1763,6 +2224,7 @@
       const s = JSON.parse(raw);
       if (s.objects) state.objects = { beds: [], trees: [], buildings: [], fences: [], plants: [], ...s.objects };
       if (s.probe && s.probe.latlng) state.probe = s.probe;
+      if (s.guideOff) guideOff = true;
       if (s.doy) { state.doy = s.doy; dateSlider.value = s.doy; }
       if (typeof s.time === 'number') { state.time = s.time; timeSlider.value = s.time; }
       if (s.show) {
@@ -1848,6 +2310,7 @@
     }
     // viewport-following analysis: recompute once the pan/zoom settles
     if (heatModeOn() && heatStale()) scheduleHeat(350);
+    refreshGuide(); // step 1 ticks off once they are down at yard zoom
     scheduleSave();
   });
 
@@ -1866,6 +2329,7 @@
   refreshDay();
   updateDock();
   updateSummary();
+  refreshGuide();
   if (heatModeOn()) computeHeat();
   requestRender();
 })();

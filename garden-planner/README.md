@@ -57,8 +57,15 @@ solar time (timezone estimated from longitude). The model is clear-sky: real lig
 varies with weather, terrain, and reflections.
 
 Shadow lengths are `height / tan(altitude)`, capped at 400 m; building shadows are
-extruded footprints, tree shadows are offset canopy discs plus a trunk streak, and
-sun below ~2° is treated as horizon-blocked.
+extruded footprints. A canopy is treated as a ball of leaves, so its shadow is an
+ellipse offset by `canopyCenterHeight / tan(altitude)` and stretched along the sun's
+bearing by `1 / sin(altitude)` — round overhead, long at dusk; the trunk is not
+modelled.
+
+Sun below 2° is treated as horizon-blocked everywhere — the raster, the light probe
+*and* the drawn shadows. Below that, true geometry stretches shadows past 29× an
+object's height, which the app has no terrain or treeline to interrupt; the shadow
+layer fades out over 2–6° so it doesn't snap off.
 
 ## Stack
 

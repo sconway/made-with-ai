@@ -284,6 +284,10 @@
           open the plant library (<kbd>P</kbd>) and plant. The Garden Ledger will warn you if anything
           is starved of light, crowded, or next to a bad companion.</p></div>
       </div>
+      <p style="margin-top:16px">These same steps ride along inside the app as a
+        <b class="gold">Getting started</b> checklist in the right-hand column — it ticks each one off
+        as you actually do it, and clicking a step picks up the tool it is asking for. Close it with
+        <b>✕</b> whenever you like; the <b>↺ Getting started</b> pill brings it back.</p>
     </section>
 
     <!-- ================= TOOLS ================= -->
@@ -293,11 +297,15 @@
       <div class="cards">
         <div class="card"><h4><span class="ic">➤</span>Select &amp; move <kbd>V</kbd></h4>
           <p>Click anything to inspect it; drag to move it. Selected beds and buildings grow white
-            corner handles — drag a handle to reshape. Trees get a radius handle on the canopy edge.</p>
-          <p class="tip">Click a warning in the Garden Ledger to fly straight to the offending plant.</p></div>
+            corner handles — drag a handle to reshape — plus a gold <b>rotate</b> grip above the
+            shape: drag it to spin the whole outline, with <kbd>Shift</kbd> snapping to 15°.
+            Trees get a radius handle on the canopy edge.</p>
+          <p class="tip">Drag-drawn rectangles come out square to north. Rotate them to sit true to your house.</p></div>
         <div class="card"><h4><span class="ic">▦</span>Garden bed <kbd>B</kbd></h4>
-          <p>Click the corners of the bed over the soil you can see; close with <kbd>Enter</kbd>,
-            a double-click, or by clicking the first corner again. Area in ft² updates live.</p>
+          <p><b>Drag a rectangle</b> over the soil and let go — that's the whole gesture, and the
+            width, depth and area count up in feet while you drag. Hold <kbd>Shift</kbd> for a
+            perfect square. For an L-shape or a curve, <b>click</b> corner by corner instead and
+            close with <kbd>Enter</kbd>, a double-click, or by clicking the first corner again.</p>
           <p class="tip">Name beds in the inspector — "Tomato row", "Shade corner" — the labels render on the map.</p></div>
         <div class="card"><h4><span class="ic">🌳</span>Tree <kbd>T</kbd></h4>
           <p>One click plants it. Set <b>height</b>, <b>canopy radius</b>, and — crucially —
@@ -305,12 +313,16 @@
             evergreens shade year-round.</p>
           <p class="tip">Match the canopy circle to the tree's real crown in the imagery — it's usually bigger than you think.</p></div>
         <div class="card"><h4><span class="ic">⌂</span>Building <kbd>U</kbd></h4>
-          <p>Trace the footprint, set the height. Buildings cast full extruded shadows — the north
-            side of a two-story house is a serious shade zone.</p>
+          <p>Drag a rectangle over the roof, then set the height. Most houses aren't square to
+            north, so switch to <kbd>V</kbd> and drag the rotate grip until the outline sits on
+            the real roofline. Buildings cast full extruded shadows — the north side of a
+            two-story house is a serious shade zone.</p>
           <p class="tip">Trace the <b>neighbor's</b> house and trees too. Their shade doesn't respect property lines.</p></div>
         <div class="card"><h4><span class="ic">╫</span>Fence / wall <kbd>F</kbd></h4>
-          <p>Click along the line, double-click to finish, set the height. A 6&nbsp;ft privacy fence
-            shades a surprising strip — morning on its west side, evening on its east.</p>
+          <p>Drag from one end to the other for a straight run — <kbd>Shift</kbd> snaps the bearing
+            to 15° steps. For a fence that turns corners, click along the line and double-click to
+            finish. Then set the height: a 6&nbsp;ft privacy fence shades a surprising strip —
+            morning on its west side, evening on its east.</p>
           <p class="tip">Fences are where cool-season greens hide from brutal afternoon sun.</p></div>
         <div class="card"><h4><span class="ic">🌱</span>Plant <kbd>P</kbd></h4>
           <p>Opens the 40-plant library — search or filter by category, click a plant to arm it, then
@@ -321,6 +333,13 @@
           <p>Click any spot to chart its personal day of sunlight. Covered in depth below —
             this is the most precise instrument in the app.</p>
           <p class="tip">The probe is draggable with Select and survives reloads.</p></div>
+        <div class="card"><h4><span class="ic">⊹</span>Snapping</h4>
+          <p>New corners latch onto the corners you have already drawn — a cyan ⊗ ring marks the
+            catch, so a bed can sit flush against the house wall instead of a hair away. Just out of
+            reach, a dashed cyan guide lines the point up with an existing corner's row or column.
+            It works while drawing and while dragging a corner handle. Hold <kbd>Alt</kbd> to draw
+            free for one gesture, or switch <b>Snap</b> off in the dock.</p>
+          <p class="tip">Shadows are cast from the outlines you trace, so corners that actually meet make a truer sun map.</p></div>
         <div class="card"><h4><span class="ic">◇</span>Erase <kbd>E</kbd> &amp; Undo <kbd>⌘Z</kbd></h4>
           <p>Erase removes whatever you click. Undo walks back the last 40 changes.
             <b>✕ Clear</b> in the top bar wipes the whole design (undoable this session).</p>
@@ -530,6 +549,9 @@
         <tr><td><kbd>F</kbd></td><td>Fence / wall</td></tr>
         <tr><td><kbd>L</kbd></td><td>Light probe</td></tr>
         <tr><td><kbd>E</kbd></td><td>Erase</td></tr>
+        <tr><td>Drag</td><td>Draw a rectangle (bed, building) or a straight run (fence)</td></tr>
+        <tr><td><kbd>Shift</kbd> + drag</td><td>Square the rectangle · snap the fence or rotation to 15°</td></tr>
+        <tr><td><kbd>Alt</kbd> + draw</td><td>Ignore corner snapping for one gesture</td></tr>
         <tr><td><kbd>Enter</kbd> / dbl-click</td><td>Close a polygon or fence line</td></tr>
         <tr><td><kbd>Esc</kbd></td><td>Cancel drawing · deselect</td></tr>
         <tr><td><kbd>⌫</kbd></td><td>Delete selection</td></tr>
@@ -549,6 +571,12 @@
         Terrain is flat: a yard on a north slope gets less than the map shows. And the golden rule
         one last time: <b>untraced objects cast no shade</b> — if the gold covers a forest you didn't
         outline, the forest wins in real life.</p>
+      <p><b>The last minutes of the day are cut off on purpose.</b> Once the sun drops below about
+        2° above the horizon, geometry alone would stretch every shadow to roughly 29× the object's
+        height — a 26&nbsp;ft tree would black out 750&nbsp;ft of neighborhood. In reality the sun is
+        behind the far treeline, the roofs and the slope of the land by then, none of which Heliotrope
+        traces. So shadows fade out as the sun sinks and stop at 2°, and the sun-hours map counts that
+        light as already gone.</p>
       <p><b>Calibrate once.</b> Pick a shadow you can see in the satellite photo itself (most imagery
         is shot mid-morning). Set the time slider until the drawn shadows of your traced objects line
         up with the photographed ones — if they agree, every other hour of the simulation is on rails.</p>
