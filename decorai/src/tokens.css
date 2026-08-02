@@ -1,0 +1,611 @@
+/* ================================================================
+   DecorAIt — Design Tokens
+   Philosophy: WARM PRECISION
+   Materials from a design magazine, mechanics from a code editor.
+
+   See .design/decorait-overhaul/DESIGN_BRIEF.md
+
+   ── HOW THIS FILE WORKS ───────────────────────────────────────
+   Three layers, in order:
+
+   1. PRIMITIVES  — raw ramps (--warm-*, --indigo-*, --clay-*).
+                    Never referenced directly by components.
+   2. SEMANTIC    — meaning-based tokens (--color-bg-primary, …).
+                    This is the API. New code uses ONLY these.
+   3. COMPAT      — the existing token names already consumed by
+                    styles.css and floorPlanEditor.js, remapped onto
+                    the new primitives.
+
+   Layer 3 is why this re-skins the whole app without editing 7,839
+   lines of CSS: every existing rule already reads --surface,
+   --text-primary, --border-subtle, --primary-color, --card-bg etc.
+   Repointing those ~60 declarations repaints everything downstream.
+   DO NOT DELETE LAYER 3 — the layout editor depends on it.
+
+   ── ACCESSIBILITY ─────────────────────────────────────────────
+   Every text pairing below is annotated with its measured contrast
+   ratio against its intended background. Target is WCAG 2.1 AA:
+   4.5:1 body text, 3:1 large text and non-text UI.
+   ================================================================ */
+
+/* ================================================================
+   LAYER 1 — PRIMITIVES
+   ================================================================ */
+
+:root {
+  /* ── Warm neutrals ────────────────────────────────────────────
+     Replaces the old cool --gray-* ramp (#fafaf9 → #18181b, which
+     carried a blue-slate cast). These are hue-shifted warm: paper,
+     not screen. This single change does more to move the app off
+     "generic AI SaaS" than any other token here. */
+  --warm-50:  #fdfcfa;  /* paper — page background */
+  --warm-100: #f8f6f2;  /* raised card on paper */
+  --warm-150: #f2efe9;  /* sunken well, input rest */
+  --warm-200: #e9e4db;  /* hairline borders */
+  --warm-300: #d8d1c5;  /* default borders, dividers */
+  --warm-400: #b0a797;  /* strong borders, disabled glyphs */
+  --warm-500: #8a8171;  /* 3.78:1 on paper — NON-TEXT ONLY (icons, borders) */
+  --warm-600: #6b6355;  /* 5.77:1 on paper — tertiary text ✓ AA */
+  --warm-700: #4f4940;  /* 8.69:1 on paper — secondary text ✓ AA */
+  --warm-800: #35312b;  /* 12.6:1 — heavy UI, inverse surfaces */
+  --warm-900: #201e1a;  /* 16.1:1 on paper — primary text ✓ AAA */
+  --warm-950: #14120f;  /* deepest ink — dark mode canvas */
+
+  /* ── Indigo (brand) ───────────────────────────────────────────
+     500 and 600 match decoraityourspace.com EXACTLY so buttons are
+     identical across the marketing → app handoff. Only the tints
+     (50–300) are re-mixed warm, so indigo washes sit on paper
+     without going cold and purple-grey. Do not "improve" 500/600
+     without updating the marketing site in the same change. */
+  --indigo-50:  #f0effc;
+  --indigo-100: #e3e1fa;
+  --indigo-200: #c9c6f6;
+  --indigo-300: #a8a3f0;
+  --indigo-400: #8079e8;  /* dark-mode brand text / links */
+  --indigo-500: #6366f1;  /* ← matches marketing site */
+  --indigo-600: #4f46e5;  /* ← matches marketing site. 6.28:1 w/ white ✓ AA */
+  --indigo-700: #4038c4;
+  --indigo-800: #342e9e;
+  --indigo-900: #2a2578;
+
+  /* ── Clay (secondary accent) ──────────────────────────────────
+     The old --accent-500 (#b45309) was defined and never used. Clay
+     is promoted here to a real role: editorial emphasis, the serif
+     display accent, "saved"/"applied" affirmations, and warm data
+     highlights in the editors. It is NOT a second CTA color. */
+  --clay-50:  #fdf6f0;
+  --clay-100: #fbede2;
+  --clay-300: #e8b48c;
+  --clay-500: #c2662e;
+  --clay-600: #a04f20;  /* 5.64:1 on paper — text-safe ✓ AA */
+  --clay-700: #7f3d18;
+
+  /* ── Status ───────────────────────────────────────────────────
+     Warm-shifted so they belong to the same world. Each -600 is
+     text-safe on paper; each -500 is for fills and icons. */
+  --success-100: #e4f0e6;
+  --success-500: #3f8f52;
+  --success-600: #2f6f3f;  /* 4.9:1 on paper ✓ AA */
+  --error-100:   #fbe8e5;
+  --error-500:   #cf4436;
+  --error-600:   #ab3327;  /* 5.3:1 on paper ✓ AA */
+  --warning-100: #fdf1de;
+  --warning-500: #cc8324;
+  --warning-600: #96601a;  /* 4.6:1 on paper ✓ AA */
+  --info-100:    var(--indigo-100);
+  --info-500:    var(--indigo-500);
+  --info-600:    var(--indigo-600);
+}
+
+/* ================================================================
+   LAYER 2 — SEMANTIC TOKENS
+   The API. All new components reference only these.
+   ================================================================ */
+
+:root {
+  /* ── Background ─────────────────────────────────────────────── */
+  --color-bg-primary:    var(--warm-50);
+  --color-bg-secondary:  var(--warm-100);
+  --color-bg-tertiary:   var(--warm-150);
+  --color-bg-inverse:    var(--warm-900);
+  --color-bg-canvas:     #ffffff;  /* editors: NEUTRAL, not warm.
+                                      Floor plans and 3D boards must
+                                      read accurately — Principle 3,
+                                      "one product, two densities". */
+
+  /* ── Text ───────────────────────────────────────────────────── */
+  --color-text-primary:    var(--warm-900);  /* 16.1:1 ✓ */
+  --color-text-secondary:  var(--warm-700);  /*  8.7:1 ✓ */
+  --color-text-tertiary:   var(--warm-600);  /*  5.8:1 ✓ */
+  --color-text-placeholder: var(--warm-600); /*  5.8:1 ✓ — deliberately
+                                      NOT --warm-500 (3.78:1), which
+                                      is the usual way placeholder
+                                      text fails AA. */
+  --color-text-disabled:   var(--warm-500);  /* exempt from 1.4.3 as an
+                                      inactive control */
+  --color-text-inverse:    var(--warm-50);
+  --color-text-link:       var(--indigo-600);
+  --color-text-accent:     var(--clay-600);  /* 5.6:1 ✓ */
+  --color-text-on-accent:  #ffffff;
+
+  /* ── Border ─────────────────────────────────────────────────── */
+  --color-border-subtle:    var(--warm-200);
+  --color-border-primary:   var(--warm-300);
+  --color-border-secondary: var(--warm-200);
+  --color-border-strong:    var(--warm-400);
+  --color-border-focus:     var(--indigo-600);
+
+  /* ── Accent / actions ───────────────────────────────────────── */
+  --color-accent-primary:        var(--indigo-600);
+  --color-accent-primary-hover:  var(--indigo-700);
+  --color-accent-primary-active: var(--indigo-800);
+  --color-accent-primary-subtle: var(--indigo-50);
+  --color-accent-secondary:      var(--clay-600);
+  --color-accent-secondary-subtle: var(--clay-100);
+
+  /* ── Status ─────────────────────────────────────────────────── */
+  --color-status-success: var(--success-600);
+  --color-status-warning: var(--warning-600);
+  --color-status-error:   var(--error-600);
+  --color-status-info:    var(--info-600);
+  --color-status-success-bg: var(--success-100);
+  --color-status-warning-bg: var(--warning-100);
+  --color-status-error-bg:   var(--error-100);
+  --color-status-info-bg:    var(--info-100);
+
+  /* ── Overlay ────────────────────────────────────────────────── */
+  --color-surface-overlay: rgba(32, 30, 26, 0.55);  /* warm-tinted scrim,
+                                      not the old blue-black */
+  --color-surface-raised:  var(--warm-50);
+  --color-surface-sunken:  var(--warm-150);
+}
+
+/* ================================================================
+   TYPOGRAPHY
+   Three families, three jobs. Load in index.html:
+   Inter 300–700 · Instrument Serif 400 (roman + italic) · JetBrains Mono 400,500
+   ================================================================ */
+
+:root {
+  /* Instrument Serif is the direct tie to decoraityourspace.com,
+     where the hero sets "redesigned" in serif italic. The app
+     currently loads none of it. */
+  --font-family-display: 'Instrument Serif', 'Iowan Old Style', Georgia, serif;
+  --font-family-body:    'Inter', system-ui, -apple-system, sans-serif;
+  --font-family-mono:    'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
+
+  /* Scale. 14px floor is an existing app-wide rule — preserved.
+     Sizes above --font-size-3xl are new: the old ramp topped out at
+     30px, which is why nothing in the app ever reads as display. */
+  --font-size-xs:   0.875rem;  /* 14 — app minimum */
+  --font-size-sm:   0.875rem;  /* 14 */
+  --font-size-base: 1rem;      /* 16 */
+  --font-size-md:   1.125rem;  /* 18 */
+  --font-size-lg:   1.25rem;   /* 20 */
+  --font-size-xl:   1.5rem;    /* 24 */
+  --font-size-2xl:  1.875rem;  /* 30 */
+  --font-size-3xl:  2.25rem;   /* 36 */
+  --font-size-4xl:  3rem;      /* 48 */
+  --font-size-5xl:  4rem;      /* 64 — hero display only */
+
+  --font-weight-normal:   400;
+  --font-weight-medium:   500;
+  --font-weight-semibold: 600;
+  --font-weight-bold:     700;
+
+  --line-height-tight:   1.15;  /* display */
+  --line-height-snug:    1.3;   /* headings */
+  --line-height-normal:  1.5;   /* body */
+  --line-height-relaxed: 1.65;  /* long-form */
+
+  /* Optical tracking: tighter as size grows. Display serif needs
+     less correction than the sans, hence the separate value. */
+  --letter-spacing-display: -0.03em;
+  --letter-spacing-tight:   -0.02em;
+  --letter-spacing-snug:    -0.01em;
+  --letter-spacing-normal:  0;
+  --letter-spacing-wide:    0.04em;  /* all-caps labels */
+  --letter-spacing-mono:    -0.01em;
+
+  /* Tabular numerals — required for dimensions, cut lists, token
+     counts, and anything that must not jitter as it updates. */
+  --font-numeric-tabular: 'tnum' 1, 'lnum' 1;
+}
+
+/* ================================================================
+   SPACING — 4px base, retained from the existing scale.
+   The old --space-* names are preserved verbatim in Layer 3.
+   ================================================================ */
+
+:root {
+  --space-0:  0;
+  --space-1:  0.25rem;  /*  4 */
+  --space-2:  0.5rem;   /*  8 */
+  --space-3:  0.75rem;  /* 12 */
+  --space-4:  1rem;     /* 16 */
+  --space-5:  1.25rem;  /* 20 */
+  --space-6:  1.5rem;   /* 24 */
+  --space-8:  2rem;     /* 32 */
+  --space-10: 2.5rem;   /* 40 */
+  --space-12: 3rem;     /* 48 */
+  --space-16: 4rem;     /* 64 */
+  --space-20: 5rem;     /* 80 */
+  --space-24: 6rem;     /* 96 */
+}
+
+/* ================================================================
+   DENSITY — Principle 3: "one product, two densities"
+   Consumer surfaces breathe; editors compress. Same tokens,
+   different rhythm. Editors opt in via [data-density="tool"].
+   ================================================================ */
+
+:root {
+  --control-height:       2.75rem;  /* 44px — meets the AA touch target */
+  --control-height-sm:    2.25rem;  /* 36px */
+  --control-padding-x:    var(--space-4);
+  --control-gap:          var(--space-3);
+  --section-gap:          var(--space-8);
+  --tap-target-min:       2.75rem;  /* 44px — never go below on touch */
+}
+
+[data-density="tool"] {
+  --control-height:       2rem;     /* 32px */
+  --control-height-sm:    1.75rem;  /* 28px */
+  --control-padding-x:    var(--space-2);
+  --control-gap:          var(--space-1);
+  --section-gap:          var(--space-4);
+  /* Touch targets are NOT reduced — pointer-coarse restores them below. */
+}
+
+@media (pointer: coarse) {
+  [data-density="tool"] {
+    --control-height: var(--tap-target-min);
+  }
+}
+
+/* ================================================================
+   LAYOUT
+   ================================================================ */
+
+:root {
+  --max-width-content: 42rem;   /* 672px — ~68ch reading measure */
+  --max-width-wide:    64rem;   /* 1024px — configure + results */
+  --max-width-page:    80rem;   /* 1280px — shell ceiling. The app
+                                   currently stretches edge-to-edge on
+                                   wide screens; it should not. */
+
+  --border-radius-sm:   6px;
+  --border-radius-md:   10px;   /* matches marketing site buttons */
+  --border-radius-lg:   14px;
+  --border-radius-xl:   20px;
+  --border-radius-2xl:  28px;   /* bottom sheets */
+  --border-radius-full: 999px;
+
+  /* Shadows re-tinted from cool slate rgba(15,23,42,…) to warm ink.
+     A cool shadow on a warm surface is the single most common way a
+     warm palette ends up looking muddy. */
+  --shadow-xs: 0 1px 2px rgba(32, 30, 26, 0.04);
+  --shadow-sm: 0 1px 3px rgba(32, 30, 26, 0.06), 0 1px 2px rgba(32, 30, 26, 0.04);
+  --shadow-md: 0 4px 12px -2px rgba(32, 30, 26, 0.08), 0 2px 4px -1px rgba(32, 30, 26, 0.04);
+  --shadow-lg: 0 12px 28px -8px rgba(32, 30, 26, 0.12), 0 4px 8px -2px rgba(32, 30, 26, 0.06);
+  --shadow-xl: 0 24px 48px -12px rgba(32, 30, 26, 0.18);
+  --shadow-sheet: 0 -8px 32px -8px rgba(32, 30, 26, 0.16);  /* bottom sheets */
+
+  /* Focus ring: 3:1 against adjacent surfaces, offset so it never
+     collides with the control's own border. */
+  --shadow-focus: 0 0 0 3px rgba(79, 70, 229, 0.28);
+  --focus-ring-width:  2px;
+  --focus-ring-offset: 2px;
+  --focus-ring-color:  var(--color-border-focus);
+}
+
+/* ================================================================
+   MOTION
+   Existing easings are preserved — they were already well chosen and
+   match the Linear/Vercel reference. New names alias the old ones so
+   both spellings work during migration.
+   ================================================================ */
+
+:root {
+  --duration-instant: 50ms;
+  --duration-fast:    120ms;
+  --duration-normal:  180ms;
+  --duration-slow:    280ms;
+  --duration-slower:  420ms;
+
+  --easing-default: cubic-bezier(0.16, 1, 0.3, 1);
+  --easing-out:     cubic-bezier(0.16, 1, 0.3, 1);
+  --easing-in:      cubic-bezier(0.4, 0, 1, 1);
+  --easing-in-out:  cubic-bezier(0.65, 0, 0.35, 1);
+  --easing-bounce:  cubic-bezier(0.34, 1.56, 0.64, 1);
+  /* iOS-like sheet motion — the "native feel" curve */
+  --easing-sheet:   cubic-bezier(0.32, 0.72, 0, 1);
+}
+
+/* ================================================================
+   BREAKPOINTS
+   Custom properties can't be used in @media queries — these exist as
+   documentation so every hardcoded breakpoint traces back here.
+   ================================================================ */
+
+:root {
+  --breakpoint-sm:  375px;   /* small phone */
+  --breakpoint-md:  640px;   /* ← sheet/modal switch, single→multi column */
+  --breakpoint-lg:  1024px;  /* editors reach full three-panel layout */
+  --breakpoint-xl:  1280px;  /* page max-width engages */
+}
+
+/* ================================================================
+   Z-INDEX
+   ================================================================ */
+
+:root {
+  --z-base:    0;
+  --z-sticky:  10;
+  --z-overlay: 100;
+  --z-modal:   2000;
+  --z-toast:   3000;
+}
+
+/* ================================================================
+   MOBILE VIEWPORT / SAFE AREA
+   Preserved from the existing system — this was already handled well
+   and is load-bearing for the "native app feel" directive.
+   ================================================================ */
+
+:root {
+  --modal-vh: min(100dvh, 100svh);
+  --modal-pad-top:    max(1rem, env(safe-area-inset-top, 0px));
+  --modal-pad-right:  max(1rem, env(safe-area-inset-right, 0px));
+  --modal-pad-bottom: max(1rem, env(safe-area-inset-bottom, 0px));
+  --modal-pad-left:   max(1rem, env(safe-area-inset-left, 0px));
+  --modal-max-height: calc(var(--modal-vh) - var(--modal-pad-top) - var(--modal-pad-bottom));
+
+  /* Desktop header height. The header is sticky, so anything else that sticks
+     must offset by this or it slides under the bar before settling. */
+  --header-height: 94px;
+
+  --safe-bottom: env(safe-area-inset-bottom, 0px);
+  /* Height of the fixed mobile action bar that owns the bottom edge.
+     (There is no mobile tab bar — the editors are desktop-only, so
+     advertising them in thumb-reach navigation was misleading.) */
+  --action-bar-height: calc(4.5rem + var(--safe-bottom));
+}
+
+/* ================================================================
+   LAYER 3 — COMPATIBILITY
+   Every token name the existing 7,839-line stylesheet and
+   floorPlanEditor.js already consume, repointed onto the new
+   primitives. This is what re-skins the app wholesale.
+
+   ⚠ DO NOT REMOVE. Verified consumers include the layout editor,
+   the woodworking editor, and hundreds of rules in styles.css.
+   ================================================================ */
+
+:root {
+  /* Old cool --gray-* ramp → warm equivalents */
+  --gray-50:  var(--warm-50);
+  --gray-100: var(--warm-100);
+  --gray-200: var(--warm-200);
+  --gray-300: var(--warm-300);
+  --gray-400: var(--warm-400);
+  --gray-500: var(--warm-500);
+  --gray-600: var(--warm-600);
+  --gray-700: var(--warm-700);
+  --gray-800: var(--warm-800);
+  --gray-900: var(--warm-900);
+
+  /* Old --brand-* ramp → tuned indigo */
+  --brand-50:  var(--indigo-50);
+  --brand-100: var(--indigo-100);
+  --brand-200: var(--indigo-200);
+  --brand-400: var(--indigo-400);
+  --brand-500: var(--indigo-500);
+  --brand-600: var(--indigo-600);
+  --brand-700: var(--indigo-700);
+  --brand-800: var(--indigo-800);
+
+  /* Clay — previously defined and unused */
+  --accent-500: var(--clay-500);
+  --accent-600: var(--clay-600);
+
+  /* Surfaces + text (already semantic in the old system) */
+  --surface:         var(--color-bg-primary);
+  --surface-raised:  var(--color-surface-raised);
+  --surface-sunken:  var(--color-surface-sunken);
+  --surface-overlay: var(--color-surface-overlay);
+
+  --text-primary:   var(--color-text-primary);
+  --text-secondary: var(--color-text-secondary);
+  --text-tertiary:  var(--color-text-tertiary);
+  --text-on-brand:  var(--color-text-inverse);
+  --text-disabled:  var(--color-text-disabled);
+
+  --border-subtle:  var(--color-border-subtle);
+  --border-default: var(--color-border-primary);
+  --border-strong:  var(--color-border-strong);
+  --border-focus:   var(--color-border-focus);
+
+  /* Type — old names */
+  --font-sans:  var(--font-family-body);
+  --text-min:   var(--font-size-xs);
+  --text-xs:    var(--font-size-xs);
+  --text-sm:    var(--font-size-sm);
+  --text-base:  var(--font-size-base);
+  --text-lg:    var(--font-size-md);
+  --text-xl:    var(--font-size-lg);
+  --text-2xl:   var(--font-size-xl);
+  --text-3xl:   var(--font-size-2xl);
+
+  --leading-tight:   var(--line-height-tight);
+  --leading-normal:  var(--line-height-normal);
+  --leading-relaxed: var(--line-height-relaxed);
+
+  --weight-regular:  var(--font-weight-normal);
+  --weight-medium:   var(--font-weight-medium);
+  --weight-semibold: var(--font-weight-semibold);
+  --weight-bold:     var(--font-weight-bold);
+
+  /* Radii — old names */
+  --radius-sm:   var(--border-radius-sm);
+  --radius-md:   var(--border-radius-md);
+  --radius-lg:   var(--border-radius-lg);
+  --radius-xl:   var(--border-radius-xl);
+  --radius-pill: var(--border-radius-full);
+
+  /* Motion — old names */
+  --ease-out:      var(--easing-out);
+  --ease-in-out:   var(--easing-in-out);
+  --ease-spring:   var(--easing-bounce);
+  --duration-base: var(--duration-normal);
+
+  /* Status — old names */
+  --success-color: var(--color-status-success);
+  --error-color:   var(--color-status-error);
+
+  /* ── The alias block from styles.css:126 ──────────────────────
+     Heavily consumed, especially by floorPlanEditor.js. Preserved
+     exactly; only the values behind them change. */
+  --primary-color:   var(--indigo-600);
+  --primary-dark:    var(--indigo-700);
+  --secondary-color: var(--color-surface-sunken);
+  --text-color:      var(--color-text-primary);
+  --text-light:      var(--color-text-secondary);
+  --background-color: var(--color-bg-primary);
+  --border-color:    var(--color-border-subtle);
+  --box-shadow:      var(--shadow-md);
+  --border-radius:   var(--border-radius-sm);
+  --button-border-radius: var(--border-radius-sm);
+
+  /* Layout editor aliases */
+  --primary:   var(--indigo-600);
+  --secondary: var(--clay-500);   /* was #a855f7 purple — off-system */
+  --text:      var(--color-text-primary);
+  --border:    var(--color-border-subtle);
+  --background: var(--color-bg-tertiary);
+  --card-bg:   var(--color-bg-primary);
+}
+
+/* ================================================================
+   DARK PALETTE — DEFINED, NOT SHIPPED
+
+   Per the Phase 1 decision: structured and ready, but NOT wired to
+   a toggle and NOT auto-applied.
+
+   The `prefers-color-scheme` block below is intentionally commented
+   out. Enabling it would flip the theme for every visitor whose OS
+   is set to dark, across 7,839 lines of CSS that have never been
+   tested against a dark background — shipping a broken experience
+   to roughly half of all users.
+
+   To enable dark mode later:
+     1. Audit styles.css + woodworking/styles.css for hardcoded
+        colors that bypass these tokens (the SVG grid strokes in
+        index.html are known offenders: #e8e8e8, #d0d0d0, #bbb).
+     2. Test every surface, especially the editors.
+     3. Add a toggle that sets [data-theme] on <html>.
+     4. Only then uncomment the media query at the bottom.
+
+   Not an inversion: the dark canvas is warm (ink, not slate), text
+   steps down from pure white to avoid halation, shadows deepen
+   rather than reuse light-mode values, and indigo lightens to
+   --indigo-400 to hold contrast on dark.
+   ================================================================ */
+
+[data-theme="dark"] {
+  --color-bg-primary:   var(--warm-950);
+  --color-bg-secondary: #1e1b16;
+  --color-bg-tertiary:  #272319;
+  --color-bg-inverse:   var(--warm-50);
+  --color-bg-canvas:    #1a1815;
+
+  --color-text-primary:     #f2efe9;  /* 16.3:1 — not pure white, avoids halation */
+  --color-text-secondary:   #c4bcae;  /* 10.1:1 ✓ */
+  --color-text-tertiary:    #948b7c;  /*  5.4:1 ✓ */
+  --color-text-placeholder: #948b7c;  /*  5.4:1 ✓ */
+  --color-text-disabled:    #6b6355;
+  --color-text-inverse:     var(--warm-900);
+  --color-text-link:        var(--indigo-400);  /* lightened to hold contrast */
+  --color-text-accent:      var(--clay-300);
+
+  --color-border-subtle:    #2e2a23;
+  --color-border-primary:   #3d382f;
+  --color-border-secondary: #2e2a23;
+  --color-border-strong:    #57503f;
+  --color-border-focus:     var(--indigo-400);
+
+  --color-accent-primary:        var(--indigo-500);
+  --color-accent-primary-hover:  var(--indigo-400);
+  --color-accent-primary-active: var(--indigo-300);
+  --color-accent-primary-subtle: #241f4a;
+  --color-accent-secondary:      var(--clay-300);
+  --color-accent-secondary-subtle: #33210f;
+
+  --color-status-success: #6bbf7e;
+  --color-status-warning: #e0a445;
+  --color-status-error:   #e8776a;
+  --color-status-info:    var(--indigo-400);
+  --color-status-success-bg: #1a2b1e;
+  --color-status-warning-bg: #2e2314;
+  --color-status-error-bg:   #2e1a17;
+  --color-status-info-bg:    #201d3d;
+
+  --color-surface-overlay: rgba(10, 9, 7, 0.7);
+  --color-surface-raised:  #1e1b16;
+  --color-surface-sunken:  #100e0c;
+
+  /* Deeper and more diffuse — light-mode shadows disappear on dark */
+  --shadow-xs: 0 1px 2px rgba(0, 0, 0, 0.3);
+  --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.4), 0 1px 2px rgba(0, 0, 0, 0.3);
+  --shadow-md: 0 4px 12px -2px rgba(0, 0, 0, 0.5), 0 2px 4px -1px rgba(0, 0, 0, 0.3);
+  --shadow-lg: 0 12px 28px -8px rgba(0, 0, 0, 0.6), 0 4px 8px -2px rgba(0, 0, 0, 0.4);
+  --shadow-xl: 0 24px 48px -12px rgba(0, 0, 0, 0.7);
+  --shadow-sheet: 0 -8px 32px -8px rgba(0, 0, 0, 0.6);
+  --shadow-focus: 0 0 0 3px rgba(128, 121, 232, 0.4);
+
+  /* Compat layer follows the semantics above */
+  --surface:         var(--color-bg-primary);
+  --surface-raised:  var(--color-surface-raised);
+  --surface-sunken:  var(--color-surface-sunken);
+  --surface-overlay: var(--color-surface-overlay);
+  --text-primary:    var(--color-text-primary);
+  --text-secondary:  var(--color-text-secondary);
+  --text-tertiary:   var(--color-text-tertiary);
+  --text-disabled:   var(--color-text-disabled);
+  --border-subtle:   var(--color-border-subtle);
+  --border-default:  var(--color-border-primary);
+  --border-strong:   var(--color-border-strong);
+  --border-focus:    var(--color-border-focus);
+  --primary-color:   var(--color-accent-primary);
+  --primary-dark:    var(--color-accent-primary-hover);
+  --text-color:      var(--color-text-primary);
+  --text-light:      var(--color-text-secondary);
+  --background-color: var(--color-bg-primary);
+  --border-color:    var(--color-border-subtle);
+  --primary:         var(--color-accent-primary);
+  --text:            var(--color-text-primary);
+  --border:          var(--color-border-subtle);
+  --background:      var(--color-bg-tertiary);
+  --card-bg:         var(--color-bg-secondary);
+}
+
+/* ⚠ INTENTIONALLY DISABLED — see the note above before enabling.
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) { ... copy of [data-theme="dark"] ... }
+}
+*/
+
+/* ================================================================
+   REDUCED MOTION — global, token-level.
+   Information is preserved; only movement is removed.
+   ================================================================ */
+
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --duration-instant: 0ms;
+    --duration-fast:    0ms;
+    --duration-normal:  0ms;
+    --duration-slow:    0ms;
+    --duration-slower:  0ms;
+  }
+}

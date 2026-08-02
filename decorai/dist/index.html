@@ -7,11 +7,13 @@
     <title>DecorAIt - AI-Powered Interior Design</title>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <!-- Inter (UI) · Instrument Serif (display — matches decoraityourspace.com) · JetBrains Mono (numerics) -->
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Instrument+Serif:ital@0;1&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+    <!-- Token layer must load before styles.css -->
     <link rel="icon" href="/assets/favicon-0noC-j7T.png" />
     <script src="https://unpkg.com/feather-icons"></script>
-  <script type="module" crossorigin src="/assets/index-DdG1-aWN.js"></script>
-  <link rel="stylesheet" crossorigin href="/assets/index-QtrW5x3_.css">
+  <script type="module" crossorigin src="/assets/index-f0UYmezU.js"></script>
+  <link rel="stylesheet" crossorigin href="/assets/index-DiggYrXp.css">
 </head>
 
 <body>
@@ -19,17 +21,25 @@
         <div class="header-inner">
             <a href="/" class="logo" id="logo-home-link" aria-label="DecorAIt home">
                 <h1>DecorAIt</h1>
-                <span class="tagline">Reimagine Your Space</span>
+                <span class="tagline">Reimagine <em>Your Space</em></span>
             </a>
-            <div class="header-actions">
-                <button type="button" id="layout-editor-btn" class="layout-editor-btn" title="Open the floor plan editor—draw walls, add furniture, and export your layout" disabled aria-busy="true">
-                    <i data-feather="layout"></i>
-                    <span>Layout Editor</span>
+            <!-- Workspace switcher: Redesign is home; the editors are tools you
+                 graduate into, not peer buttons competing with the core product. -->
+            <nav class="workspace-switcher" aria-label="Workspaces">
+                <button type="button" id="workspace-redesign-btn" class="workspace-tab is-active" data-workspace="redesign" aria-current="page" title="Redesign a room from a photo">
+                    <i data-feather="image"></i>
+                    <span>Redesign</span>
                 </button>
-                <button type="button" id="woodworking-editor-btn" class="woodworking-editor-btn" title="Open the woodworking 3D editor—design furniture out of boards and get a cut list" disabled aria-busy="true">
+                <button type="button" id="layout-editor-btn" class="workspace-tab" data-workspace="plan" title="Draw walls, add furniture, and export your floor plan" disabled aria-busy="true">
+                    <i data-feather="layout"></i>
+                    <span>Floor Plan</span>
+                </button>
+                <button type="button" id="woodworking-editor-btn" class="workspace-tab" data-workspace="build" title="Design furniture out of boards and get a cut list" disabled aria-busy="true">
                     <i data-feather="box"></i>
                     <span>Woodworking</span>
                 </button>
+            </nav>
+            <div class="header-actions">
                 <!-- Auth Buttons (shown when logged out) -->
                 <div id="auth-buttons" class="auth-buttons">
                     <button id="login-btn" class="secondary-btn" type="button" disabled aria-busy="true">
@@ -82,28 +92,6 @@
                 </div>
             </div>
         </div>
-        <!-- Wizard progress bar — hidden until an image is uploaded -->
-        <div class="wizard-progress hidden" id="wizard-progress" role="list" aria-label="Design steps">
-            <div class="wizard-step active" data-step="1" role="listitem">
-                <div class="wizard-step-dot"><span class="wizard-step-num">1</span></div>
-                <div class="wizard-step-label">Room</div>
-            </div>
-            <div class="wizard-step-line"></div>
-            <div class="wizard-step" data-step="2" role="listitem">
-                <div class="wizard-step-dot"><span class="wizard-step-num">2</span></div>
-                <div class="wizard-step-label">Approach</div>
-            </div>
-            <div class="wizard-step-line"></div>
-            <div class="wizard-step" data-step="3" role="listitem">
-                <div class="wizard-step-dot"><span class="wizard-step-num">3</span></div>
-                <div class="wizard-step-label">Items</div>
-            </div>
-            <div class="wizard-step-line"></div>
-            <div class="wizard-step" data-step="4" role="listitem">
-                <div class="wizard-step-dot"><span class="wizard-step-num">4</span></div>
-                <div class="wizard-step-label">Style</div>
-            </div>
-        </div>
     </header>
 
     <div class="app-container">
@@ -113,185 +101,189 @@
                 <div class="upload-container" id="upload-container">
                     <div class="upload-content">
                         <i data-feather="image" class="upload-icon"></i>
-                        <h2>Upload a room photo</h2>
+                        <h2>Upload a <em>room photo</em></h2>
                         <p>Take a photo of your room or upload an existing one</p>
-                        <label for="room-upload" class="upload-btn">
-                            <span>Upload Image</span>
-                        </label>
-                        <input type="file" id="room-upload" accept="image/*" hidden>
-                        <button id="camera-btn" class="camera-btn">
-                            <i data-feather="camera"></i>
-                            <span>Take Photo</span>
-                        </button>
+                        <!-- The container owns the spacing (gap), so the stack
+                             stays evenly spaced no matter how many actions are
+                             present. Per-button margins only worked for exactly
+                             two. -->
+                        <div class="upload-actions">
+                            <label for="room-upload" class="upload-btn">
+                                <span>Upload Image</span>
+                            </label>
+                            <input type="file" id="room-upload" accept="image/*" hidden>
+                            <button id="camera-btn" class="camera-btn">
+                                <i data-feather="camera"></i>
+                                <span>Take Photo</span>
+                            </button>
+                            <!-- Shown only when the user actually has saved designs;
+                                 revealed by refreshUseSavedAvailability(). -->
+                            <button type="button" id="use-saved-btn" class="camera-btn use-saved-btn hidden">
+                                <i data-feather="image"></i>
+                                <span>Saved Design</span>
+                            </button>
+                        </div>
                     </div>
                 </div>
 
-                <!-- Multi-step wizard (shown after image is selected) -->
+                <!-- Configure view — one scrollable surface replacing the old
+                     4-pane wizard. Every option carries a default so Generate is
+                     live the moment a photo lands ("proof before configuration").
+                     Sections reveal by relevance, not by step number. -->
                 <div class="wizard-container hidden" id="wizard-container">
-                    <div class="wizard-upload-actions">
-                        <button type="button" id="wizard-feng-shui-btn" class="secondary-btn feng-shui-action-btn">
-                            <i data-feather="compass"></i>
-                            <span>Feng Shui Analysis</span>
-                        </button>
-                        <button type="button" id="wizard-quick-edit-btn" class="secondary-btn quick-edit-action-btn">
-                            <i data-feather="droplet"></i>
-                            <span>Quick Edit</span>
-                        </button>
-                    </div>
+                    <div class="configure-layout">
 
-                    <!-- Step 1: Photo + room type -->
-                    <div class="wizard-pane" id="wizard-pane-1">
-                        <div class="image-preview-wrapper">
-                            <img id="room-preview" src="" alt="Room preview">
-                            <div class="image-overlay">
-                                <button id="change-image-btn" class="change-image-overlay-btn">
-                                    <i data-feather="refresh-cw"></i>
-                                    <span>Change Image</span>
+                        <!-- Photo — the anchor for every choice below it -->
+                        <div class="configure-photo">
+                            <div class="image-preview-wrapper">
+                                <img id="room-preview" src="" alt="Your room">
+                                <div class="image-overlay">
+                                    <button id="change-image-btn" class="change-image-overlay-btn">
+                                        <i data-feather="refresh-cw"></i>
+                                        <span>Change Image</span>
+                                    </button>
+                                    <button type="button" id="use-saved-overlay-btn" class="change-image-overlay-btn use-saved-btn hidden">
+                                        <i data-feather="image"></i>
+                                        <span>Use a saved design</span>
+                                    </button>
+                                </div>
+                            </div>
+                            <div class="wizard-upload-actions">
+                                <button type="button" id="wizard-feng-shui-btn" class="secondary-btn feng-shui-action-btn">
+                                    <i data-feather="compass"></i>
+                                    <span>Feng Shui Analysis</span>
+                                </button>
+                                <button type="button" id="wizard-quick-edit-btn" class="secondary-btn quick-edit-action-btn">
+                                    <i data-feather="droplet"></i>
+                                    <span>Quick Edit</span>
                                 </button>
                             </div>
                         </div>
-                        <div class="room-type-selection">
-                            <h3>Tell us about your room</h3>
-                            <div class="room-options">
-                                <div class="room-option">
-                                    <input type="radio" id="empty-room" name="room-type" value="empty">
-                                    <label for="empty-room">
-                                        <div class="option-icon">
-                                            <i data-feather="square"></i>
-                                        </div>
-                                        <div class="option-text">
-                                            <h4>Empty Room</h4>
-                                            <p>Start fresh with new furniture ideas</p>
-                                        </div>
-                                    </label>
+
+                        <!-- Options — ordered by how much each changes the output -->
+                        <div class="configure-options">
+
+                            <section class="configure-section" id="configure-style" data-section="style">
+                                <button type="button" class="configure-section-toggle" aria-expanded="true" aria-controls="configure-style-body">
+                                    <span class="configure-section-title">Style</span>
+                                    <span class="configure-section-value" data-section-value></span>
+                                    <i data-feather="chevron-down" class="configure-section-chevron" aria-hidden="true"></i>
+                                </button>
+                                <div class="configure-section-body" id="configure-style-body">
+                                    <p class="selection-hint">Pick the look you're after.</p>
+                                    <div class="style-options-grid" id="style-options-grid">
+                                        <!-- Populated by JavaScript -->
+                                    </div>
                                 </div>
-                                <div class="room-option">
-                                    <input type="radio" id="furnished-room" name="room-type" value="furnished">
-                                    <label for="furnished-room">
-                                        <div class="option-icon">
-                                            <i data-feather="home"></i>
-                                        </div>
-                                        <div class="option-text">
-                                            <h4>Furnished Room</h4>
-                                            <p>Rearrange existing furniture or add new pieces</p>
-                                        </div>
-                                    </label>
+                            </section>
+
+                            <!-- Room type is no longer asked. It is detected, and
+                                 the app already overrode the user's answer when
+                                 the two disagreed (see main.js `shouldTreatAsEmpty`),
+                                 so the question was collecting input it discarded.
+                                 These hidden inputs remain as the state carrier for
+                                 the prompt logic, driven by detection and by the
+                                 correction link below. -->
+                            <div class="room-type-state" hidden>
+                                <input type="radio" id="empty-room" name="room-type" value="empty">
+                                <input type="radio" id="furnished-room" name="room-type" value="furnished">
+                            </div>
+
+                            <!-- Shown only for furnished rooms: an empty room has
+                                 exactly one possible intent, so asking is noise. -->
+                            <section class="configure-section hidden" id="configure-approach" data-section="approach">
+                                <button type="button" class="configure-section-toggle" aria-expanded="true" aria-controls="configure-approach-body">
+                                    <span class="configure-section-title">What should we do?</span>
+                                    <span class="configure-section-value" data-section-value></span>
+                                    <i data-feather="chevron-down" class="configure-section-chevron" aria-hidden="true"></i>
+                                </button>
+                                <div class="configure-section-body" id="configure-approach-body">
+                                <div class="furnished-options-grid">
+                                    <div class="furnished-option">
+                                        <input type="radio" id="keep-existing" name="furnished-option" value="keep-existing">
+                                        <label for="keep-existing">
+                                            <div class="option-icon">
+                                                <i data-feather="move"></i>
+                                            </div>
+                                            <div class="option-text">
+                                                <h4>Rearrange what's there</h4>
+                                                <p>Move your current furniture around — nothing added or removed</p>
+                                            </div>
+                                        </label>
+                                    </div>
+                                    <div class="furnished-option">
+                                        <input type="radio" id="add-new" name="furnished-option" value="add-new">
+                                        <label for="add-new">
+                                            <div class="option-icon">
+                                                <i data-feather="plus"></i>
+                                            </div>
+                                            <div class="option-text">
+                                                <h4>Add to what's there</h4>
+                                                <p>Keep your furniture and add new pieces to fill the space out</p>
+                                            </div>
+                                        </label>
+                                    </div>
+                                    <div class="furnished-option">
+                                        <input type="radio" id="start-fresh" name="furnished-option" value="start-fresh">
+                                        <label for="start-fresh">
+                                            <div class="option-icon">
+                                                <i data-feather="refresh-cw"></i>
+                                            </div>
+                                            <div class="option-text">
+                                                <h4>Start over</h4>
+                                                <p>Clear the room out and furnish it with completely new pieces</p>
+                                            </div>
+                                        </label>
+                                    </div>
                                 </div>
-                            </div>
-                        </div>
-                        <div class="wizard-nav">
-                            <button id="step1-next-btn" class="primary-btn" disabled>
-                                <span>Next</span>
-                                <i data-feather="arrow-right"></i>
-                            </button>
-                        </div>
-                    </div>
+                                </div>
+                            </section>
 
-                    <!-- Step 2: How to redesign (furnished rooms only) -->
-                    <div class="wizard-pane hidden" id="wizard-pane-2">
-                        <h3 class="wizard-pane-title">How would you like to redesign your room?</h3>
-                        <div class="furnished-options-grid">
-                            <div class="furnished-option">
-                                <input type="radio" id="keep-existing" name="furnished-option" value="keep-existing">
-                                <label for="keep-existing">
-                                    <div class="option-icon">
-                                        <i data-feather="move"></i>
+                            <!-- Longest list, most optional — last -->
+                            <section class="configure-section" id="configure-items" data-section="items">
+                                <button type="button" class="configure-section-toggle" aria-expanded="true" aria-controls="configure-items-body">
+                                    <span class="configure-section-title" id="items-selection-title">Items</span>
+                                    <span class="configure-section-value" data-section-value></span>
+                                    <i data-feather="chevron-down" class="configure-section-chevron" aria-hidden="true"></i>
+                                </button>
+                                <div class="configure-section-body" id="configure-items-body">
+                                    <p class="selection-hint" id="items-selection-hint">Optional — pick anything you'd like included.</p>
+                                    <div class="items-grid" id="items-grid">
+                                        <!-- Populated by JavaScript -->
                                     </div>
-                                    <div class="option-text">
-                                        <h4>Keep Existing Items</h4>
-                                        <p>Rearrange current furniture without adding or removing anything</p>
+                                    <div class="error-message hidden" id="items-selection-error">
+                                        <i data-feather="alert-circle"></i>
+                                        <span>Please select at least one item before continuing.</span>
                                     </div>
+                                </div>
+                            </section>
+
+                            <div class="model-pref-row">
+                                <label class="model-pref-toggle">
+                                    <input type="checkbox" id="default-model-toggle">
+                                    <span class="model-pref-track"><span class="model-pref-thumb"></span></span>
+                                    <span class="model-pref-text">
+                                        <span class="model-pref-label">Use premium model</span>
+                                        <span class="model-pref-hint">Higher fidelity. Each generation counts against your monthly limit.</span>
+                                    </span>
                                 </label>
                             </div>
-                            <div class="furnished-option">
-                                <input type="radio" id="add-new" name="furnished-option" value="add-new">
-                                <label for="add-new">
-                                    <div class="option-icon">
-                                        <i data-feather="plus"></i>
-                                    </div>
-                                    <div class="option-text">
-                                        <h4>Add New Items</h4>
-                                        <p>Keep existing furniture and add new pieces to enhance the space</p>
-                                    </div>
-                                </label>
-                            </div>
-                            <div class="furnished-option">
-                                <input type="radio" id="start-fresh" name="furnished-option" value="start-fresh">
-                                <label for="start-fresh">
-                                    <div class="option-icon">
-                                        <i data-feather="refresh-cw"></i>
-                                    </div>
-                                    <div class="option-text">
-                                        <h4>Start Fresh</h4>
-                                        <p>Remove existing items and furnish with completely new pieces</p>
-                                    </div>
-                                </label>
-                            </div>
-                        </div>
-                        <div class="wizard-nav">
-                            <button class="secondary-btn" id="step2-back-btn">
-                                <i data-feather="arrow-left"></i>
-                                <span>Back</span>
-                            </button>
-                            <button class="primary-btn" id="step2-next-btn" disabled>
-                                <span>Next</span>
-                                <i data-feather="arrow-right"></i>
-                            </button>
+
                         </div>
                     </div>
 
-                    <!-- Step 3: Items to add -->
-                    <div class="wizard-pane hidden" id="wizard-pane-3">
-                        <h3 id="items-selection-title">What would you like to add?</h3>
-                        <p class="selection-hint" id="items-selection-hint">Select items you'd like to include in your room design</p>
-                        <div class="items-grid" id="items-grid">
-                            <!-- Populated by JavaScript -->
-                        </div>
-                        <div class="error-message hidden" id="items-selection-error">
-                            <i data-feather="alert-circle"></i>
-                            <span>Please select at least one item before continuing.</span>
-                        </div>
-                        <div class="wizard-nav">
-                            <button class="secondary-btn" id="step3-back-btn">
-                                <i data-feather="arrow-left"></i>
-                                <span>Back</span>
-                            </button>
-                            <button class="primary-btn" id="step3-next-btn">
-                                <span>Next</span>
-                                <i data-feather="arrow-right"></i>
-                            </button>
-                        </div>
+                    <!-- Sticky primary action. On mobile this sits above the safe
+                         area and never scrolls away. -->
+                    <div class="configure-actionbar">
+                        <button type="button" id="configure-back-btn" class="secondary-btn">
+                            <i data-feather="arrow-left"></i>
+                            <span>Back</span>
+                        </button>
+                        <button id="generate-btn" class="primary-btn configure-generate-btn">
+                            <i data-feather="zap"></i>
+                            <span>Generate Design</span>
+                        </button>
                     </div>
-
-                    <!-- Step 4: Design style + generate -->
-                    <div class="wizard-pane hidden" id="wizard-pane-4">
-                        <h3 class="wizard-pane-title">Choose a design style</h3>
-                        <p class="selection-hint">Select the interior style for your room</p>
-                        <div class="style-options-grid" id="style-options-grid">
-                            <!-- Populated by JavaScript -->
-                        </div>
-                        <div class="model-pref-row">
-                            <label class="model-pref-toggle">
-                                <input type="checkbox" id="default-model-toggle">
-                                <span class="model-pref-track"><span class="model-pref-thumb"></span></span>
-                                <span class="model-pref-text">
-                                    <span class="model-pref-label">Use premium model</span>
-                                    <span class="model-pref-hint">Higher fidelity. Each generation counts against your monthly limit.</span>
-                                </span>
-                            </label>
-                        </div>
-                        <div class="wizard-nav">
-                            <button class="secondary-btn" id="step4-back-btn">
-                                <i data-feather="arrow-left"></i>
-                                <span>Back</span>
-                            </button>
-                            <button id="generate-btn" class="primary-btn">
-                                <span>Generate Design</span>
-                                <i data-feather="zap"></i>
-                            </button>
-                        </div>
-                    </div>
-
                 </div><!-- /.wizard-container -->
             </section>
 
@@ -306,8 +298,8 @@
                 </div>
                 <div class="results-header">
                     <div class="results-header-text">
-                        <h2>Your design</h2>
-                        <p>Toggle the original to compare, or refine the result below.</p>
+                        <h2>Your <em>design</em></h2>
+                        <p>Drag the divider to compare with your original, or refine the result below.</p>
                     </div>
                     <button type="button" id="results-feng-shui-btn" class="secondary-btn feng-shui-action-btn" disabled>
                         <i data-feather="compass"></i>
@@ -315,10 +307,10 @@
                     </button>
                 </div>
                 <div class="results-display">
-                    <div class="loading-indicator hidden" id="loading-indicator">
-                        <div class="spinner"></div>
-                        <p>Generating your design — this can take up to a minute for premium model generations.</p>
-                    </div>
+                    <!-- Unused by the app (generation renders its wait state
+                         inside each design card) — kept only because older code
+                         paths still reference the id. -->
+                    <div class="loading-indicator hidden" id="loading-indicator"></div>
                     <div class="design-carousel" id="design-carousel">
                         <!-- Design variants will be inserted here by JavaScript -->
                     </div>
@@ -1178,6 +1170,24 @@
         </div>
     </div>
 
+    <!-- Pick a previously saved design to use as the source photo. Offered
+         anywhere an image can be chosen: the upload drop zone and the
+         "change image" overlay in the configure view. -->
+    <div class="modal hidden" id="use-saved-modal" role="dialog" aria-modal="true" aria-labelledby="use-saved-modal-title">
+        <div class="modal-content use-saved-modal-content">
+            <div class="modal-header">
+                <h2 id="use-saved-modal-title">Use a saved design</h2>
+                <button type="button" id="use-saved-close" class="close-modal-btn" aria-label="Close">
+                    <i data-feather="x"></i>
+                </button>
+            </div>
+            <div class="modal-body">
+                <p class="use-saved-intro">Pick one of your saved designs to redesign further. It becomes your new starting photo.</p>
+                <div id="use-saved-grid" class="use-saved-grid"></div>
+            </div>
+        </div>
+    </div>
+
     <div class="modal hidden" id="room3d-modal">
         <div class="modal-content room3d-modal-content">
             <div class="modal-header">
@@ -1223,6 +1233,52 @@
             <div class="modal-footer room3d-footer">
                 <button id="room3d-download-btn" class="secondary-btn" type="button" disabled>Download</button>
                 <button id="room3d-regenerate-btn" class="secondary-btn" type="button" disabled>Regenerate</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- No mobile tab bar: the floor plan and woodworking editors are desktop
+         tools, so giving them permanent thumb-level navigation on a phone
+         advertised destinations that don't work. Mobile is redesign-only;
+         Library lives in the account menu. -->
+
+    <!-- Feedback -->
+    <button type="button" id="feedback-fab" class="feedback-fab" aria-label="Send feedback">
+        <i data-feather="message-circle"></i>
+        <span class="feedback-fab-label">Feedback</span>
+    </button>
+
+    <div class="modal" id="feedback-modal" role="dialog" aria-modal="true" aria-labelledby="feedback-modal-title">
+        <div class="modal-content feedback-modal-content">
+            <div class="modal-header">
+                <h2 id="feedback-modal-title">Send Feedback</h2>
+                <button type="button" id="feedback-close-btn" class="close-modal-btn" aria-label="Close">
+                    <i data-feather="x"></i>
+                </button>
+            </div>
+            <div class="modal-body">
+                <form id="feedback-form">
+                    <div class="form-group">
+                        <label for="feedback-message">What's on your mind?</label>
+                        <textarea id="feedback-message" rows="5" maxlength="5000" placeholder="Ideas, issues, or anything else — we read every message." required></textarea>
+                    </div>
+                    <div class="form-group">
+                        <label for="feedback-email">Email <span class="feedback-optional">(optional, if you'd like a reply)</span></label>
+                        <input type="email" id="feedback-email" placeholder="you@example.com" autocomplete="email">
+                    </div>
+                    <!-- Honeypot: hidden from real users, catches bots -->
+                    <input type="text" id="feedback-website" name="website" class="feedback-honeypot" tabindex="-1" autocomplete="off" aria-hidden="true">
+                    <div id="feedback-error" class="auth-error hidden"></div>
+                    <button type="submit" id="feedback-submit-btn" class="primary-btn feedback-submit-btn">Send Feedback</button>
+                </form>
+                <div id="feedback-success" class="auth-success hidden">
+                    <div class="success-icon">
+                        <i data-feather="check-circle"></i>
+                    </div>
+                    <h3>Thanks for the feedback!</h3>
+                    <p>We read every message and appreciate you taking the time.</p>
+                    <button type="button" id="feedback-done-btn" class="primary-btn">Done</button>
+                </div>
             </div>
         </div>
     </div>

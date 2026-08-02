@@ -3,6 +3,17 @@ import { createClient } from '@supabase/supabase-js';
 import FloorPlanEditor from './floorPlanEditor.js';
 import WoodworkingEditor from './woodworking/editor.js';
 import './woodworking/styles.css';
+import {
+    start as startRouter,
+    navigate,
+    syncUrl,
+    authParam,
+    setAuthParam,
+    current as currentRoute,
+} from './router.js';
+import { initSheets } from './sheets.js';
+import { initWaitState, waitStateMarkup } from './waitState.js';
+import { initCompare, enhanceCompare } from './compare.js';
 
 // Same-origin API routes (Vite dev proxies /api to the backend; production serves both).
 const PROXY_SERVER_URL = '';
@@ -79,13 +90,8 @@ document.querySelectorAll('.refinement-chip').forEach((chip) => {
     });
 });
 
-// Wizard navigation buttons
-const step1NextBtn = document.getElementById('step1-next-btn');
-const step2BackBtn = document.getElementById('step2-back-btn');
-const step2NextBtn = document.getElementById('step2-next-btn');
-const step3BackBtn = document.getElementById('step3-back-btn');
-const step3NextBtn = document.getElementById('step3-next-btn');
-const step4BackBtn = document.getElementById('step4-back-btn');
+// (The per-step Next/Back buttons are gone — the 4-pane wizard is now a single
+// configure view with one sticky primary action.)
 
 // Auth elements
 const loginBtn = document.getElementById('login-btn');
@@ -153,8 +159,20 @@ const confirmModalConfirmBtn = document.getElementById('confirm-modal-confirm');
 
 // Error message management
 function showItemsSelectionError() {
-    if (itemsSelectionError) {
-        itemsSelectionError.classList.remove('hidden');
+    if (!itemsSelectionError) return;
+    itemsSelectionError.classList.remove('hidden');
+
+    // On mobile the Items section is a collapsed row, so revealing an error
+    // inside it would be invisible — pressing Generate would appear to do
+    // nothing at all. Open the section and scroll the error into view.
+    const section = document.getElementById('configure-items');
+    if (section) {
+        if (typeof setConfigureSectionOpen === 'function') {
+            setConfigureSectionOpen(section, true);
+        }
+        requestAnimationFrame(() => {
+            itemsSelectionError.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        });
     }
 }
 
@@ -641,11 +659,33 @@ function updateSubscriptionUsageDisplay() {
  * Check whether the user has tokens available before starting generation.
  * Returns true if generation may proceed, false otherwise (shows buy modal).
  */
+/**
+ * The action a user was attempting when a gate interrupted them. Replayed once
+ * they finish signing in, so the gate costs them a form — not their work.
+ */
+let pendingGatedAction = null;
+
+export function setPendingGatedAction(fn) {
+    pendingGatedAction = typeof fn === 'function' ? fn : null;
+}
+
+/** Run whatever the user was trying to do before auth interrupted them. */
+function resumePendingGatedAction() {
+    if (!pendingGatedAction) return;
+    const action = pendingGatedAction;
+    pendingGatedAction = null;
+    // Let auth state settle before replaying the action.
+    setTimeout(() => { try { action(); } catch (err) { console.error(err); } }, 150);
+}
+
 // Lightweight gate for free-model runs: just verify the user is signed in.
 // Free generations don't touch the monthly limit so we don't check tokens.
 function ensureLoggedIn() {
     if (!currentUser || !currentSession) {
-        showAuthModal('login');
+        // Someone hitting this gate has almost always never had an account —
+        // showing them a Sign In form for an account they don't have was the
+        // single worst moment in the funnel.
+        showAuthModal('signup');
         return false;
     }
     return true;
@@ -653,7 +693,7 @@ function ensureLoggedIn() {
 
 function hasTokensAvailable() {
     if (!currentUser || !currentSession) {
-        showAuthModal('login');
+        showAuthModal('signup');
         return false;
     }
     if (userHasSubscription) {
@@ -1427,6 +1467,10 @@ async function autoSaveGeneratedDesign(imageUrl, {
 async function onGenerationSuccess(imageUrl, saveMeta = {}) {
     pushDesignHistory(imageUrl);
     await autoSaveGeneratedDesign(imageUrl, saveMeta);
+    // A new saved design may be the user's first — re-check so the
+    // "use a saved design" option appears without needing a reload.
+    invalidateUseSavedAvailability();
+    refreshUseSavedAvailability();
 }
 
 async function fetchSavedDesigns(bustCache = false) {
@@ -1621,6 +1665,7 @@ async function loadSavedDesignIntoResults(design) {
     if (uploadSection) uploadSection.classList.add('hidden');
     if (resultsSection) resultsSection.classList.remove('hidden');
     if (backToOptionsBtn) backToOptionsBtn.classList.remove('hidden');
+    syncUrl('result', { id: design.id });
 
     lastGeneratedImageUrl = design.imageUrl;
     resetDesignHistory();
@@ -1713,6 +1758,8 @@ function updateAuthUI() {
         if (subscriptionUsageDisplay) subscriptionUsageDisplay.classList.add('hidden');
         syncDefaultModelToggles();
     }
+    // Reveal/hide the "use a saved design" entry points as auth state changes.
+    refreshUseSavedAvailability();
     if (typeof feather !== 'undefined') feather.replace();
 }
 
@@ -1758,6 +1805,9 @@ function setupAuthFormEnterToSubmit(form) {
 function showAuthModal(mode = 'login') {
     if (!authModal) return;
     authModal.classList.add('show');
+    // Auth is an overlay, not a route — the URL records it without navigating,
+    // so the view (and the user's in-progress work) survives underneath.
+    setAuthParam(mode === 'signup' ? 'signup' : 'signin');
     // Ensure visibility/opacity are explicitly set so CSS transitions always apply
     authModal.style.opacity = '1';
     authModal.style.visibility = 'visible';
@@ -1790,6 +1840,7 @@ function hideAuthModal() {
         authModal.style.opacity = '';
         authModal.style.visibility = '';
     }
+    setAuthParam(null);
     setLoginSubmitLoading(false);
     if (loginForm) loginForm.reset();
     if (signupForm) signupForm.reset();
@@ -1860,6 +1911,9 @@ async function handleLogin(e) {
         const { error } = await supabase.auth.signInWithPassword({ email, password });
         if (error) throw error;
         hideAuthModal();
+        // Replay whatever the gate interrupted, so signing in costs a form and
+        // not the work they'd already done.
+        resumePendingGatedAction();
     } catch (err) {
         if (loginError) { loginError.textContent = err.message; loginError.classList.remove('hidden'); }
         if (isEmailNotConfirmedError(err)) showLoginResendBlock();
@@ -2204,6 +2258,12 @@ document.addEventListener('DOMContentLoaded', async () => {
     // Event Listeners (Add null checks for safety)
     if (roomUpload) roomUpload.addEventListener('change', handleImageUpload);
     if (cameraBtn) cameraBtn.addEventListener('click', openCamera);
+
+    // "Use a saved design" — offered wherever an image can be chosen: the
+    // upload drop zone and the change-image overlay in the configure view.
+    document.getElementById('use-saved-btn')?.addEventListener('click', openUseSavedPicker);
+    document.getElementById('use-saved-overlay-btn')?.addEventListener('click', openUseSavedPicker);
+    document.getElementById('use-saved-close')?.addEventListener('click', closeUseSavedPicker);
     if (changeImageBtn) changeImageBtn.addEventListener('click', openFileSelector);
     if (generateBtn) generateBtn.addEventListener('click', generateDesigns);
     if (backToOptionsBtn) backToOptionsBtn.addEventListener('click', goBackToPreview);
@@ -2432,31 +2492,19 @@ document.addEventListener('DOMContentLoaded', async () => {
         }
     });
 
-    // Room type selection — enable step 1 "Next" when a type is chosen
-    const roomTypeRadios = document.querySelectorAll('input[name="room-type"]');
-    roomTypeRadios.forEach(radio => {
-        radio.addEventListener('change', (e) => {
-            currentRoomType = e.target.value;
-            if (step1NextBtn) step1NextBtn.disabled = false;
-        });
-    });
+    // Room type is detected, not asked, and not user-correctable.
 
-    // Furnished option selection — enable step 2 "Next" when an option is chosen
+    // Approach (furnished rooms only) — also reveals/hides the items section.
     const furnishedOptionRadios = document.querySelectorAll('input[name="furnished-option"]');
     furnishedOptionRadios.forEach(radio => {
         radio.addEventListener('change', (e) => {
             furnishedOption = e.target.value;
-            if (step2NextBtn) step2NextBtn.disabled = false;
+            updateConfigureSections();
         });
     });
 
-    // Wizard navigation buttons
-    if (step1NextBtn) step1NextBtn.addEventListener('click', () => wizardNext(1));
-    if (step2BackBtn) step2BackBtn.addEventListener('click', () => wizardNext(2, true));
-    if (step2NextBtn) step2NextBtn.addEventListener('click', () => wizardNext(2));
-    if (step3BackBtn) step3BackBtn.addEventListener('click', () => wizardNext(3, true));
-    if (step3NextBtn) step3NextBtn.addEventListener('click', () => wizardNext(3));
-    if (step4BackBtn) step4BackBtn.addEventListener('click', () => wizardNext(4, true));
+    // Back out of configure to the upload view.
+    document.getElementById('configure-back-btn')?.addEventListener('click', goBackToUpload);
 
     // Drag-and-drop file upload
     if (uploadContainer) {
@@ -2497,127 +2545,353 @@ document.addEventListener('DOMContentLoaded', async () => {
 // Functions
 function initializeAppUI() {
     feather.replace();
+    initSheets();
+    initWaitState();
+    initCompare();
+    initShell();
+    startRouter(applyRoute);
+    openAuthFromUrl();
+}
 
-    // Step clicks: navigate back to any completed or active step
-    document.querySelectorAll('.wizard-progress .wizard-step').forEach(stepEl => {
-        stepEl.addEventListener('click', () => {
-            const target = parseInt(stepEl.dataset.step, 10);
-            if (stepEl.classList.contains('completed') || stepEl.classList.contains('active')) {
-                goToWizardStep(target);
-            }
-        });
+// ── App shell: workspace switcher + mobile tab bar ───────────────────────────
+
+/** Which workspace is on screen right now. */
+function activeWorkspace() {
+    const plan = document.getElementById('layout-editor-screen');
+    const build = document.getElementById('woodworking-editor-screen');
+    if (plan && !plan.classList.contains('hidden')) return 'plan';
+    if (build && !build.classList.contains('hidden')) return 'build';
+    return 'redesign';
+}
+
+/** Reflect the current workspace in the header switcher. */
+function updateWorkspaceUI() {
+    const active = activeWorkspace();
+    document.querySelectorAll('.workspace-tab').forEach(el => {
+        const isActive = el.dataset.workspace === active;
+        el.classList.toggle('is-active', isActive);
+        if (isActive) el.setAttribute('aria-current', 'page');
+        else el.removeAttribute('aria-current');
     });
+}
+
+function initShell() {
+    // Redesign is home.
+    document.getElementById('workspace-redesign-btn')?.addEventListener('click', () => {
+        goToRedesign();
+    });
+
+    // The editors bind their own show() to these buttons; we only record the URL
+    // afterwards so the DOM stays the source of truth and nothing double-fires.
+    document.getElementById('layout-editor-btn')?.addEventListener('click', () => {
+        setTimeout(() => { syncUrl('plan'); updateWorkspaceUI(); }, 0);
+    });
+    document.getElementById('woodworking-editor-btn')?.addEventListener('click', () => {
+        setTimeout(() => { syncUrl('build'); updateWorkspaceUI(); }, 0);
+    });
+
+    // Returning from an editor via its own back button must update the URL too.
+    document.getElementById('layout-editor-back-btn')?.addEventListener('click', () => {
+        setTimeout(() => { syncUrl('home'); updateWorkspaceUI(); }, 0);
+    });
+    document.querySelector('#woodworking-editor-screen [data-action="back"]')
+        ?.addEventListener('click', () => {
+            setTimeout(() => { syncUrl('home'); updateWorkspaceUI(); }, 0);
+        });
+
+    updateWorkspaceUI();
+}
+
+/** Close any editor and return to the redesign workspace. */
+function goToRedesign() {
+    const plan = document.getElementById('layout-editor-screen');
+    const build = document.getElementById('woodworking-editor-screen');
+    if (plan && !plan.classList.contains('hidden')) {
+        document.getElementById('layout-editor-back-btn')?.click();
+    }
+    if (build && !build.classList.contains('hidden')) {
+        document.querySelector('#woodworking-editor-screen [data-action="back"]')?.click();
+    }
+    updateWorkspaceUI();
+}
+
+// ── Routing ──────────────────────────────────────────────────────────────────
+
+/**
+ * Move the app to match a route. Primarily drives Back/Forward: forward
+ * navigation happens through the existing handlers, which call syncUrl().
+ */
+function applyRoute(route) {
+    const uploadSection = document.getElementById('upload-section');
+    const plan = document.getElementById('layout-editor-screen');
+    const build = document.getElementById('woodworking-editor-screen');
+    const planOpen = plan && !plan.classList.contains('hidden');
+    const buildOpen = build && !build.classList.contains('hidden');
+
+    switch (route.name) {
+        case 'plan':
+            if (!planOpen) FloorPlanEditor.show?.();
+            break;
+
+        case 'build':
+            if (!buildOpen) WoodworkingEditor.show?.();
+            break;
+
+        case 'upgrade':
+            goToRedesign();
+            showSubscribeModal();
+            break;
+
+        case 'library':
+            goToRedesign();
+            openDesignsModal();
+            break;
+
+        case 'result':
+            goToRedesign();
+            // Only meaningful with a generated design in hand; otherwise fall
+            // back to the start rather than showing an empty results shell.
+            if (generatedDesigns.length || lastGeneratedImageUrl) {
+                if (uploadSection) uploadSection.classList.add('hidden');
+                resultsSection?.classList.remove('hidden');
+            } else {
+                navigate('home', {}, { replace: true, silent: true });
+                showHomeView();
+            }
+            break;
+
+        case 'design':
+            goToRedesign();
+            // /design without a photo is meaningless — send them to upload.
+            if (!currentUploadedImage) {
+                navigate('home', {}, { replace: true, silent: true });
+                showHomeView();
+            } else {
+                resultsSection?.classList.add('hidden');
+                if (uploadSection) uploadSection.classList.remove('hidden');
+                if (uploadContainer) uploadContainer.classList.add('hidden');
+                if (wizardContainer) wizardContainer.classList.remove('hidden');
+            }
+            break;
+
+        case 'home':
+        default:
+            goToRedesign();
+            showHomeView();
+            break;
+    }
+
+    updateWorkspaceUI();
+}
+
+/** Reset the redesign workspace to the upload view. */
+function showHomeView() {
+    const uploadSection = document.getElementById('upload-section');
+    resultsSection?.classList.add('hidden');
+    if (uploadSection) uploadSection.classList.remove('hidden');
+    if (wizardContainer) wizardContainer.classList.add('hidden');
+    if (uploadContainer) uploadContainer.classList.remove('hidden');
+}
+
+/** Open the auth overlay if the URL asks for it (?auth=signin|signup). */
+function openAuthFromUrl() {
+    const mode = authParam();
+    if (mode) showAuthModal(mode === 'signup' ? 'signup' : 'login');
 }
 
 // ── Wizard navigation ────────────────────────────────────────────────────────
 
 const wizardProgress = document.getElementById('wizard-progress');
 
-/** Show the wizard container and go to step 1, hiding the upload drop zone. */
+/** Show the configure view, hiding the upload drop zone. */
 function showWizard() {
     if (uploadContainer) uploadContainer.classList.add('hidden');
     if (wizardContainer) wizardContainer.classList.remove('hidden');
-    if (wizardProgress) wizardProgress.classList.remove('hidden');
-    goToWizardStep(1);
+    applyConfigureDefaults();
+    updateConfigureSections();
+    scrollPageToTop();
+    syncUrl('design');
 }
 
-/** Hide the wizard, show the upload drop zone, and fully reset state. */
+/** Hide the configure view, show the upload drop zone, and fully reset state. */
 function hideWizard() {
     if (wizardContainer) wizardContainer.classList.add('hidden');
-    if (wizardProgress) wizardProgress.classList.add('hidden');
     if (uploadContainer) uploadContainer.classList.remove('hidden');
     resetWizardState();
 }
 
 /**
- * Advance or retreat the wizard from a given pane.
- * @param {number} fromStep – the pane currently visible
- * @param {boolean} goBack  – true when the Back button was pressed
+ * Pre-select sensible defaults so "Generate" is live the instant a photo lands.
+ * This is the mechanical expression of the brief's first principle — proof
+ * before configuration. Every default remains changeable.
  */
-function wizardNext(fromStep, goBack = false) {
-    if (goBack) {
-        // Back routes
-        if (fromStep === 2) { goToWizardStep(1); return; }
-        if (fromStep === 3) {
-            goToWizardStep(currentRoomType === 'empty' ? 1 : 2);
-            return;
-        }
-        if (fromStep === 4) {
-            // Skip step 3 if keep-existing (no items needed) or empty+keep-existing N/A
-            const skipItems = furnishedOption === 'keep-existing';
-            goToWizardStep(skipItems ? 2 : 3);
-            return;
-        }
-        return;
+function applyConfigureDefaults() {
+    // Room type comes from detection — it is never asked.
+    if (!currentRoomType) {
+        currentRoomType = isRoomActuallyEmpty ? 'empty' : 'furnished';
+        const radio = document.getElementById(
+            currentRoomType === 'empty' ? 'empty-room' : 'furnished-room'
+        );
+        if (radio) radio.checked = true;
     }
 
-    // Forward routes
-    if (fromStep === 1) {
-        // Empty rooms skip the "how to redesign" step
-        if (currentRoomType === 'empty') {
-            updateItemsSelectionUI('empty');
-            populateRoomItems();
-            goToWizardStep(3);
-        } else {
-            goToWizardStep(2);
-        }
-        return;
+    // Approach: furnished rooms default to enhancing what's already there.
+    if (currentRoomType === 'furnished' && !furnishedOption) {
+        furnishedOption = 'add-new';
+        const radio = document.getElementById('add-new');
+        if (radio) radio.checked = true;
     }
-    if (fromStep === 2) {
-        if (furnishedOption === 'keep-existing') {
-            // No items needed — jump straight to style
-            selectedRoomItems.clear();
-            goToWizardStep(4);
-        } else {
-            const ctx = furnishedOption === 'add-new' ? 'add-new' : 'start-fresh';
-            updateItemsSelectionUI(ctx);
-            populateRoomItems();
-            goToWizardStep(3);
-        }
-        return;
-    }
-    if (fromStep === 3) {
-        // For empty rooms, at least one item is required
-        if (currentRoomType === 'empty' && selectedRoomItems.size === 0) {
-            if (itemsSelectionError) itemsSelectionError.classList.remove('hidden');
-            return;
-        }
-        if (itemsSelectionError) itemsSelectionError.classList.add('hidden');
-        goToWizardStep(4);
-        return;
+
+    // Style: default to the first available so the grid is never empty-handed.
+    if (!selectedDesignStyle && Array.isArray(interiorDesignStyles) && interiorDesignStyles.length) {
+        selectedDesignStyle = interiorDesignStyles[0].id;
     }
 }
 
-/** Activate a specific wizard pane and update the progress indicator. */
+/** Breakpoint at which configure sections collapse into disclosure rows. */
+const CONFIGURE_COLLAPSE_QUERY = '(max-width: 899px)';
+
+function configureIsCollapsible() {
+    return window.matchMedia(CONFIGURE_COLLAPSE_QUERY).matches;
+}
+
+/**
+ * Human-readable summary of each section's current selection, shown on the
+ * collapsed row. Defaults are pre-applied, so these are never empty — the
+ * point is that you can see every choice already made without opening
+ * anything, and without scrolling to discover the options exist.
+ */
+function configureSectionSummary(section) {
+    switch (section) {
+        case 'style': {
+            const style = interiorDesignStyles.find(s => s.id === selectedDesignStyle);
+            return style ? style.name : 'Any';
+        }
+        case 'approach':
+            return {
+                'keep-existing': 'Rearrange',
+                'add-new': 'Add to it',
+                'start-fresh': 'Start over',
+            }[furnishedOption] || 'Not set';
+        case 'items': {
+            const n = selectedRoomItems.size;
+            if (!n) return 'None';
+            return n === 1 ? '1 item' : `${n} items`;
+        }
+        default:
+            return '';
+    }
+}
+
+/** Refresh the summary text on every collapsed row. */
+function updateConfigureSummaries() {
+    document.querySelectorAll('.configure-section[data-section]').forEach(sectionEl => {
+        const valueEl = sectionEl.querySelector('[data-section-value]');
+        if (valueEl) valueEl.textContent = configureSectionSummary(sectionEl.dataset.section);
+    });
+}
+
+/** Open one section; on mobile this closes the others (single-open accordion). */
+function setConfigureSectionOpen(sectionEl, open, { exclusive = true } = {}) {
+    const toggle = sectionEl.querySelector('.configure-section-toggle');
+    const body = sectionEl.querySelector('.configure-section-body');
+    if (!toggle || !body) return;
+
+    if (open && exclusive && configureIsCollapsible()) {
+        document.querySelectorAll('.configure-section[data-section]').forEach(other => {
+            if (other === sectionEl) return;
+            other.classList.remove('is-open');
+            other.querySelector('.configure-section-toggle')?.setAttribute('aria-expanded', 'false');
+        });
+    }
+
+    sectionEl.classList.toggle('is-open', open);
+    toggle.setAttribute('aria-expanded', String(open));
+}
+
+/** Wire the disclosure rows. Desktop keeps everything expanded. */
+function initConfigureDisclosure() {
+    document.querySelectorAll('.configure-section[data-section]').forEach(sectionEl => {
+        const toggle = sectionEl.querySelector('.configure-section-toggle');
+        if (!toggle || toggle.dataset.bound === 'true') return;
+        toggle.dataset.bound = 'true';
+        toggle.addEventListener('click', () => {
+            const isOpen = sectionEl.classList.contains('is-open');
+            setConfigureSectionOpen(sectionEl, !isOpen);
+        });
+    });
+
+    applyConfigureDisclosureMode();
+    window.matchMedia(CONFIGURE_COLLAPSE_QUERY)
+        .addEventListener('change', applyConfigureDisclosureMode);
+}
+
+/**
+ * Collapsed rows on mobile; everything open on desktop, where there's room to
+ * show it all at once and collapsing would only add clicks.
+ */
+function applyConfigureDisclosureMode() {
+    const collapsible = configureIsCollapsible();
+    document.querySelectorAll('.configure-section[data-section]').forEach(sectionEl => {
+        setConfigureSectionOpen(sectionEl, !collapsible, { exclusive: false });
+    });
+}
+
+/**
+ * Reveal configure sections by relevance. Replaces step-based pane switching:
+ * nothing is sequenced, sections simply appear when they apply.
+ */
+function updateConfigureSections() {
+    const approachSection = document.getElementById('configure-approach');
+    const itemsSection = document.getElementById('configure-items');
+
+    // "How should we redesign it?" only applies to furnished rooms.
+    const showApproach = currentRoomType === 'furnished';
+    approachSection?.classList.toggle('hidden', !showApproach);
+
+    // Items are irrelevant when keeping the existing furniture as-is.
+    const showItems = !(currentRoomType === 'furnished' && furnishedOption === 'keep-existing');
+    itemsSection?.classList.toggle('hidden', !showItems);
+
+    if (showItems) {
+        const ctx = currentRoomType === 'empty'
+            ? 'empty'
+            : (furnishedOption === 'add-new' ? 'add-new' : 'start-fresh');
+        updateItemsSelectionUI(ctx);
+        populateRoomItems();
+    } else {
+        selectedRoomItems.clear();
+    }
+
+    populateDesignStyles();
+    hideItemsSelectionError();
+    initConfigureDisclosure();
+    updateConfigureSummaries();
+    feather.replace();
+}
+
+/**
+ * Kept for compatibility with older callers. The configure view is a single
+ * surface now, so "going to a step" means scrolling to that section.
+ */
 function goToWizardStep(step) {
     currentWizardStep = step;
-
-    // Show/hide panes
-    for (let i = 1; i <= 4; i++) {
-        const pane = document.getElementById(`wizard-pane-${i}`);
-        if (pane) pane.classList.toggle('hidden', i !== step);
+    const sectionId = {
+        1: 'configure-room-type',
+        2: 'configure-approach',
+        3: 'configure-items',
+        4: 'configure-style',
+    }[step];
+    if (!sectionId) return;
+    const el = document.getElementById(sectionId);
+    if (el && !el.classList.contains('hidden')) {
+        el.scrollIntoView({ behavior: 'smooth', block: 'start' });
     }
+}
 
-    // Update progress steps and connecting lines
-    const steps = document.querySelectorAll('.wizard-progress .wizard-step');
-    const lines = document.querySelectorAll('.wizard-progress .wizard-step-line');
-    steps.forEach(stepEl => {
-        const s = parseInt(stepEl.dataset.step, 10);
-        stepEl.classList.toggle('active', s === step);
-        stepEl.classList.toggle('completed', s < step);
-    });
-    lines.forEach((line, idx) => {
-        // Line idx connects step (idx+1) to step (idx+2)
-        line.classList.toggle('completed', idx + 2 <= step);
-    });
-
-    // Feng shui is tied to the uploaded photo — show on the photo step only.
-    const wizardUploadActions = wizardFengShuiBtn?.closest('.wizard-upload-actions');
-    if (wizardUploadActions) {
-        wizardUploadActions.classList.toggle('hidden', step !== 1);
-    }
-
-    scrollPageToTop();
+/** Kept for compatibility — section visibility is now derived, not sequenced. */
+function wizardNext() {
+    updateConfigureSections();
 }
 
 function scrollPageToTop() {
@@ -2657,14 +2931,9 @@ function resetWizardState() {
     selectedRoomItems.clear();
     currentWizardStep = 0;
 
-    // Uncheck all room-type radios
+    // Clear the hidden room-type state and the approach choice
     document.querySelectorAll('input[name="room-type"]').forEach(r => { r.checked = false; });
-    // Uncheck all furnished-option radios
     document.querySelectorAll('input[name="furnished-option"]').forEach(r => { r.checked = false; });
-    // Reset step 1 Next button
-    if (step1NextBtn) step1NextBtn.disabled = true;
-    if (step2NextBtn) step2NextBtn.disabled = true;
-    // Hide items error
     hideItemsSelectionError();
 }
 
@@ -2681,6 +2950,150 @@ function goBackToUpload() {
 function toggleKeyVisibility() { /* no-op */ }
 function toggleReplicateKeyVisibility() { /* no-op */ }
 function saveApiKeys() { /* no-op */ }
+
+// ── Use a saved design as the source photo ───────────────────────────────────
+
+/**
+ * Adopt a previously generated design as the new source image, so a user can
+ * keep iterating on a result they liked instead of starting from a fresh photo.
+ *
+ * The saved image is fetched and converted to a data URL rather than passed
+ * along as its signed Supabase URL, for two reasons:
+ *   1. The server's SSRF allowlist (IMAGE_FETCH_ALLOWED_HOSTS) only permits
+ *      replicate.delivery / replicate.com, so a Supabase URL would be rejected
+ *      with "Image URL host not allowed".
+ *   2. Signed URLs expire; a data URL cannot go stale mid-session.
+ *
+ * Converting also makes this indistinguishable from a real upload downstream,
+ * so room detection, feng shui, quick edit and generation all behave normally.
+ */
+async function useSavedDesignAsSource(design) {
+    if (!design?.imageUrl) return;
+
+    const grid = document.getElementById('use-saved-grid');
+    if (grid) grid.setAttribute('aria-busy', 'true');
+
+    try {
+        const resp = await fetch(design.imageUrl, { mode: 'cors' });
+        if (!resp.ok) throw new Error(`Failed to load image (${resp.status})`);
+        const blob = await resp.blob();
+
+        const dataUrl = await new Promise((resolve, reject) => {
+            const reader = new FileReader();
+            reader.onload = () => resolve(reader.result);
+            reader.onerror = () => reject(new Error('Could not read the saved image'));
+            reader.readAsDataURL(blob);
+        });
+
+        closeUseSavedPicker();
+
+        // From here this is exactly the upload path.
+        clearFengShuiCache();
+        currentUploadedImage = dataUrl;
+        if (roomPreview) roomPreview.src = currentUploadedImage;
+        // Selecting a different starting image invalidates the previous run's
+        // choices — reset so detection and defaults apply to the new picture.
+        resetWizardState();
+        isRoomActuallyEmpty = await detectEmptyRoom(currentUploadedImage);
+        applyDetectedRoomType();
+        resetDesignHistory();
+        lastGeneratedImageUrl = null;
+        resultsSection?.classList.add('hidden');
+        document.getElementById('upload-section')?.classList.remove('hidden');
+        showWizard();
+    } catch (err) {
+        console.error('Could not use saved design as source:', err);
+        showAlertDialog('Could not load that design. Please try again.');
+    } finally {
+        if (grid) grid.removeAttribute('aria-busy');
+    }
+}
+
+function openUseSavedPicker() {
+    const modal = document.getElementById('use-saved-modal');
+    if (!modal) return;
+    modal.classList.remove('hidden');
+    modal.classList.add('show');
+    renderUseSavedGrid();
+}
+
+function closeUseSavedPicker() {
+    const modal = document.getElementById('use-saved-modal');
+    if (!modal) return;
+    modal.classList.remove('show');
+    modal.classList.add('hidden');
+}
+
+function renderUseSavedGrid() {
+    const grid = document.getElementById('use-saved-grid');
+    if (!grid) return;
+    grid.innerHTML = '<p class="my-designs-loading" role="status" aria-live="polite"><span class="my-layouts-spinner" aria-hidden="true"></span>Loading your designs…</p>';
+
+    fetchSavedDesigns().then(designs => {
+        grid.innerHTML = '';
+        if (!designs.length) {
+            grid.innerHTML = '<p class="my-designs-empty">No saved designs yet. Generate a design and it will appear here.</p>';
+            return;
+        }
+        designs.forEach(design => {
+            const card = document.createElement('button');
+            card.type = 'button';
+            card.className = 'use-saved-card';
+            card.setAttribute('aria-label', `Use ${formatDesignTitle(design)} as the starting photo`);
+
+            const img = document.createElement('img');
+            img.className = 'use-saved-card-img';
+            img.alt = '';
+            img.loading = 'lazy';
+            img.src = design.imageUrl || '';
+            img.onerror = function () { this.style.visibility = 'hidden'; };
+
+            const label = document.createElement('span');
+            label.className = 'use-saved-card-label';
+            label.textContent = formatDesignTitle(design);
+
+            card.append(img, label);
+            card.addEventListener('click', () => useSavedDesignAsSource(design));
+            grid.appendChild(card);
+        });
+    }).catch(() => {
+        grid.innerHTML = '<p class="my-designs-empty">Couldn’t load your designs. Try again in a moment.</p>';
+    });
+}
+
+/**
+ * Show the "use a saved design" entry points only when the user actually has
+ * saved designs. Saved designs are a subscriber feature, so for everyone else
+ * the option would be an empty promise — better absent than teasing.
+ */
+let useSavedAvailabilityKey = null;
+
+async function refreshUseSavedAvailability() {
+    const triggers = document.querySelectorAll('.use-saved-btn');
+
+    // updateAuthUI() runs on every auth change; without this guard each one
+    // would fire a fresh /api/designs request just to decide button visibility.
+    const key = `${currentUser?.id || 'anon'}:${userHasSubscription ? 'sub' : 'free'}`;
+    if (key === useSavedAvailabilityKey) return;
+    useSavedAvailabilityKey = key;
+
+    let available = false;
+    if (currentUser && currentSession && userHasSubscription) {
+        try {
+            const designs = await fetchSavedDesigns();
+            available = designs.length > 0;
+        } catch {
+            available = false;
+        }
+    }
+
+    triggers.forEach(el => el.classList.toggle('hidden', !available));
+}
+
+/** Force the next availability check to re-query (e.g. after a new save). */
+function invalidateUseSavedAvailability() {
+    useSavedAvailabilityKey = null;
+}
 
 async function handleImageUpload(e) {
     const file = e.target.files[0];
@@ -2873,8 +3286,6 @@ function applyDetectedRoomType() {
     const radio = document.getElementById(detectedType === 'empty' ? 'empty-room' : 'furnished-room');
     if (radio) radio.checked = true;
     currentRoomType = detectedType;
-    // Enable step 1 "Next" since we auto-detected a type
-    if (step1NextBtn) step1NextBtn.disabled = false;
 }
 
 // Stub — wizard controls section visibility, not this function
@@ -2911,6 +3322,7 @@ function populateRoomItems() {
             }
             // Hide validation error as soon as user picks something
             if (selectedRoomItems.size > 0) hideItemsSelectionError();
+            updateConfigureSummaries();
         });
 
         itemsGrid.appendChild(itemElement);
@@ -2942,7 +3354,10 @@ function populateDesignStyles() {
         `;
 
         el.querySelector('input[type="radio"]').addEventListener('change', (e) => {
-            if (e.target.checked) selectedDesignStyle = style.id;
+            if (e.target.checked) {
+                selectedDesignStyle = style.id;
+                updateConfigureSummaries();
+            }
         });
 
         grid.appendChild(el);
@@ -2956,18 +3371,19 @@ function handleFurnishedOptionChange() { /* handled by wizard nav */ }
 
 // Update the UI text based on the context
 function updateItemsSelectionUI(context) {
-    const title = document.getElementById('items-selection-title');
     const hint = document.getElementById('items-selection-hint');
+    if (!hint) return;
 
+    // The section title stays short and stable ("Items") because it doubles as
+    // a collapsed disclosure row label on mobile — a question-length heading
+    // wraps and pushes the current-value summary off the row. The context now
+    // lives in the hint, which only shows when the section is open.
     if (context === 'empty') {
-        title.textContent = 'What would you like to add?';
-        hint.textContent = 'Select items you\'d like to include in your room design';
+        hint.textContent = 'Optional — pick anything you\'d like included in the design.';
     } else if (context === 'add-new') {
-        title.textContent = 'What additional items would you like?';
-        hint.textContent = 'Select new items to add to your existing furniture';
+        hint.textContent = 'Optional — pick new items to add to your existing furniture.';
     } else if (context === 'start-fresh') {
-        title.textContent = 'What would you like in your new room?';
-        hint.textContent = 'Select items to replace your existing furniture';
+        hint.textContent = 'Optional — pick items to replace your existing furniture.';
     }
 }
 
@@ -3734,11 +4150,15 @@ async function generateDesigns(options = {}) {
 
     // Only premium generations consume tokens. Free runs are unlimited for
     // signed-in users — we gate on auth so anonymous traffic can't abuse it.
+    // If a gate blocks us, remember the attempt so it resumes after sign-in
+    // rather than stranding the user on a form.
+    setPendingGatedAction(() => generateDesigns(options));
     if (usePremium) {
         if (!hasTokensAvailable()) return;
     } else {
         if (!ensureLoggedIn()) return;
     }
+    setPendingGatedAction(null);
 
 
     // Check if we're regenerating (already on results screen)
@@ -3841,6 +4261,10 @@ async function generateDesigns(options = {}) {
     const uploadSection = document.getElementById('upload-section');
     if (uploadSection) uploadSection.classList.add('hidden');
     resultsSection.classList.remove('hidden');
+    // Give results its own history entry. Without this, Back from a result
+    // skipped straight past /design to / — hiding the configure view and its
+    // Generate button even though the photo was still loaded.
+    syncUrl('result');
     designCarousel.innerHTML = '';
 
     // Ensure back button is visible
@@ -4136,24 +4560,8 @@ async function retryImageGeneration() {
             ensureLoadingSpinner(card);
             scrollToDesignLoader(card);
 
-            // Add reveal checkbox if it's missing.
-            const designCard = revealContainer.closest('.design-card');
-            const imageContainer = card.querySelector('.design-image-container');
-            if (designCard && !designCard.querySelector('.reveal-checkbox-container')) {
-                const checkboxContainer = document.createElement('div');
-                checkboxContainer.className = 'reveal-checkbox-container';
-                checkboxContainer.innerHTML = `
-                    <label class="reveal-checkbox-label">
-                        <input type="checkbox" class="reveal-checkbox" aria-label="Show original image">
-                        <span class="reveal-checkbox-text">Show Original Image</span>
-                    </label>
-                `;
-                if (imageContainer && imageContainer.nextSibling) {
-                    designCard.insertBefore(checkboxContainer, imageContainer.nextSibling);
-                } else {
-                    designCard.appendChild(checkboxContainer);
-                }
-            }
+            // The compare divider is attached by compare.js, which observes the
+            // DOM — no wiring needed at each render site.
 
             feather.replace();
         }
@@ -4329,25 +4737,6 @@ function updateDesignCard(cardData, index) {
             img.style.opacity = 1;
             img.style.zIndex = 3;
 
-            if (card && !card.querySelector('.reveal-checkbox')) {
-                console.log(`Adding reveal checkbox to card ${index}`);
-                const checkboxContainer = document.createElement('div');
-                checkboxContainer.className = 'reveal-checkbox-container';
-                checkboxContainer.innerHTML = `
-                        <label class="reveal-checkbox-label">
-                            <input type="checkbox" class="reveal-checkbox" aria-label="Show original image">
-                            <span class="reveal-checkbox-text">Show Original Image</span>
-                        </label>
-                    `;
-                const imageContainer = card.querySelector('.design-image-container');
-                if (imageContainer && imageContainer.nextSibling) {
-                    card.insertBefore(checkboxContainer, imageContainer.nextSibling);
-                } else {
-                    card.appendChild(checkboxContainer);
-                }
-
-                setupRevealCheckbox(card, index);
-            }
 
             setTimeout(() => {
                 img.style.opacity = 1;
@@ -4612,11 +5001,9 @@ async function offerFallbackChoice(designIndex, design) {
 function ensureLoadingSpinner(card) {
     const imageContainer = card?.querySelector('.design-image-container');
     if (!imageContainer || imageContainer.querySelector('.image-loader')) return;
-    const loader = document.createElement('div');
-    loader.className = 'image-loader';
-    loader.setAttribute('aria-label', 'Generating image');
-    loader.innerHTML = '<div class="image-loader-spinner"></div>';
-    imageContainer.insertBefore(loader, imageContainer.firstChild);
+    const wrap = document.createElement('div');
+    wrap.innerHTML = waitStateMarkup();
+    imageContainer.insertBefore(wrap.firstElementChild, imageContainer.firstChild);
 }
 
 // Run a free Replicate model on an existing design. The request is flagged
@@ -4845,12 +5232,9 @@ function displayDesigns(designs) {
         }
 
 
-        // Only show reveal slider if not loading
-        const showRevealSlider = !design.loading;
-
         designCard.innerHTML = `
             <div class="design-image-container">
-                ${design.loading ? '<div class="image-loader" aria-label="Generating image"><div class="image-loader-spinner"></div></div>' : ''}
+                ${design.loading ? waitStateMarkup() : ''}
                 <div class="image-reveal-container${design.loading ? ' reveal-loading' : ''}">
                     <img class="design-image original-image" src="${design.originalImageUrl}" alt="Original Room">
                     <img class="design-image generated-image${design.loading ? '' : ' fade-in'}" src="${design.loading ? '' : design.imageUrl}" alt="${design.title}" style="opacity:${design.loading ? 0 : 1}; z-index: 3;">
@@ -4858,14 +5242,6 @@ function displayDesigns(designs) {
                 ${disclaimer}
             </div>
             <div class="model-status${design.loading ? '' : ' hidden'}" aria-live="polite">Generating your design — this can take up to a minute for premium model generations.</div>
-            ${showRevealSlider ? `
-                <div class="reveal-checkbox-container">
-                    <label class="reveal-checkbox-label">
-                        <input type="checkbox" class="reveal-checkbox" aria-label="Show original image">
-                        <span class="reveal-checkbox-text">Show Original Image</span>
-                    </label>
-                </div>
-            ` : ''}
             <div class="design-info">
                 <h3 class="design-title">${design.title}</h3>
                 <p class="design-description">${design.description}</p>
@@ -5020,71 +5396,44 @@ function hideHintArrows(card) {
     }
 }
 
+/**
+ * Prepare a design card's two images for the compare divider and attach it.
+ * (Formerly wired a "Show Original Image" checkbox — replaced by direct
+ * manipulation. Name kept because several render paths still call it.)
+ */
 function setupRevealCheckbox(card, index) {
-    const revealContainer = card.querySelector('.image-reveal-container');
-    const revealCheckbox = card.querySelector('.reveal-checkbox');
-    const generatedImage = card.querySelector('.generated-image');
+    const revealContainer = card?.querySelector('.image-reveal-container');
+    const generatedImage = card?.querySelector('.generated-image');
+    if (!revealContainer || !generatedImage) return;
 
-    console.log(`Card ${index}: revealContainer=${!!revealContainer}, revealCheckbox=${!!revealCheckbox}, generatedImage=${!!generatedImage}`);
-
-    if (!revealContainer || !revealCheckbox || !generatedImage) {
-        console.log(`Missing elements for card ${index}`);
-        return;
-    }
-
-    // Set up checkbox functionality
-    const handleCheckboxChange = (e) => {
-        const isChecked = e.target.checked;
-        // When checked, show original (hide generated), when unchecked, show generated
-        generatedImage.style.opacity = isChecked ? 0 : 1;
-        console.log(`Checkbox ${index} changed: ${isChecked}, generated image opacity: ${generatedImage.style.opacity}`);
-    };
-
-    revealCheckbox.addEventListener('change', handleCheckboxChange);
-
-    // Also ensure original image is properly positioned
+    // Both images must be stacked and fill the frame — the divider clips the
+    // generated layer over the original rather than toggling opacity.
     const originalImage = card.querySelector('.original-image');
-    if (originalImage) {
-        originalImage.style.position = 'absolute';
-        originalImage.style.top = '0';
-        originalImage.style.left = '0';
-        originalImage.style.width = '100%';
-        originalImage.style.height = '100%';
-        originalImage.style.zIndex = 2;
-        originalImage.style.opacity = 1;
-        originalImage.style.display = 'block';
-        console.log(`Original image positioned for card ${index}`);
-    }
+    [originalImage, generatedImage].forEach((img, i) => {
+        if (!img) return;
+        img.style.position = 'absolute';
+        img.style.top = '0';
+        img.style.left = '0';
+        img.style.width = '100%';
+        img.style.height = '100%';
+        img.style.display = 'block';
+        img.style.opacity = 1;
+        img.style.zIndex = i === 0 ? 2 : 3;
+    });
+    generatedImage.classList.remove('fade-in');
 
-    // Initialize with full opacity (generated image fully visible)
-    generatedImage.classList.remove('fade-in'); // Remove fade-in class to prevent CSS conflicts
-    generatedImage.style.opacity = 1;
-    generatedImage.style.display = 'block';
-    generatedImage.style.zIndex = 3;
-    generatedImage.style.position = 'absolute';
-    generatedImage.style.top = '0';
-    generatedImage.style.left = '0';
-    generatedImage.style.width = '100%';
-    generatedImage.style.height = '100%';
-
-    // Initialize checkbox to unchecked (show generated image)
-    revealCheckbox.checked = false;
-
-    // Force a reflow to ensure styles are applied
-    generatedImage.offsetHeight;
-
-    console.log(`Initialized card ${index} with opacity: ${generatedImage.style.opacity}, display: ${generatedImage.style.display}`);
-    console.log(`Generated image computed style:`, window.getComputedStyle(generatedImage).opacity);
-    console.log(`Generated image src:`, generatedImage.src);
+    enhanceCompare(revealContainer);
 }
 
 function goBackToPreview() {
     resultsSection.classList.add('hidden');
-    // Return to style selection (step 4) — the last wizard step before generation
     const uploadSection = document.getElementById('upload-section');
     if (uploadSection) uploadSection.classList.remove('hidden');
+    // The drop zone must stay hidden — the configure view owns this screen.
+    if (uploadContainer) uploadContainer.classList.add('hidden');
     if (wizardContainer) wizardContainer.classList.remove('hidden');
     if (wizardProgress) wizardProgress.classList.remove('hidden');
+    syncUrl('design');
     goToWizardStep(4);
 
     // Clear refinement text so it doesn't bleed into the next generation
