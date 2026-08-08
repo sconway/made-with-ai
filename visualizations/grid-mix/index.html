@@ -1,0 +1,799 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>24 Hours on the Grid</title>
+  <meta name="description"
+    content="An interactive look at how the U.S. makes its electricity hour by hour — watch the solar 'duck curve' grow across seasons and regions. Real 2024 data from the U.S. Energy Information Administration." />
+  <link rel="icon" type="image/png" href="../../favicon.png" />
+  <style>
+    :root {
+      --page: #090b10;
+      --surface: #0e1117;
+      --surface-2: #141924;
+      --ink: #f3f5f8;
+      --ink-2: #aab3c2;
+      --ink-3: #6f7987;
+      --grid: #1c2431;
+      --axis: #2a3444;
+      --border: rgba(255, 255, 255, 0.08);
+      /* fuel palette — validated (worst adjacent CVD ΔE 8.9, normal-vision 16.2) */
+      --f-COL: #6f6a63;
+      --f-NG: #e0793a;
+      --f-NUC: #d861a3;
+      --f-WAT: #3d8ae0;
+      --f-WND: #35b87a;
+      --f-SUN: #ecb230;
+      --f-OTH: #8a94a6;
+      --demand: #f3f5f8;
+      --netload: #ff9d5c;
+      font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    }
+
+    * { box-sizing: border-box; }
+
+    html, body { margin: 0; padding: 0; }
+
+    body {
+      background:
+        radial-gradient(1200px 700px at 78% -8%, #16213a 0%, rgba(9, 11, 16, 0) 60%),
+        radial-gradient(900px 600px at 10% 110%, #201430 0%, rgba(9, 11, 16, 0) 55%),
+        var(--page);
+      color: var(--ink);
+      min-height: 100vh;
+      -webkit-font-smoothing: antialiased;
+    }
+
+    .wrap { max-width: 1140px; margin: 0 auto; padding: 34px 22px 60px; }
+
+    header.masthead { margin-bottom: 22px; }
+
+    .eyebrow {
+      font-size: 12px; letter-spacing: 3px; text-transform: uppercase;
+      color: var(--ink-3); margin: 0 0 12px;
+    }
+
+    h1 {
+      font-size: clamp(30px, 5vw, 52px); line-height: 1.02; font-weight: 600;
+      letter-spacing: -0.02em; margin: 0 0 12px;
+      background: linear-gradient(180deg, #ffffff 30%, #b9c2d1 100%);
+      -webkit-background-clip: text; background-clip: text; color: transparent;
+    }
+
+    .dek { font-size: 16px; line-height: 1.55; color: var(--ink-2); max-width: 660px; margin: 0; }
+    .dek b { color: var(--ink); font-weight: 600; }
+
+    /* ---- controls ---- */
+    .controls {
+      display: flex; flex-wrap: wrap; gap: 18px 26px; align-items: flex-end;
+      margin: 26px 0 14px; padding: 16px 18px;
+      background: linear-gradient(180deg, rgba(255, 255, 255, 0.035), rgba(255, 255, 255, 0.01));
+      border: 1px solid var(--border); border-radius: 14px;
+    }
+    .ctl-label {
+      font-size: 11px; letter-spacing: 1.6px; text-transform: uppercase;
+      color: var(--ink-3); margin: 0 0 9px;
+    }
+    .regions { display: flex; flex-wrap: wrap; gap: 7px; }
+    .region-group + .region-group { margin-top: 12px; }
+    .group-label {
+      font-size: 10px; letter-spacing: 1.4px; text-transform: uppercase; color: var(--ink-3);
+      margin: 0 0 7px; display: flex; align-items: center; gap: 8px;
+    }
+    .group-label::after { content: ""; flex: 1; height: 1px; background: var(--border); }
+    .pill {
+      appearance: none; border: 1px solid var(--border); background: rgba(255, 255, 255, 0.04);
+      color: var(--ink-2); font: inherit; font-size: 13px; padding: 7px 13px; border-radius: 999px;
+      cursor: pointer; transition: all .15s ease; white-space: nowrap;
+    }
+    .pill:hover { color: var(--ink); border-color: rgba(255, 255, 255, 0.22); }
+    .pill[aria-pressed="true"] {
+      background: var(--ink); color: #0a0d12; border-color: var(--ink); font-weight: 600;
+    }
+
+    .month-block { flex: 1 1 300px; min-width: 260px; }
+    .month-row { display: flex; align-items: center; gap: 12px; }
+    .play {
+      appearance: none; width: 34px; height: 34px; flex: none; border-radius: 999px;
+      border: 1px solid var(--border); background: rgba(255, 255, 255, 0.05); color: var(--ink);
+      cursor: pointer; display: grid; place-items: center; transition: all .15s ease;
+    }
+    .play:hover { border-color: rgba(255, 255, 255, 0.28); background: rgba(255, 255, 255, 0.09); }
+    input[type="range"] {
+      -webkit-appearance: none; appearance: none; width: 100%; height: 4px; border-radius: 4px;
+      background: var(--axis); outline: none; cursor: pointer;
+    }
+    input[type="range"]::-webkit-slider-thumb {
+      -webkit-appearance: none; width: 18px; height: 18px; border-radius: 50%;
+      background: var(--ink); border: 3px solid var(--surface); cursor: pointer;
+      box-shadow: 0 0 0 1px var(--axis);
+    }
+    input[type="range"]::-moz-range-thumb {
+      width: 16px; height: 16px; border-radius: 50%; background: var(--ink);
+      border: 3px solid var(--surface); cursor: pointer;
+    }
+    .month-name {
+      min-width: 118px; text-align: right; font-variant-numeric: tabular-nums;
+      font-size: 15px; font-weight: 600; letter-spacing: .3px;
+    }
+
+    .seg { display: inline-flex; border: 1px solid var(--border); border-radius: 999px; padding: 3px; gap: 2px; background: rgba(0, 0, 0, 0.25); }
+    .seg button {
+      appearance: none; border: 0; background: transparent; color: var(--ink-2);
+      font: inherit; font-size: 13px; padding: 6px 14px; border-radius: 999px; cursor: pointer; transition: all .15s;
+    }
+    .seg button[aria-pressed="true"] { background: var(--ink); color: #0a0d12; font-weight: 600; }
+
+    /* ---- chart ---- */
+    .stage {
+      position: relative; margin-top: 12px; background: var(--surface);
+      border: 1px solid var(--border); border-radius: 16px; padding: 12px 10px 6px;
+      box-shadow: 0 24px 60px -30px rgba(0, 0, 0, 0.9);
+    }
+    .chart-head { display: flex; justify-content: space-between; align-items: baseline; padding: 6px 12px 2px; gap: 14px; flex-wrap: wrap; }
+    .chart-title { font-size: 15px; font-weight: 600; letter-spacing: .2px; }
+    .chart-title span { color: var(--ink-3); font-weight: 400; }
+    .chart-sub { font-size: 12.5px; color: var(--ink-3); }
+    svg.chart { display: block; width: 100%; height: auto; }
+    .band { transition: opacity .18s ease; }
+    .dim { opacity: 0.16; }
+    text { font-family: inherit; }
+
+    .tooltip {
+      position: absolute; pointer-events: none; z-index: 6; opacity: 0; transition: opacity .1s;
+      background: rgba(12, 16, 23, 0.92); backdrop-filter: blur(8px);
+      border: 1px solid var(--border); border-radius: 10px; padding: 10px 12px; min-width: 172px;
+      box-shadow: 0 16px 40px -18px rgba(0, 0, 0, 0.95); font-size: 12.5px;
+    }
+    .tt-hour { font-weight: 700; font-size: 13px; margin-bottom: 7px; letter-spacing: .3px; }
+    .tt-row { display: flex; align-items: center; gap: 8px; margin: 3px 0; }
+    .tt-row .sw { width: 9px; height: 9px; border-radius: 2px; flex: none; }
+    .tt-row .nm { color: var(--ink-2); flex: 1; }
+    .tt-row .vl { font-variant-numeric: tabular-nums; font-weight: 600; }
+    .tt-sep { height: 1px; background: var(--border); margin: 7px 0 6px; }
+
+    /* ---- legend ---- */
+    .legend { display: flex; flex-wrap: wrap; gap: 6px 16px; padding: 10px 14px 4px; }
+    .lg {
+      display: inline-flex; align-items: center; gap: 7px; font-size: 13px; color: var(--ink-2);
+      cursor: pointer; padding: 3px 4px; border-radius: 6px; user-select: none; transition: color .15s;
+    }
+    .lg:hover { color: var(--ink); }
+    .lg .sw { width: 12px; height: 12px; border-radius: 3px; flex: none; }
+    .lg.off { color: var(--ink-3); }
+    .lg.off .sw { opacity: .25; }
+
+    /* ---- stats + narrative ---- */
+    .below { display: grid; grid-template-columns: 1.15fr 1fr; gap: 18px; margin-top: 20px; }
+    @media (max-width: 780px) { .below { grid-template-columns: 1fr; } }
+
+    .stats { display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px; }
+    .tile {
+      background: linear-gradient(180deg, rgba(255, 255, 255, 0.04), rgba(255, 255, 255, 0.012));
+      border: 1px solid var(--border); border-radius: 12px; padding: 14px 15px;
+    }
+    .tile .k { font-size: 11px; letter-spacing: 1.2px; text-transform: uppercase; color: var(--ink-3); margin-bottom: 8px; }
+    .tile .v { font-size: 26px; font-weight: 700; letter-spacing: -0.01em; font-variant-numeric: tabular-nums; line-height: 1; }
+    .tile .v small { font-size: 14px; font-weight: 600; color: var(--ink-2); letter-spacing: 0; }
+    .tile .c { font-size: 12px; color: var(--ink-3); margin-top: 6px; }
+
+    .narrative {
+      background: linear-gradient(180deg, rgba(255, 255, 255, 0.04), rgba(255, 255, 255, 0.012));
+      border: 1px solid var(--border); border-radius: 12px; padding: 18px 20px;
+    }
+    .narrative .rt { font-size: 12px; letter-spacing: 1.4px; text-transform: uppercase; color: var(--f-SUN); margin-bottom: 10px; }
+    .narrative p { margin: 0 0 10px; line-height: 1.6; color: var(--ink-2); font-size: 14.5px; }
+    .narrative p:last-child { margin-bottom: 0; }
+    .narrative b { color: var(--ink); font-weight: 600; }
+
+    .datatoggle { margin-top: 18px; }
+    .link-btn {
+      appearance: none; background: none; border: 0; border-bottom: 1px solid var(--axis);
+      color: var(--ink-2); font: inherit; font-size: 13px; letter-spacing: .4px; padding: 2px 0; cursor: pointer;
+    }
+    .link-btn:hover { color: var(--ink); border-color: var(--ink-3); }
+    .tablewrap { margin-top: 14px; overflow-x: auto; display: none; }
+    table { border-collapse: collapse; font-size: 12px; font-variant-numeric: tabular-nums; width: 100%; }
+    th, td { text-align: right; padding: 5px 9px; border-bottom: 1px solid var(--grid); white-space: nowrap; }
+    th:first-child, td:first-child { text-align: left; }
+    thead th { color: var(--ink-3); font-weight: 600; letter-spacing: .3px; position: sticky; top: 0; background: var(--surface); }
+
+    footer { margin-top: 40px; padding-top: 18px; border-top: 1px solid var(--border); color: var(--ink-3); font-size: 12.5px; line-height: 1.6; }
+    footer a { color: var(--ink-2); }
+    .mockflag {
+      display: none; margin: 14px 0 0; padding: 9px 13px; font-size: 13px; border-radius: 9px;
+      background: rgba(236, 178, 48, 0.12); border: 1px solid rgba(236, 178, 48, 0.4); color: #f0d38a;
+    }
+  </style>
+</head>
+
+<body>
+  <div class="wrap">
+    <header class="masthead">
+      <p class="eyebrow">Made with AI · Data visualization</p>
+      <h1>24 Hours on the Grid</h1>
+      <p class="dek">Every day the United States rebuilds its electricity supply from scratch, hour by hour. This is the
+        <b>average day</b> — how much power comes from each source at each hour, drawn from real 2024 readings of the
+        U.S. grid. Pick a region and drag through the year to watch <b>solar</b> carve its midday valley into demand:
+        the famous <b>duck curve</b>.</p>
+      <div class="mockflag" id="mockflag">⚠︎ Showing placeholder data — awaiting the live EIA fetch.</div>
+    </header>
+
+    <div class="controls">
+      <div style="flex: 1 1 100%;">
+        <p class="ctl-label">Region</p>
+        <div id="regions"></div>
+      </div>
+      <div class="month-block">
+        <p class="ctl-label">Month <span id="yearlabel" style="color:var(--ink-3)"></span></p>
+        <div class="month-row">
+          <button class="play" id="play" aria-label="Play through the year" title="Play through the year">
+            <svg width="13" height="13" viewBox="0 0 13 13" id="playicon"><path d="M2 1.5 L11 6.5 L2 11.5 Z" fill="currentColor" /></svg>
+          </button>
+          <input type="range" id="month" min="1" max="12" step="1" value="7" aria-label="Month" />
+          <span class="month-name" id="monthname">July</span>
+        </div>
+      </div>
+      <div>
+        <p class="ctl-label">View</p>
+        <div class="seg" id="viewseg">
+          <button data-view="mix" aria-pressed="true">Generation mix</button>
+          <button data-view="duck" aria-pressed="false">Duck curve</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="stage">
+      <div class="chart-head">
+        <div class="chart-title" id="chartTitle">Generation mix <span id="chartTitleRegion"></span></div>
+        <div class="chart-sub" id="chartSub">Average megawatts by hour · local time</div>
+      </div>
+      <svg class="chart" id="chart" viewBox="0 0 960 486" preserveAspectRatio="xMidYMid meet"
+        role="img" aria-label="Stacked area chart of electricity generation by source over 24 hours"></svg>
+      <div class="legend" id="legend"></div>
+      <div class="tooltip" id="tooltip"></div>
+    </div>
+
+    <div class="below">
+      <div class="stats" id="stats"></div>
+      <div class="narrative">
+        <div class="rt" id="regionTag">—</div>
+        <div id="story"></div>
+      </div>
+    </div>
+
+    <div class="datatoggle">
+      <button class="link-btn" id="tableBtn" aria-expanded="false">Show the numbers ▾</button>
+      <div class="tablewrap" id="tablewrap"></div>
+    </div>
+
+    <footer>
+      <p><b>Source:</b> U.S. Energy Information Administration, Hourly Electric Grid Monitor
+        (<a href="https://www.eia.gov/opendata/" target="_blank" rel="noopener">EIA API v2</a>), calendar year
+        <span id="footyear">2024</span>. Each series is the mean generation for that hour-of-day across every day of the
+        year, in the region's local time. "Other" includes petroleum and miscellaneous sources.</p>
+      <p>The <b>city &amp; utility grids</b> are individual balancing authorities — the finest resolution at which
+        hourly generation is published; nothing goes below it, because once power enters the grid it can't be traced to
+        a particular neighborhood. Many of these small grids import a share of their power, so the mix shown is what's
+        generated <i>inside</i> the territory; any gap up to the demand line is <b>net imports</b> from the wider grid.</p>
+      <p>Built with AI · one of a small collection of experiments.</p>
+    </footer>
+  </div>
+
+  <script src="data.js"></script>
+  <script>
+  (function () {
+    "use strict";
+    const DATA = window.GRID_DATA;
+    if (!DATA) { document.getElementById("chart").innerHTML = "<text x='20' y='40' fill='#f88'>data.js failed to load</text>"; return; }
+
+    const FUELS = DATA.fuels;                       // [{code,label}] in stack order (bottom->top)
+    const FUEL_COLOR = c => getComputedStyle(document.documentElement).getPropertyValue("--f-" + c).trim();
+    // Pills are grouped: large grid regions, then city / single-utility grids.
+    const GROUPS = [
+      { label: "Grid regions", codes: ["US48", "CAL", "TEX", "SW", "CENT", "NW", "NY", "FLA"] },
+      { label: "City & utility grids", codes: ["LDWP", "BANC", "SCL", "IID", "AZPS", "NEVP", "GVL"] },
+    ].map(g => ({ ...g, codes: g.codes.filter(r => DATA.regions[r]) })).filter(g => g.codes.length);
+    const REGION_ORDER = GROUPS.flatMap(g => g.codes);
+    const isUtility = code => (DATA.regions[code].group === "utility");
+    const MONTHS = ["", "January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
+    const RENEW = new Set(["SUN", "WND", "WAT"]);
+
+    document.getElementById("footyear").textContent = DATA.year;
+    document.getElementById("yearlabel").textContent = "· " + DATA.year;
+    if (DATA._mock) document.getElementById("mockflag").style.display = "block";
+
+    // ---- geometry ----
+    const W = 960, H = 486, M = { t: 18, r: 20, b: 34, l: 58 };
+    const PW = W - M.l - M.r, PH = H - M.t - M.b;
+    const xAt = h => M.l + (h / 23) * PW;
+    const NS = "http://www.w3.org/2000/svg";
+    const svg = document.getElementById("chart");
+    const tooltip = document.getElementById("tooltip");
+
+    // ---- state ----
+    let state = { region: REGION_ORDER[0], month: 7, view: "mix" };
+    let hidden = new Set();          // fuel codes toggled off in legend
+    let hoverFuel = null;            // fuel hovered in legend
+    let playTimer = null;
+    let curFrame = null;             // currently displayed (interpolated) frame
+    let yMaxCur = null;              // currently displayed y max
+    let anim = null;
+
+    // ---- helpers ----
+    const fuelsPresent = region => {
+      const seen = new Set();
+      const mo = DATA.regions[region].months;
+      for (const m in mo) for (const c in mo[m].fuels) seen.add(c);
+      return FUELS.filter(f => seen.has(f.code)).map(f => f.code);
+    };
+    const frameOf = (region, month) => {
+      const raw = DATA.regions[region].months[month];
+      const fuels = {};
+      for (const f of FUELS) fuels[f.code] = (raw.fuels[f.code] || Array(24).fill(0)).slice();
+      return { fuels, demand: raw.demand.slice() };
+    };
+    const regionYMax = region => {
+      let mx = 0; const mo = DATA.regions[region].months;
+      for (const m in mo) for (let h = 0; h < 24; h++) {
+        let tot = 0; for (const c in mo[m].fuels) if (!hidden.has(c)) tot += mo[m].fuels[c][h];
+        mx = Math.max(mx, tot, mo[m].demand[h]);
+      }
+      return mx;
+    };
+    const lerp = (a, b, t) => a + (b - a) * t;
+    const lerpFrame = (A, B, t) => {
+      const fuels = {};
+      for (const f of FUELS) {
+        const a = A.fuels[f.code] || Array(24).fill(0), b = B.fuels[f.code] || Array(24).fill(0);
+        fuels[f.code] = a.map((v, i) => lerp(v, b[i], t));
+      }
+      return { fuels, demand: A.demand.map((v, i) => lerp(v, B.demand[i], t)) };
+    };
+    const easeOut = t => 1 - Math.pow(1 - t, 3);
+
+    // smooth path (cardinal spline) through [x,y] points
+    function smooth(pts, tension) {
+      if (pts.length < 2) return "";
+      tension = tension == null ? 0.5 : tension;
+      let d = "M" + pts[0][0].toFixed(2) + "," + pts[0][1].toFixed(2);
+      for (let i = 0; i < pts.length - 1; i++) {
+        const p0 = pts[i - 1] || pts[i], p1 = pts[i], p2 = pts[i + 1], p3 = pts[i + 2] || p2;
+        const c1x = p1[0] + (p2[0] - p0[0]) / 6 * tension * 2;
+        const c1y = p1[1] + (p2[1] - p0[1]) / 6 * tension * 2;
+        const c2x = p2[0] - (p3[0] - p1[0]) / 6 * tension * 2;
+        const c2y = p2[1] - (p3[1] - p1[1]) / 6 * tension * 2;
+        d += "C" + c1x.toFixed(2) + "," + c1y.toFixed(2) + " " + c2x.toFixed(2) + "," + c2y.toFixed(2) + " " + p2[0].toFixed(2) + "," + p2[1].toFixed(2);
+      }
+      return d;
+    }
+    const el = (name, attrs, kids) => {
+      const e = document.createElementNS(NS, name);
+      for (const k in attrs) if (attrs[k] != null) e.setAttribute(k, attrs[k]);
+      if (kids) (Array.isArray(kids) ? kids : [kids]).forEach(k => e.appendChild(typeof k === "string" ? document.createTextNode(k) : k));
+      return e;
+    };
+    const hourLabel = h => { const ap = h < 12 ? "a" : "p"; let hh = h % 12; if (hh === 0) hh = 12; return hh + ap; };
+    // Adaptive unit: MW for small (city) grids, GW for large regions.
+    let UNIT = { div: 1000, sym: "GW", axis: "GIGAWATTS" };
+    function setUnit(region) {
+      UNIT = regionYMax(region) < 2000
+        ? { div: 1, sym: "MW", axis: "MEGAWATTS" }
+        : { div: 1000, sym: "GW", axis: "GIGAWATTS" };
+    }
+    const fmtGW = v => (v / UNIT.div);
+    const gw = v => {
+      const g = v / UNIT.div;
+      if (UNIT.div === 1) return Math.round(g);              // MW: whole numbers
+      return g >= 100 ? Math.round(g) : g >= 10 ? g.toFixed(1) : g.toFixed(2);
+    };
+
+    function niceMax(v) {
+      if (v <= 0) return 1;
+      const p = Math.pow(10, Math.floor(Math.log10(v)));
+      const n = v / p;
+      const steps = [1, 1.2, 1.5, 2, 2.5, 3, 4, 5, 6, 8, 10];
+      const step = steps.find(s => n <= s + 1e-9) || 10;
+      return step * p;
+    }
+
+    // ---- main draw ----
+    function draw(frame, yMax) {
+      curFrame = frame; yMaxCur = yMax;
+      const yTop = niceMax(yMax);
+      const yAt = v => M.t + PH - (v / yTop) * PH;
+      const present = fuelsPresent(state.region).filter(c => !hidden.has(c));
+      const parts = [];
+
+      // gridlines + y labels
+      const gridG = el("g", {});
+      const ticks = 4;
+      for (let i = 0; i <= ticks; i++) {
+        const val = yTop * i / ticks, y = yAt(val);
+        gridG.appendChild(el("line", { x1: M.l, x2: W - M.r, y1: y.toFixed(1), y2: y.toFixed(1), stroke: "var(--grid)", "stroke-width": 1 }));
+        gridG.appendChild(el("text", { x: M.l - 10, y: y + 4, "text-anchor": "end", fill: "var(--ink-3)", "font-size": 11.5, "font-variant-numeric": "tabular-nums" }, String(fmtGW(val) >= 10 ? Math.round(fmtGW(val)) : fmtGW(val))));
+      }
+      gridG.appendChild(el("text", { x: M.l - 44, y: M.t + PH / 2, fill: "var(--ink-3)", "font-size": 11.5, "text-anchor": "middle", transform: `rotate(-90 ${M.l - 44} ${M.t + PH / 2})`, "letter-spacing": 1 }, UNIT.axis));
+      parts.push(gridG);
+
+      // x labels
+      const xG = el("g", {});
+      [0, 6, 12, 18, 23].forEach(h => {
+        xG.appendChild(el("text", { x: xAt(h), y: H - 12, "text-anchor": "middle", fill: "var(--ink-3)", "font-size": 11.5 }, hourLabel(h)));
+      });
+      parts.push(xG);
+
+      if (state.view === "mix") drawMix(frame, yAt, present, parts);
+      else drawDuck(frame, yAt, parts);
+
+      // hover overlay group (populated on move)
+      parts.push(el("g", { id: "hoverlayer" }));
+
+      svg.replaceChildren(...parts);
+    }
+
+    function cumulative(frame, present) {
+      // returns cum[h] = array of running totals after each present fuel (bottom->top)
+      const cum = [];
+      for (let h = 0; h < 24; h++) {
+        let run = 0; const col = { 0: 0 };
+        present.forEach((c, i) => { run += frame.fuels[c][h]; col[i + 1] = run; });
+        cum.push(col);
+      }
+      return cum;
+    }
+
+    function drawMix(frame, yAt, present, parts) {
+      const cum = cumulative(frame, present);
+      const g = el("g", {});
+      present.forEach((code, i) => {
+        const topPts = [], botPts = [];
+        for (let h = 0; h < 24; h++) { topPts.push([xAt(h), yAt(cum[h][i + 1])]); botPts.push([xAt(h), yAt(cum[h][i])]); }
+        const area = smooth(topPts, 0.5) + " L" + botPts[23][0].toFixed(2) + "," + botPts[23][1].toFixed(2) + " " + smoothOpen(botPts.slice().reverse()) + " Z";
+        const dim = (hoverFuel && hoverFuel !== code);
+        g.appendChild(el("path", { d: area, fill: FUEL_COLOR(code), class: "band" + (dim ? " dim" : ""), "fill-opacity": 0.92, "data-fuel": code }));
+        // 2px surface gap along the top boundary of each band
+        g.appendChild(el("path", { d: smooth(topPts, 0.5), fill: "none", stroke: "var(--surface)", "stroke-width": 2, "stroke-linejoin": "round", opacity: dim ? 0.2 : 1, "pointer-events": "none" }));
+      });
+      parts.push(g);
+
+      // direct labels on thick-enough bands (at their thickest hour)
+      const labG = el("g", {});
+      present.forEach((code, i) => {
+        if (hoverFuel && hoverFuel !== code) return;
+        let bestH = 3, bestGap = 0;
+        for (let h = 3; h <= 20; h++) { const gap = cum[h][i + 1] - cum[h][i]; if (gap > bestGap) { bestGap = gap; bestH = h; } } // interior hours only
+        const yMid = yAt((cum[bestH][i + 1] + cum[bestH][i]) / 2);
+        const px = yAt(cum[bestH][i]) - yAt(cum[bestH][i + 1]); // pixel thickness
+        if (px < 19) return;
+        const label = FUELS.find(f => f.code === code).label;
+        const lx = Math.max(M.l + 34, Math.min(W - M.r - 34, xAt(bestH)));
+        const t = el("text", { x: lx, y: yMid + 4, "text-anchor": "middle", fill: "#0a0d12", "font-size": 12.5, "font-weight": 700, "pointer-events": "none" }, label);
+        t.style.paintOrder = "stroke"; t.setAttribute("stroke", "rgba(255,255,255,.28)"); t.setAttribute("stroke-width", "0.6");
+        labG.appendChild(t);
+      });
+      parts.push(labG);
+
+      // net-imports gap: demand rising above local generation (import-heavy utilities)
+      const genTopArr = []; for (let h = 0; h < 24; h++) genTopArr.push(cum[h][present.length] || 0);
+      let dd = 0, gg = 0; for (let h = 0; h < 24; h++) { dd += frame.demand[h]; gg += genTopArr[h]; }
+      const impShare = dd > 0 ? Math.max(0, (dd - gg) / dd) : 0;
+      if (impShare >= 0.08) {
+        const upPts = frame.demand.map((v, h) => [xAt(h), yAt(Math.max(v, genTopArr[h]))]);
+        const loPts = genTopArr.map((v, h) => [xAt(h), yAt(v)]);
+        const gapD = smooth(upPts, 0.5) + " L" + loPts[23][0].toFixed(2) + "," + loPts[23][1].toFixed(2) + " " + smoothOpen(loPts.slice().reverse()) + " Z";
+        parts.push(el("path", { d: gapD, fill: "rgba(233,236,241,0.06)", stroke: "none", "pointer-events": "none" }));
+        // hatch strokes to read as "not generated here"
+        let wideH = 12, wideGap = 0;
+        for (let h = 4; h <= 20; h++) { const g2 = frame.demand[h] - genTopArr[h]; if (g2 > wideGap) { wideGap = g2; wideH = h; } }
+        if (yAt(genTopArr[wideH]) - yAt(frame.demand[wideH]) > 20) {
+          const my = (yAt(genTopArr[wideH]) + yAt(frame.demand[wideH])) / 2;
+          parts.push(el("text", { x: xAt(wideH), y: my + 4, "text-anchor": "middle", fill: "var(--ink-2)", "font-size": 11.5, "font-weight": 600, "font-style": "italic", "pointer-events": "none" }, "net imports"));
+        }
+      }
+      // demand line on top
+      const demPts = frame.demand.map((v, h) => [xAt(h), yAt(v)]);
+      parts.push(el("path", { d: smooth(demPts, 0.5), fill: "none", stroke: "var(--demand)", "stroke-width": 2, "stroke-dasharray": "1 5", "stroke-linecap": "round", opacity: 0.85, "pointer-events": "none" }));
+      parts.push(el("text", { x: xAt(23) - 2, y: yAt(frame.demand[23]) - 8, "text-anchor": "end", fill: "var(--demand)", "font-size": 11.5, "font-weight": 600, opacity: 0.9 }, "Demand"));
+    }
+
+    // open smoothed polyline continuation for reversed bottom edge (returns "C..." commands, no leading M)
+    function smoothOpen(pts) {
+      const full = smooth(pts, 0.5);
+      const ci = full.indexOf("C");
+      return ci >= 0 ? full.slice(ci) : "";
+    }
+
+    function drawDuck(frame, yAt, parts) {
+      const dem = frame.demand;
+      const solar = frame.fuels.SUN || Array(24).fill(0);
+      const wind = frame.fuels.WND || Array(24).fill(0);
+      const net = dem.map((v, h) => Math.max(0, v - solar[h] - wind[h]));
+      const demPts = dem.map((v, h) => [xAt(h), yAt(v)]);
+      const netPts = net.map((v, h) => [xAt(h), yAt(v)]);
+
+      // shaded wedge (renewables serving load) between demand and net-load
+      const wedge = smooth(demPts, 0.5) + " L" + netPts[23][0].toFixed(2) + "," + netPts[23][1].toFixed(2) + " " + smoothOpen(netPts.slice().reverse()) + " Z";
+      const grad = el("linearGradient", { id: "wedgeGrad", x1: 0, y1: 0, x2: 0, y2: 1 });
+      grad.appendChild(el("stop", { offset: "0%", "stop-color": "var(--f-SUN)", "stop-opacity": 0.34 }));
+      grad.appendChild(el("stop", { offset: "100%", "stop-color": "var(--f-WND)", "stop-opacity": 0.14 }));
+      parts.push(el("defs", {}, grad));
+      parts.push(el("path", { d: wedge, fill: "url(#wedgeGrad)", stroke: "none", "pointer-events": "none" }));
+
+      // lines
+      parts.push(el("path", { d: smooth(demPts, 0.5), fill: "none", stroke: "var(--demand)", "stroke-width": 2, opacity: 0.85, "pointer-events": "none" }));
+      parts.push(el("path", { d: smooth(netPts, 0.5), fill: "none", stroke: "var(--netload)", "stroke-width": 3, "stroke-linecap": "round", "pointer-events": "none" }));
+
+      // belly marker (min of net load, daytime) + evening peak
+      let bellyH = 12, bellyV = Infinity;
+      for (let h = 7; h <= 17; h++) if (net[h] < bellyV) { bellyV = net[h]; bellyH = h; }
+      let peakH = 19, peakV = -Infinity;
+      for (let h = 16; h <= 23; h++) if (net[h] > peakV) { peakV = net[h]; peakH = h; }
+      parts.push(el("circle", { cx: xAt(bellyH), cy: yAt(bellyV), r: 4.5, fill: "var(--netload)", stroke: "var(--surface)", "stroke-width": 2 }));
+      parts.push(el("text", { x: xAt(bellyH), y: yAt(bellyV) - 14, "text-anchor": "middle", fill: "var(--netload)", "font-size": 12, "font-weight": 600 }, "the belly"));
+      parts.push(el("circle", { cx: xAt(peakH), cy: yAt(peakV), r: 4, fill: "var(--netload)", stroke: "var(--surface)", "stroke-width": 2 }));
+
+      // labels
+      parts.push(el("text", { x: xAt(23) - 2, y: yAt(dem[23]) - 8, "text-anchor": "end", fill: "var(--demand)", "font-size": 11.5, "font-weight": 600, opacity: 0.9 }, "Demand"));
+      const nlx = xAt(2), nly = yAt(net[2]);
+      parts.push(el("text", { x: nlx + 4, y: nly - 8, fill: "var(--netload)", "font-size": 11.5, "font-weight": 700 }, "Net load"));
+      parts.push(el("text", { x: nlx + 4, y: nly + 8, fill: "var(--netload)", "font-size": 10.5, opacity: 0.8 }, "demand − solar − wind"));
+    }
+
+    // ---- stats + narrative + table ----
+    function computeStats(frame) {
+      const present = fuelsPresent(state.region);
+      let dayGen = 0; const fuelDay = {};
+      present.forEach(c => { const s = frame.fuels[c].reduce((a, b) => a + b, 0); fuelDay[c] = s; dayGen += s; });
+      const renewDay = ["SUN", "WND", "WAT"].reduce((a, c) => a + (fuelDay[c] || 0), 0);
+      const solar = frame.fuels.SUN || Array(24).fill(0);
+      const wind = frame.fuels.WND || Array(24).fill(0);
+      let solarPeak = 0, solarPeakH = 12;
+      solar.forEach((v, h) => { if (v > solarPeak) { solarPeak = v; solarPeakH = h; } });
+      let peakDem = 0, peakDemH = 18;
+      frame.demand.forEach((v, h) => { if (v > peakDem) { peakDem = v; peakDemH = h; } });
+      // solar share at its peak hour
+      let genAtPeak = 0; present.forEach(c => genAtPeak += frame.fuels[c][solarPeakH]);
+      const solarShareAtPeak = genAtPeak ? solar[solarPeakH] / genAtPeak : 0;
+      // net load belly + evening ramp
+      const net = frame.demand.map((v, h) => Math.max(0, v - solar[h] - wind[h]));
+      let bellyV = Infinity, bellyH = 12; for (let h = 7; h <= 17; h++) if (net[h] < bellyV) { bellyV = net[h]; bellyH = h; }
+      let peakV = -Infinity, pkH = 19; for (let h = 16; h <= 23; h++) if (net[h] > peakV) { peakV = net[h]; pkH = h; }
+      const dayDemand = frame.demand.reduce((a, b) => a + b, 0);
+      const importShare = dayDemand > 0 ? Math.max(0, (dayDemand - dayGen) / dayDemand) : 0;
+      return { dayGen, dayDemand, importShare, renewShare: dayGen ? renewDay / dayGen : 0, solarPeak, solarPeakH, peakDem, peakDemH,
+               solarShareAtPeak, bellyV, bellyH, rampV: peakV - bellyV, rampHrs: pkH - bellyH, fuelDay };
+    }
+
+    function renderStats(frame) {
+      const s = computeStats(frame);
+      const stats = document.getElementById("stats");
+      let tiles;
+      if (state.view === "mix") {
+        const fourth = s.importShare >= 0.1
+          ? { k: "Net imports", v: (s.importShare * 100).toFixed(0), u: "%", c: "of demand, brought in from outside" }
+          : { k: "Sources online", v: fuelsPresent(state.region).length, u: "", c: MONTHS[state.month] + " average" };
+        tiles = [
+          { k: "Peak demand", v: gw(s.peakDem), u: UNIT.sym, c: "at " + hourLabel(s.peakDemH) + " local" },
+          { k: "Renewables (day)", v: (s.renewShare * 100).toFixed(0), u: "%", c: "of local generation" },
+          { k: "Solar at midday", v: gw(s.solarPeak), u: UNIT.sym, c: (s.solarShareAtPeak * 100).toFixed(0) + "% of supply at " + hourLabel(s.solarPeakH) },
+          fourth,
+        ];
+      } else {
+        tiles = [
+          { k: "Peak demand", v: gw(s.peakDem), u: UNIT.sym, c: "at " + hourLabel(s.peakDemH) },
+          { k: "Net-load belly", v: gw(s.bellyV), u: UNIT.sym, c: "daytime low at " + hourLabel(s.bellyH) },
+          { k: "Evening ramp", v: "+" + gw(s.rampV), u: UNIT.sym, c: "over ~" + s.rampHrs + "h into the peak" },
+          { k: "Renewables (day)", v: (s.renewShare * 100).toFixed(0), u: "%", c: "solar + wind + hydro" },
+        ];
+      }
+      stats.replaceChildren(...tiles.map(t => {
+        const d = document.createElement("div"); d.className = "tile";
+        d.innerHTML = `<div class="k">${t.k}</div><div class="v">${t.v}${t.u ? " <small>" + t.u + "</small>" : ""}</div><div class="c">${t.c}</div>`;
+        return d;
+      }));
+    }
+
+    function renderNarrative(frame) {
+      const reg = DATA.regions[state.region];
+      const s = computeStats(frame);
+      document.getElementById("regionTag").textContent = reg.tag;
+      const solarPct = (s.solarShareAtPeak * 100).toFixed(0);
+      const mn = MONTHS[state.month];
+      let p1, p2;
+      if (s.solarPeak > 0 && s.solarShareAtPeak > 0.02) {
+        p1 = `In <b>${mn}</b>, ${reg.name}'s solar tops out around <b>${hourLabel(s.solarPeakH)}</b>, supplying about <b>${solarPct}%</b> of the power generated at that moment.`;
+        p2 = `As the sun sets, that supply vanishes just as people come home. Net load — what everything <i>except</i> wind and solar must cover — climbs <b>${gw(s.rampV)} ${UNIT.sym}</b> into the evening peak. That steep ramp is the neck of the duck.`;
+      } else {
+        p1 = `In <b>${mn}</b>, ${reg.name} leans on ${topFuelName(s)} for the bulk of its power, with demand peaking near <b>${hourLabel(s.peakDemH)}</b>.`;
+        p2 = `With little solar on the system, the daily shape stays close to demand itself — no midday valley, no sharp evening ramp. Drag to another month, or compare against California to see the duck emerge.`;
+      }
+      let p3 = "";
+      if (s.importShare >= 0.15) {
+        p3 = `${reg.name} makes only part of its own power: about <b>${(s.importShare * 100).toFixed(0)}%</b> of demand is <b>imported</b> from the wider grid, so the gap between the stacked generation and the demand line is electricity flowing in from elsewhere. The mix shown is what's generated <i>inside</i> the territory.`;
+      }
+      document.getElementById("story").innerHTML = `<p>${p1}</p><p>${p2}</p>` + (p3 ? `<p>${p3}</p>` : "");
+    }
+    function topFuelName(s) {
+      let best = null, bv = -1;
+      for (const c in s.fuelDay) if (s.fuelDay[c] > bv) { bv = s.fuelDay[c]; best = c; }
+      return (FUELS.find(f => f.code === best) || { label: "its mix" }).label.toLowerCase();
+    }
+
+    function renderTable(frame) {
+      const present = fuelsPresent(state.region);
+      const head = ["Hour", ...present.map(c => FUELS.find(f => f.code === c).label), "Demand"];
+      let html = "<table><thead><tr>" + head.map(h => `<th>${h}</th>`).join("") + "</tr></thead><tbody>";
+      for (let h = 0; h < 24; h++) {
+        html += "<tr><td>" + hourLabel(h) + "</td>" +
+          present.map(c => "<td>" + gw(frame.fuels[c][h]) + "</td>").join("") +
+          "<td>" + gw(frame.demand[h]) + "</td></tr>";
+      }
+      html += "</tbody></table>";
+      document.getElementById("tablewrap").innerHTML = html;
+    }
+
+    // ---- legend ----
+    function renderLegend() {
+      const present = fuelsPresent(state.region);
+      const lg = document.getElementById("legend");
+      lg.replaceChildren(...present.map(code => {
+        const f = FUELS.find(x => x.code === code);
+        const d = document.createElement("div");
+        d.className = "lg" + (hidden.has(code) ? " off" : "");
+        d.innerHTML = `<span class="sw" style="background:${FUEL_COLOR(code)}"></span>${f.label}`;
+        d.addEventListener("mouseenter", () => { if (!hidden.has(code)) { hoverFuel = code; draw(curFrame, yMaxCur); } });
+        d.addEventListener("mouseleave", () => { hoverFuel = null; draw(curFrame, yMaxCur); });
+        d.addEventListener("click", () => {
+          if (hidden.has(code)) hidden.delete(code); else hidden.add(code);
+          hoverFuel = null; renderLegend(); commit(true);
+        });
+        return d;
+      }));
+    }
+
+    // ---- transitions ----
+    function commit(instant) {
+      setUnit(state.region);
+      const target = frameOf(state.region, state.month);
+      const yTarget = regionYMax(state.region);
+      if (instant || !curFrame) { curFrame = target; yMaxCur = yTarget; draw(target, yTarget); afterDraw(target); return; }
+      const from = curFrame, fromY = yMaxCur, dur = 460, t0 = performance.now();
+      if (anim) cancelAnimationFrame(anim);
+      (function step(now) {
+        let t = Math.min(1, (now - t0) / dur); const e = easeOut(t);
+        draw(lerpFrame(from, target, e), lerp(fromY, yTarget, e));
+        if (t < 1) anim = requestAnimationFrame(step); else { anim = null; afterDraw(target); }
+      })(t0);
+    }
+    function afterDraw(frame) { renderStats(frame); renderNarrative(frame); renderTable(frame); }
+
+    // ---- hover ----
+    svg.addEventListener("mousemove", onMove);
+    svg.addEventListener("mouseleave", () => { tooltip.style.opacity = 0; const hl = document.getElementById("hoverlayer"); if (hl) hl.replaceChildren(); });
+    function onMove(evt) {
+      if (!curFrame) return;
+      const pt = svg.getBoundingClientRect();
+      const sx = (evt.clientX - pt.left) / pt.width * W;
+      let h = Math.round((sx - M.l) / PW * 23);
+      h = Math.max(0, Math.min(23, h));
+      const yTop = niceMax(yMaxCur), yAt = v => M.t + PH - (v / yTop) * PH;
+      const hl = document.getElementById("hoverlayer");
+      if (hl) {
+        hl.replaceChildren(
+          el("line", { x1: xAt(h), x2: xAt(h), y1: M.t, y2: M.t + PH, stroke: "rgba(255,255,255,.28)", "stroke-width": 1 })
+        );
+      }
+      const present = fuelsPresent(state.region).filter(c => !hidden.has(c));
+      let gen = 0; present.forEach(c => gen += curFrame.fuels[c][h]);
+      const solar = (curFrame.fuels.SUN || [])[h] || 0, wind = (curFrame.fuels.WND || [])[h] || 0;
+      const net = Math.max(0, curFrame.demand[h] - solar - wind);
+      let rows;
+      if (state.view === "mix") {
+        rows = present.slice().reverse().map(c => {
+          const v = curFrame.fuels[c][h];
+          const pct = gen ? (v / gen * 100) : 0;
+          return `<div class="tt-row"><span class="sw" style="background:${FUEL_COLOR(c)}"></span><span class="nm">${FUELS.find(f => f.code === c).label}</span><span class="vl">${gw(v)}<span style="color:var(--ink-3);font-weight:400"> · ${pct.toFixed(0)}%</span></span></div>`;
+        }).join("");
+        rows += `<div class="tt-sep"></div><div class="tt-row"><span class="sw" style="background:var(--demand)"></span><span class="nm">Demand</span><span class="vl">${gw(curFrame.demand[h])}</span></div>`;
+      } else {
+        rows = `<div class="tt-row"><span class="sw" style="background:var(--demand)"></span><span class="nm">Demand</span><span class="vl">${gw(curFrame.demand[h])}</span></div>`
+          + `<div class="tt-row"><span class="sw" style="background:var(--netload)"></span><span class="nm">Net load</span><span class="vl">${gw(net)}</span></div>`
+          + `<div class="tt-sep"></div>`
+          + `<div class="tt-row"><span class="sw" style="background:var(--f-SUN)"></span><span class="nm">Solar</span><span class="vl">${gw(solar)}</span></div>`
+          + `<div class="tt-row"><span class="sw" style="background:var(--f-WND)"></span><span class="nm">Wind</span><span class="vl">${gw(wind)}</span></div>`;
+      }
+      tooltip.innerHTML = `<div class="tt-hour">${hourLabel(h)} · ${String(h).padStart(2, "0")}:00</div>${rows}<div style="color:var(--ink-3);font-size:11px;margin-top:6px">${UNIT.sym} · ${MONTHS[state.month]} avg</div>`;
+      tooltip.style.opacity = 1;
+      // position (relative to stage)
+      const stage = svg.parentElement.getBoundingClientRect();
+      const px = evt.clientX - stage.left, py = evt.clientY - stage.top;
+      const tw = tooltip.offsetWidth, th = tooltip.offsetHeight;
+      let left = px + 18; if (left + tw > stage.width - 8) left = px - tw - 18;
+      let top = py - th / 2; top = Math.max(6, Math.min(stage.height - th - 6, top));
+      tooltip.style.left = left + "px"; tooltip.style.top = top + "px";
+    }
+
+    // ---- controls wiring ----
+    const regionsEl = document.getElementById("regions");
+    const pillByCode = {};
+    function selectRegion(code) {
+      state.region = code;
+      for (const c in pillByCode) pillByCode[c].setAttribute("aria-pressed", c === code);
+      document.getElementById("chartTitleRegion").textContent = "· " + DATA.regions[code].name;
+      renderLegend(); commit(false);
+    }
+    GROUPS.forEach(group => {
+      const wrap = document.createElement("div"); wrap.className = "region-group";
+      const lab = document.createElement("p"); lab.className = "group-label"; lab.textContent = group.label;
+      const row = document.createElement("div"); row.className = "regions";
+      group.codes.forEach(code => {
+        const b = document.createElement("button");
+        b.className = "pill"; b.textContent = DATA.regions[code].name;
+        b.setAttribute("aria-pressed", code === state.region);
+        b.addEventListener("click", () => selectRegion(code));
+        pillByCode[code] = b; row.appendChild(b);
+      });
+      wrap.appendChild(lab); wrap.appendChild(row); regionsEl.appendChild(wrap);
+    });
+    document.getElementById("chartTitleRegion").textContent = "· " + DATA.regions[state.region].name;
+
+    const monthSlider = document.getElementById("month");
+    const monthName = document.getElementById("monthname");
+    monthSlider.addEventListener("input", () => {
+      state.month = +monthSlider.value; monthName.textContent = MONTHS[state.month];
+      stopPlay(); commit(false);
+    });
+
+    document.getElementById("viewseg").addEventListener("click", e => {
+      const btn = e.target.closest("button"); if (!btn) return;
+      state.view = btn.dataset.view;
+      [...e.currentTarget.children].forEach(c => c.setAttribute("aria-pressed", c === btn));
+      document.getElementById("chartTitle").firstChild.textContent = (state.view === "mix" ? "Generation mix " : "Duck curve ");
+      document.getElementById("chartSub").textContent = state.view === "mix"
+        ? "Average megawatts by hour · local time"
+        : "Net load = demand minus wind & solar · local time";
+      commit(true);
+    });
+
+    // play through the year
+    const play = document.getElementById("play");
+    const playicon = document.getElementById("playicon");
+    function startPlay() {
+      play.setAttribute("aria-label", "Pause");
+      playicon.innerHTML = '<rect x="2" y="1.5" width="3" height="10" fill="currentColor"/><rect x="8" y="1.5" width="3" height="10" fill="currentColor"/>';
+      playTimer = setInterval(() => {
+        state.month = state.month % 12 + 1;
+        monthSlider.value = state.month; monthName.textContent = MONTHS[state.month];
+        commit(false);
+      }, 900);
+    }
+    function stopPlay() {
+      if (!playTimer) return;
+      clearInterval(playTimer); playTimer = null;
+      play.setAttribute("aria-label", "Play through the year");
+      playicon.innerHTML = '<path d="M2 1.5 L11 6.5 L2 11.5 Z" fill="currentColor"/>';
+    }
+    play.addEventListener("click", () => { playTimer ? stopPlay() : startPlay(); });
+
+    // table toggle
+    const tableBtn = document.getElementById("tableBtn");
+    tableBtn.addEventListener("click", () => {
+      const wrap = document.getElementById("tablewrap");
+      const open = wrap.style.display === "block";
+      wrap.style.display = open ? "none" : "block";
+      tableBtn.setAttribute("aria-expanded", String(!open));
+      tableBtn.textContent = open ? "Show the numbers ▾" : "Hide the numbers ▴";
+    });
+
+    // ---- go ----
+    renderLegend();
+    commit(true);
+    window.addEventListener("resize", () => { if (curFrame) draw(curFrame, yMaxCur); });
+  })();
+  </script>
+</body>
+
+</html>
