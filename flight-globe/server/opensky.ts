@@ -1,8 +1,31 @@
 import type { BBox, FlightState } from './types'
+import dns from 'node:dns'
+
+// Render (and many cloud hosts) often prefer IPv6; OpenSky's AAAA path can
+// fail with opaque "fetch failed". Prefer IPv4 for outbound API calls.
+dns.setDefaultResultOrder('ipv4first')
 
 const OPENSKY_API = 'https://opensky-network.org/api'
 const OPENSKY_TOKEN_URL =
   'https://auth.opensky-network.org/auth/realms/opensky-network/protocol/openid-connect/token'
+
+/** Unwrap undici/Node fetch failures into something useful in /api/health. */
+export function formatUpstreamError(err: unknown): string {
+  if (!(err instanceof Error)) return String(err)
+  const parts = [err.message]
+  let c: unknown = (err as Error & { cause?: unknown }).cause
+  let depth = 0
+  while (c instanceof Error && depth < 4) {
+    const code =
+      'code' in c && typeof (c as { code?: unknown }).code === 'string'
+        ? ` [${(c as { code: string }).code}]`
+        : ''
+    parts.push(`${c.message}${code}`)
+    c = (c as Error & { cause?: unknown }).cause
+    depth++
+  }
+  return parts.filter(Boolean).join(' → ')
+}
 
 export class OpenSkyError extends Error {
   status: number
@@ -69,9 +92,12 @@ async function getToken(): Promise<string | null> {
     method: 'POST',
     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
     body,
+    signal: AbortSignal.timeout(20_000),
   })
   if (!r.ok) {
     console.warn(`[opensky] token request failed: ${r.status} ${r.statusText}`)
+    // Don't silently fall back to anonymous on Render — auth failures should
+    // surface. Still return null so callers can decide; poller logs the fetch.
     return null
   }
   const j = (await r.json()) as { access_token: string; expires_in: number }
@@ -153,7 +179,10 @@ export async function fetchStates(bbox?: BBox): Promise<FlightState[]> {
   const t = await getToken()
   if (t) headers.Authorization = `Bearer ${t}`
 
-  const res = await fetch(url, { headers })
+  const res = await fetch(url, {
+    headers,
+    signal: AbortSignal.timeout(45_000),
+  })
   const remaining = readRemaining(res)
   const creditCost = creditCostForBBox(bbox)
   lastMeta = { remaining: remaining ?? null, creditCost }
@@ -202,7 +231,10 @@ export async function fetchOpenSkyFlightAirports(
   const t = await getToken()
   if (t) headers.Authorization = `Bearer ${t}`
 
-  const res = await fetch(url, { headers })
+  const res = await fetch(url, {
+    headers,
+    signal: AbortSignal.timeout(20_000),
+  })
   const remaining = readRemaining(res)
   lastMeta = { remaining: remaining ?? null, creditCost: 1 }
 

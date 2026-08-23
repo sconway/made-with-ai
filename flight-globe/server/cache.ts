@@ -8,7 +8,7 @@ import { pushSnapshot } from './history'
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const DISK_PATH = path.join(__dirname, '.flights-cache.json')
 
-export type CacheSource = 'opensky' | 'mock'
+export type CacheSource = 'opensky' | 'adsb' | 'mock'
 
 export interface FlightCacheSnapshot {
   flights: FlightState[]
@@ -96,12 +96,20 @@ export function clearMemoryCache(): void {
   state.lastPollOk = false
 }
 
+function sourceAllowed(
+  source: CacheSource,
+  expect: CacheSource | 'live',
+): boolean {
+  if (expect === 'live') return source === 'opensky' || source === 'adsb'
+  return source === expect
+}
+
 /**
- * Load last successful snapshot. Live mode only restores OpenSky snapshots —
- * never mock leftovers from `npm run dev:mock`.
+ * Load last successful snapshot. Live mode restores OpenSky or ADS-B
+ * snapshots — never mock leftovers from `npm run dev:mock`.
  */
 export async function loadFlightCache(
-  expectSource: CacheSource,
+  expectSource: CacheSource | 'live',
 ): Promise<boolean> {
   try {
     const raw = await readFile(DISK_PATH, 'utf8')
@@ -114,11 +122,11 @@ export async function loadFlightCache(
 
     // Untagged files are treated as mock (older builds wrote mock without a tag).
     const source: CacheSource = data.source ?? 'mock'
-    if (source !== expectSource) {
+    if (!sourceAllowed(source, expectSource)) {
       console.log(
         `[cache] ignoring disk snapshot (source=${source}, need ${expectSource})`,
       )
-      if (expectSource === 'opensky' && source === 'mock') {
+      if (expectSource === 'live' && source === 'mock') {
         try {
           await unlink(DISK_PATH)
           console.log('[cache] removed stale mock snapshot from disk')

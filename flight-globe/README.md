@@ -69,7 +69,8 @@ poll (or zero extra polls during a short window if the cache is already warm).
 
 Useful env knobs (see `.env.example`):
 
-- `FLIGHT_POLL_INTERVAL_MS` — backend OpenSky cadence (default 120000)
+- `FLIGHT_UPSTREAM` — `auto` (OpenSky → adsb.lol), `opensky`, or `adsb`
+- `FLIGHT_POLL_INTERVAL_MS` — backend poll cadence (default 120000 / OpenSky)
 - `FLIGHT_BACKEND_MOCK=1` — synthetic traffic (`npm run dev:mock`)
 - `VITE_USE_BACKEND=0` — browser hits OpenSky/airplanes.live directly (debug only)
 
@@ -81,9 +82,15 @@ npm run preview  # build then start (local prod check)
 
 ## Deploy (Render / Fly / Railway)
 
-One **always-on** Web Service is enough: the Node server polls OpenSky and
-serves both `/api/*` and the Vite `dist/` UI (same origin, so relative `/api`
+One **always-on** Web Service is enough: the Node server polls an upstream feed
+and serves both `/api/*` and the Vite `dist/` UI (same origin, so relative `/api`
 calls keep working).
+
+**Important:** [OpenSky may block cloud / hyperscaler egress IPs](https://openskynetwork.github.io/opensky-api/).
+On Render/Fly/Railway the poller therefore defaults to `FLIGHT_UPSTREAM=auto`:
+try OpenSky, then fall back to keyless [adsb.lol](https://api.adsb.lol) hub
+queries so the globe still fills. Set `FLIGHT_UPSTREAM=adsb` to skip OpenSky
+entirely on those hosts.
 
 **Render.com example**
 
@@ -95,9 +102,10 @@ calls keep working).
 
 | Key | Notes |
 |-----|--------|
-| `OPENSKY_CLIENT_ID` | OpenSky API client |
-| `OPENSKY_CLIENT_SECRET` | OpenSky API secret |
-| `FLIGHT_POLL_INTERVAL_MS` | `120000` recommended (world poll = 4 credits) |
+| `FLIGHT_UPSTREAM` | `auto` (default) or `adsb` on cloud hosts |
+| `OPENSKY_CLIENT_ID` | Optional if using `adsb`; needed for local OpenSky |
+| `OPENSKY_CLIENT_SECRET` | Optional if using `adsb` |
+| `FLIGHT_POLL_INTERVAL_MS` | `120000` for OpenSky; ADS-B defaults to 60s |
 | `PORT` | Set automatically by Render |
 
 Optional: attach a small disk and point caches at it later; in-memory + optional
@@ -109,10 +117,11 @@ Local check: `npm run preview` then open `http://localhost:8787`.
 ## Architecture
 
 ```
-server/            # shared poller (one OpenSky credit budget for all users)
+server/            # shared poller (one upstream for all users)
   index.ts         # HTTP: /api/health, /api/flights, /api/routes/:callsign
-  poller.ts        # world snapshot on an interval (+ mock mode)
+  poller.ts        # world snapshot on an interval (+ mock / ADS-B fallback)
   opensky.ts       # OAuth2 + states/all
+  adsblol.ts       # keyless ADS-B fallback for cloud hosts
   cache.ts         # in-memory flights; region/bbox filter with no extra upstream
   routes.ts        # shared adsbdb lookup + disk cache
 src/

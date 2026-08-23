@@ -272,7 +272,7 @@ const server = http.createServer((req, res) => {
 })
 
 await loadRouteCache()
-await loadFlightCache(isMockMode() ? 'mock' : 'opensky')
+await loadFlightCache(isMockMode() ? 'mock' : 'live')
 startPoller()
 
 server.listen(PORT, () => {

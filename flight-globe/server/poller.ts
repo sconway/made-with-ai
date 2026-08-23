@@ -1,14 +1,21 @@
 import { buildMockFlights } from './mock'
-import { fetchStates, lastOpenSkyMeta, OpenSkyError } from './opensky'
+import { fetchAdsbLolStates } from './adsblol'
+import {
+  fetchStates,
+  formatUpstreamError,
+  lastOpenSkyMeta,
+  OpenSkyError,
+} from './opensky'
 import {
   getCache,
   setCreditsRemaining,
   setFlights,
   setPollError,
   setPollWakeHandler,
+  type CacheSource,
 } from './cache'
 
-/** Clients idle longer than this → skip OpenSky (save credits). */
+/** Clients idle longer than this → skip upstream polls (save credits / quota). */
 const IDLE_MS = 5 * 60_000
 /** Poller wake interval while waiting for a browser. */
 const WAKE_CHECK_MS = 2_000
@@ -20,16 +27,20 @@ const MAX_429_WAIT_MS = 6 * 60 * 60_000
 const MAX_TRANSIENT_WAIT_MS = 60_000
 /** Empty or very stale cache: retry even sooner. */
 const MAX_URGENT_WAIT_MS = 20_000
+/** After this many consecutive OpenSky network failures, prefer ADS-B for a while. */
+const OPENSKY_FAIL_BEFORE_ADSB = 2
+/** How long to stick with ADS-B before probing OpenSky again. */
+const OPENSKY_RETRY_AFTER_MS = 30 * 60_000
 
 /**
- * Default 2 minutes. Global /states/all costs **4 credits**; at 45s that was
- * ~7.6k credits/day vs a 4k free-tier budget. 120s ≈ 2.9k credits/day.
+ * Default 2 minutes for OpenSky (4 credits / world poll). ADS-B fallback can
+ * poll a bit faster — no credit budget.
  */
 export function pollIntervalMs(): number {
   const n = Number(process.env.FLIGHT_POLL_INTERVAL_MS)
   if (Number.isFinite(n) && n >= 5_000) return n
-  // Mock drifts each poll — denser frames make playback useful while developing.
   if (isMockMode()) return 15_000
+  if (activeSource() === 'adsb') return 60_000
   return 120_000
 }
 
@@ -40,6 +51,21 @@ export function isMockMode(): boolean {
   )
 }
 
+/** opensky | adsb | auto (try OpenSky, fall back when cloud IPs are blocked). */
+export function upstreamMode(): 'opensky' | 'adsb' | 'auto' {
+  const v = (process.env.FLIGHT_UPSTREAM || 'auto').trim().toLowerCase()
+  if (v === 'adsb' || v === 'adsblol' || v === 'adsb.lol') return 'adsb'
+  if (v === 'opensky') return 'opensky'
+  return 'auto'
+}
+
+let preferAdsbUntil = 0
+let openskyNetFails = 0
+
+function activeSource(): CacheSource | null {
+  return getCache().source
+}
+
 function clientsActive(): boolean {
   const hit = getCache().lastApiHitAt
   return hit != null && Date.now() - hit < IDLE_MS
@@ -47,7 +73,8 @@ function clientsActive(): boolean {
 
 function needsLiveRefresh(): boolean {
   const c = getCache()
-  if (c.source !== 'opensky' || c.flights.length === 0) return true
+  if (c.source !== 'opensky' && c.source !== 'adsb') return true
+  if (c.flights.length === 0) return true
   if (c.updatedAt == null) return true
   return Date.now() - c.updatedAt >= pollIntervalMs()
 }
@@ -55,16 +82,12 @@ function needsLiveRefresh(): boolean {
 /** True when the UI would feel frozen without a fresh poll. */
 function cacheIsUrgent(): boolean {
   const c = getCache()
-  if (c.source !== 'opensky' || c.flights.length === 0) return true
+  if (c.source !== 'opensky' && c.source !== 'adsb') return true
+  if (c.flights.length === 0) return true
   if (c.updatedAt == null) return true
-  // Older than 2 poll intervals → treat as stale.
   return Date.now() - c.updatedAt >= pollIntervalMs() * 2
 }
 
-/**
- * Honor Retry-After when present. Only fall back to the long minimum when
- * OpenSky gives no guidance (typical empty credit bucket).
- */
 function waitFor429(e: OpenSkyError): number {
   if (e.retryAfterMs != null && e.retryAfterMs > 0) {
     return Math.min(Math.max(e.retryAfterMs, 5_000), MAX_429_WAIT_MS)
@@ -72,11 +95,6 @@ function waitFor429(e: OpenSkyError): number {
   return MIN_429_WAIT_MS
 }
 
-/**
- * Short exponential backoff for timeouts / 5xx / auth blips.
- * Previously this was always `pollInterval * 2` (240s) — that left a stale
- * globe sitting for minutes after a transient blip.
- */
 function waitForTransient(streak: number, urgent: boolean): number {
   const start = urgent ? 2_000 : 5_000
   const cap = urgent ? MAX_URGENT_WAIT_MS : MAX_TRANSIENT_WAIT_MS
@@ -84,12 +102,53 @@ function waitForTransient(streak: number, urgent: boolean): number {
   return Math.min(cap, start * 2 ** exp)
 }
 
+function isOpenSkyNetworkError(e: unknown): boolean {
+  if (e instanceof OpenSkyError) return false
+  const msg = formatUpstreamError(e).toLowerCase()
+  return (
+    msg.includes('fetch failed') ||
+    msg.includes('aborted') ||
+    msg.includes('timeout') ||
+    msg.includes('econnreset') ||
+    msg.includes('etimedout') ||
+    msg.includes('enotfound') ||
+    msg.includes('eai_again') ||
+    msg.includes('cert') ||
+    msg.includes('socket')
+  )
+}
+
+async function pollOpenSky(): Promise<void> {
+  const flights = await fetchStates()
+  const meta = lastOpenSkyMeta()
+  setCreditsRemaining(meta.remaining)
+  setFlights(flights, 'opensky')
+  openskyNetFails = 0
+  preferAdsbUntil = 0
+  const c = getCache()
+  console.log(
+    `[poller] OpenSky ok — ${flights.length} flights, poll #${c.upstreamPolls}, ~${meta.creditCost} credit(s)` +
+      (meta.remaining != null ? `, ${meta.remaining} left` : '') +
+      ` (api hits since last poll: ${c.hitsSinceLastPoll})`,
+  )
+}
+
+async function pollAdsb(reason: string): Promise<void> {
+  const flights = await fetchAdsbLolStates()
+  setCreditsRemaining(null)
+  setFlights(flights, 'adsb')
+  const c = getCache()
+  console.log(
+    `[poller] ADS-B (adsb.lol) ok — ${flights.length} flights, poll #${c.upstreamPolls}` +
+      ` (${reason}; api hits since last poll: ${c.hitsSinceLastPoll})`,
+  )
+}
+
 /**
  * Single upstream poll loop. All browsers share this cache — N clients do not
  * multiply OpenSky credits. Skips polls while no client has hit the API recently.
  */
 export function startPoller(): void {
-  const base = pollIntervalMs()
   let timer: ReturnType<typeof setTimeout> | null = null
   let running = false
   let loggedWaiting = false
@@ -105,6 +164,7 @@ export function startPoller(): void {
   const tick = async () => {
     if (running) return
     running = true
+    const base = pollIntervalMs()
     try {
       if (isMockMode()) {
         setFlights(buildMockFlights(), 'mock')
@@ -118,11 +178,10 @@ export function startPoller(): void {
         return
       }
 
-      // Demand-driven: don't burn credits when nobody is looking.
       if (!clientsActive()) {
         if (!loggedWaiting) {
           console.log(
-            '[poller] waiting for client… (no OpenSky call until the UI connects)',
+            '[poller] waiting for client… (no upstream call until the UI connects)',
           )
           loggedWaiting = true
         }
@@ -136,21 +195,49 @@ export function startPoller(): void {
         return
       }
 
-      const flights = await fetchStates()
-      const meta = lastOpenSkyMeta()
-      setCreditsRemaining(meta.remaining)
-      setFlights(flights, 'opensky')
+      const mode = upstreamMode()
+      const forceAdsb =
+        mode === 'adsb' || (mode === 'auto' && Date.now() < preferAdsbUntil)
+
+      if (forceAdsb) {
+        await pollAdsb(mode === 'adsb' ? 'FLIGHT_UPSTREAM=adsb' : 'OpenSky skipped')
+      } else {
+        try {
+          await pollOpenSky()
+        } catch (e) {
+          if (e instanceof OpenSkyError && e.status === 429) throw e
+          if (mode === 'auto' && isOpenSkyNetworkError(e)) {
+            openskyNetFails += 1
+            console.warn(
+              `[poller] OpenSky network error (${openskyNetFails}): ${formatUpstreamError(e)}`,
+            )
+            if (openskyNetFails >= OPENSKY_FAIL_BEFORE_ADSB) {
+              preferAdsbUntil = Date.now() + OPENSKY_RETRY_AFTER_MS
+              console.warn(
+                '[poller] OpenSky unreachable from this host (common on cloud IPs) — using ADS-B fallback for 30m',
+              )
+              await pollAdsb('OpenSky blocked / unreachable')
+            } else {
+              throw e
+            }
+          } else if (mode === 'auto') {
+            // HTTP errors other than 429 — still try ADS-B so the globe stays live.
+            console.warn(
+              `[poller] OpenSky failed (${formatUpstreamError(e)}) — trying ADS-B`,
+            )
+            preferAdsbUntil = Date.now() + OPENSKY_RETRY_AFTER_MS
+            await pollAdsb('OpenSky error fallback')
+          } else {
+            throw e
+          }
+        }
+      }
+
       failStreak = 0
       creditBackoffUntil = 0
-      const c = getCache()
-      console.log(
-        `[poller] OpenSky ok — ${flights.length} flights, poll #${c.upstreamPolls}, ~${meta.creditCost} credit(s)` +
-          (meta.remaining != null ? `, ${meta.remaining} left` : '') +
-          ` (api hits since last poll: ${c.hitsSinceLastPoll})`,
-      )
-      schedule(base)
+      schedule(pollIntervalMs())
     } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e)
+      const msg = formatUpstreamError(e)
       setPollError(msg)
 
       if (e instanceof OpenSkyError && e.status === 429) {
@@ -158,12 +245,13 @@ export function startPoller(): void {
         const wait = waitFor429(e)
         creditBackoffUntil = Date.now() + wait
         const hasLive =
-          getCache().source === 'opensky' && getCache().flights.length > 0
+          (getCache().source === 'opensky' || getCache().source === 'adsb') &&
+          getCache().flights.length > 0
         console.warn(
           `[poller] ${msg} — credits exhausted; backing off ${Math.round(wait / 1000)}s` +
             (hasLive
-              ? ' (serving last OpenSky snapshot)'
-              : ' (no live snapshot yet — wait for daily credit refill, or npm run dev:mock)') +
+              ? ' (serving last snapshot)'
+              : ' (no live snapshot yet — wait for daily credit refill, set FLIGHT_UPSTREAM=adsb, or npm run dev:mock)') +
             '.',
         )
         schedule(wait)
@@ -186,16 +274,16 @@ export function startPoller(): void {
 
   setPollWakeHandler(() => {
     if (running) return
-    // Still in a credit backoff — don't burn more 429s on every page refresh.
     if (Date.now() < creditBackoffUntil) return
     schedule(0)
   })
 
+  const mode = upstreamMode()
   console.log(
-    `[poller] starting (${isMockMode() ? 'MOCK' : 'OpenSky'}, interval ${base}ms` +
+    `[poller] starting (${isMockMode() ? 'MOCK' : mode}, interval ~${pollIntervalMs()}ms` +
       (isMockMode()
         ? ''
-        : `; world poll = 4 credits; idle skip after ${IDLE_MS / 1000}s`) +
+        : `; idle skip after ${IDLE_MS / 1000}s`) +
       ')',
   )
   schedule(isMockMode() ? 0 : 500)

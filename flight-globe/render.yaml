@@ -11,8 +11,13 @@ services:
     envVars:
       - key: NODE_VERSION
         value: "20"
+      # OpenSky often blocks cloud/datacenter egress. auto → ADS-B (adsb.lol) fallback.
+      - key: FLIGHT_UPSTREAM
+        value: "auto"
       - key: FLIGHT_POLL_INTERVAL_MS
         value: "120000"
+      - key: NODE_OPTIONS
+        value: "--dns-result-order=ipv4first"
       - key: OPENSKY_CLIENT_ID
         sync: false
       - key: OPENSKY_CLIENT_SECRET
