@@ -22,40 +22,108 @@ country detail. Built with React + TypeScript + react-three-fiber.
 - **Per-flight detail** — click any plane for callsign, ICAO24, altitude,
   ground speed, heading, vertical rate, and live position.
 - **Region presets** — World / North America / Europe, each with a scoped query.
+- **Filters** — airborne/ground, altitude & speed bands, airline code, airline vs GA.
+- **Trails** — breadcrumbs on selected/pinned aircraft (or all visible traffic).
+- **Search, playback, follow, multi-pin** — tracker-style tools on the shared feed.
 
 ## Running
 
-Requires **Node 18+** (developed on Node 20).
+Requires **Node 20+** (uses `--env-file`).
 
 ```bash
+cp .env.example .env   # add OpenSky client id/secret
 npm install
-npm run dev      # http://localhost:5180
-npm run build    # type-check + production bundle
+npm run dev            # shared backend + Vite (real OpenSky, same as deploy)
+npm run dev:mock       # synthetic planes only (no credits)
 ```
+
+`npm run dev` starts two processes — the same architecture you’d run in
+production:
+
+1. **Shared backend** (`server/`) — polls OpenSky once on an interval, serves
+   `/api/flights` and `/api/routes/:callsign` from a shared cache.
+2. **Vite** — React app; browser only talks to `/api/*` (proxied to the backend).
+
+Many browser tabs share one OpenSky credit stream. Secrets never leave the
+Node process. Use `npm run dev:mock` only when you want to avoid OpenSky
+entirely (UI work, load tests).
+
+**Credit note:** a global `/states/all` costs **4 credits**. The poller defaults
+to **2 minutes**, skips OpenSky while no client is active, restores the last
+snapshot from disk, and on 429 backs off at least 15 minutes (honoring
+OpenSky’s `X-Rate-Limit-Retry-After-Seconds`). Free-tier credits refill daily.
+
+### Local testing (accurate multi-user path)
+
+| Goal | Command |
+|------|---------|
+| Live OpenSky (mirrors deploy) | `npm run dev` — open 2+ tabs |
+| UI / load tests without credits | `npm run dev:mock` |
+| Prove fan-in (N clients ≫ upstream polls) | `npm run server:mock` then `npm run test:api` |
+| Health / credits remaining | `curl -s localhost:8787/api/health \| jq` |
+| Bypass backend (old direct proxies) | `VITE_USE_BACKEND=0 npm run web` |
+
+`npm run test:api` spins up parallel clients against `/api/flights` and prints
+`apiHits` vs `upstreamPolls`. A healthy run shows many client hits per upstream
+poll (or zero extra polls during a short window if the cache is already warm).
+
+Useful env knobs (see `.env.example`):
+
+- `FLIGHT_POLL_INTERVAL_MS` — backend OpenSky cadence (default 120000)
+- `FLIGHT_BACKEND_MOCK=1` — synthetic traffic (`npm run dev:mock`)
+- `VITE_USE_BACKEND=0` — browser hits OpenSky/airplanes.live directly (debug only)
+
+```bash
+npm run build    # type-check + production bundle
+npm start        # serve API + dist/ on PORT (or FLIGHT_BACKEND_PORT / 8787)
+npm run preview  # build then start (local prod check)
+```
+
+## Deploy (Render / Fly / Railway)
+
+One **always-on** Web Service is enough: the Node server polls OpenSky and
+serves both `/api/*` and the Vite `dist/` UI (same origin, so relative `/api`
+calls keep working).
+
+**Render.com example**
+
+1. New **Web Service** from this repo (Node 20+).
+2. Build command: `npm install && npm run build`
+3. Start command: `npm start`
+4. Instance: **paid / always-on** (free tier spin-down breaks the live poller).
+5. Environment:
+
+| Key | Notes |
+|-----|--------|
+| `OPENSKY_CLIENT_ID` | OpenSky API client |
+| `OPENSKY_CLIENT_SECRET` | OpenSky API secret |
+| `FLIGHT_POLL_INTERVAL_MS` | `120000` recommended (world poll = 4 credits) |
+| `PORT` | Set automatically by Render |
+
+Optional: attach a small disk and point caches at it later; in-memory + optional
+on-disk files under `server/` already restore across restarts when the
+filesystem persists.
+
+Local check: `npm run preview` then open `http://localhost:8787`.
 
 ## Architecture
 
 ```
+server/            # shared poller (one OpenSky credit budget for all users)
+  index.ts         # HTTP: /api/health, /api/flights, /api/routes/:callsign
+  poller.ts        # world snapshot on an interval (+ mock mode)
+  opensky.ts       # OAuth2 + states/all
+  cache.ts         # in-memory flights; region/bbox filter with no extra upstream
+  routes.ts        # shared adsbdb lookup + disk cache
 src/
   lib/
-    geo.ts         # lat/lon <-> vector3, altitude scaling, dead reckoning,
-                   #   point-in-polygon, polygon -> line/fill geometry
-    opensky.ts     # OpenSky states client (normalizes the positional arrays)
-    countries.ts   # loads + normalizes Natural Earth country GeoJSON
-    regions.ts     # region presets (bbox + camera target)
-    sun.ts         # sub-solar point for the day/night terminator
-  store/
-    useStore.ts    # zustand store (flights, countries, selection, region)
+    api.ts         # browser → /api/*
+    geo.ts         # lat/lon <-> vector3, altitude scaling, dead reckoning
+    opensky.ts     # direct OpenSky client (only when VITE_USE_BACKEND=0)
+    …
   components/
-    Scene.tsx      # composes the r3f scene
-    Earth.tsx      # day/night shader sphere (UVs derived from geo.ts formula)
-    Atmosphere.tsx # additive fresnel glow shell
-    Countries.tsx  # merged borders + raycast pick + hover/selected highlight
-    Flights.tsx    # instanced aircraft + interpolation + click selection
-    CameraRig.tsx  # animated fly-to for country / region selection
-    DataLayer.tsx  # loads countries once, polls OpenSky on region/country change
-    HUD.tsx        # overlay UI (topbar, detail panels, region switch)
-  App.tsx          # Canvas + HUD + DataLayer
+    DataLayer.tsx  # polls /api/flights for region/country scope
+    …
 ```
 
 ### Key design notes
@@ -68,64 +136,49 @@ src/
   raycast; the hit point is converted to lat/lon and tested against country
   polygons (bbox pre-filter + point-in-polygon). Only the hovered/selected
   country builds fill geometry (earcut triangulation projected to the sphere).
-- **Viewport-scoped data.** Selecting a country re-queries OpenSky with that
-  country's bbox — the same pattern that keeps a production tracker's bandwidth
-  sane (send only what's in view).
+- **Shared backend, scoped responses.** The server keeps one world snapshot and
+  filters by region/country bbox on read — switching region does not burn a new
+  OpenSky credit. Clients dead-reckon between cache refreshes.
 
 ## Data sources
 
-Queries follow the camera: `ViewportTracker` computes the visible lat/lon box,
-and the data layer requests just that area (or the selected country's box), so
-coverage spreads across the **whole view** rather than a single spot. When a view
-returns more than `MAX_RENDER` (4,000) aircraft, a monotonic hash samples a
-stable, flicker-free fraction spread across the area (HUD shows "shown / in
-view"). Cadence scales with area; errors back off exponentially, then fall back
-to bundled demo data.
+The backend polls OpenSky `/states/all` on a fixed interval while clients are
+active (default **2 min**; world queries cost **4 credits** ≈ 2.9k/day on the
+free tier). Region and country views are **slices of that cache**. When a view
+has more than `MAX_RENDER` (4,000) aircraft, a monotonic hash samples a stable
+fraction (HUD shows counts). Client errors back off and surface an on-screen
+message.
 
-Pick the source with `VITE_FLIGHT_SOURCE` in `.env`:
+### OpenSky credentials
 
-### OpenSky (recommended — full bbox coverage)
-
-`VITE_FLIGHT_SOURCE=opensky`. Returns every aircraft in the visible box in one
-request, so coverage is uniform across the view. Anonymous OpenSky is
-rate-limited (~400 credits/day → frequent 429s); a **free** account gets 4,000.
+Anonymous OpenSky is ~400 credits/day; a **free** account gets ~4,000.
 
 1. Create a free account at https://opensky-network.org
 2. Account → create an API client (OAuth2 client credentials)
 3. Put `OPENSKY_CLIENT_ID` / `OPENSKY_CLIENT_SECRET` in `.env` and restart
 
-The OAuth2 token exchange runs in the Vite dev server (`vite.config.ts`,
-proxied at `/opensky`), so the secret never reaches the browser.
+Used by `server/` (and by Vite’s `/opensky` proxy only if `VITE_USE_BACKEND=0`).
 
-### airplanes.live (default — keyless)
+### Direct / legacy path (`VITE_USE_BACKEND=0`)
 
-Unset / any other value. A keyless community feed proxied at `/adsblive` (a
-User-Agent is set server-side). Since its API caps each query at 250 nm, the app
-**tiles** the visible box into up to 8 requests (throttled to ≤ 1/s) and merges
-them. Good coverage on a fresh IP; on a heavily shared IP some tiles may be rate-
-limited.
-
-### Demo mode
-
-Append `?demo=1` to force the bundled `public/data/demo-flights.json` (850
-globally-distributed aircraft) — useful for offline previews and screenshots.
-The app also drops to this automatically after repeated live-fetch failures, and
-returns to live data on the next success.
+`VITE_FLIGHT_SOURCE=opensky` or airplanes.live via Vite proxies — fine for solo
+debugging, not for many concurrent users.
 
 For ocean coverage beyond terrestrial ADS-B you'd add satellite ADS-B
 (Aireon/Spire) or a commercial feed (FlightAware AeroAPI, ADS-B Exchange).
 
 ## Possible next steps
 
+- **Deploy** — one always-on Node service (`npm run build` + `npm start`) on
+  Render / Fly / Railway; serves `/api/*` and the Vite `dist/` UI.
+- **CDN in front of `/api/flights`** — `Cache-Control: max-age=5` is already set;
+  edge caching multiplies fan-in further.
+- **WebSocket / SSE push** — push snapshot updates instead of client polling.
 - **Weather overlay** — drape RainViewer / OpenWeatherMap tiles as an additive
-  layer, or volumetric cloud/storm cells at altitude. The layered component
-  model makes this an additive `<Weather />` in `Scene.tsx`.
+  layer, or volumetric cloud/storm cells at altitude.
 - **Bloom** — re-add a glow pass (was removed due to a Vite pre-bundling bug in
   `@react-three/postprocessing` 2.16 + `postprocessing` 6.37+; pin
   `postprocessing@6.36.x` or use a newer r3f-postprocessing when re-adding).
-- **WebSocket backend** — replace polling with a socket that pushes only the
-  current camera-frustum bbox, plus server-side interpolation.
 - **LOD aircraft** — swap the instanced dart glyph for detailed glTF models when
   zoomed into a country.
-- **Flight routes** — great-circle arcs from origin→destination on selection.
 ```

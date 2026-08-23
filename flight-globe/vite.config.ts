@@ -122,9 +122,14 @@ function adsbdbProxy(): Plugin {
   }
 }
 
+const BACKEND =
+  process.env.FLIGHT_BACKEND_URL?.replace(/\/$/, '') || 'http://localhost:8787'
+
 // https://vitejs.dev/config/
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), '')
+  // Direct OpenSky / airplanes.live proxies remain for VITE_USE_BACKEND=0.
+  // Default multi-user path is the shared backend at /api/* (see server/).
   return {
     plugins: [
       react(),
@@ -132,6 +137,14 @@ export default defineConfig(({ mode }) => {
       adsbdbProxy(),
       openSkyProxy(env.OPENSKY_CLIENT_ID, env.OPENSKY_CLIENT_SECRET),
     ],
-    server: { port: 5180 },
+    server: {
+      port: 5180,
+      proxy: {
+        '/api': {
+          target: BACKEND,
+          changeOrigin: true,
+        },
+      },
+    },
   }
 })

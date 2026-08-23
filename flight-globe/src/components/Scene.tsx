@@ -6,8 +6,9 @@ import { Atmosphere } from './Atmosphere'
 import { Countries } from './Countries'
 import { Flights } from './Flights'
 import { Arcs } from './Arcs'
+import { Trails } from './Trails'
+import { AirportPins } from './AirportPins'
 import { CameraRig } from './CameraRig'
-import { ViewportTracker } from './ViewportTracker'
 import { sunDirection } from '../lib/sun'
 import { GLOBE_RADIUS } from '../lib/geo'
 
@@ -41,21 +42,21 @@ export function Scene() {
       </Suspense>
       <Atmosphere />
       <Countries />
+      <AirportPins />
+      <Trails />
       <Arcs />
       <Flights />
 
       <OrbitControls
         makeDefault
         enablePan={false}
+        autoRotate={false}
         minDistance={1.25}
         maxDistance={6}
         rotateSpeed={0.5}
         zoomSpeed={0.7}
-        enableDamping
-        dampingFactor={0.08}
       />
       <CameraRig />
-      <ViewportTracker />
     </>
   )
 }

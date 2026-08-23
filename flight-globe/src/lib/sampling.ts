@@ -19,26 +19,57 @@ function hashUnit(s: string): number {
   return ((h >>> 0) % 100000) / 100000
 }
 
+function normalizeKeep(
+  keepIds?: string | Iterable<string> | null,
+): Set<string> {
+  if (keepIds == null) return new Set()
+  if (typeof keepIds === 'string') return keepIds ? new Set([keepIds]) : new Set()
+  return new Set([...keepIds].filter(Boolean))
+}
+
 /**
  * Thin flights to a roughly even spatial density: bin into a lat/lon grid sized
  * to the current view and keep at most a few per cell. Dense clusters (hubs) get
  * capped hard; sparse areas keep everything — so you see fewer planes spread
  * over a larger area rather than a blob over a hub. Selection within a cell is
  * hash-based, so the visible set is stable between polls.
+ *
+ * `keepIds` (selected / pinned) are always retained when present in `flights`.
  */
 export function thinEvenly(
   flights: FlightState[],
   bounds: BBox | null,
-  keepId?: string | null,
+  keepIds?: string | Iterable<string> | null,
 ): FlightState[] {
   if (flights.length === 0) return flights
 
+  const protectedIds = normalizeKeep(keepIds)
   const b = bounds ?? GLOBE_BOUNDS
+  const inBounds =
+    bounds == null
+      ? flights
+      : flights.filter(
+          (f) =>
+            protectedIds.has(f.icao24) ||
+            (f.lat >= bounds.minLat &&
+              f.lat <= bounds.maxLat &&
+              f.lon >= bounds.minLon &&
+              f.lon <= bounds.maxLon),
+        )
+  if (inBounds.length === 0) {
+    const forced: FlightState[] = []
+    for (const id of protectedIds) {
+      const sel = flights.find((f) => f.icao24 === id)
+      if (sel) forced.push(sel)
+    }
+    return forced
+  }
+
   const span = Math.max(b.maxLat - b.minLat, b.maxLon - b.minLon)
   const cellDeg = Math.max(0.05, span / GRID_N)
 
   const cells = new Map<string, FlightState[]>()
-  for (const f of flights) {
+  for (const f of inBounds) {
     const key = `${Math.floor(f.lat / cellDeg)}:${Math.floor(f.lon / cellDeg)}`
     let arr = cells.get(key)
     if (!arr) {
@@ -48,27 +79,55 @@ export function thinEvenly(
     arr.push(f)
   }
 
-  // Spread the render budget evenly across occupied cells.
-  const perCell = Math.min(PER_CELL_MAX, Math.max(1, Math.round(MAX_RENDER / cells.size)))
+  const perCell = Math.min(
+    PER_CELL_MAX,
+    Math.max(1, Math.round(MAX_RENDER / cells.size)),
+  )
 
   const kept: FlightState[] = []
+  const keptIds = new Set<string>()
   for (const arr of cells.values()) {
-    if (arr.length > perCell) {
-      arr.sort((x, y) => hashUnit(x.icao24) - hashUnit(y.icao24))
-      for (let i = 0; i < perCell; i++) kept.push(arr[i])
+    // Always keep protected aircraft in this cell first.
+    const forced = arr.filter((f) => protectedIds.has(f.icao24))
+    const rest = arr.filter((f) => !protectedIds.has(f.icao24))
+    for (const f of forced) {
+      if (keptIds.has(f.icao24)) continue
+      kept.push(f)
+      keptIds.add(f.icao24)
+    }
+    const slots = Math.max(0, perCell - forced.length)
+    if (rest.length > slots) {
+      rest.sort((x, y) => hashUnit(x.icao24) - hashUnit(y.icao24))
+      for (let i = 0; i < slots; i++) {
+        kept.push(rest[i]!)
+        keptIds.add(rest[i]!.icao24)
+      }
     } else {
-      for (const f of arr) kept.push(f)
+      for (const f of rest) {
+        kept.push(f)
+        keptIds.add(f.icao24)
+      }
     }
   }
 
-  if (keepId && !kept.some((f) => f.icao24 === keepId)) {
-    const sel = flights.find((f) => f.icao24 === keepId)
-    if (sel) kept.push(sel)
+  for (const id of protectedIds) {
+    if (keptIds.has(id)) continue
+    const sel =
+      inBounds.find((f) => f.icao24 === id) ??
+      flights.find((f) => f.icao24 === id)
+    if (sel) {
+      kept.push(sel)
+      keptIds.add(id)
+    }
   }
 
-  // Safety cap if even 1/cell exceeds the budget (very fine grids).
   if (kept.length > MAX_RENDER) {
-    kept.sort((x, y) => hashUnit(x.icao24) - hashUnit(y.icao24))
+    kept.sort((x, y) => {
+      const xp = protectedIds.has(x.icao24) ? 0 : 1
+      const yp = protectedIds.has(y.icao24) ? 0 : 1
+      if (xp !== yp) return xp - yp
+      return hashUnit(x.icao24) - hashUnit(y.icao24)
+    })
     return kept.slice(0, MAX_RENDER)
   }
   return kept

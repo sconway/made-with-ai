@@ -1,0 +1,19 @@
+# Example Render Blueprint — one always-on service (API + static UI).
+# https://render.com/docs/blueprint-spec
+services:
+  - type: web
+    name: flight-globe
+    runtime: node
+    plan: starter
+    buildCommand: npm install && npm run build
+    startCommand: npm start
+    healthCheckPath: /api/health
+    envVars:
+      - key: NODE_VERSION
+        value: "20"
+      - key: FLIGHT_POLL_INTERVAL_MS
+        value: "120000"
+      - key: OPENSKY_CLIENT_ID
+        sync: false
+      - key: OPENSKY_CLIENT_SECRET
+        sync: false

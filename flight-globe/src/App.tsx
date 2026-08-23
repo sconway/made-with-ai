@@ -2,8 +2,12 @@ import { Suspense } from 'react'
 import { Canvas } from '@react-three/fiber'
 import { Scene } from './components/Scene'
 import { HUD } from './components/HUD'
+import { FlightTooltip } from './components/FlightTooltip'
 import { DataLayer } from './components/DataLayer'
 import { RouteResolver } from './components/RouteResolver'
+import { DeepLinkSync } from './components/DeepLinkSync'
+import { AlertWatcher } from './components/AlertWatcher'
+import { AlertToasts } from './components/AlertsPanel'
 
 export default function App() {
   return (
@@ -21,7 +25,11 @@ export default function App() {
 
       <DataLayer />
       <RouteResolver />
+      <DeepLinkSync />
+      <AlertWatcher />
       <HUD />
+      <AlertToasts />
+      <FlightTooltip />
     </>
   )
 }

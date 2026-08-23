@@ -6,6 +6,12 @@ export interface Route {
   dLon: number
   oIata?: string
   dIata?: string
+  /** Full airport name when known (e.g. from adsbdb). */
+  oName?: string
+  dName?: string
+  /** City / municipality when known. */
+  oCity?: string
+  dCity?: string
 }
 
 /**
@@ -26,6 +32,8 @@ export interface FlightState {
   track: number | null // heading deg from north
   verticalRate: number | null // m/s
   lastContact: number // unix seconds
+  /** Mode A squawk when present (e.g. "7700"). */
+  squawk?: string | null
   registration?: string
   typeCode?: string
   category?: string

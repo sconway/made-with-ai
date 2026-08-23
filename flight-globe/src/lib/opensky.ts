@@ -67,6 +67,7 @@ export async function fetchStates(bbox?: BBox): Promise<FlightState[]> {
       verticalRate: s[11] as number | null,
       geoAltitude: s[13] as number | null,
       lastContact: s[4] as number,
+      squawk: ((s[14] as string) || '').trim() || null,
     })
   }
   return out
