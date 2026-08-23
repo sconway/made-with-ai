@@ -101,7 +101,11 @@ function handleFlights(req: http.IncomingMessage, res: http.ServerResponse): voi
 
   // Always 200 so the browser console isn't flooded with 503s while OpenSky
   // is warming or rate-limiting. Clients read `pending` / `error` instead.
-  if (c.updatedAt == null && !historical) {
+  // Live or nothing: no snapshot, failed last poll, or empty → pending empty.
+  if (
+    !historical &&
+    (c.updatedAt == null || !c.lastPollOk || c.flights.length === 0)
+  ) {
     const body: FlightsResponse = {
       flights: [],
       updatedAt: 0,
@@ -146,7 +150,7 @@ function handleFlights(req: http.IncomingMessage, res: http.ServerResponse): voi
     scope: key,
     count: flights.length,
     pending: false,
-    error: c.lastPollOk ? null : publicFeedError(c.lastError),
+    error: null,
   }
 
   // Short TTL hint for any reverse proxy; browsers still poll on their cadence.

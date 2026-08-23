@@ -8,7 +8,7 @@ import { pushSnapshot } from './history'
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const DISK_PATH = path.join(__dirname, '.flights-cache.json')
 
-export type CacheSource = 'opensky' | 'adsb' | 'mock'
+export type CacheSource = 'opensky' | 'mock'
 
 export interface FlightCacheSnapshot {
   flights: FlightState[]
@@ -69,6 +69,13 @@ export function setPollError(err: string): void {
   state.lastError = err
   state.upstreamPolls += 1
   state.hitsSinceLastPoll = 0
+  // Live or nothing: never keep serving a previous snapshot after a failed poll.
+  state.flights = []
+  state.updatedAt = null
+  state.source = null
+  void unlink(DISK_PATH).catch(() => {
+    /* ignore missing cache file */
+  })
 }
 
 export function recordApiHit(): void {
@@ -78,13 +85,8 @@ export function recordApiHit(): void {
   state.lastApiHitAt = Date.now()
   const stale =
     state.updatedAt != null && Date.now() - state.updatedAt > 4 * 60_000
-  // First client, empty/wrong cache, or data older than ~4 min → nudge poller.
-  if (
-    firstHit ||
-    state.source !== 'opensky' ||
-    state.flights.length === 0 ||
-    stale
-  ) {
+  // First client, empty cache, or data older than ~4 min → nudge poller.
+  if (firstHit || state.flights.length === 0 || stale) {
     wakePoll?.()
   }
 }
@@ -100,13 +102,13 @@ function sourceAllowed(
   source: CacheSource,
   expect: CacheSource | 'live',
 ): boolean {
-  if (expect === 'live') return source === 'opensky' || source === 'adsb'
+  if (expect === 'live') return source === 'opensky'
   return source === expect
 }
 
 /**
- * Load last successful snapshot. Live mode restores OpenSky or ADS-B
- * snapshots — never mock leftovers from `npm run dev:mock`.
+ * Load last successful snapshot. Live mode only restores a fresh OpenSky
+ * snapshot — never mock leftovers or old hub-sampled ADS-B files.
  */
 export async function loadFlightCache(
   expectSource: CacheSource | 'live',
@@ -116,12 +118,23 @@ export async function loadFlightCache(
     const data = JSON.parse(raw) as {
       flights?: FlightState[]
       updatedAt?: number
-      source?: CacheSource
+      source?: CacheSource | 'adsb'
     }
     if (!Array.isArray(data.flights) || data.flights.length === 0) return false
 
+    // Drop legacy / non-OpenSky disk files (hub ADS-B looked like random clusters).
+    if (data.source === 'adsb') {
+      try {
+        await unlink(DISK_PATH)
+        console.log('[cache] removed hub-sampled ADS-B snapshot from disk')
+      } catch {
+        /* ignore */
+      }
+      return false
+    }
+
     // Untagged files are treated as mock (older builds wrote mock without a tag).
-    const source: CacheSource = data.source ?? 'mock'
+    const source: CacheSource = data.source === 'opensky' ? 'opensky' : 'mock'
     if (!sourceAllowed(source, expectSource)) {
       console.log(
         `[cache] ignoring disk snapshot (source=${source}, need ${expectSource})`,
@@ -137,8 +150,18 @@ export async function loadFlightCache(
       return false
     }
 
+    const updatedAt = data.updatedAt ?? Date.now()
+    // Only restore if still reasonably fresh — otherwise start empty.
+    const maxAgeMs = 3 * 60_000
+    if (Date.now() - updatedAt > maxAgeMs) {
+      console.log(
+        `[cache] ignoring disk snapshot (age ${Math.round((Date.now() - updatedAt) / 1000)}s > ${maxAgeMs / 1000}s)`,
+      )
+      return false
+    }
+
     state.flights = data.flights
-    state.updatedAt = data.updatedAt ?? Date.now()
+    state.updatedAt = updatedAt
     state.source = source
     state.lastPollOk = true
     state.lastError = null

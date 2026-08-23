@@ -27,6 +27,54 @@ export function formatUpstreamError(err: unknown): string {
   return parts.filter(Boolean).join(' → ')
 }
 
+/** True for DNS/TLS/TCP failures (not HTTP 4xx/5xx from OpenSky). */
+export function isOpenSkyNetworkError(err: unknown): boolean {
+  if (err instanceof OpenSkyError) return false
+  const msg = formatUpstreamError(err).toLowerCase()
+  return (
+    msg.includes('fetch failed') ||
+    msg.includes('aborted') ||
+    msg.includes('timeout') ||
+    msg.includes('econnreset') ||
+    msg.includes('etimedout') ||
+    msg.includes('enotfound') ||
+    msg.includes('eai_again') ||
+    msg.includes('cert') ||
+    msg.includes('socket')
+  )
+}
+
+const OPENSKY_DOWN_MS = 30 * 60_000
+const OPENSKY_FAILS_BEFORE_DOWN = 3
+let openskyDownUntil = 0
+let openskyNetFails = 0
+let loggedOpenSkyDown = false
+
+/** Skip further OpenSky calls while this host looks firewalled from OpenSky. */
+export function isOpenSkyUnreachable(): boolean {
+  return Date.now() < openskyDownUntil
+}
+
+export function noteOpenSkySuccess(): void {
+  openskyNetFails = 0
+  openskyDownUntil = 0
+  loggedOpenSkyDown = false
+}
+
+export function noteOpenSkyFailure(err: unknown): void {
+  if (!isOpenSkyNetworkError(err)) return
+  openskyNetFails += 1
+  if (openskyNetFails < OPENSKY_FAILS_BEFORE_DOWN) return
+  openskyDownUntil = Date.now() + OPENSKY_DOWN_MS
+  if (!loggedOpenSkyDown) {
+    loggedOpenSkyDown = true
+    console.warn(
+      `[opensky] host appears unable to reach OpenSky (${formatUpstreamError(err)}) — ` +
+        `skipping OpenSky for ${OPENSKY_DOWN_MS / 60_000}m (common on cloud IPs)`,
+    )
+  }
+}
+
 export class OpenSkyError extends Error {
   status: number
   retryAfterMs?: number
@@ -162,44 +210,54 @@ function readRemaining(res: Response): number | undefined {
  * Prefer infrequent world polls + server-side filtering over many bbox calls.
  */
 export async function fetchStates(bbox?: BBox): Promise<FlightState[]> {
-  let url = `${OPENSKY_API}/states/all`
-  if (bbox) {
-    const params = new URLSearchParams({
-      lamin: bbox.minLat.toFixed(4),
-      lomin: bbox.minLon.toFixed(4),
-      lamax: bbox.maxLat.toFixed(4),
-      lomax: bbox.maxLon.toFixed(4),
+  if (isOpenSkyUnreachable()) {
+    throw new Error('OpenSky unreachable from this host (circuit open)')
+  }
+  try {
+    let url = `${OPENSKY_API}/states/all`
+    if (bbox) {
+      const params = new URLSearchParams({
+        lamin: bbox.minLat.toFixed(4),
+        lomin: bbox.minLon.toFixed(4),
+        lamax: bbox.maxLat.toFixed(4),
+        lomax: bbox.maxLon.toFixed(4),
+      })
+      url += `?${params.toString()}`
+    }
+
+    const headers: Record<string, string> = {
+      'User-Agent': 'flight-globe-backend/0.1',
+    }
+    const t = await getToken()
+    if (t) headers.Authorization = `Bearer ${t}`
+
+    const res = await fetch(url, {
+      headers,
+      signal: AbortSignal.timeout(45_000),
     })
-    url += `?${params.toString()}`
-  }
+    const remaining = readRemaining(res)
+    const creditCost = creditCostForBBox(bbox)
+    lastMeta = { remaining: remaining ?? null, creditCost }
 
-  const headers: Record<string, string> = {
-    'User-Agent': 'flight-globe-backend/0.1',
-  }
-  const t = await getToken()
-  if (t) headers.Authorization = `Bearer ${t}`
+    if (!res.ok) {
+      throw new OpenSkyError(res.status, res.statusText, {
+        retryAfterMs: readRetryAfterMs(res),
+        remaining,
+      })
+    }
 
-  const res = await fetch(url, {
-    headers,
-    signal: AbortSignal.timeout(45_000),
-  })
-  const remaining = readRemaining(res)
-  const creditCost = creditCostForBBox(bbox)
-  lastMeta = { remaining: remaining ?? null, creditCost }
-
-  if (!res.ok) {
-    throw new OpenSkyError(res.status, res.statusText, {
-      retryAfterMs: readRetryAfterMs(res),
-      remaining,
-    })
+    if (remaining != null) {
+      console.log(
+        `[opensky] ok — ${creditCost} credit(s) used, ${remaining} remaining today`,
+      )
+    }
+    const flights = parseStates((await res.json()) as StatesResponse)
+    noteOpenSkySuccess()
+    return flights
+  } catch (e) {
+    noteOpenSkyFailure(e)
+    throw e
   }
-
-  if (remaining != null) {
-    console.log(
-      `[opensky] ok — ${creditCost} credit(s) used, ${remaining} remaining today`,
-    )
-  }
-  return parseStates((await res.json()) as StatesResponse)
 }
 
 export interface OpenSkyEstAirports {
@@ -218,6 +276,7 @@ export async function fetchOpenSkyFlightAirports(
 ): Promise<OpenSkyEstAirports | null> {
   const id = icao24.trim().toLowerCase()
   if (!/^[0-9a-f]{6}$/.test(id)) return null
+  if (isOpenSkyUnreachable()) return null
 
   const end = Math.floor(Date.now() / 1000)
   const begin = end - lookbackSec
@@ -228,39 +287,50 @@ export async function fetchOpenSkyFlightAirports(
   const headers: Record<string, string> = {
     'User-Agent': 'flight-globe-backend/0.1',
   }
-  const t = await getToken()
-  if (t) headers.Authorization = `Bearer ${t}`
 
-  const res = await fetch(url, {
-    headers,
-    signal: AbortSignal.timeout(20_000),
-  })
-  const remaining = readRemaining(res)
-  lastMeta = { remaining: remaining ?? null, creditCost: 1 }
+  try {
+    const t = await getToken()
+    if (t) headers.Authorization = `Bearer ${t}`
 
-  if (res.status === 404) return null
-  if (!res.ok) {
-    throw new OpenSkyError(res.status, res.statusText, {
-      retryAfterMs: readRetryAfterMs(res),
-      remaining,
+    const res = await fetch(url, {
+      headers,
+      signal: AbortSignal.timeout(20_000),
     })
-  }
+    const remaining = readRemaining(res)
+    lastMeta = { remaining: remaining ?? null, creditCost: 1 }
 
-  const rows = (await res.json()) as Array<{
-    estDepartureAirport?: string | null
-    estArrivalAirport?: string | null
-    lastSeen?: number
-    firstSeen?: number
-  }>
-  if (!Array.isArray(rows) || rows.length === 0) return null
+    if (res.status === 404) return null
+    if (!res.ok) {
+      throw new OpenSkyError(res.status, res.statusText, {
+        retryAfterMs: readRetryAfterMs(res),
+        remaining,
+      })
+    }
 
-  // Prefer the most recently active leg that has both airports.
-  const sorted = rows.slice().sort((a, b) => (b.lastSeen ?? 0) - (a.lastSeen ?? 0))
-  for (const row of sorted) {
-    const dep = (row.estDepartureAirport || '').trim().toUpperCase() || null
-    const arr = (row.estArrivalAirport || '').trim().toUpperCase() || null
-    if (dep && arr) return { dep, arr }
+    const rows = (await res.json()) as Array<{
+      estDepartureAirport?: string | null
+      estArrivalAirport?: string | null
+      lastSeen?: number
+      firstSeen?: number
+    }>
+    if (!Array.isArray(rows) || rows.length === 0) return null
+
+    // Prefer the most recently active leg that has both airports.
+    const sorted = rows
+      .slice()
+      .sort((a, b) => (b.lastSeen ?? 0) - (a.lastSeen ?? 0))
+    for (const row of sorted) {
+      const dep = (row.estDepartureAirport || '').trim().toUpperCase() || null
+      const arr = (row.estArrivalAirport || '').trim().toUpperCase() || null
+      if (dep && arr) {
+        noteOpenSkySuccess()
+        return { dep, arr }
+      }
+    }
+    noteOpenSkySuccess()
+    return null
+  } catch (e) {
+    noteOpenSkyFailure(e)
+    throw e
   }
-  // Accept single-sided if that's all we got (caller needs both — return null).
-  return null
 }

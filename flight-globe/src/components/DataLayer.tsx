@@ -124,19 +124,19 @@ export function DataLayer() {
 
           if (cancelled) return
 
-          if (data.pending) {
+          if (data.pending || (playbackLive && data.error)) {
             if (data.error) setError(upstreamMessage(data.error))
             else setError('Loading live traffic…')
-            if (!hadLiveData.current) setFlights([])
+            // Live or nothing — clear the globe rather than keep drawing stale traffic.
+            setFlights([])
+            hadLiveData.current = false
             nextDelay = PENDING_RETRY_MS
             backoff = 1
           } else {
             states = data.flights
-            hadLiveData.current = true
+            hadLiveData.current = states.length > 0
             setFlights(states, data.updatedAt || Date.now())
-            setError(
-              playbackLive && data.error ? upstreamMessage(data.error) : null,
-            )
+            setError(null)
             backoff = 1
             // Historical scrub: don't keep polling the same frame.
             nextDelay = playbackLive ? base : 60_000
@@ -166,6 +166,10 @@ export function DataLayer() {
         if (cancelled) return
         backoff = Math.min(backoff * 2, MAX_BACKOFF)
         if (!hadLiveData.current) setFlights([])
+        else if (playbackLive) {
+          setFlights([])
+          hadLiveData.current = false
+        }
         setError(liveDataErrorMessage(e))
         setLoading(false)
         timer = setTimeout(run, base * backoff)

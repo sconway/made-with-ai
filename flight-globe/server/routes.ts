@@ -7,7 +7,7 @@ import {
   looksLikeAirlineCallsign,
 } from '../src/lib/callsignVariants'
 import { findAirport } from '../src/lib/airports'
-import { fetchOpenSkyFlightAirports } from './opensky'
+import { fetchOpenSkyFlightAirports, isOpenSkyUnreachable } from './opensky'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const CACHE_PATH = path.join(__dirname, '.route-cache.json')
@@ -245,16 +245,18 @@ async function fetchUpstream(
     }
   }
 
-  // OpenSky estimated airports (1 credit) — only for airline-like callsigns.
+  // OpenSky estimated airports (1 credit) — only when OpenSky is reachable.
   if (
     icao24 &&
     looksLikeAirlineCallsign(callsign) &&
-    process.env.FLIGHT_ROUTE_OPENSKY_FALLBACK !== '0'
+    process.env.FLIGHT_ROUTE_OPENSKY_FALLBACK !== '0' &&
+    !isOpenSkyUnreachable()
   ) {
     try {
       const route = await routeFromOpenSky(icao24.toLowerCase())
       if (route) return route
     } catch (e) {
+      // One line max — circuit breaker stops further attempts on this host.
       console.warn(
         `[routes] OpenSky fallback failed for ${icao24}:`,
         e instanceof Error ? e.message : e,
