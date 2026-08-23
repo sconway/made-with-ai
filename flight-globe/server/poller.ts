@@ -2,14 +2,18 @@ import { buildMockFlights } from './mock'
 import {
   fetchStates,
   formatUpstreamError,
+  isOpenSkyNetworkError,
+  isOpenSkyUnreachable,
   lastOpenSkyMeta,
   OpenSkyError,
+  openskyUnreachableRemainingMs,
 } from './opensky'
 import {
   getCache,
   setCreditsRemaining,
   setFlights,
   setPollError,
+  ensurePollError,
   setPollWakeHandler,
 } from './cache'
 
@@ -21,15 +25,12 @@ const WAKE_CHECK_MS = 2_000
 const MIN_429_WAIT_MS = 15 * 60_000
 /** Cap absurd headers; still long enough to stop hammering an empty bucket. */
 const MAX_429_WAIT_MS = 6 * 60 * 60_000
-/** Transient errors (network / 5xx): never sit idle longer than this. */
+/** Transient errors before the circuit opens: short retries, but wake-proof. */
 const MAX_TRANSIENT_WAIT_MS = 60_000
-/** Empty or very stale cache: retry even sooner. */
 const MAX_URGENT_WAIT_MS = 20_000
+/** Minimum sleep while OpenSky circuit is open (even if remaining ms glitches). */
+const MIN_CIRCUIT_SLEEP_MS = 60_000
 
-/**
- * Default 2 minutes. Global /states/all costs **4 credits**; at 45s that was
- * ~7.6k credits/day vs a 4k free-tier budget. 120s ≈ 2.9k credits/day.
- */
 export function pollIntervalMs(): number {
   const n = Number(process.env.FLIGHT_POLL_INTERVAL_MS)
   if (Number.isFinite(n) && n >= 5_000) return n
@@ -56,7 +57,6 @@ function needsLiveRefresh(): boolean {
   return Date.now() - c.updatedAt >= pollIntervalMs()
 }
 
-/** True when the UI would feel frozen without a fresh poll. */
 function cacheIsUrgent(): boolean {
   const c = getCache()
   if (c.source !== 'opensky' || c.flights.length === 0) return true
@@ -78,6 +78,143 @@ function waitForTransient(streak: number, urgent: boolean): number {
   return Math.min(cap, start * 2 ** exp)
 }
 
+function isCircuitError(err: unknown, msg: string): boolean {
+  if (isOpenSkyUnreachable()) return true
+  return /circuit open|unreachable from this host/i.test(msg)
+}
+
+// ─── module singleton (Render / double-import must not run two loops) ───
+let started = false
+let timer: ReturnType<typeof setTimeout> | null = null
+let running = false
+let loggedWaiting = false
+let loggedCircuit = false
+let failStreak = 0
+/** Absolute timestamp — API-hit wakes must not cancel this backoff. */
+let hardBackoffUntil = 0
+
+function schedule(ms: number): void {
+  if (timer) clearTimeout(timer)
+  const delay = Math.max(0, ms)
+  hardBackoffUntil = Date.now() + delay
+  timer = setTimeout(() => void tick(), delay)
+}
+
+async function tick(): Promise<void> {
+  if (running) return
+  running = true
+  const base = pollIntervalMs()
+  try {
+    if (isMockMode()) {
+      setFlights(buildMockFlights(), 'mock')
+      const c = getCache()
+      console.log(
+        `[poller] mock refresh — ${c.flights.length} flights (api hits since last poll: ${c.hitsSinceLastPoll})`,
+      )
+      failStreak = 0
+      schedule(base)
+      return
+    }
+
+    if (!clientsActive()) {
+      if (!loggedWaiting) {
+        console.log(
+          '[poller] waiting for client… (no OpenSky call until the UI connects)',
+        )
+        loggedWaiting = true
+      }
+      // Soft wait — wakes may advance this when a client connects.
+      if (timer) clearTimeout(timer)
+      hardBackoffUntil = 0
+      timer = setTimeout(() => void tick(), WAKE_CHECK_MS)
+      return
+    }
+    loggedWaiting = false
+
+    const circuitMs = openskyUnreachableRemainingMs()
+    if (circuitMs > 0) {
+      ensurePollError('OpenSky unreachable from this host')
+      const sleep = Math.max(circuitMs, MIN_CIRCUIT_SLEEP_MS)
+      if (!loggedCircuit) {
+        loggedCircuit = true
+        console.warn(
+          `[poller] OpenSky circuit open — next probe in ${Math.round(sleep / 1000)}s (empty feed until then)`,
+        )
+      }
+      schedule(sleep)
+      return
+    }
+    loggedCircuit = false
+
+    if (!needsLiveRefresh()) {
+      schedule(Math.min(base, 15_000))
+      return
+    }
+
+    const flights = await fetchStates()
+    const meta = lastOpenSkyMeta()
+    setCreditsRemaining(meta.remaining)
+    setFlights(flights, 'opensky')
+    failStreak = 0
+    const c = getCache()
+    console.log(
+      `[poller] OpenSky ok — ${flights.length} flights, poll #${c.upstreamPolls}, ~${meta.creditCost} credit(s)` +
+        (meta.remaining != null ? `, ${meta.remaining} left` : '') +
+        ` (api hits since last poll: ${c.hitsSinceLastPoll})`,
+    )
+    schedule(base)
+  } catch (e) {
+    const msg = formatUpstreamError(e)
+    if (isCircuitError(e, msg)) {
+      ensurePollError('OpenSky unreachable from this host')
+    } else {
+      setPollError(msg)
+    }
+
+    if (e instanceof OpenSkyError && e.status === 429) {
+      failStreak = 0
+      const wait = waitFor429(e)
+      console.warn(
+        `[poller] ${msg} — credits exhausted; backing off ${Math.round(wait / 1000)}s`,
+      )
+      schedule(wait)
+    } else if (isCircuitError(e, msg)) {
+      failStreak = 0
+      const wait = Math.max(
+        openskyUnreachableRemainingMs(),
+        MIN_CIRCUIT_SLEEP_MS,
+      )
+      if (!loggedCircuit) {
+        loggedCircuit = true
+        console.warn(
+          `[poller] OpenSky unreachable — next probe in ${Math.round(wait / 1000)}s`,
+        )
+      }
+      schedule(wait)
+    } else if (isOpenSkyNetworkError(e)) {
+      // Toward circuit open — still wake-proof so clients can't stampede.
+      failStreak += 1
+      const wait = waitForTransient(failStreak, true)
+      console.warn(
+        `[poller] ${msg} — retry in ${Math.round(wait / 1000)}s [streak ${failStreak}]`,
+      )
+      schedule(wait)
+    } else {
+      failStreak += 1
+      const urgent = cacheIsUrgent()
+      const wait = waitForTransient(failStreak, urgent)
+      console.warn(
+        `[poller] ${msg} — retry in ${Math.round(wait / 1000)}s` +
+          (urgent ? ' (no live snapshot)' : '') +
+          ` [streak ${failStreak}]`,
+      )
+      schedule(wait)
+    }
+  } finally {
+    running = false
+  }
+}
+
 /**
  * Single upstream poll loop. All browsers share this cache — N clients do not
  * multiply OpenSky credits. Skips polls while no client has hit the API recently.
@@ -86,102 +223,20 @@ function waitForTransient(streak: number, urgent: boolean): number {
  * sampled fallbacks (those look like random clusters on the globe).
  */
 export function startPoller(): void {
-  const base = pollIntervalMs()
-  let timer: ReturnType<typeof setTimeout> | null = null
-  let running = false
-  let loggedWaiting = false
-  let failStreak = 0
-  /** Don't let API-hit wakeups cancel an active 429 credit backoff. */
-  let creditBackoffUntil = 0
-
-  const schedule = (ms: number) => {
-    if (timer) clearTimeout(timer)
-    timer = setTimeout(() => void tick(), ms)
+  if (started) {
+    console.warn('[poller] startPoller() called again — ignoring duplicate')
+    return
   }
-
-  const tick = async () => {
-    if (running) return
-    running = true
-    try {
-      if (isMockMode()) {
-        setFlights(buildMockFlights(), 'mock')
-        const c = getCache()
-        console.log(
-          `[poller] mock refresh — ${c.flights.length} flights (api hits since last poll: ${c.hitsSinceLastPoll})`,
-        )
-        failStreak = 0
-        creditBackoffUntil = 0
-        schedule(base)
-        return
-      }
-
-      if (!clientsActive()) {
-        if (!loggedWaiting) {
-          console.log(
-            '[poller] waiting for client… (no OpenSky call until the UI connects)',
-          )
-          loggedWaiting = true
-        }
-        schedule(WAKE_CHECK_MS)
-        return
-      }
-      loggedWaiting = false
-
-      if (!needsLiveRefresh()) {
-        schedule(Math.min(base, 15_000))
-        return
-      }
-
-      const flights = await fetchStates()
-      const meta = lastOpenSkyMeta()
-      setCreditsRemaining(meta.remaining)
-      setFlights(flights, 'opensky')
-      failStreak = 0
-      creditBackoffUntil = 0
-      const c = getCache()
-      console.log(
-        `[poller] OpenSky ok — ${flights.length} flights, poll #${c.upstreamPolls}, ~${meta.creditCost} credit(s)` +
-          (meta.remaining != null ? `, ${meta.remaining} left` : '') +
-          ` (api hits since last poll: ${c.hitsSinceLastPoll})`,
-      )
-      schedule(base)
-    } catch (e) {
-      const msg = formatUpstreamError(e)
-      // Drop any previous snapshot — clients must not keep drawing stale traffic.
-      setPollError(msg)
-
-      if (e instanceof OpenSkyError && e.status === 429) {
-        failStreak = 0
-        const wait = waitFor429(e)
-        creditBackoffUntil = Date.now() + wait
-        console.warn(
-          `[poller] ${msg} — credits exhausted; backing off ${Math.round(wait / 1000)}s` +
-            ' (serving empty until the next successful poll).',
-        )
-        schedule(wait)
-      } else {
-        failStreak += 1
-        creditBackoffUntil = 0
-        const urgent = cacheIsUrgent()
-        const wait = waitForTransient(failStreak, urgent)
-        console.warn(
-          `[poller] ${msg} — retry in ${Math.round(wait / 1000)}s` +
-            (urgent ? ' (no live snapshot)' : '') +
-            ` [streak ${failStreak}]`,
-        )
-        schedule(wait)
-      }
-    } finally {
-      running = false
-    }
-  }
+  started = true
 
   setPollWakeHandler(() => {
     if (running) return
-    if (Date.now() < creditBackoffUntil) return
+    if (Date.now() < hardBackoffUntil) return
+    if (isOpenSkyUnreachable()) return
     schedule(0)
   })
 
+  const base = pollIntervalMs()
   console.log(
     `[poller] starting (${isMockMode() ? 'MOCK' : 'OpenSky'}, interval ${base}ms` +
       (isMockMode()

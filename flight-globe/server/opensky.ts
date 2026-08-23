@@ -45,7 +45,8 @@ export function isOpenSkyNetworkError(err: unknown): boolean {
 }
 
 const OPENSKY_DOWN_MS = 30 * 60_000
-const OPENSKY_FAILS_BEFORE_DOWN = 3
+/** Open circuit after this many consecutive connect/DNS failures. */
+const OPENSKY_FAILS_BEFORE_DOWN = 2
 let openskyDownUntil = 0
 let openskyNetFails = 0
 let loggedOpenSkyDown = false
@@ -53,6 +54,11 @@ let loggedOpenSkyDown = false
 /** Skip further OpenSky calls while this host looks firewalled from OpenSky. */
 export function isOpenSkyUnreachable(): boolean {
   return Date.now() < openskyDownUntil
+}
+
+/** Ms until the OpenSky circuit breaker reopens (0 if currently reachable). */
+export function openskyUnreachableRemainingMs(): number {
+  return Math.max(0, openskyDownUntil - Date.now())
 }
 
 export function noteOpenSkySuccess(): void {

@@ -78,6 +78,18 @@ export function setPollError(err: string): void {
   })
 }
 
+/** Like setPollError but no-op when already in this error state (avoids log/poll storms). */
+export function ensurePollError(err: string): void {
+  if (
+    !state.lastPollOk &&
+    state.lastError === err &&
+    state.flights.length === 0
+  ) {
+    return
+  }
+  setPollError(err)
+}
+
 export function recordApiHit(): void {
   const firstHit = state.lastApiHitAt == null
   state.apiHits += 1
@@ -85,7 +97,8 @@ export function recordApiHit(): void {
   state.lastApiHitAt = Date.now()
   const stale =
     state.updatedAt != null && Date.now() - state.updatedAt > 4 * 60_000
-  // First client, empty cache, or data older than ~4 min → nudge poller.
+  // First client, empty cache, or stale success → nudge poller.
+  // The poller's hardBackoffUntil / circuit checks ignore wakes during backoff.
   if (firstHit || state.flights.length === 0 || stale) {
     wakePoll?.()
   }
