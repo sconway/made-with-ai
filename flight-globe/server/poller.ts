@@ -5,6 +5,7 @@ import {
   isOpenSkyNetworkError,
   isOpenSkyUnreachable,
   lastOpenSkyMeta,
+  OpenSkyCircuitOpenError,
   OpenSkyError,
   openskyUnreachableRemainingMs,
 } from './opensky'
@@ -28,8 +29,8 @@ const MAX_429_WAIT_MS = 6 * 60 * 60_000
 /** Transient errors before the circuit opens: short retries, but wake-proof. */
 const MAX_TRANSIENT_WAIT_MS = 60_000
 const MAX_URGENT_WAIT_MS = 20_000
-/** Minimum sleep while OpenSky circuit is open (even if remaining ms glitches). */
-const MIN_CIRCUIT_SLEEP_MS = 60_000
+/** Minimum sleep while OpenSky circuit is open (matches opensky circuit window). */
+const MIN_CIRCUIT_SLEEP_MS = 2 * 60_000
 
 export function pollIntervalMs(): number {
   const n = Number(process.env.FLIGHT_POLL_INTERVAL_MS)
@@ -79,6 +80,7 @@ function waitForTransient(streak: number, urgent: boolean): number {
 }
 
 function isCircuitError(err: unknown, msg: string): boolean {
+  if (err instanceof OpenSkyCircuitOpenError) return true
   if (isOpenSkyUnreachable()) return true
   return /circuit open|unreachable from this host/i.test(msg)
 }
@@ -165,20 +167,19 @@ async function tick(): Promise<void> {
     schedule(base)
   } catch (e) {
     const msg = formatUpstreamError(e)
-    if (isCircuitError(e, msg)) {
-      ensurePollError('OpenSky unreachable from this host')
-    } else {
-      setPollError(msg)
-    }
 
     if (e instanceof OpenSkyError && e.status === 429) {
+      setPollError(msg)
       failStreak = 0
       const wait = waitFor429(e)
       console.warn(
         `[poller] ${msg} — credits exhausted; backing off ${Math.round(wait / 1000)}s`,
       )
       schedule(wait)
-    } else if (isCircuitError(e, msg)) {
+    } else if (isCircuitError(e, msg) || isOpenSkyNetworkError(e)) {
+      // Connect timeouts / circuit: one quiet sleep, no streak spam.
+      // noteOpenSkyFailure (inside fetchStates) opens the 2-minute circuit.
+      ensurePollError('OpenSky unreachable from this host')
       failStreak = 0
       const wait = Math.max(
         openskyUnreachableRemainingMs(),
@@ -191,22 +192,12 @@ async function tick(): Promise<void> {
         )
       }
       schedule(wait)
-    } else if (isOpenSkyNetworkError(e)) {
-      // Toward circuit open — still wake-proof so clients can't stampede.
+    } else {
+      setPollError(msg)
       failStreak += 1
-      const wait = waitForTransient(failStreak, true)
+      const wait = waitForTransient(failStreak, cacheIsUrgent())
       console.warn(
         `[poller] ${msg} — retry in ${Math.round(wait / 1000)}s [streak ${failStreak}]`,
-      )
-      schedule(wait)
-    } else {
-      failStreak += 1
-      const urgent = cacheIsUrgent()
-      const wait = waitForTransient(failStreak, urgent)
-      console.warn(
-        `[poller] ${msg} — retry in ${Math.round(wait / 1000)}s` +
-          (urgent ? ' (no live snapshot)' : '') +
-          ` [streak ${failStreak}]`,
       )
       schedule(wait)
     }

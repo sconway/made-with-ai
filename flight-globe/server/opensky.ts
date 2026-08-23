@@ -44,7 +44,8 @@ export function isOpenSkyNetworkError(err: unknown): boolean {
   )
 }
 
-const OPENSKY_DOWN_MS = 30 * 60_000
+/** How long to skip OpenSky after repeated connect failures (cloud IP blocks). */
+const OPENSKY_DOWN_MS = 2 * 60_000
 /** Open circuit after this many consecutive connect/DNS failures. */
 const OPENSKY_FAILS_BEFORE_DOWN = 2
 let openskyDownUntil = 0
@@ -76,7 +77,7 @@ export function noteOpenSkyFailure(err: unknown): void {
     loggedOpenSkyDown = true
     console.warn(
       `[opensky] host appears unable to reach OpenSky (${formatUpstreamError(err)}) — ` +
-        `skipping OpenSky for ${OPENSKY_DOWN_MS / 60_000}m (common on cloud IPs)`,
+        `skipping OpenSky for ${OPENSKY_DOWN_MS / 1000}s (common on cloud IPs)`,
     )
   }
 }
@@ -97,6 +98,14 @@ export class OpenSkyError extends Error {
     this.status = status
     this.retryAfterMs = opts?.retryAfterMs
     this.remaining = opts?.remaining
+  }
+}
+
+/** Thrown when the circuit breaker is open — never treat as a short transient retry. */
+export class OpenSkyCircuitOpenError extends Error {
+  constructor() {
+    super('OpenSky unreachable from this host (circuit open)')
+    this.name = 'OpenSkyCircuitOpenError'
   }
 }
 
@@ -217,7 +226,7 @@ function readRemaining(res: Response): number | undefined {
  */
 export async function fetchStates(bbox?: BBox): Promise<FlightState[]> {
   if (isOpenSkyUnreachable()) {
-    throw new Error('OpenSky unreachable from this host (circuit open)')
+    throw new OpenSkyCircuitOpenError()
   }
   try {
     let url = `${OPENSKY_API}/states/all`
