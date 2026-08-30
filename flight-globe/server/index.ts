@@ -12,6 +12,7 @@ import { hasOpenSkyAuth } from './opensky'
 import { isMockMode, pollIntervalMs, startPoller } from './poller'
 import { loadRouteCache, resolveRoute, routeCacheSize } from './routes'
 import { distAvailable, tryServeStatic } from './static'
+import { runOutboundDiag } from './diag'
 import type { BBox, FlightsResponse, HealthResponse } from './types'
 
 /** Prefer host-provided PORT (Render/Fly/Railway); fall back to local default. */
@@ -224,6 +225,20 @@ const server = http.createServer((req, res) => {
     handleHealth(req, res)
     return
   }
+  if (pathOnly === '/api/diag') {
+    if (req.method !== 'GET') {
+      sendJson(res, 405, { error: 'method not allowed' })
+      return
+    }
+    void runOutboundDiag()
+      .then((body) => sendJson(res, 200, body))
+      .catch((e) =>
+        sendJson(res, 500, {
+          error: e instanceof Error ? e.message : String(e),
+        }),
+      )
+    return
+  }
   if (pathOnly === '/api/flights') {
     if (req.method !== 'GET') {
       sendJson(res, 405, { error: 'method not allowed' })
@@ -253,6 +268,7 @@ const server = http.createServer((req, res) => {
       error: 'not found',
       endpoints: [
         'GET /api/health',
+        'GET /api/diag',
         'GET /api/flights?scope=world|na|eu',
         'GET /api/flights?at=<ms>',
         'GET /api/playback',
