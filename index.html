@@ -129,6 +129,54 @@
     <h1>Made With AI Projects</h1>
 
     <div class="projects-container">
+        <!-- Global Flights — live air-traffic globe -->
+        <div class="project-card">
+            <div class="project-image" style="background: radial-gradient(ellipse at 42% 38%, #1a3a68 0%, #050810 72%);">
+                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none">
+                    <!-- Atmosphere glow -->
+                    <circle cx="12" cy="13" r="7.6" fill="#1a4a8a" opacity="0.22" />
+                    <!-- Earth -->
+                    <circle cx="12" cy="13" r="6.2" fill="#0d2a52" stroke="#5fd0ff" stroke-width="0.35" />
+                    <!-- Terminator / night side -->
+                    <path d="M 12 6.8 A 6.2 6.2 0 0 1 12 19.2 A 4.4 6.2 0 0 0 12 6.8 Z"
+                        fill="#061018" opacity="0.55" />
+                    <!-- Continents (stylized) -->
+                    <path d="M 7.4 11.2 Q 8.6 9.6, 10.4 10.2 Q 11.2 11.6, 9.8 12.8 Q 8.2 13.2, 7.4 11.2 Z"
+                        fill="#2a8050" opacity="0.85" />
+                    <path d="M 13.2 10.4 Q 15.2 9.8, 16.6 11.4 Q 16.2 13.2, 14.6 13.6 Q 13 12.8, 13.2 10.4 Z"
+                        fill="#2a8050" opacity="0.8" />
+                    <path d="M 10.6 14.6 Q 12.2 14.2, 13.4 15.4 Q 12.8 16.8, 11 16.6 Q 10.2 15.6, 10.6 14.6 Z"
+                        fill="#2a8050" opacity="0.75" />
+                    <!-- Latitude rings -->
+                    <ellipse cx="12" cy="13" rx="6.2" ry="2.1" fill="none" stroke="#5fd0ff" stroke-width="0.18"
+                        opacity="0.35" />
+                    <ellipse cx="12" cy="13" rx="6.2" ry="4.2" fill="none" stroke="#5fd0ff" stroke-width="0.15"
+                        opacity="0.22" />
+                    <!-- Flight arcs -->
+                    <path d="M 4.5 8.5 Q 12 4.2, 19.2 9.2" fill="none" stroke="#ffd97a" stroke-width="0.32"
+                        opacity="0.85" />
+                    <path d="M 5.2 17.5 Q 12 20.6, 18.8 16.2" fill="none" stroke="#7fe6c8" stroke-width="0.28"
+                        opacity="0.7" />
+                    <!-- Aircraft (simple darts) -->
+                    <polygon points="19.2,9.2 18.1,8.4 18.4,9.5 17.6,10.1" fill="#ffd97a" stroke="none" />
+                    <polygon points="18.8,16.2 19.7,15.5 19.2,16.6 18.4,17" fill="#7fe6c8" stroke="none" />
+                    <polygon points="7.2,7.6 6.3,6.9 6.8,7.9 6.1,8.4" fill="#ffd97a" stroke="none" />
+                    <!-- Stars -->
+                    <circle cx="3.2" cy="3.2" r="0.14" fill="#cfe8ff" opacity="0.8" />
+                    <circle cx="20.5" cy="3.8" r="0.12" fill="#cfe8ff" opacity="0.7" />
+                    <circle cx="21.4" cy="7.2" r="0.1" fill="#cfe8ff" opacity="0.55" />
+                    <circle cx="2.4" cy="9" r="0.1" fill="#cfe8ff" opacity="0.5" />
+                    <circle cx="22" cy="20.2" r="0.12" fill="#cfe8ff" opacity="0.6" />
+                </svg>
+            </div>
+            <div class="project-info">
+                <h2 class="project-title">Global Flights</h2>
+                <p class="project-description">A live 3D globe of world air traffic. Aircraft sit at their real
+                    position, altitude, and heading on a day/night Earth — click a country to zoom in, pin routes,
+                    search flights, and scrub recent history from a shared OpenSky feed.</p>
+                <a href="https://globalflights.live/" target="_blank" class="project-link">View Project</a>
+            </div>
+        </div>
         <!-- 24 Hours on the Grid — EIA data visualization -->
         <div class="project-card">
             <div class="project-image" style="background: radial-gradient(ellipse at 72% 18%, #223354 0%, #090c14 72%);">
