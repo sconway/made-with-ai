@@ -10,7 +10,14 @@ import {
   trackForward,
   type BBox,
 } from '../lib/geo'
-import { createAirplaneGeometry } from '../lib/airplaneGeometry'
+import {
+  getMapBlend,
+  getMapEase,
+  getMapFrame,
+  mapFeatureScale,
+  projectPosition,
+} from '../lib/mapView'
+import { createAirplaneGeometry, createMapPlaneGeometry } from '../lib/airplaneGeometry'
 import { getVisibleFlights } from '../lib/visibleFlights'
 import { filterFlightsByQuery, flightsForAirportIata, haversineKm } from '../lib/search'
 import { filterFlightsByTraffic } from '../lib/filters'
@@ -41,6 +48,13 @@ const COLOR_SELECTED = new THREE.Color('#ffffff')
 const COLOR_HOVER = new THREE.Color('#ffe08a')
 const COLOR_PINNED = new THREE.Color('#7dffb3')
 const COLOR_EMERGENCY = new THREE.Color('#ff3b3b')
+/** High-luminance map glyphs — readable on the navy country fill. */
+const MAP_COLOR_LOW = new THREE.Color('#ffcc22')
+const MAP_COLOR_HIGH = new THREE.Color('#ffe566')
+const MAP_COLOR_SELECTED = new THREE.Color('#ffffff')
+const MAP_COLOR_HOVER = new THREE.Color('#fff36b')
+const MAP_COLOR_PINNED = new THREE.Color('#b6ffd4')
+const MAP_COLOR_EMERGENCY = new THREE.Color('#ff5c5c')
 
 // Scratch objects reused every frame to avoid per-flight allocation.
 const _dummy = new THREE.Object3D()
@@ -81,6 +95,8 @@ export function Flights() {
   }, [pinnedFlightIds])
 
   const meshRef = useRef<THREE.InstancedMesh>(null)
+  const mapMeshRef = useRef<THREE.InstancedMesh>(null)
+  const mapHaloRef = useRef<THREE.InstancedMesh>(null)
   const pickRef = useRef<THREE.InstancedMesh>(null)
   const statesRef = useRef<Map<string, PerFlight>>(new Map())
   const orderRef = useRef<string[]>([])
@@ -94,11 +110,12 @@ export function Flights() {
     hoveredIdRef.current = hoveredId
   }, [hoveredId])
   useEffect(() => {
-    scopeBBoxRef.current = selectedCountry?.bbox ?? region.bbox
-  }, [region, selectedCountry])
+    scopeBBoxRef.current = region.bbox
+  }, [region])
 
   // Shared low-poly airliner (+Z nose) — one InstancedMesh draw call for all aircraft.
   const geometry = useMemo(() => createAirplaneGeometry(), [])
+  const mapGeometry = useMemo(() => createMapPlaneGeometry(), [])
 
   // Resolve routes for the visible/thinned set (not only selection).
   // Priority: selected → pinned → airline-like callsigns → everything else.
@@ -260,6 +277,8 @@ export function Flights() {
 
     const n = Math.min(orderRef.current.length, MAX_INSTANCES)
     if (meshRef.current) meshRef.current.count = n
+    if (mapMeshRef.current) mapMeshRef.current.count = n
+    if (mapHaloRef.current) mapHaloRef.current.count = n
     if (pickRef.current) pickRef.current.count = n
   }, [
     flights,
@@ -295,8 +314,22 @@ export function Flights() {
     _camDir.copy(state.camera.position)
     const camDist = _camDir.length() || 1
     _camDir.normalize()
+    const mapBlend = getMapBlend()
+    const mapEase = getMapEase()
+    const map = getMapFrame()
+    const mapMode = mapBlend > 0.2
     const frontThreshold = GLOBE_RADIUS / camDist - 0.02
-    const hitR = pickRadiusForCamera(camDist)
+    const mapHeight = Math.max(0.12, camDist - GLOBE_RADIUS)
+    const hitR = mapMode
+      ? THREE.MathUtils.clamp(mapHeight * 0.06, 0.01, 0.055)
+      : pickRadiusForCamera(camDist)
+    const featureScale = mapFeatureScale()
+    const mapGlyph =
+      mapEase > 0.03
+        ? THREE.MathUtils.clamp(mapHeight * 1.05, 0.38, 2.1)
+        : 0
+    const mapMesh = mapMeshRef.current
+    const mapHalo = mapHaloRef.current
 
     for (let i = 0; i < count; i++) {
       const e = statesRef.current.get(order[i])
@@ -305,16 +338,18 @@ export function Flights() {
       const radius = altitudeToRadius(e.alt)
       const isSelected = order[i] === selectedId
 
-      latLonToVector3(pred.lat, pred.lon, radius, _target)
+      projectPosition(pred.lat, pred.lon, radius, _target)
+      if (mapMode && map) _target.addScaledVector(map.origin, 0.012)
       // Selected aircraft must sit exactly on the route arc (no smoothing lag).
-      if (isSelected) e.dispVec.copy(_target)
+      if (isSelected || mapBlend > 0.02) e.dispVec.copy(_target)
       else e.dispVec.lerp(_target, 0.2)
 
       const isHovered = order[i] === hoveredIdRef.current
       const isPinned = pinnedSetRef.current.has(order[i]!)
       const isEmergency = e.emergency
-      const facing = e.dispVec.dot(_camDir) / e.dispVec.length()
+      const facing = e.dispVec.dot(_camDir) / (e.dispVec.length() || 1)
       if (
+        !mapMode &&
         facing < frontThreshold &&
         !isSelected &&
         !isHovered &&
@@ -327,6 +362,8 @@ export function Flights() {
         _dummy.scale.setScalar(0)
         _dummy.updateMatrix()
         mesh.setMatrixAt(i, _dummy.matrix)
+        if (mapMesh) mapMesh.setMatrixAt(i, _dummy.matrix)
+        if (mapHalo) mapHalo.setMatrixAt(i, _dummy.matrix)
         if (pick) {
           _pickDummy.position.copy(e.dispVec)
           _pickDummy.scale.setScalar(0)
@@ -339,34 +376,76 @@ export function Flights() {
       // Level attitude: +Y = radial (belly to earth), +Z = nose along track.
       // Use reported/interpolated track (not destination bearing) so playback
       // headings match motion between history frames.
-      _up.copy(e.dispVec).normalize()
-      trackForward(pred.lat, pred.lon, e.track, _forward)
-
-      _right.crossVectors(_up, _forward)
-      if (_right.lengthSq() < 1e-10) {
-        trackForward(pred.lat, pred.lon, e.track + 90, _right)
+      if (mapMode && map) {
+        const rad = (e.track * Math.PI) / 180
+        _up.copy(map.origin)
+        _forward
+          .copy(map.east)
+          .multiplyScalar(Math.sin(rad))
+          .addScaledVector(map.north, Math.cos(rad))
+          .normalize()
+        _right.crossVectors(_up, _forward)
+        if (_right.lengthSq() < 1e-10) {
+          _right.copy(map.east)
+        } else {
+          _right.normalize()
+        }
+        _forward.crossVectors(_right, _up).normalize()
+        _basis.makeBasis(_right, _up, _forward)
       } else {
-        _right.normalize()
+        _up.copy(e.dispVec).normalize()
+        trackForward(pred.lat, pred.lon, e.track, _forward)
+
+        _right.crossVectors(_up, _forward)
+        if (_right.lengthSq() < 1e-10) {
+          trackForward(pred.lat, pred.lon, e.track + 90, _right)
+        } else {
+          _right.normalize()
+        }
+        _forward.crossVectors(_right, _up).normalize()
+        _basis.makeBasis(_right, _up, _forward)
       }
-      _forward.crossVectors(_right, _up).normalize()
-      _basis.makeBasis(_right, _up, _forward)
 
       const pulse = isEmergency
         ? 0.55 + 0.45 * Math.sin(state.clock.elapsedTime * 7)
         : 1
-      _dummy.position.copy(e.dispVec)
-      _dummy.quaternion.setFromRotationMatrix(_basis)
-      _dummy.scale.setScalar(
+      const emphasis =
         (isSelected
           ? 2.4
           : isEmergency
             ? 2.1
             : isHovered || isPinned
               ? 1.75
-              : 1) * (isEmergency ? 0.85 + 0.25 * pulse : 1),
-      )
+              : 1) * (isEmergency ? 0.85 + 0.25 * pulse : 1)
+
+      _dummy.position.copy(e.dispVec)
+      _dummy.quaternion.setFromRotationMatrix(_basis)
+
+      const globeScale = (1 - mapEase) * emphasis * featureScale
+      if (globeScale > 0.02) {
+        _dummy.scale.setScalar(globeScale)
+      } else {
+        _dummy.scale.setScalar(0)
+      }
       _dummy.updateMatrix()
       mesh.setMatrixAt(i, _dummy.matrix)
+
+      if (mapMesh && mapHalo) {
+        const mapScale = mapGlyph * mapEase * (isSelected ? 1.35 : isHovered || isEmergency ? 1.2 : 1)
+        if (mapScale > 0.02) {
+          _dummy.scale.setScalar(mapScale * 1.55)
+          _dummy.updateMatrix()
+          mapHalo.setMatrixAt(i, _dummy.matrix)
+          _dummy.scale.setScalar(mapScale)
+          _dummy.updateMatrix()
+          mapMesh.setMatrixAt(i, _dummy.matrix)
+        } else {
+          _dummy.scale.setScalar(0)
+          _dummy.updateMatrix()
+          mapHalo.setMatrixAt(i, _dummy.matrix)
+          mapMesh.setMatrixAt(i, _dummy.matrix)
+        }
+      }
 
       if (pick) {
         _pickDummy.position.copy(e.dispVec)
@@ -376,7 +455,21 @@ export function Flights() {
         pick.setMatrixAt(i, _pickDummy.matrix)
       }
 
-      if (isEmergency) {
+      if (mapEase > 0.45) {
+        if (isEmergency) {
+          _color.copy(MAP_COLOR_EMERGENCY).multiplyScalar(0.75 + 0.25 * pulse)
+        } else if (isSelected) {
+          _color.copy(MAP_COLOR_SELECTED)
+        } else if (isPinned) {
+          _color.copy(MAP_COLOR_PINNED)
+        } else if (isHovered) {
+          _color.copy(MAP_COLOR_HOVER)
+        } else {
+          const altT = Math.min(1, e.alt / 12000)
+          _color.copy(MAP_COLOR_LOW).lerp(MAP_COLOR_HIGH, altT)
+        }
+        if (mapMesh) mapMesh.setColorAt(i, _color)
+      } else if (isEmergency) {
         _color.copy(COLOR_EMERGENCY).multiplyScalar(0.65 + 0.35 * pulse)
       } else if (isSelected) {
         _color.copy(COLOR_SELECTED)
@@ -385,14 +478,19 @@ export function Flights() {
       } else if (isHovered) {
         _color.copy(COLOR_HOVER)
       } else {
-        const t = Math.min(1, e.alt / 12000)
-        _color.copy(COLOR_LOW).lerp(COLOR_HIGH, t)
+        const altT = Math.min(1, e.alt / 12000)
+        _color.copy(COLOR_LOW).lerp(COLOR_HIGH, altT)
       }
       mesh.setColorAt(i, _color)
     }
 
     mesh.instanceMatrix.needsUpdate = true
     if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true
+    if (mapMesh) {
+      mapMesh.instanceMatrix.needsUpdate = true
+      if (mapMesh.instanceColor) mapMesh.instanceColor.needsUpdate = true
+    }
+    if (mapHalo) mapHalo.instanceMatrix.needsUpdate = true
     if (pick) pick.instanceMatrix.needsUpdate = true
   })
 
@@ -443,15 +541,56 @@ export function Flights() {
         ref={meshRef}
         args={[geometry, undefined, MAX_INSTANCES]}
         frustumCulled={false}
+        renderOrder={21}
         raycast={() => {}}
       >
-        <meshBasicMaterial toneMapped={false} />
+        <meshBasicMaterial
+          transparent
+          opacity={1}
+          toneMapped={false}
+          depthTest={false}
+          depthWrite={false}
+        />
+      </instancedMesh>
+      <instancedMesh
+        ref={mapHaloRef}
+        args={[mapGeometry, undefined, MAX_INSTANCES]}
+        frustumCulled={false}
+        renderOrder={22}
+        raycast={() => {}}
+      >
+        <meshBasicMaterial
+          color="#061018"
+          transparent
+          opacity={1}
+          toneMapped={false}
+          depthTest={false}
+          depthWrite={false}
+          side={THREE.DoubleSide}
+        />
+      </instancedMesh>
+      <instancedMesh
+        ref={mapMeshRef}
+        args={[mapGeometry, undefined, MAX_INSTANCES]}
+        frustumCulled={false}
+        renderOrder={23}
+        raycast={() => {}}
+      >
+        <meshBasicMaterial
+          transparent
+          opacity={1}
+          toneMapped={false}
+          depthTest={false}
+          depthWrite={false}
+          side={THREE.DoubleSide}
+        />
       </instancedMesh>
       {/* Distance-scaled hit targets (invisible). */}
       <instancedMesh
         ref={pickRef}
         args={[pickGeometry, undefined, MAX_INSTANCES]}
         frustumCulled={false}
+        renderOrder={7}
         onPointerDown={onPointerDown}
         onPointerMove={onPointerMove}
         onPointerOut={onPointerOut}

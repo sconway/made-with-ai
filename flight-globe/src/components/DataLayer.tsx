@@ -49,9 +49,9 @@ function liveDataErrorMessage(err: unknown): string {
 }
 
 /**
- * Loads country geometry once, then polls flight data for the active region
- * (or selected country). When playback is scrubbed off live, fetches a
- * historical snapshot instead of the live cache.
+ * Loads country geometry once, then polls flight data for the active region.
+ * Country view filters that same feed in the client. When playback is scrubbed
+ * off live, fetches a historical snapshot instead of the live cache.
  */
 export function DataLayer() {
   const setCountries = useStore((s) => s.setCountries)
@@ -60,7 +60,6 @@ export function DataLayer() {
   const setError = useStore((s) => s.setError)
   const setPlaybackRange = useStore((s) => s.setPlaybackRange)
   const region = useStore((s) => s.region)
-  const selectedCountry = useStore((s) => s.selectedCountry)
   const playbackLive = useStore((s) => s.playbackLive)
   const playbackAt = useStore((s) => s.playbackAt)
 
@@ -96,9 +95,12 @@ export function DataLayer() {
     }
   }, [backend, setPlaybackRange])
 
-  const bbox: BBox | null = selectedCountry?.bbox ?? region.bbox
+  // Country view filters the existing region/world feed client-side. Refetching
+  // a country bbox would drop departed originating flights and can clear the
+  // globe while that query is pending.
+  const bbox: BBox | null = region.bbox
   const histKey = playbackLive ? 'live' : `at:${playbackAt ?? 0}`
-  const key = `${backend ? 'be' : 'direct'}|${selectedCountry?.id ?? 'none'}|${region.id}|${bboxKey(bbox)}|${histKey}`
+  const key = `${backend ? 'be' : 'direct'}|${region.id}|${bboxKey(bbox)}|${histKey}`
 
   useEffect(() => {
     let cancelled = false
@@ -116,9 +118,7 @@ export function DataLayer() {
 
         if (backend) {
           const data = await fetchFlightsFromBackend({
-            ...(selectedCountry?.bbox
-              ? { bbox: selectedCountry.bbox }
-              : { scope: region.id }),
+            scope: region.id,
             at: playbackLive ? null : playbackAt,
           })
 

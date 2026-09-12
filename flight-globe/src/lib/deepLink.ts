@@ -3,8 +3,8 @@ import { REGIONS, type Region } from './regions'
 import type { FlightState } from './flight'
 import { findAirport } from './airports'
 
-/** Default region in the store (`REGIONS[1]`). Omitted from the URL when active. */
-export const DEFAULT_REGION_ID = REGIONS[1]!.id
+/** Default region in the store (`REGIONS[0]` World). Omitted from the URL when active. */
+export const DEFAULT_REGION_ID = REGIONS[0]!.id
 
 export interface DeepLink {
   regionId?: string
@@ -125,7 +125,7 @@ export function deepLinkFromApp(state: {
   const hasFocus =
     !!state.selected || !!state.airportIata || !!state.follow || state.includeCamera
   // Include region whenever the link carries focus, or when it isn't the app default
-  // (so refresh keeps World/Europe). Bare default NA stays as a clean URL.
+  // (so refresh keeps NA/Europe). Bare default World stays as a clean URL.
   if (hasFocus || state.regionId !== DEFAULT_REGION_ID) {
     link.regionId = state.regionId
   }

@@ -56,6 +56,10 @@ export function airlineName(code: string): string {
   return AIRLINES[code] ?? code
 }
 
+export function listKnownAirlines(): Array<{ code: string; name: string }> {
+  return Object.entries(AIRLINES).map(([code, name]) => ({ code, name }))
+}
+
 export {
   callsignCandidatesFromQuery,
   iataToIcaoAirline,

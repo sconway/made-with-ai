@@ -1,8 +1,9 @@
 import type { Country } from './countries'
 import type { FlightState } from './flight'
 import { pointInBBox, type BBox } from './geo'
-import { filterFlightsServingCountry } from './countryFlights'
+import { flightRelatedToCountry } from './countryFlights'
 import { thinEvenly } from './sampling'
+import { MAX_RENDER } from './viewport'
 
 /** True when the aircraft's current position lies inside the bbox. */
 export function flightInBBox(flight: FlightState, bbox: BBox): boolean {
@@ -12,43 +13,37 @@ export function flightInBBox(flight: FlightState, bbox: BBox): boolean {
 /**
  * Flights drawn on the globe / listed in the sidebar.
  *
- * Scope is the selected country bbox, or the active region bbox — never the
- * live camera footprint. Zoom/rotate must not change which aircraft are in
- * the set (far-side ones stay in the set; the renderer hides them).
- *
- * When a country is selected, keep only flights whose route serves it.
- * Then spatially thin for render budget against that same stable scope.
+ * Region scope is the active region bbox — never the live camera footprint.
+ * When a country is selected, search the full feed for flights whose route
+ * starts or ends there, or that are currently over it. Do not clip to the
+ * country box first: departed/arriving aircraft would vanish.
  * `keepIds` (selected / pinned) are never dropped by thinning.
  */
 export function getVisibleFlights(
   flights: FlightState[],
   selectedCountry: Country | null,
-  /** Region or country query box; null = world. */
+  /** Region query box; null = world. Ignored while a country is selected. */
   scopeBBox: BBox | null,
   keepIds?: Iterable<string> | null,
 ): FlightState[] {
-  const area = selectedCountry?.bbox ?? scopeBBox
   const keep = keepIds ? [...keepIds].filter(Boolean) : []
 
-  let list = flights
-  if (area) {
-    list = list.filter(
-      (f) => flightInBBox(f, area) || keep.includes(f.icao24),
-    )
-  }
   if (selectedCountry) {
-    const serving = filterFlightsServingCountry(list, selectedCountry)
-    // Still force-keep selected/pinned even if route data isn't ready.
-    const servingIds = new Set(serving.map((f) => f.icao24))
-    for (const id of keep) {
-      if (servingIds.has(id)) continue
-      const f = list.find((x) => x.icao24 === id) ?? flights.find((x) => x.icao24 === id)
-      if (f) serving.push(f)
-    }
-    list = serving
+    const related = flights.filter(
+      (f) =>
+        keep.includes(f.icao24) || flightRelatedToCountry(f, selectedCountry),
+    )
+    if (related.length <= MAX_RENDER) return related
+    return thinEvenly(related, null, keep)
   }
 
-  return thinEvenly(list, area, keep)
+  let list = flights
+  if (scopeBBox) {
+    list = list.filter(
+      (f) => flightInBBox(f, scopeBBox) || keep.includes(f.icao24),
+    )
+  }
+  return thinEvenly(list, scopeBBox, keep)
 }
 
 /** Filter a raw feed down to a query bbox. */

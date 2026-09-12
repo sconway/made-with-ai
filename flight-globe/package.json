@@ -15,7 +15,8 @@
     "test:api": "tsx server/load-test.ts",
     "build": "tsc && vite build",
     "start": "tsx server/index.ts",
-    "preview": "npm run build && tsx server/index.ts"
+    "preview": "npm run build && tsx server/index.ts",
+    "build:airports": "node scripts/build-airports.mjs"
   },
   "dependencies": {
     "@react-three/drei": "9.114.0",

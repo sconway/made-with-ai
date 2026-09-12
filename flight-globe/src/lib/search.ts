@@ -4,6 +4,7 @@ import {
   airlineName,
   callsignCandidatesFromQuery,
   iataToIcaoAirline,
+  listKnownAirlines,
   parseFlightNumber,
   resolveRoute,
 } from './flightInfo'
@@ -27,13 +28,31 @@ export type SearchHit =
       /** Live flights currently in the feed whose route touches this airport. */
       relatedCount: number
     }
+  | {
+      kind: 'airline'
+      code: string
+      name: string
+      label: string
+      detail: string
+      score: number
+    }
+
+/** Case/accent/punctuation-insensitive token for matching "sao paulo" to "São Paulo". */
+function fold(s: string): string {
+  return s
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .trim()
+    .toUpperCase()
+    .replace(/[^A-Z0-9]/g, '')
+}
 
 function norm(s: string): string {
-  return s.trim().toUpperCase().replace(/\s+/g, '')
+  return fold(s)
 }
 
 function includesLoose(hay: string, needle: string): boolean {
-  return norm(hay).includes(norm(needle))
+  return fold(hay).includes(fold(needle))
 }
 
 function scorePrefix(value: string, q: string): number {
@@ -147,12 +166,31 @@ function scoreAirport(airport: Airport, q: string): number {
   let score = 0
   score = Math.max(score, scorePrefix(airport.iata, q))
   score = Math.max(score, scorePrefix(airport.icao, q) * 0.9)
-  if (includesLoose(airport.city, q)) score = Math.max(score, 55)
-  if (includesLoose(airport.name, q)) score = Math.max(score, 45)
+  const city = fold(airport.city)
+  const needle = fold(q)
+  if (city && needle) {
+    if (city === needle) score = Math.max(score, 88)
+    else if (city.startsWith(needle) && needle.length >= 3) score = Math.max(score, 74)
+    else if (city.includes(needle) && needle.length >= 3) score = Math.max(score, 62)
+  }
+  if (includesLoose(airport.name, q) && needle.length >= 3) {
+    score = Math.max(score, city === needle ? 70 : 48)
+  }
   return score
 }
 
-/** Best hub match for a query (IATA / city / name), or null. */
+function scoreAirline(code: string, name: string, q: string): number {
+  const needle = fold(q)
+  if (needle.length < 2) return 0
+  let score = scorePrefix(code, q)
+  const folded = fold(name)
+  if (folded === needle) score = Math.max(score, 86)
+  else if (folded.startsWith(needle)) score = Math.max(score, 76)
+  else if (folded.includes(needle) && needle.length >= 3) score = Math.max(score, 58)
+  return score
+}
+
+/** Best airport match for a query (IATA / city / name), or null. */
 export function bestAirportForQuery(query: string): Airport | null {
   const q = query.trim()
   if (q.length < 1) return null
@@ -168,14 +206,14 @@ export function bestAirportForQuery(query: string): Airport | null {
   return bestScore > 0 ? best : null
 }
 
-/** Ranked search over current flights + major airports. */
+/** Ranked search over current flights, known airports, and airlines. */
 export function searchTraffic(
   query: string,
   flights: FlightState[],
-  limit = 12,
+  limit = 8,
 ): SearchHit[] {
   const q = query.trim()
-  if (q.length < 1) return []
+  if (q.length < 2) return []
 
   const hits: SearchHit[] = []
 
@@ -209,26 +247,54 @@ export function searchTraffic(
   for (const airport of AIRPORTS) {
     const score = scoreAirport(airport, q)
     if (score <= 0) continue
-
-    let relatedCount = 0
-    for (const f of flights) {
-      const r = resolveRoute(f)
-      if (!r) continue
-      if (r.oIata === airport.iata || r.dIata === airport.iata) relatedCount++
-    }
-
     hits.push({
       kind: 'airport',
       airport,
       label: airport.iata,
       detail: `${airport.city} · ${airport.name}`,
       score,
-      relatedCount,
+      relatedCount: 0,
     })
   }
 
+  const seenAirline = new Set<string>()
+  const addAirline = (code: string, name: string) => {
+    if (!code || seenAirline.has(code)) return
+    const score = scoreAirline(code, name, q)
+    if (score <= 0) return
+    seenAirline.add(code)
+    hits.push({
+      kind: 'airline',
+      code,
+      name: name === 'Unknown airline' ? code : name,
+      label: name === 'Unknown airline' ? code : name,
+      detail: code,
+      score,
+    })
+  }
+  for (const { code, name } of listKnownAirlines()) addAirline(code, name)
+  for (const flight of flights) {
+    const code = airlineCodeFromCallsign(flight.callsign || '')
+    if (code) addAirline(code, airlineName(code))
+  }
+
   hits.sort((a, b) => b.score - a.score || a.label.localeCompare(b.label))
-  return hits.slice(0, limit)
+  const top = hits.slice(0, limit)
+
+  for (const hit of top) {
+    if (hit.kind !== 'airport') continue
+    let relatedCount = 0
+    for (const f of flights) {
+      const r = resolveRoute(f)
+      if (!r) continue
+      if (r.oIata === hit.airport.iata || r.dIata === hit.airport.iata) {
+        relatedCount++
+      }
+    }
+    hit.relatedCount = relatedCount
+  }
+
+  return top
 }
 
 /** Flights tied to an airport: known route O/D match, or currently near the field. */

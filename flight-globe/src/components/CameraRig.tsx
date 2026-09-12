@@ -3,6 +3,15 @@ import { useFrame, useThree } from '@react-three/fiber'
 import * as THREE from 'three'
 import { useStore } from '../store/useStore'
 import { altitudeToRadius, deadReckon, latLonToVector3 } from '../lib/geo'
+import { regionCameraDist } from '../lib/regions'
+import {
+  getMapBlend,
+  getMapEase,
+  getMapFrame,
+  setMapViewCountry,
+  tickMapBlend,
+  writeMapCameraPose,
+} from '../lib/mapView'
 
 interface Fly {
   from: THREE.Vector3
@@ -23,14 +32,58 @@ type OrbitLike = {
   enableRotate?: boolean
   enableZoom?: boolean
   enablePan?: boolean
+  screenSpacePanning?: boolean
   minDistance?: number
   maxDistance?: number
+  mouseButtons?: { LEFT?: number; MIDDLE?: number; RIGHT?: number }
+  touches?: { ONE?: number; TWO?: number }
+}
+
+const GLOBE_MOUSE = {
+  LEFT: THREE.MOUSE.ROTATE,
+  MIDDLE: THREE.MOUSE.DOLLY,
+  RIGHT: THREE.MOUSE.PAN,
+}
+const MAP_MOUSE = {
+  LEFT: THREE.MOUSE.PAN,
+  MIDDLE: THREE.MOUSE.DOLLY,
+  RIGHT: THREE.MOUSE.PAN,
 }
 
 const _dir = new THREE.Vector3()
 const _prev = new THREE.Vector3()
 const _quat = new THREE.Quaternion()
+const _mapPos = new THREE.Vector3()
+const _mapQuat = new THREE.Quaternion()
+const _mapQuatTo = new THREE.Quaternion()
+const _mapLook = new THREE.Vector3()
+const WORLD_UP = new THREE.Vector3(0, 1, 0)
 const FOLLOW_CAM_DIST = 1.85
+const _homeCam = new THREE.PerspectiveCamera()
+
+function writeGlobePoseFromDir(
+  dir: THREE.Vector3,
+  dist: number,
+  outPos: THREE.Vector3,
+  outQuat: THREE.Quaternion,
+) {
+  if (dir.lengthSq() < 1e-8) outPos.set(0, 0, dist)
+  else outPos.copy(dir).normalize().multiplyScalar(dist)
+  _homeCam.position.copy(outPos)
+  _homeCam.up.copy(WORLD_UP)
+  _homeCam.lookAt(0, 0, 0)
+  outQuat.copy(_homeCam.quaternion)
+}
+
+function writeGlobeHomePose(
+  lat: number,
+  lon: number,
+  dist: number,
+  outPos: THREE.Vector3,
+  outQuat: THREE.Quaternion,
+) {
+  writeGlobePoseFromDir(latLonToVector3(lat, lon, 1), dist, outPos, outQuat)
+}
 
 function cameraIsValid(camera: THREE.Camera): boolean {
   const p = camera.position
@@ -43,14 +96,14 @@ function cameraIsValid(camera: THREE.Camera): boolean {
 }
 
 /**
- * Region/country/search camera flies, plus optional follow.
+ * Region/search camera flies, optional follow, and in-place country flatten.
  *
- * Follow = one mild zoom toward the aircraft, then rotate the camera around
- * the globe with the plane's motion only. Orbit/zoom stay fully user-driven;
- * we never rewrite OrbitControls internals.
+ * Country select: the country unpeels onto its tangent plane while the same
+ * perspective camera slerps to a north-up top-down fit — no projection swap.
  */
 export function CameraRig() {
   const camera = useThree((s) => s.camera)
+  const size = useThree((s) => s.size)
   const controls = useThree((s) => s.controls) as OrbitLike | null
   const selectedCountry = useStore((s) => s.selectedCountry)
   const region = useStore((s) => s.region)
@@ -60,6 +113,19 @@ export function CameraRig() {
   const flightsById = useStore((s) => s.flightsById)
   const lastUpdate = useStore((s) => s.lastUpdate)
   const playbackLive = useStore((s) => s.playbackLive)
+
+  const globeFromPos = useRef(new THREE.Vector3())
+  const globeFromQuat = useRef(new THREE.Quaternion())
+  const mapLeavePos = useRef(new THREE.Vector3())
+  const mapLeaveQuat = useRef(new THREE.Quaternion())
+  const poseFromPos = useRef(new THREE.Vector3())
+  const poseFromQuat = useRef(new THREE.Quaternion())
+  const poseMix = useRef(1)
+  const lastCountryId = useRef<string | null>(null)
+  const pendingGlobeHome = useRef(false)
+  const wasMap = useRef(false)
+  const mapNav = useRef(false)
+  const lastFocusNonce = useRef(0)
 
   const fly = useRef<Fly>({
     from: new THREE.Vector3(),
@@ -83,49 +149,141 @@ export function CameraRig() {
     fly.current.active = true
   }
 
-  const resetCameraHome = () => {
-    const lat = region.center.lat
-    const lon = region.center.lon
-    const dist = region.bbox ? 2.4 : 3.0
-    const dir = latLonToVector3(lat, lon, 1).normalize()
-    camera.position.copy(dir.multiplyScalar(dist))
+  const enableMapPan = (lookAt: THREE.Vector3) => {
+    if (!controls) return
+    if (controls.minDistance != null) savedMinDist.current = controls.minDistance
+    if (controls.maxDistance != null) savedMaxDist.current = controls.maxDistance
+    const dist = Math.max(0.2, camera.position.distanceTo(lookAt))
+    controls.target.copy(lookAt)
+    if (controls.enableRotate != null) controls.enableRotate = false
+    if (controls.enablePan != null) controls.enablePan = true
+    if (controls.enableZoom != null) controls.enableZoom = true
+    if (controls.screenSpacePanning != null) controls.screenSpacePanning = true
+    if (controls.mouseButtons) {
+      controls.mouseButtons.LEFT = MAP_MOUSE.LEFT
+      controls.mouseButtons.MIDDLE = MAP_MOUSE.MIDDLE
+      controls.mouseButtons.RIGHT = MAP_MOUSE.RIGHT
+    }
+    if (controls.touches) {
+      controls.touches.ONE = THREE.TOUCH.PAN
+      controls.touches.TWO = THREE.TOUCH.DOLLY_PAN
+    }
+    if (controls.minDistance != null) {
+      controls.minDistance = Math.max(0.14, dist * 0.22)
+    }
+    if (controls.maxDistance != null) controls.maxDistance = dist * 2.6
+    controls.enabled = true
+    controls.update()
+  }
+
+  const restoreGlobeOrbit = () => {
+    mapNav.current = false
+    camera.up.copy(WORLD_UP)
     if (controls) {
       controls.target.set(0, 0, 0)
+      if (controls.enableRotate != null) controls.enableRotate = true
+      if (controls.enablePan != null) controls.enablePan = false
+      if (controls.enableZoom != null) controls.enableZoom = true
+      if (controls.mouseButtons) {
+        controls.mouseButtons.LEFT = GLOBE_MOUSE.LEFT
+        controls.mouseButtons.MIDDLE = GLOBE_MOUSE.MIDDLE
+        controls.mouseButtons.RIGHT = GLOBE_MOUSE.RIGHT
+      }
+      if (controls.touches) {
+        controls.touches.ONE = THREE.TOUCH.ROTATE
+        controls.touches.TWO = THREE.TOUCH.DOLLY_PAN
+      }
+      if (controls.minDistance != null) controls.minDistance = savedMinDist.current
+      if (controls.maxDistance != null) controls.maxDistance = savedMaxDist.current
+      controls.enabled = true
       controls.update()
     } else {
       camera.lookAt(0, 0, 0)
     }
   }
 
+  const resetCameraHome = () => {
+    writeGlobeHomePose(
+      region.center.lat,
+      region.center.lon,
+      regionCameraDist(region),
+      camera.position,
+      camera.quaternion,
+    )
+    restoreGlobeOrbit()
+  }
+
   useEffect(() => {
-    let lat: number
-    let lon: number
-    let dist: number
-    if (selectedCountry) {
-      lat = (selectedCountry.bbox.minLat + selectedCountry.bbox.maxLat) / 2
-      lon = (selectedCountry.bbox.minLon + selectedCountry.bbox.maxLon) / 2
-      const span = Math.max(
-        selectedCountry.bbox.maxLat - selectedCountry.bbox.minLat,
-        selectedCountry.bbox.maxLon - selectedCountry.bbox.minLon,
-      )
-      dist = THREE.MathUtils.clamp(1.4 + span / 40, 1.5, 2.6)
-    } else {
-      lat = region.center.lat
-      lon = region.center.lon
-      dist = region.bbox ? 2.4 : 3.0
+    const prevId = lastCountryId.current
+    const countryChanged = selectedCountry?.id !== prevId
+    lastCountryId.current = selectedCountry?.id ?? null
+    setMapViewCountry(selectedCountry)
+
+    if (selectedCountry && countryChanged) {
+      fly.current.active = false
+      pendingGlobeHome.current = false
+      if (!prevId) {
+        globeFromPos.current.copy(camera.position)
+        globeFromQuat.current.copy(camera.quaternion)
+        poseMix.current = 1
+      } else {
+        poseFromPos.current.copy(camera.position)
+        poseFromQuat.current.copy(camera.quaternion)
+        poseMix.current = 0
+      }
     }
-    startFly(lat, lon, dist, 1.1)
+
+    const leavingCountry = prevId != null && !selectedCountry
+    if (leavingCountry) {
+      pendingGlobeHome.current = false
+      // Pull back along the current view so the country stays in frame —
+      // a region fly-to (N. America / Europe) may replace this next.
+      writeGlobePoseFromDir(
+        camera.position,
+        regionCameraDist(region),
+        globeFromPos.current,
+        globeFromQuat.current,
+      )
+    } else if (!selectedCountry) {
+      pendingGlobeHome.current = true
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedCountry, region])
 
   useEffect(() => {
     if (!cameraFocus || followFlight) return
+    if (cameraFocus.nonce === lastFocusNonce.current) return
+    if (selectedCountry) return
+    lastFocusNonce.current = cameraFocus.nonce
+    // Leaving a country: aim the reverse blend at this home pose so we don't
+    // settle on the old country-facing side of the globe.
+    const blendingOut = wasMap.current || getMapBlend() > 0.001
+    if (blendingOut) {
+      writeGlobeHomePose(
+        cameraFocus.lat,
+        cameraFocus.lon,
+        cameraFocus.dist,
+        globeFromPos.current,
+        globeFromQuat.current,
+      )
+      pendingGlobeHome.current = false
+      fly.current.active = false
+      return
+    }
+    pendingGlobeHome.current = false
     startFly(cameraFocus.lat, cameraFocus.lon, cameraFocus.dist, 0.95)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [cameraFocus?.nonce])
+  }, [cameraFocus?.nonce, selectedCountry, followFlight])
 
   useEffect(() => {
     if (!controls) return
+    if (selectedCountry || wasMap.current) {
+      if (selectedCountry && !mapNav.current) controls.enabled = false
+      followReady.current = false
+      prevFollowDir.current.set(0, 0, 0)
+      fly.current.active = false
+      return
+    }
     if (followFlight && selectedFlightId) {
       if (controls.minDistance != null) savedMinDist.current = controls.minDistance
       if (controls.maxDistance != null) savedMaxDist.current = controls.maxDistance
@@ -148,17 +306,96 @@ export function CameraRig() {
       prevFollowDir.current.set(0, 0, 0)
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [followFlight, selectedFlightId, controls])
+  }, [followFlight, selectedFlightId, selectedCountry, controls])
 
-  useFrame(() => {
-    // Recover from a corrupted camera (e.g. bad follow math).
+  useFrame((_, delta) => {
+    const b = tickMapBlend(delta)
+    const map = getMapFrame()
+    const t = getMapEase()
+
+    if (b > 0.001 && map) {
+      wasMap.current = true
+      const fov =
+        camera instanceof THREE.PerspectiveCamera ? camera.fov : 45
+      writeMapCameraPose(
+        map,
+        size.width,
+        size.height,
+        fov,
+        _mapPos,
+        _mapQuatTo,
+        _mapLook,
+      )
+
+      if (poseMix.current < 1) {
+        poseMix.current = Math.min(1, poseMix.current + delta * 1.35)
+        const u = easeInOut(poseMix.current)
+        _mapPos.lerpVectors(poseFromPos.current, _mapPos, u)
+        _mapQuat.slerpQuaternions(poseFromQuat.current, _mapQuatTo, u)
+      } else {
+        _mapQuat.copy(_mapQuatTo)
+      }
+
+      if (t > 0.97) {
+        if (!mapNav.current) {
+          camera.position.copy(_mapPos)
+          camera.up.copy(map.north)
+          camera.lookAt(_mapLook)
+          camera.updateMatrixWorld()
+          mapLeavePos.current.copy(camera.position)
+          mapLeaveQuat.current.copy(camera.quaternion)
+          enableMapPan(_mapLook)
+          mapNav.current = true
+        }
+        return
+      }
+
+      if (mapNav.current) {
+        mapLeavePos.current.copy(camera.position)
+        mapLeaveQuat.current.copy(camera.quaternion)
+        mapNav.current = false
+      } else if (selectedCountry) {
+        mapLeavePos.current.copy(_mapPos)
+        mapLeaveQuat.current.copy(_mapQuat)
+      }
+      camera.position.lerpVectors(
+        globeFromPos.current,
+        mapLeavePos.current,
+        t,
+      )
+      camera.quaternion.slerpQuaternions(
+        globeFromQuat.current,
+        mapLeaveQuat.current,
+        t,
+      )
+      camera.up.lerpVectors(WORLD_UP, map.north, t).normalize()
+      camera.updateMatrixWorld()
+      if (controls) controls.enabled = false
+      return
+    }
+
+    if (wasMap.current) {
+      wasMap.current = false
+      restoreGlobeOrbit()
+    }
+
+    if (pendingGlobeHome.current && b < 0.05 && !selectedCountry) {
+      pendingGlobeHome.current = false
+      startFly(
+        region.center.lat,
+        region.center.lon,
+        regionCameraDist(region),
+        1.05,
+      )
+    }
+
     if (!cameraIsValid(camera)) {
       resetCameraHome()
       followReady.current = false
       prevFollowDir.current.set(0, 0, 0)
     }
 
-    if (followFlight && selectedFlightId) {
+    if (followFlight && selectedFlightId && !selectedCountry) {
       const f = flightsById.get(selectedFlightId)
       if (f) {
         const elapsed =
@@ -187,7 +424,6 @@ export function CameraRig() {
         _prev.copy(prevFollowDir.current)
         if (_prev.lengthSq() > 0.5) {
           const dot = THREE.MathUtils.clamp(_prev.dot(_dir), -1, 1)
-          // Skip tiny moves; skip near-opposite (setFromUnitVectors goes unstable).
           if (dot < 0.9999 && dot > -0.99) {
             _quat.setFromUnitVectors(_prev, _dir)
             camera.position.applyQuaternion(_quat)
@@ -199,7 +435,6 @@ export function CameraRig() {
         prevFollowDir.current.copy(_dir)
 
         if (controls) controls.target.set(0, 0, 0)
-        // Do not call controls.update() every frame — it fights user orbit.
         camera.lookAt(0, 0, 0)
         return
       }
@@ -207,12 +442,12 @@ export function CameraRig() {
 
     const anim = fly.current
     if (!anim.active) return
-    const t = (performance.now() / 1000 - anim.start) / anim.duration
-    if (t >= 1) {
+    const ft = (performance.now() / 1000 - anim.start) / anim.duration
+    if (ft >= 1) {
       camera.position.copy(anim.to)
       anim.active = false
     } else {
-      camera.position.lerpVectors(anim.from, anim.to, easeInOut(t))
+      camera.position.lerpVectors(anim.from, anim.to, easeInOut(ft))
     }
     if (controls) {
       controls.target.set(0, 0, 0)

@@ -2,7 +2,7 @@ import { create } from 'zustand'
 import type { FlightState } from '../lib/opensky'
 import type { Country } from '../lib/countries'
 import type { BBox } from '../lib/geo'
-import { REGIONS, type Region } from '../lib/regions'
+import { REGIONS, regionCameraDist, type Region } from '../lib/regions'
 import {
   DEFAULT_TRAFFIC_FILTERS,
   type TrafficFilters,
@@ -106,7 +106,7 @@ interface AppState {
     id: string | null,
     pointer?: { x: number; y: number } | null,
   ) => void
-  setRegion: (r: Region) => void
+  setRegion: (r: Region, opts?: { focus?: boolean }) => void
   bumpRoutes: () => void
   focusCamera: (lat: number, lon: number, dist?: number) => void
   setSearchAirportIata: (iata: string | null) => void
@@ -140,8 +140,8 @@ export const useStore = create<AppState>((set) => ({
   selectedFlightId: null,
   hoveredFlightId: null,
   hoverPointer: null,
-  region: REGIONS[1], // default to North America — dense + fast to load
-  viewBBox: REGIONS[1].bbox,
+  region: REGIONS[0], // World — all flights
+  viewBBox: REGIONS[0].bbox,
   routesVersion: 0,
   cameraFocus: null,
   searchAirportIata: null,
@@ -203,7 +203,6 @@ export const useStore = create<AppState>((set) => ({
   setSelectedCountry: (selectedCountry) =>
     set({
       selectedCountry,
-      selectedFlightId: null,
       hoveredFlightId: null,
       hoverPointer: null,
       searchAirportIata: null,
@@ -231,7 +230,23 @@ export const useStore = create<AppState>((set) => ({
         hoverPointer: pointer !== undefined ? pointer : s.hoverPointer,
       }
     }),
-  setRegion: (region) => set({ region, searchAirportIata: null, searchQuery: '' }),
+  setRegion: (region, opts) =>
+    set((s) => ({
+      region,
+      selectedCountry: null,
+      searchAirportIata: null,
+      searchQuery: '',
+      ...(opts?.focus === false
+        ? {}
+        : {
+            cameraFocus: {
+              lat: region.center.lat,
+              lon: region.center.lon,
+              dist: regionCameraDist(region),
+              nonce: (s.cameraFocus?.nonce ?? 0) + 1,
+            },
+          }),
+    })),
   bumpRoutes: () => set((s) => ({ routesVersion: s.routesVersion + 1 })),
   focusCamera: (lat, lon, dist = 2.15) =>
     set((s) => ({

@@ -160,9 +160,7 @@ export function HUD() {
       pool,
       selectedCountry,
       // Airport mode: keep en-route traffic anywhere, not just over the region.
-      searchAirportIata
-        ? null
-        : (selectedCountry?.bbox ?? region.bbox),
+      searchAirportIata ? null : region.bbox,
       keepIds,
     )
     const list = base.slice()
@@ -249,6 +247,23 @@ export function HUD() {
         >
           <span />
         </button>
+        {selectedCountry && (
+          <button
+            type="button"
+            className="sidebar-back"
+            onClick={() => {
+              const world = REGIONS[0]
+              if (!world) return
+              setSearchAirportIata(null)
+              setSearchQuery('')
+              setSelectedFlight(null)
+              setRegion(world, { focus: false })
+            }}
+          >
+            <span aria-hidden>←</span>
+            World
+          </button>
+        )}
         <header className="sidebar-header">
           <div className="sidebar-title">
             <span className="dot" />
@@ -296,14 +311,9 @@ export function HUD() {
             </button>
           )}
           {selectedCountry && (
-            <button
-              type="button"
-              className="active country-chip"
-              title="Clear country filter"
-              onClick={() => setSelectedCountry(null)}
-            >
+            <span className="active country-chip" title={selectedCountry.name}>
               {selectedCountry.name}
-            </button>
+            </span>
           )}
           {REGIONS.map((r) => (
             <button
@@ -322,7 +332,9 @@ export function HUD() {
                   setSearchAirportIata(null)
                   setSearchQuery('')
                   setSelectedFlight(null)
-                  setRegion(r)
+                  setRegion(r, {
+                    focus: !(selectedCountry && r.id === 'world'),
+                  })
                 }}
             >
               {r.label}
@@ -359,7 +371,7 @@ export function HUD() {
                     const next =
                       f.icao24 === selectedFlightId ? null : f.icao24
                     setSelectedFlight(next)
-                    if (next) focusCamera(f.lat, f.lon, 1.85)
+                    if (next && !selectedCountry) focusCamera(f.lat, f.lon, 1.85)
                   }}
                 />
               </div>
@@ -382,7 +394,9 @@ export function HUD() {
         <div className="panel hint">
           {followFlight
             ? 'Following — drag to orbit · pick another flight in the list to switch · Esc to exit'
-            : '/ to search · filters & trails in sidebar · scrub playback · pick a flight for its path'}
+            : selectedCountry
+              ? `Map of ${selectedCountry.name} — drag to pan · scroll to zoom · click a plane · pick a region to return`
+              : '/ to search · click a country for a 2D map · pick a flight for its path'}
         </div>
         <PlaybackBar />
       </div>

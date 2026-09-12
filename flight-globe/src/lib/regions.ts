@@ -8,6 +8,11 @@ export interface Region {
   center: { lat: number; lon: number }
 }
 
+/** Camera distance from globe center for this region's home pose. */
+export function regionCameraDist(region: Region): number {
+  return region.bbox ? 2.4 : 3.0
+}
+
 export const REGIONS: Region[] = [
   {
     id: 'world',

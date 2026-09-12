@@ -10,6 +10,7 @@ import {
   appendFlightPathArc,
   deadReckon,
 } from '../lib/geo'
+import { appendProjectedFlightPath, getMapBlend } from '../lib/mapView'
 import { enqueueRoutes, getCachedRoute } from '../lib/routes'
 import { setLineSegmentPositions } from '../lib/lineSegments'
 import type { FlightState } from '../lib/flight'
@@ -57,18 +58,18 @@ export function Arcs() {
     const selectedGeom = new LineSegmentsGeometry()
     selectedGeom.setPositions([0, 0, 0, 0, 0.01, 0])
     const glow = new LineSegments2(selectedGeom, glowMat)
-    glow.renderOrder = 4
+    glow.renderOrder = 16
     glow.frustumCulled = false
     glow.visible = false
     const core = new LineSegments2(selectedGeom, coreMat)
-    core.renderOrder = 5
+    core.renderOrder = 17
     core.frustumCulled = false
     core.visible = false
 
     const pinGeom = new LineSegmentsGeometry()
     pinGeom.setPositions([0, 0, 0, 0, 0.01, 0])
     const pinned = new LineSegments2(pinGeom, pinMat)
-    pinned.renderOrder = 3
+    pinned.renderOrder = 15
     pinned.frustumCulled = false
     pinned.visible = false
 
@@ -119,16 +120,29 @@ export function Arcs() {
       const vel = f.onGround ? 0 : f.velocity ?? 0
       const pred = deadReckon(f.lat, f.lon, vel, f.track ?? 0, elapsed)
       const pRadius = altitudeToRadius(f.geoAltitude ?? f.baroAltitude)
-      appendFlightPathArc(
-        route.oLat,
-        route.oLon,
-        route.dLat,
-        route.dLon,
-        pred.lat,
-        pred.lon,
-        pRadius,
-        out,
-      )
+      if (getMapBlend() > 0.04) {
+        appendProjectedFlightPath(
+          route.oLat,
+          route.oLon,
+          route.dLat,
+          route.dLon,
+          pred.lat,
+          pred.lon,
+          pRadius,
+          out,
+        )
+      } else {
+        appendFlightPathArc(
+          route.oLat,
+          route.oLon,
+          route.dLat,
+          route.dLon,
+          pred.lat,
+          pred.lon,
+          pRadius,
+          out,
+        )
+      }
     }
 
     // Selected path

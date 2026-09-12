@@ -82,6 +82,19 @@ export function noteOpenSkyFailure(err: unknown): void {
   }
 }
 
+/** One 429 is enough — further route fallbacks would only burn the log. */
+export function noteOpenSkyRateLimit(retryAfterMs?: number): void {
+  const wait = Math.min(
+    Math.max(retryAfterMs ?? 15 * 60_000, 30_000),
+    6 * 60 * 60_000,
+  )
+  if (Date.now() + wait <= openskyDownUntil) return
+  openskyDownUntil = Date.now() + wait
+  console.warn(
+    `[opensky] rate limited — skipping OpenSky for ${Math.round(wait / 1000)}s`,
+  )
+}
+
 export class OpenSkyError extends Error {
   status: number
   retryAfterMs?: number
@@ -316,8 +329,10 @@ export async function fetchOpenSkyFlightAirports(
 
     if (res.status === 404) return null
     if (!res.ok) {
+      const retryAfterMs = readRetryAfterMs(res)
+      if (res.status === 429) noteOpenSkyRateLimit(retryAfterMs)
       throw new OpenSkyError(res.status, res.statusText, {
-        retryAfterMs: readRetryAfterMs(res),
+        retryAfterMs,
         remaining,
       })
     }

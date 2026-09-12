@@ -1,5 +1,6 @@
-import { Suspense, useMemo } from 'react'
+import { Suspense, useMemo, useRef } from 'react'
 import { OrbitControls, Stars } from '@react-three/drei'
+import { useFrame } from '@react-three/fiber'
 import * as THREE from 'three'
 import { Earth } from './Earth'
 import { Atmosphere } from './Atmosphere'
@@ -11,6 +12,7 @@ import { AirportPins } from './AirportPins'
 import { CameraRig } from './CameraRig'
 import { sunDirection } from '../lib/sun'
 import { GLOBE_RADIUS } from '../lib/geo'
+import { getMapEase } from '../lib/mapView'
 
 /** Plain dark sphere shown while the earth textures load. */
 function EarthFallback() {
@@ -19,6 +21,18 @@ function EarthFallback() {
       <sphereGeometry args={[GLOBE_RADIUS, 48, 48]} />
       <meshBasicMaterial color="#0a1526" />
     </mesh>
+  )
+}
+
+function StarsLayer() {
+  const group = useRef<THREE.Group>(null)
+  useFrame(() => {
+    if (group.current) group.current.visible = 1 - getMapEase() > 0.12
+  })
+  return (
+    <group ref={group}>
+      <Stars radius={80} depth={40} count={6000} factor={4} fade speed={0.5} />
+    </group>
   )
 }
 
@@ -33,7 +47,7 @@ export function Scene() {
         intensity={1.4}
       />
 
-      <Stars radius={80} depth={40} count={6000} factor={4} fade speed={0.5} />
+      <StarsLayer />
 
       {/* Only the texture-dependent earth suspends; everything else keeps the
           render loop alive so the scene never blanks out. */}

@@ -89,3 +89,24 @@ export function createAirplaneGeometry(): THREE.BufferGeometry {
   merged.computeBoundingBox()
   return merged
 }
+
+/**
+ * Flat top-down chevron for the 2D country map. Lies in XZ (nose +Z) so the
+ * existing flight basis (+Y toward camera) shows it face-on.
+ */
+export function createMapPlaneGeometry(): THREE.BufferGeometry {
+  const nose = 0.0062
+  const tail = -0.0044
+  const half = 0.0038
+  const g = new THREE.BufferGeometry()
+  g.setAttribute(
+    'position',
+    new THREE.Float32BufferAttribute(
+      [0, 0, nose, -half, 0, tail, half, 0, tail],
+      3,
+    ),
+  )
+  g.computeVertexNormals()
+  g.computeBoundingSphere()
+  return g
+}

@@ -1,15 +1,43 @@
 import type { Country } from './countries'
 import type { FlightState, Route } from './flight'
-import { pointInBBox, pointInPolygons } from './geo'
+import { AIRPORTS } from './airports'
+import { padBBox, pointInBBox, pointInPolygons } from './geo'
 import { getCachedRoute } from './routes'
 
-function pointInCountry(lon: number, lat: number, country: Country): boolean {
+const iataByCountry = new Map<string, Set<string>>()
+
+export function pointInCountry(lon: number, lat: number, country: Country): boolean {
   if (!pointInBBox(lon, lat, country.bbox)) return false
   return pointInPolygons(lon, lat, country.polys)
 }
 
+/** IATA codes of fields that sit in the country's bounding box. */
+export function airportIatasInCountry(country: Country): Set<string> {
+  let set = iataByCountry.get(country.id)
+  if (set) return set
+  set = new Set<string>()
+  for (const a of AIRPORTS) {
+    if (pointInBBox(a.lon, a.lat, country.bbox)) set.add(a.iata)
+  }
+  iataByCountry.set(country.id, set)
+  return set
+}
+
+function approachPadDeg(country: Country): number {
+  const span = Math.max(
+    country.bbox.maxLat - country.bbox.minLat,
+    country.bbox.maxLon - country.bbox.minLon,
+  )
+  return Math.min(8, Math.max(2.5, span * 0.08))
+}
+
 /** True when a known route has its origin or destination inside the country. */
 export function routeServesCountry(route: Route, country: Country): boolean {
+  const iatas = airportIatasInCountry(country)
+  const o = route.oIata?.toUpperCase()
+  const d = route.dIata?.toUpperCase()
+  if (o && iatas.has(o)) return true
+  if (d && iatas.has(d)) return true
   return (
     pointInCountry(route.oLon, route.oLat, country) ||
     pointInCountry(route.dLon, route.dLat, country)
@@ -37,4 +65,20 @@ export function filterFlightsServingCountry(
 ): FlightState[] {
   if (!country) return flights
   return flights.filter((f) => flightServesCountry(f, country))
+}
+
+/**
+ * Traffic for the country map + sidebar: inbound/outbound routes (incl. IATA
+ * like GRU), aircraft in a padded country box, or aircraft near a hub.
+ */
+export function flightRelatedToCountry(
+  flight: FlightState,
+  country: Country,
+): boolean {
+  if (flightServesCountry(flight, country)) return true
+  return pointInBBox(
+    flight.lon,
+    flight.lat,
+    padBBox(country.bbox, approachPadDeg(country)),
+  )
 }

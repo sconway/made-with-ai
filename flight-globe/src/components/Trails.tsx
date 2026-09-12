@@ -5,7 +5,8 @@ import { LineSegments2 } from 'three/examples/jsm/lines/LineSegments2.js'
 import { LineSegmentsGeometry } from 'three/examples/jsm/lines/LineSegmentsGeometry.js'
 import { LineMaterial } from 'three/examples/jsm/lines/LineMaterial.js'
 import { useStore } from '../store/useStore'
-import { altitudeToRadius, latLonToVector3, type BBox } from '../lib/geo'
+import { altitudeToRadius, type BBox } from '../lib/geo'
+import { projectPosition } from '../lib/mapView'
 import {
   clearAllTrails,
   getTrail,
@@ -49,8 +50,8 @@ function appendTrailSegments(
   for (let i = 1; i < pts.length; i++) {
     const p0 = pts[i - 1]!
     const p1 = pts[i]!
-    latLonToVector3(p0.lat, p0.lon, altitudeToRadius(p0.alt), _a)
-    latLonToVector3(p1.lat, p1.lon, altitudeToRadius(p1.alt), _b)
+    projectPosition(p0.lat, p0.lon, altitudeToRadius(p0.alt), _a)
+    projectPosition(p1.lat, p1.lon, altitudeToRadius(p1.alt), _b)
     out.push(_a.x, _a.y, _a.z, _b.x, _b.y, _b.z)
   }
 }
@@ -81,7 +82,7 @@ export function Trails() {
   const lastPlaybackAt = useRef<number | null>(null)
 
   useEffect(() => {
-    scopeBBoxRef.current = selectedCountry?.bbox ?? region.bbox
+    scopeBBoxRef.current = region.bbox
   }, [region, selectedCountry])
 
   useEffect(() => {
@@ -103,14 +104,14 @@ export function Trails() {
     const selGeom = new LineSegmentsGeometry()
     selGeom.setPositions([0, 0, 0, 0, 0.01, 0])
     const selected = new LineSegments2(selGeom, selMat)
-    selected.renderOrder = 6
+    selected.renderOrder = 19
     selected.frustumCulled = false
     selected.visible = false
 
     const allGeom = new LineSegmentsGeometry()
     allGeom.setPositions([0, 0, 0, 0, 0.01, 0])
     const all = new LineSegments2(allGeom, allMat)
-    all.renderOrder = 2
+    all.renderOrder = 18
     all.frustumCulled = false
     all.visible = false
 

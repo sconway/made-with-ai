@@ -130,6 +130,16 @@ export function pointInBBox(lon: number, lat: number, b: BBox): boolean {
   return lon >= b.minLon && lon <= b.maxLon && lat >= b.minLat && lat <= b.maxLat
 }
 
+/** Expand a lat/lon box by `padDeg` on each side (clamped to valid range). */
+export function padBBox(b: BBox, padDeg: number): BBox {
+  return {
+    minLon: b.minLon - padDeg,
+    maxLon: b.maxLon + padDeg,
+    minLat: Math.max(-85, b.minLat - padDeg),
+    maxLat: Math.min(85, b.maxLat + padDeg),
+  }
+}
+
 function pointInRing(lon: number, lat: number, ring: Ring): boolean {
   let inside = false
   for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {

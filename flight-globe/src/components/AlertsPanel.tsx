@@ -123,6 +123,7 @@ export function AlertToasts() {
   const toasts = useStore((s) => s.alertToasts)
   const dismissAlertToast = useStore((s) => s.dismissAlertToast)
   const setSelectedFlight = useStore((s) => s.setSelectedFlight)
+  const selectedCountry = useStore((s) => s.selectedCountry)
   const focusCamera = useStore((s) => s.focusCamera)
   const flightsById = useStore((s) => s.flightsById)
 
@@ -149,7 +150,7 @@ export function AlertToasts() {
             if (t.flightId) {
               const f = flightsById.get(t.flightId)
               setSelectedFlight(t.flightId)
-              if (f) focusCamera(f.lat, f.lon, 1.85)
+              if (f && !selectedCountry) focusCamera(f.lat, f.lon, 1.85)
             }
             dismissAlertToast(t.id)
           }}

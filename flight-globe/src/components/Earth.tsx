@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef } from 'react'
 import { useFrame, useLoader } from '@react-three/fiber'
 import * as THREE from 'three'
 import { GLOBE_RADIUS } from '../lib/geo'
+import { getMapEase } from '../lib/mapView'
 
 // UVs are computed analytically in the shader from object-space position using
 // the exact inverse of latLonToVector3 (geo.ts), so the imagery aligns with the
@@ -21,6 +22,7 @@ const fragmentShader = /* glsl */ `
   uniform sampler2D dayTexture;
   uniform sampler2D nightTexture;
   uniform vec3 sunDirection;
+  uniform float globeFade;
   varying vec3 vObj;
   varying vec3 vWorldNormal;
 
@@ -35,7 +37,8 @@ const fragmentShader = /* glsl */ `
     float d = dot(normalize(vWorldNormal), normalize(sunDirection));
     float t = smoothstep(-0.12, 0.28, d);
     vec3 color = mix(night * 1.35 + vec3(0.01, 0.02, 0.05), day, t);
-    gl_FragColor = vec4(color, 1.0);
+    vec3 bg = vec3(0.02, 0.027, 0.05);
+    gl_FragColor = vec4(mix(bg, color, globeFade), 1.0);
   }
 `
 
@@ -49,6 +52,7 @@ export function Earth({ sunDirection }: EarthProps) {
     '/textures/earth_night.png',
   ])
   const matRef = useRef<THREE.ShaderMaterial>(null)
+  const meshRef = useRef<THREE.Mesh>(null)
 
   useEffect(() => {
     for (const t of [dayMap, nightMap]) {
@@ -64,18 +68,24 @@ export function Earth({ sunDirection }: EarthProps) {
       dayTexture: { value: dayMap },
       nightTexture: { value: nightMap },
       sunDirection: { value: sunDirection.clone() },
+      globeFade: { value: 1 },
     }),
     [dayMap, nightMap], // eslint-disable-line react-hooks/exhaustive-deps
   )
 
   useFrame(() => {
+    const fade = 1 - getMapEase()
     if (matRef.current) {
       matRef.current.uniforms.sunDirection.value.copy(sunDirection)
+      matRef.current.uniforms.globeFade.value = fade
+    }
+    if (meshRef.current) {
+      meshRef.current.visible = fade > 0.08
     }
   })
 
   return (
-    <mesh>
+    <mesh ref={meshRef}>
       <sphereGeometry args={[GLOBE_RADIUS, 96, 96]} />
       <shaderMaterial
         ref={matRef}
