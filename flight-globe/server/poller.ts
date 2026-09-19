@@ -22,10 +22,7 @@ import {
 const IDLE_MS = 5 * 60_000
 /** Poller wake interval while waiting for a browser. */
 const WAKE_CHECK_MS = 2_000
-/** When 429 has no Retry-After, wait at least this long (credits refill daily). */
-const MIN_429_WAIT_MS = 15 * 60_000
-/** Cap absurd headers; still long enough to stop hammering an empty bucket. */
-const MAX_429_WAIT_MS = 6 * 60 * 60_000
+/** 429 on the world poll: retry on the normal cadence, never sit idle for hours. */
 /** Transient errors before the circuit opens: short retries, but wake-proof. */
 const MAX_TRANSIENT_WAIT_MS = 60_000
 const MAX_URGENT_WAIT_MS = 20_000
@@ -66,10 +63,11 @@ function cacheIsUrgent(): boolean {
 }
 
 function waitFor429(e: OpenSkyError): number {
+  const cap = pollIntervalMs()
   if (e.retryAfterMs != null && e.retryAfterMs > 0) {
-    return Math.min(Math.max(e.retryAfterMs, 5_000), MAX_429_WAIT_MS)
+    return Math.min(Math.max(e.retryAfterMs, 5_000), cap)
   }
-  return MIN_429_WAIT_MS
+  return cap
 }
 
 function waitForTransient(streak: number, urgent: boolean): number {

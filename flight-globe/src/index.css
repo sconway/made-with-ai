@@ -1,3 +1,9 @@
+@property --sheet-h {
+  syntax: '<length>';
+  inherits: true;
+  initial-value: 0px;
+}
+
 :root {
   color-scheme: dark;
   --bg: #05070d;
@@ -7,6 +13,10 @@
   --accent-warm: #ffcf6b;
   --text: #e8eef7;
   --text-dim: #8fa3bd;
+  --safe-top: env(safe-area-inset-top, 0px);
+  --safe-right: env(safe-area-inset-right, 0px);
+  --safe-bottom: env(safe-area-inset-bottom, 0px);
+  --safe-left: env(safe-area-inset-left, 0px);
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica,
     Arial, sans-serif;
 }
@@ -20,6 +30,7 @@ body,
 #root {
   margin: 0;
   height: 100%;
+  height: 100dvh;
   width: 100%;
   overflow: hidden;
   background: var(--bg);
@@ -47,6 +58,10 @@ canvas {
   pointer-events: auto;
 }
 
+.hud-dock {
+  display: contents;
+}
+
 .panel {
   background: var(--panel);
   border: 1px solid var(--panel-border);
@@ -67,6 +82,13 @@ canvas {
   flex-direction: column;
   padding: 0;
   overflow: hidden;
+}
+
+.sidebar > *:not(.flight-list),
+.sheet-peek,
+.sheet-peek > *,
+.sheet-body > *:not(.flight-list) {
+  flex-shrink: 0;
 }
 
 .sidebar-header {
@@ -398,7 +420,7 @@ canvas {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  max-width: 200px;
+  max-width: min(220px, 52vw);
 }
 
 .sidebar-clear {
@@ -431,13 +453,17 @@ canvas {
 }
 
 .flight-list {
-  flex: 1;
+  flex: 1 1 auto;
   min-height: 0;
   overflow-y: auto;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
   padding: 0 8px 12px;
   display: flex;
   flex-direction: column;
   gap: 4px;
+  position: relative;
+  z-index: 0;
 }
 
 .flight-row {
@@ -716,12 +742,36 @@ canvas {
   top: 18px;
   right: 18px;
   width: min(320px, calc(100vw - 36px));
-  padding: 14px 16px 16px;
+  padding: 14px 16px 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  max-height: calc(100vh - 120px);
+  max-height: calc(100dvh - 120px);
+  overflow: hidden;
+}
+
+.flight-detail-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  max-height: calc(100dvh - 120px - 5.25rem);
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
   display: flex;
   flex-direction: column;
   gap: 10px;
-  max-height: calc(100vh - 120px);
-  overflow-y: auto;
+  padding-bottom: 12px;
+}
+
+.flight-detail-footer {
+  flex: 0 0 auto;
+  position: relative;
+  z-index: 1;
+  padding: 10px 0 14px;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+  background: #0c121e;
 }
 
 .flight-detail-header {
@@ -762,6 +812,7 @@ canvas {
   margin-top: 2px;
   color: var(--text-dim);
   font-size: 11px;
+  overflow-wrap: anywhere;
 }
 
 .flight-detail-close {
@@ -787,6 +838,7 @@ canvas {
   color: var(--text-dim);
   margin-top: -4px;
   line-height: 1.35;
+  min-height: 1.35em;
 }
 
 .flight-detail-times {
@@ -812,8 +864,7 @@ canvas {
 }
 
 .flight-detail-times-note {
-  grid-column: 1 / -1;
-  margin: 0;
+  margin: -4px 0 0;
   font-size: 10px;
   color: var(--text-dim);
   line-height: 1.35;
@@ -855,7 +906,7 @@ canvas {
 }
 
 .flight-detail-emergency {
-  margin: 0 14px 10px;
+  margin: 0;
   padding: 8px 10px;
   border-radius: 8px;
   background: rgba(255, 50, 50, 0.16);
@@ -874,15 +925,14 @@ canvas {
 }
 
 .flight-detail-actions {
-  display: flex;
-  flex-wrap: wrap;
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
   gap: 8px;
   margin-top: 4px;
 }
 
 .flight-detail-actions button {
-  flex: 1 1 calc(33% - 6px);
-  min-width: 72px;
+  min-width: 0;
   border: 1px solid var(--panel-border);
   background: rgba(255, 255, 255, 0.04);
   color: var(--text);
@@ -910,6 +960,134 @@ canvas {
   color: var(--text-dim);
 }
 
+.aircraft-photo {
+  height: 88px;
+  border-radius: 8px;
+  overflow: hidden;
+  background: rgba(0, 0, 0, 0.35);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  flex-shrink: 0;
+}
+
+.aircraft-photo a,
+.aircraft-photo img {
+  display: block;
+  width: 100%;
+  height: 88px;
+  object-fit: cover;
+}
+
+.aircraft-photo-empty {
+  height: 88px;
+  display: grid;
+  place-items: center;
+  font-size: 11px;
+  color: var(--text-dim);
+}
+
+.airport-board-group {
+  margin: 4px 0 0;
+}
+
+.airport-board-group h3 {
+  margin: 0 0 6px;
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+  font-weight: 600;
+}
+
+.airport-board-group ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.airport-board-group button {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 1px;
+  width: 100%;
+  text-align: left;
+  border: 1px solid transparent;
+  background: rgba(255, 255, 255, 0.03);
+  color: var(--text);
+  border-radius: 8px;
+  padding: 7px 9px;
+  font: inherit;
+  cursor: pointer;
+}
+
+.airport-board-group button:hover {
+  background: rgba(255, 255, 255, 0.06);
+  border-color: rgba(120, 170, 255, 0.25);
+}
+
+.airport-board-cs {
+  font-size: 13px;
+  font-weight: 650;
+  letter-spacing: 0.03em;
+}
+
+.airport-board-meta {
+  font-size: 11px;
+  color: var(--text-dim);
+}
+
+.airport-board-empty {
+  margin: 0 0 8px;
+  font-size: 11px;
+  color: var(--text-dim);
+}
+
+.flight-label-layer {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  pointer-events: none;
+  z-index: 8;
+}
+
+.flight-label {
+  position: absolute;
+  left: 0;
+  top: 0;
+  pointer-events: auto;
+  transform: translate(-50%, -120%);
+  margin: 0;
+  padding: 2px 6px;
+  border-radius: 4px;
+  border: 1px solid rgba(0, 0, 0, 0.85);
+  background: rgba(8, 12, 20, 0.82);
+  color: #eaf4ff;
+  font: 600 10px/1.2 -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  letter-spacing: 0.04em;
+  white-space: nowrap;
+  text-shadow: 0 1px 0 #000;
+  cursor: pointer;
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.12);
+}
+
+.flight-label.is-selected {
+  background: rgba(20, 28, 44, 0.94);
+  border-color: #ffe08a;
+  color: #fff;
+}
+
+.flight-label.is-hovered {
+  border-color: #8ecbff;
+}
+
+.flight-label.is-emergency {
+  border-color: #ff6b6b;
+  color: #ffd0d0;
+}
+
 .hint {
   font-size: 12px;
   color: var(--text-dim);
@@ -932,6 +1110,7 @@ canvas {
 .loading.err {
   text-align: center;
   line-height: 1.35;
+  overflow-wrap: anywhere;
 }
 
 .loading .spin {
@@ -1096,26 +1275,97 @@ canvas {
   color: var(--text-dim);
 }
 
+.sheet-inner,
+.sheet-peek,
+.sheet-body {
+  display: contents;
+}
+
 .sheet-handle {
   display: none;
 }
 
 @media (max-width: 720px) {
-  .sidebar {
-    top: auto;
-    bottom: 0;
+  .hud-dock {
+    display: flex;
+    flex-direction: column;
+    position: absolute;
     left: 0;
     right: 0;
+    bottom: 0;
     width: 100%;
-    height: 38vh;
-    max-height: 38vh;
-    border-radius: 16px 16px 0 0;
-    transition: height 0.22s ease, max-height 0.22s ease;
+    max-height: calc(100dvh - var(--safe-top) - 12px);
+    padding-left: var(--safe-left);
+    padding-right: var(--safe-right);
+    pointer-events: none;
+    z-index: 14;
   }
 
-  .sidebar.sheet-expanded {
-    height: min(78vh, calc(100dvh - 48px));
-    max-height: min(78vh, calc(100dvh - 48px));
+  .hud-dock > * {
+    pointer-events: auto;
+  }
+
+  .sidebar {
+    position: relative;
+    top: auto;
+    right: auto;
+    bottom: auto;
+    left: auto;
+    width: 100%;
+    height: var(--sheet-h, var(--sheet-collapsed-h, 30dvh));
+    max-height: calc(100dvh - var(--safe-top) - 12px);
+    flex: 0 0 auto;
+    min-height: 0;
+    overflow: hidden;
+    border-radius: 16px 16px 0 0;
+    padding-bottom: var(--safe-bottom);
+    overscroll-behavior: contain;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .sidebar.sheet-expanded:not(.sheet-dragging):not(.sheet-snapping) {
+    overflow-y: auto;
+  }
+
+  .sidebar.sheet-dragging {
+    transition: none;
+    touch-action: none;
+    overflow: hidden;
+  }
+
+  .sidebar.sheet-snapping {
+    transition: height 0.2s cubic-bezier(0.22, 1, 0.36, 1);
+    overflow: hidden;
+  }
+
+  .sheet-inner {
+    display: block;
+    height: auto;
+    min-height: 0;
+  }
+
+  .sheet-peek {
+    display: block;
+  }
+
+  .sheet-body {
+    display: block;
+  }
+
+  .sidebar:not(.sheet-expanded):not(.sheet-dragging) .sheet-body {
+    pointer-events: none;
+  }
+
+  .flight-list {
+    flex: none;
+    min-height: 0;
+    height: auto;
+    overflow: visible;
+    margin-top: 2px;
+    padding-top: 8px;
+    padding-bottom: 20px;
+    border-top: 1px solid rgba(255, 255, 255, 0.06);
+    background: rgba(8, 12, 22, 0.55);
   }
 
   .sheet-handle {
@@ -1123,31 +1373,79 @@ canvas {
     align-items: center;
     justify-content: center;
     width: 100%;
-    padding: 10px 0 2px;
+    position: sticky;
+    top: 0;
+    z-index: 6;
+    padding: 14px 0 8px;
     border: none;
-    background: transparent;
-    cursor: pointer;
+    background: rgba(12, 18, 30, 0.94);
+    backdrop-filter: blur(14px);
+    -webkit-backdrop-filter: blur(14px);
+    cursor: grab;
+    flex-shrink: 0;
+    touch-action: none;
+  }
+
+  .sidebar.sheet-dragging .sheet-handle {
+    cursor: grabbing;
+  }
+
+  .sidebar-header {
+    touch-action: pan-y;
   }
 
   .sheet-handle span {
-    width: 36px;
-    height: 4px;
+    width: 42px;
+    height: 5px;
     border-radius: 99px;
-    background: rgba(255, 255, 255, 0.28);
+    background: rgba(255, 255, 255, 0.38);
+  }
+
+  .sidebar-regions {
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: none;
+    padding-bottom: 8px;
+  }
+
+  .sidebar-regions::-webkit-scrollbar {
+    display: none;
+  }
+
+  .sidebar-back {
+    margin-top: 4px;
+  }
+
+  .search-suggest {
+    max-height: min(240px, 36dvh);
   }
 
   .flight-detail {
-    top: 8px;
-    right: 8px;
-    left: 8px;
+    top: calc(8px + var(--safe-top));
+    right: calc(8px + var(--safe-right));
+    left: calc(8px + var(--safe-left));
     width: auto;
-    max-height: 34vh;
+    max-height: calc(
+      100dvh - var(--dock-h, 28dvh) - var(--safe-top) - 16px
+    );
+    z-index: 12;
+  }
+
+  .flight-detail-body {
+    max-height: calc(
+      100dvh - var(--dock-h, 28dvh) - var(--safe-top) - 16px - 4.75rem
+    );
+  }
+
+  .hud-sheet-expanded .flight-detail {
+    display: none;
   }
 
   .alert-toasts {
-    top: 8px;
-    right: 8px;
-    left: 8px;
+    top: calc(8px + var(--safe-top));
+    right: calc(8px + var(--safe-right));
+    left: calc(8px + var(--safe-left));
     max-width: none;
   }
 
@@ -1156,13 +1454,77 @@ canvas {
   }
 
   .bottom-stack {
-    bottom: calc(38vh + 8px);
-    width: calc(100vw - 24px);
-    transition: bottom 0.22s ease;
+    position: relative;
+    bottom: auto;
+    left: auto;
+    transform: none;
+    width: calc(100% - 24px);
+    margin: 0 auto 6px;
+    max-width: none;
   }
 
-  .sidebar.sheet-expanded ~ .bottom-stack,
-  .hud:has(.sidebar.sheet-expanded) .bottom-stack {
-    bottom: calc(min(78vh, 100dvh - 48px) + 8px);
+  .bottom-status {
+    min-height: 0;
+    height: 0;
+    overflow: visible;
+  }
+
+  .bottom-status .loading {
+    position: absolute;
+    left: 0;
+    right: 0;
+    bottom: 6px;
+    width: auto;
+  }
+
+  .hud-has-detail .bottom-status {
+    display: none;
+  }
+
+  .playback-bar {
+    flex-wrap: wrap;
+    gap: 6px;
+    padding: 8px 10px;
+  }
+
+  .playback-time {
+    min-width: 0;
+    flex: 1 1 auto;
+  }
+
+  .hud-sheet-expanded .bottom-stack {
+    margin-bottom: 6px;
+  }
+}
+
+@media (max-width: 720px) and (max-height: 520px) {
+  .flight-detail {
+    max-height: calc(
+      100dvh - var(--dock-h, 32dvh) - var(--safe-top) - 12px
+    );
+  }
+
+  .flight-detail-body {
+    max-height: calc(
+      100dvh - var(--dock-h, 32dvh) - var(--safe-top) - 12px - 4.75rem
+    );
+  }
+}
+
+@media (max-width: 420px) {
+  .playback-bar {
+    display: grid;
+    grid-template-columns: auto auto 1fr;
+    align-items: center;
+  }
+
+  .playback-scrub {
+    grid-column: 1 / -1;
+    order: 3;
+  }
+
+  .flight-detail-actions button {
+    font-size: 11px;
+    padding: 8px 6px;
   }
 }

@@ -8,8 +8,20 @@ import {
   type TrafficFilters,
 } from '../lib/filters'
 import { observeEmergencySquawks } from '../lib/squawk'
+import type { LabelMode } from '../lib/flightLabels'
 
 export type TrailMode = 'off' | 'selected' | 'all'
+export type { LabelMode }
+
+function readLabelMode(): LabelMode {
+  try {
+    const v = localStorage.getItem('fg-labels')
+    if (v === 'auto' || v === 'on' || v === 'off') return v
+  } catch {
+    /* ignore */
+  }
+  return 'auto'
+}
 
 /** Max comparison paths kept on the globe alongside the selection. */
 export const MAX_PINNED_FLIGHTS = 8
@@ -93,6 +105,12 @@ interface AppState {
   alertToasts: AlertToast[]
   /** Bumped when confirmed unusual-squawk set changes. */
   emergencyVersion: number
+  /** Callsign labels on the globe / map. */
+  labelMode: LabelMode
+  /** Flatten the current view to a 2D map (independent of country select). */
+  flatMap: boolean
+  /** Bumped when the 2D look-at frame is written so map meshes rebuild. */
+  mapEpoch: number
 
   setFlights: (flights: FlightState[], updatedAt?: number) => void
   setViewBBox: (b: BBox | null) => void
@@ -124,6 +142,9 @@ interface AppState {
   removeAlertWatch: (id: string) => void
   pushAlertToast: (toast: Omit<AlertToast, 'id' | 'createdAt'>) => void
   dismissAlertToast: (id: string) => void
+  setLabelMode: (mode: LabelMode) => void
+  setFlatMap: (flat: boolean) => void
+  bumpMapEpoch: () => void
 }
 
 export const useStore = create<AppState>((set) => ({
@@ -158,6 +179,9 @@ export const useStore = create<AppState>((set) => ({
   alertWatches: [],
   alertToasts: [],
   emergencyVersion: 0,
+  labelMode: readLabelMode(),
+  flatMap: false,
+  mapEpoch: 0,
 
   setFlights: (flights, updatedAt = Date.now()) =>
     set((s) => {
@@ -207,6 +231,7 @@ export const useStore = create<AppState>((set) => ({
       hoverPointer: null,
       searchAirportIata: null,
       searchQuery: '',
+      flatMap: false,
     }),
   setSelectedFlight: (selectedFlightId) =>
     set((s) => {
@@ -236,6 +261,7 @@ export const useStore = create<AppState>((set) => ({
       selectedCountry: null,
       searchAirportIata: null,
       searchQuery: '',
+      flatMap: false,
       ...(opts?.focus === false
         ? {}
         : {
@@ -320,4 +346,18 @@ export const useStore = create<AppState>((set) => ({
     set((s) => ({
       alertToasts: s.alertToasts.filter((t) => t.id !== id),
     })),
+  setLabelMode: (labelMode) => {
+    try {
+      localStorage.setItem('fg-labels', labelMode)
+    } catch {
+      /* ignore */
+    }
+    set({ labelMode })
+  },
+  setFlatMap: (flatMap) =>
+    set((s) => ({
+      flatMap,
+      followFlight: flatMap ? false : s.followFlight,
+    })),
+  bumpMapEpoch: () => set((s) => ({ mapEpoch: s.mapEpoch + 1 })),
 }))

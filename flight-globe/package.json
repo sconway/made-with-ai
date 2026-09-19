@@ -16,7 +16,8 @@
     "build": "tsc && vite build",
     "start": "tsx server/index.ts",
     "preview": "npm run build && tsx server/index.ts",
-    "build:airports": "node scripts/build-airports.mjs"
+    "build:airports": "node scripts/build-airports.mjs",
+    "deploy": "bash scripts/deploy.sh"
   },
   "dependencies": {
     "@react-three/drei": "9.114.0",

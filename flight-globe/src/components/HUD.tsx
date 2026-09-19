@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react'
 import { useStore } from '../store/useStore'
 import { REGIONS } from '../lib/regions'
 import { getVisibleFlights } from '../lib/visibleFlights'
@@ -18,6 +18,7 @@ import { FlightFilters } from './FlightFilters'
 import { AlertsPanel } from './AlertsPanel'
 import { PlaybackBar } from './PlaybackBar'
 import { FlightDetailPanel } from './FlightDetailPanel'
+import { AirportDetailPanel } from './AirportDetailPanel'
 import type { FlightState } from '../lib/flight'
 import { isConfirmedEmergency, emergencySquawkLabel } from '../lib/squawk'
 
@@ -129,6 +130,8 @@ export function HUD() {
   const selectedFlightId = useStore((s) => s.selectedFlightId)
   const setSelectedFlight = useStore((s) => s.setSelectedFlight)
   const selectedCountry = useStore((s) => s.selectedCountry)
+  const flatMap = useStore((s) => s.flatMap)
+  const setFlatMap = useStore((s) => s.setFlatMap)
   const routesVersion = useStore((s) => s.routesVersion)
   const searchAirportIata = useStore((s) => s.searchAirportIata)
   const setSearchAirportIata = useStore((s) => s.setSearchAirportIata)
@@ -140,13 +143,16 @@ export function HUD() {
   const playbackLive = useStore((s) => s.playbackLive)
   const playbackPlaying = useStore((s) => s.playbackPlaying)
   const listRef = useRef<HTMLDivElement>(null)
+  const dockRef = useRef<HTMLDivElement>(null)
+  const sheetRef = useRef<HTMLElement>(null)
+  const peekRef = useRef<HTMLDivElement>(null)
 
   const emergencyVersion = useStore((s) => s.emergencyVersion)
 
   const visible = useMemo(() => {
-    const emergencyIds = flights
-      .filter((f) => isConfirmedEmergency(f))
-      .map((f) => f.icao24)
+    const emergencyIds = followFlight
+      ? []
+      : flights.filter((f) => isConfirmedEmergency(f)).map((f) => f.icao24)
     const keepIds = [
       ...(selectedFlightId ? [selectedFlightId] : []),
       ...emergencyIds,
@@ -204,6 +210,7 @@ export function HUD() {
     searchQuery,
     trafficFilters,
     selectedFlightId,
+    followFlight,
     emergencyVersion,
   ])
 
@@ -212,6 +219,14 @@ export function HUD() {
   // while following / browsing the list).
   useEffect(() => {
     if (!selectedFlightId || !listRef.current) return
+    // Selecting a flight collapses the mobile sheet; scrolling a clipped
+    // list can resize the dock and bounce the detail actions.
+    if (
+      typeof window !== 'undefined' &&
+      window.matchMedia('(max-width: 720px)').matches
+    ) {
+      return
+    }
     const list = listRef.current
     const raf = requestAnimationFrame(() => {
       const el = list.querySelector<HTMLElement>(
@@ -233,17 +248,289 @@ export function HUD() {
     : undefined
   const filtersOn = trafficFiltersActive(trafficFilters)
   const [sheetExpanded, setSheetExpanded] = useState(false)
+  const [sheetDragging, setSheetDragging] = useState(false)
+  const [sheetSnapping, setSheetSnapping] = useState(false)
+  const collapsedHRef = useRef(200)
+  const sheetDrag = useRef({
+    pointerId: -1,
+    startY: 0,
+    startH: 0,
+    lastY: 0,
+    lastT: 0,
+    vy: 0,
+    moved: false,
+  })
+  const listPullPending = useRef(false)
+  const sheetDraggingRef = useRef(false)
+  const sheetSnappingRef = useRef(false)
+  const sheetExpandedRef = useRef(false)
+  sheetDraggingRef.current = sheetDragging
+  sheetSnappingRef.current = sheetSnapping
+  sheetExpandedRef.current = sheetExpanded
+
+  const isMobileHud = () =>
+    typeof window !== 'undefined' &&
+    window.matchMedia('(max-width: 720px)').matches
+
+  const collapseSheetOnMobile = () => {
+    if (!isMobileHud()) return
+    sheetExpandedRef.current = false
+    setSheetSnapping(false)
+    setSheetDragging(false)
+    setSheetExpanded(false)
+    setSheetH(peekCollapsedHeight())
+    if (sheetRef.current) sheetRef.current.scrollTop = 0
+  }
+
+  const expandSheetOnMobile = () => {
+    if (!isMobileHud()) return
+    sheetExpandedRef.current = true
+    setSheetSnapping(false)
+    setSheetDragging(false)
+    setSheetExpanded(true)
+    setSheetH(sheetMaxHeight())
+  }
+
+  const peekCollapsedHeight = () => {
+    const sheet = sheetRef.current
+    const peek = peekRef.current
+    if (!sheet || !peek) return collapsedHRef.current
+    const pad = parseFloat(getComputedStyle(sheet).paddingBottom) || 0
+    return peek.offsetHeight + pad
+  }
+
+  const sheetMaxHeight = () => {
+    const dock = dockRef.current
+    const stack = dock?.querySelector('.bottom-stack') as HTMLElement | null
+    const vh = window.visualViewport?.height ?? window.innerHeight
+    return Math.max(240, vh - 12 - (stack?.offsetHeight ?? 0))
+  }
+
+  const setSheetH = (px: number) => {
+    document.documentElement.style.setProperty('--sheet-h', `${Math.round(px)}px`)
+  }
+
+  const syncSheetHeights = (applyResting = false) => {
+    if (!isMobileHud()) {
+      document.documentElement.style.removeProperty('--sheet-collapsed-h')
+      document.documentElement.style.removeProperty('--sheet-expanded-h')
+      document.documentElement.style.removeProperty('--sheet-h')
+      return
+    }
+    const collapsed = peekCollapsedHeight()
+    const expanded = sheetMaxHeight()
+    collapsedHRef.current = collapsed
+    document.documentElement.style.setProperty('--sheet-collapsed-h', `${collapsed}px`)
+    document.documentElement.style.setProperty('--sheet-expanded-h', `${expanded}px`)
+    if (applyResting && !sheetDraggingRef.current && !sheetSnappingRef.current) {
+      setSheetH(sheetExpandedRef.current ? expanded : collapsed)
+    }
+  }
+
+  const beginSheetDrag = (e: ReactPointerEvent) => {
+    if (!isMobileHud()) return false
+    if (e.pointerType === 'mouse' && e.button !== 0) return false
+    const el = sheetRef.current
+    if (!el) return false
+    if (!sheetExpanded) collapsedHRef.current = peekCollapsedHeight()
+    const d = sheetDrag.current
+    d.pointerId = e.pointerId
+    d.startY = e.clientY
+    d.startH = el.offsetHeight
+    d.lastY = e.clientY
+    d.lastT = performance.now()
+    d.vy = 0
+    d.moved = false
+    setSheetSnapping(false)
+    setSheetH(el.offsetHeight)
+    el.setPointerCapture(e.pointerId)
+    setSheetDragging(true)
+    return true
+  }
+
+  const moveSheetDrag = (e: ReactPointerEvent) => {
+    const d = sheetDrag.current
+    if (d.pointerId !== e.pointerId) return
+    const el = sheetRef.current
+    if (!el) return
+    const now = performance.now()
+    const dt = Math.max(1, now - d.lastT)
+    d.vy = (d.lastY - e.clientY) / dt
+    d.lastY = e.clientY
+    d.lastT = now
+    if (Math.abs(e.clientY - d.startY) > 8) d.moved = true
+    const minH = collapsedHRef.current
+    const maxH = sheetMaxHeight()
+    const next = Math.min(maxH, Math.max(minH, d.startH + (d.startY - e.clientY)))
+    setSheetH(next)
+  }
+
+  const settleSheet = (expand: boolean) => {
+    setSheetH(expand ? sheetMaxHeight() : peekCollapsedHeight())
+    setSheetSnapping(false)
+    setSheetDragging(false)
+    setSheetExpanded(expand)
+    if (!expand && sheetRef.current) sheetRef.current.scrollTop = 0
+  }
+
+  const endSheetDrag = (e: ReactPointerEvent) => {
+    const d = sheetDrag.current
+    if (d.pointerId !== e.pointerId) return
+    d.pointerId = -1
+    listPullPending.current = false
+    const el = sheetRef.current
+    const h = el?.offsetHeight ?? d.startH
+    const minH = collapsedHRef.current
+    const maxH = sheetMaxHeight()
+    const mid = minH + (maxH - minH) * 0.28
+    const expand = !d.moved
+      ? !sheetExpanded
+      : d.vy > 0.35
+        ? true
+        : d.vy < -0.35
+          ? false
+          : h > mid
+    const target = expand ? maxH : minH
+    if (!el || Math.abs(h - target) < 2) {
+      settleSheet(expand)
+      return
+    }
+    el.classList.add('sheet-snapping')
+    void el.offsetHeight
+    setSheetH(target)
+    setSheetDragging(false)
+    setSheetSnapping(true)
+    let done = false
+    const finish = (ev?: Event) => {
+      if (done) return
+      if (ev && ev.target !== el) return
+      done = true
+      el.removeEventListener('transitionend', finish)
+      settleSheet(expand)
+    }
+    el.addEventListener('transitionend', finish)
+    window.setTimeout(() => finish(), 240)
+  }
+
+  useEffect(() => {
+    const dock = dockRef.current
+    const peek = peekRef.current
+    if (!dock) return
+
+    const syncDockHeight = () => {
+      if (!isMobileHud()) {
+        document.documentElement.style.removeProperty('--dock-h')
+        document.documentElement.style.removeProperty('--sheet-collapsed-h')
+        document.documentElement.style.removeProperty('--sheet-expanded-h')
+        document.documentElement.style.removeProperty('--sheet-h')
+        return
+      }
+      document.documentElement.style.setProperty(
+        '--dock-h',
+        `${dock.offsetHeight}px`,
+      )
+      if (!sheetDraggingRef.current && !sheetSnappingRef.current) {
+        syncSheetHeights(true)
+      }
+    }
+
+    syncDockHeight()
+    const ro = new ResizeObserver(syncDockHeight)
+    ro.observe(dock)
+    if (peek) ro.observe(peek)
+    window.addEventListener('resize', syncDockHeight)
+    return () => {
+      ro.disconnect()
+      window.removeEventListener('resize', syncDockHeight)
+      document.documentElement.style.removeProperty('--dock-h')
+      document.documentElement.style.removeProperty('--sheet-collapsed-h')
+      document.documentElement.style.removeProperty('--sheet-expanded-h')
+      document.documentElement.style.removeProperty('--sheet-h')
+    }
+  }, [selectedCountry])
+
+  useEffect(() => {
+    if (sheetDragging || sheetSnapping) return
+    if (!isMobileHud()) return
+    syncSheetHeights(true)
+  }, [sheetExpanded])
+
+  useEffect(() => {
+    if (!selectedFlightId) return
+    collapseSheetOnMobile()
+  }, [selectedFlightId])
 
   return (
-    <div className="hud">
+    <div
+      className={`hud${
+        sheetExpanded || sheetDragging || sheetSnapping ? ' hud-sheet-expanded' : ''
+      }${selectedFlightId || searchAirportIata ? ' hud-has-detail' : ''}`}
+    >
+      <FlightDetailPanel />
+      <AirportDetailPanel />
+
+      <div className="hud-dock" ref={dockRef}>
+      <div className="bottom-stack">
+        <div className="bottom-status" aria-live="polite">
+          {loading && !error && playbackLive && !playbackPlaying && (
+            <div className="panel loading">
+              <span className="spin" /> Updating live positions…
+            </div>
+          )}
+          {error && <div className="panel loading err">⚠ {error}</div>}
+        </div>
+        <div className="panel hint">
+          {followFlight
+            ? 'Following — drag to orbit · pick another flight in the list to switch · Esc to exit'
+            : selectedCountry
+              ? `Map of ${selectedCountry.name} — drag to pan · scroll to zoom · click a plane · pick a region to return`
+              : flatMap
+                ? '2D map — drag to pan · scroll to zoom · Map again or ← Globe to return'
+                : '/ to search · Map for a 2D view · click a country · pick a flight'}
+        </div>
+        <PlaybackBar />
+      </div>
+
       <aside
-        className={`panel sidebar${sheetExpanded ? ' sheet-expanded' : ''}`}
+        ref={sheetRef}
+        className={`panel sidebar${sheetExpanded ? ' sheet-expanded' : ''}${
+          sheetDragging ? ' sheet-dragging' : ''
+        }${sheetSnapping ? ' sheet-snapping' : ''}`}
+        onPointerMove={moveSheetDrag}
+        onPointerUp={endSheetDrag}
+        onPointerCancel={endSheetDrag}
       >
+        <div
+          className="sheet-inner"
+          onPointerDown={(e) => {
+            if (!isMobileHud() || !sheetExpanded || sheetDragging) return
+            if ((e.target as HTMLElement).closest('input, textarea, button, a'))
+              return
+            if (sheetRef.current && sheetRef.current.scrollTop > 1) return
+            listPullPending.current = true
+            sheetDrag.current.startY = e.clientY
+          }}
+          onPointerMove={(e) => {
+            if (!listPullPending.current || sheetDrag.current.pointerId !== -1)
+              return
+            if (e.clientY - sheetDrag.current.startY > 10) {
+              listPullPending.current = false
+              beginSheetDrag(e)
+            }
+          }}
+          onPointerUp={() => {
+            listPullPending.current = false
+          }}
+          onPointerCancel={() => {
+            listPullPending.current = false
+          }}
+        >
+        <div className="sheet-peek" ref={peekRef}>
         <button
           type="button"
           className="sheet-handle"
           aria-label={sheetExpanded ? 'Collapse flight list' : 'Expand flight list'}
-          onClick={() => setSheetExpanded((v) => !v)}
+          onPointerDown={beginSheetDrag}
         >
           <span />
         </button>
@@ -257,14 +544,35 @@ export function HUD() {
               setSearchAirportIata(null)
               setSearchQuery('')
               setSelectedFlight(null)
+              setFlatMap(false)
               setRegion(world, { focus: false })
+              collapseSheetOnMobile()
             }}
           >
             <span aria-hidden>←</span>
             World
           </button>
         )}
-        <header className="sidebar-header">
+        {flatMap && !selectedCountry && (
+          <button
+            type="button"
+            className="sidebar-back"
+            onClick={() => {
+              setFlatMap(false)
+              collapseSheetOnMobile()
+            }}
+          >
+            <span aria-hidden>←</span>
+            Globe
+          </button>
+        )}
+        <header
+          className="sidebar-header"
+          onPointerDown={(e) => {
+            if ((e.target as HTMLElement).closest('button, input, a')) return
+            beginSheetDrag(e)
+          }}
+        >
           <div className="sidebar-title">
             <span className="dot" />
             <div>
@@ -276,16 +584,18 @@ export function HUD() {
                     ? `Search “${searchQuery.trim()}”`
                     : selectedCountry
                       ? `To/from ${selectedCountry.name}`
-                      : `${region.label} view`}
+                      : flatMap
+                        ? '2D map'
+                        : `${region.label} view`}
               </small>
             </div>
           </div>
         </header>
 
-        <SearchBox />
-        <FlightFilters />
-        <AlertsPanel />
+        <SearchBox onActivate={expandSheetOnMobile} />
+        </div>
 
+        <div className="sheet-body">
         <div className="region-select sidebar-regions">
           {searchAirportIata && (
             <button
@@ -335,12 +645,29 @@ export function HUD() {
                   setRegion(r, {
                     focus: !(selectedCountry && r.id === 'world'),
                   })
+                  collapseSheetOnMobile()
                 }}
             >
               {r.label}
             </button>
           ))}
+          {!selectedCountry && (
+            <button
+              type="button"
+              className={flatMap ? 'active' : ''}
+              title="Flatten the current view to a 2D map"
+              onClick={() => {
+                setFlatMap(!flatMap)
+                collapseSheetOnMobile()
+              }}
+            >
+              Map
+            </button>
+          )}
         </div>
+
+        <FlightFilters />
+        <AlertsPanel />
 
         <div className="sidebar-count">
           {followFlight && selectedFlightId
@@ -372,33 +699,16 @@ export function HUD() {
                       f.icao24 === selectedFlightId ? null : f.icao24
                     setSelectedFlight(next)
                     if (next && !selectedCountry) focusCamera(f.lat, f.lon, 1.85)
+                    if (next) collapseSheetOnMobile()
                   }}
                 />
               </div>
             ))
           )}
         </div>
+        </div>
+        </div>
       </aside>
-
-      <FlightDetailPanel />
-
-      <div className="bottom-stack">
-        <div className="bottom-status" aria-live="polite">
-          {loading && !error && playbackLive && !playbackPlaying && (
-            <div className="panel loading">
-              <span className="spin" /> Updating live positions…
-            </div>
-          )}
-          {error && <div className="panel loading err">⚠ {error}</div>}
-        </div>
-        <div className="panel hint">
-          {followFlight
-            ? 'Following — drag to orbit · pick another flight in the list to switch · Esc to exit'
-            : selectedCountry
-              ? `Map of ${selectedCountry.name} — drag to pan · scroll to zoom · click a plane · pick a region to return`
-              : '/ to search · click a country for a 2D map · pick a flight for its path'}
-        </div>
-        <PlaybackBar />
       </div>
     </div>
   )

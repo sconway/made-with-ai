@@ -23,6 +23,23 @@ export function airportIatasInCountry(country: Country): Set<string> {
   return set
 }
 
+const pinsByCountry = new Map<string, Set<string>>()
+
+/**
+ * Pins to draw on the country map — land polygons only, so neighboring
+ * fields that merely sit in the bounding box stay hidden.
+ */
+export function airportPinsInCountry(country: Country): Set<string> {
+  let set = pinsByCountry.get(country.id)
+  if (set) return set
+  set = new Set<string>()
+  for (const a of AIRPORTS) {
+    if (pointInCountry(a.lon, a.lat, country)) set.add(a.iata)
+  }
+  pinsByCountry.set(country.id, set)
+  return set
+}
+
 function approachPadDeg(country: Country): number {
   const span = Math.max(
     country.bbox.maxLat - country.bbox.minLat,

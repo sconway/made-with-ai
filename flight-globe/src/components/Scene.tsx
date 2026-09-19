@@ -6,6 +6,7 @@ import { Earth } from './Earth'
 import { Atmosphere } from './Atmosphere'
 import { Countries } from './Countries'
 import { Flights } from './Flights'
+import { FlightLabels } from './FlightLabels'
 import { Arcs } from './Arcs'
 import { Trails } from './Trails'
 import { AirportPins } from './AirportPins'
@@ -60,6 +61,7 @@ export function Scene() {
       <Trails />
       <Arcs />
       <Flights />
+      <FlightLabels />
 
       <OrbitControls
         makeDefault

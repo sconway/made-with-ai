@@ -33,10 +33,20 @@ export function FlightTooltip() {
     routeLabel,
   ].filter(Boolean)
 
+  const pad = 8
+  const left = Math.max(
+    pad,
+    Math.min(pointer.x + 14, window.innerWidth - 248),
+  )
+  const top = Math.max(
+    pad,
+    Math.min(pointer.y + 14, window.innerHeight - 120),
+  )
+
   return (
     <div
       className="flight-tooltip"
-      style={{ left: pointer.x + 14, top: pointer.y + 14 }}
+      style={{ left, top }}
       role="tooltip"
     >
       <div className="flight-tooltip-call">{callsign}</div>

@@ -51,10 +51,17 @@ const OPENSKY_FAILS_BEFORE_DOWN = 2
 let openskyDownUntil = 0
 let openskyNetFails = 0
 let loggedOpenSkyDown = false
+/** Pause optional /flights/aircraft lookups only — never the world poll. */
+let routeFallbackUntil = 0
 
 /** Skip further OpenSky calls while this host looks firewalled from OpenSky. */
 export function isOpenSkyUnreachable(): boolean {
   return Date.now() < openskyDownUntil
+}
+
+/** True after a 429 on route fallback — keep polling /states/all. */
+export function isOpenSkyRouteFallbackPaused(): boolean {
+  return Date.now() < routeFallbackUntil
 }
 
 /** Ms until the OpenSky circuit breaker reopens (0 if currently reachable). */
@@ -82,16 +89,19 @@ export function noteOpenSkyFailure(err: unknown): void {
   }
 }
 
-/** One 429 is enough — further route fallbacks would only burn the log. */
+/**
+ * A 429 on /flights/aircraft means "stop burning route credits", not "stop
+ * drawing planes". OpenSky's Retry-After is often hours (daily refill).
+ */
 export function noteOpenSkyRateLimit(retryAfterMs?: number): void {
   const wait = Math.min(
     Math.max(retryAfterMs ?? 15 * 60_000, 30_000),
     6 * 60 * 60_000,
   )
-  if (Date.now() + wait <= openskyDownUntil) return
-  openskyDownUntil = Date.now() + wait
+  if (Date.now() + wait <= routeFallbackUntil) return
+  routeFallbackUntil = Date.now() + wait
   console.warn(
-    `[opensky] rate limited — skipping OpenSky for ${Math.round(wait / 1000)}s`,
+    `[opensky] rate limited — skipping route fallbacks for ${Math.round(wait / 1000)}s (live poll continues)`,
   )
 }
 
@@ -304,7 +314,7 @@ export async function fetchOpenSkyFlightAirports(
 ): Promise<OpenSkyEstAirports | null> {
   const id = icao24.trim().toLowerCase()
   if (!/^[0-9a-f]{6}$/.test(id)) return null
-  if (isOpenSkyUnreachable()) return null
+  if (isOpenSkyUnreachable() || isOpenSkyRouteFallbackPaused()) return null
 
   const end = Math.floor(Date.now() / 1000)
   const begin = end - lookbackSec

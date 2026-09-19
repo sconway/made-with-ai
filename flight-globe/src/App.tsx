@@ -16,6 +16,7 @@ export default function App() {
         camera={{ position: [0, 0.6, 2.6], fov: 45, near: 0.1, far: 100 }}
         gl={{ antialias: true }}
         dpr={[1, 2]}
+        style={{ position: 'absolute', inset: 0, zIndex: 0 }}
       >
         <color attach="background" args={['#05070d']} />
         <Suspense fallback={null}>

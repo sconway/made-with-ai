@@ -2,13 +2,14 @@ import { useEffect, useRef } from 'react'
 import { useFrame, useThree } from '@react-three/fiber'
 import * as THREE from 'three'
 import { useStore } from '../store/useStore'
-import { altitudeToRadius, deadReckon, latLonToVector3 } from '../lib/geo'
+import { altitudeToRadius, deadReckon, latLonToVector3, vector3ToLatLon } from '../lib/geo'
 import { regionCameraDist } from '../lib/regions'
 import {
   getMapBlend,
   getMapEase,
   getMapFrame,
   setMapViewCountry,
+  setMapViewLookAt,
   tickMapBlend,
   writeMapCameraPose,
 } from '../lib/mapView'
@@ -106,6 +107,7 @@ export function CameraRig() {
   const size = useThree((s) => s.size)
   const controls = useThree((s) => s.controls) as OrbitLike | null
   const selectedCountry = useStore((s) => s.selectedCountry)
+  const flatMap = useStore((s) => s.flatMap)
   const region = useStore((s) => s.region)
   const cameraFocus = useStore((s) => s.cameraFocus)
   const followFlight = useStore((s) => s.followFlight)
@@ -125,6 +127,7 @@ export function CameraRig() {
   const pendingGlobeHome = useRef(false)
   const wasMap = useRef(false)
   const mapNav = useRef(false)
+  const lastFlatRef = useRef(false)
   const lastFocusNonce = useRef(0)
 
   const fly = useRef<Fly>({
@@ -217,12 +220,32 @@ export function CameraRig() {
     const prevId = lastCountryId.current
     const countryChanged = selectedCountry?.id !== prevId
     lastCountryId.current = selectedCountry?.id ?? null
-    setMapViewCountry(selectedCountry)
+    const wasFlat = lastFlatRef.current
+    const nowFlat = flatMap && !selectedCountry
+    lastFlatRef.current = nowFlat
 
-    if (selectedCountry && countryChanged) {
+    if (selectedCountry) {
+      setMapViewCountry(selectedCountry)
+    } else if (flatMap) {
+      const { lat, lon } = vector3ToLatLon(camera.position)
+      const dist = Math.max(1.2, camera.position.length())
+      const halfLon = THREE.MathUtils.clamp((dist - 1.05) * 32, 10, 62)
+      const halfLat = halfLon * 0.62
+      setMapViewLookAt(lat, lon, halfLon, halfLat)
+      useStore.getState().bumpMapEpoch()
+    } else {
+      setMapViewCountry(null)
+    }
+
+    const enteringCountry = Boolean(selectedCountry && countryChanged)
+    const enteringFlat = nowFlat && !wasFlat
+    const leavingMap =
+      (prevId != null && !selectedCountry && !nowFlat) || (wasFlat && !nowFlat)
+
+    if (enteringCountry || enteringFlat) {
       fly.current.active = false
       pendingGlobeHome.current = false
-      if (!prevId) {
+      if (!prevId && !wasFlat) {
         globeFromPos.current.copy(camera.position)
         globeFromQuat.current.copy(camera.quaternion)
         poseMix.current = 1
@@ -233,27 +256,24 @@ export function CameraRig() {
       }
     }
 
-    const leavingCountry = prevId != null && !selectedCountry
-    if (leavingCountry) {
+    if (leavingMap) {
       pendingGlobeHome.current = false
-      // Pull back along the current view so the country stays in frame —
-      // a region fly-to (N. America / Europe) may replace this next.
       writeGlobePoseFromDir(
         camera.position,
         regionCameraDist(region),
         globeFromPos.current,
         globeFromQuat.current,
       )
-    } else if (!selectedCountry) {
+    } else if (!selectedCountry && !flatMap) {
       pendingGlobeHome.current = true
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedCountry, region])
+  }, [selectedCountry, flatMap, region])
 
   useEffect(() => {
     if (!cameraFocus || followFlight) return
     if (cameraFocus.nonce === lastFocusNonce.current) return
-    if (selectedCountry) return
+    if (selectedCountry || flatMap) return
     lastFocusNonce.current = cameraFocus.nonce
     // Leaving a country: aim the reverse blend at this home pose so we don't
     // settle on the old country-facing side of the globe.
@@ -277,7 +297,7 @@ export function CameraRig() {
 
   useEffect(() => {
     if (!controls) return
-    if (selectedCountry || wasMap.current) {
+    if (selectedCountry || flatMap || wasMap.current) {
       if (selectedCountry && !mapNav.current) controls.enabled = false
       followReady.current = false
       prevFollowDir.current.set(0, 0, 0)
@@ -306,7 +326,7 @@ export function CameraRig() {
       prevFollowDir.current.set(0, 0, 0)
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [followFlight, selectedFlightId, selectedCountry, controls])
+  }, [followFlight, selectedFlightId, selectedCountry, flatMap, controls])
 
   useFrame((_, delta) => {
     const b = tickMapBlend(delta)
@@ -354,7 +374,7 @@ export function CameraRig() {
         mapLeavePos.current.copy(camera.position)
         mapLeaveQuat.current.copy(camera.quaternion)
         mapNav.current = false
-      } else if (selectedCountry) {
+      } else if (selectedCountry || flatMap) {
         mapLeavePos.current.copy(_mapPos)
         mapLeaveQuat.current.copy(_mapQuat)
       }
@@ -379,7 +399,7 @@ export function CameraRig() {
       restoreGlobeOrbit()
     }
 
-    if (pendingGlobeHome.current && b < 0.05 && !selectedCountry) {
+    if (pendingGlobeHome.current && b < 0.05 && !selectedCountry && !flatMap) {
       pendingGlobeHome.current = false
       startFly(
         region.center.lat,
@@ -395,7 +415,7 @@ export function CameraRig() {
       prevFollowDir.current.set(0, 0, 0)
     }
 
-    if (followFlight && selectedFlightId && !selectedCountry) {
+    if (followFlight && selectedFlightId && !selectedCountry && !flatMap) {
       const f = flightsById.get(selectedFlightId)
       if (f) {
         const elapsed =

@@ -123,6 +123,37 @@ export function setMapViewCountry(country: Country | null): void {
   }
 }
 
+/** Flatten a patch of earth around a look-at (current globe view → 2D map). */
+export function frameFromLookAt(
+  lat0: number,
+  lon0: number,
+  halfLon: number,
+  halfLat: number,
+): MapFrame {
+  const lat = Math.max(-80, Math.min(80, lat0))
+  const hLon = Math.max(6, Math.min(70, halfLon))
+  const hLat = Math.max(5, Math.min(50, halfLat))
+  return {
+    lon0,
+    lat0: lat,
+    minLon: lon0 - hLon,
+    maxLon: lon0 + hLon,
+    minLat: Math.max(-85, lat - hLat),
+    maxLat: Math.min(85, lat + hLat),
+    ...buildBasis(lat, lon0),
+  }
+}
+
+export function setMapViewLookAt(
+  lat: number,
+  lon: number,
+  halfLon: number,
+  halfLat: number,
+): void {
+  frame = frameFromLookAt(lat, lon, halfLon, halfLat)
+  targetBlend = 1
+}
+
 export function tickMapBlend(dt: number): number {
   const delta = targetBlend - blend
   if (Math.abs(delta) < 0.0015) {
@@ -225,7 +256,13 @@ export function overlayMargins(
   height: number,
 ): { left: number; right: number; top: number; bottom: number } {
   if (width <= 720) {
-    return { left: 16, right: 16, top: 12, bottom: height * 0.38 + 16 }
+    const raw =
+      typeof document !== 'undefined'
+        ? getComputedStyle(document.documentElement).getPropertyValue('--dock-h')
+        : ''
+    const dock = Number.parseFloat(raw)
+    const bottom = Number.isFinite(dock) && dock > 0 ? dock + 8 : height * 0.24 + 8
+    return { left: 16, right: 16, top: 16, bottom }
   }
   return { left: 376, right: 28, top: 22, bottom: 100 }
 }

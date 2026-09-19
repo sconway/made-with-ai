@@ -203,6 +203,68 @@ async function handleRoute(
   }
 }
 
+type PhotoCache = {
+  at: number
+  body: { src: string; link: string; photographer: string } | null
+}
+const photoCache = new Map<string, PhotoCache>()
+const PHOTO_TTL_MS = 24 * 60 * 60 * 1000
+
+async function handlePhoto(
+  req: http.IncomingMessage,
+  res: http.ServerResponse,
+): Promise<void> {
+  const host = req.headers.host ?? `localhost:${PORT}`
+  const url = new URL(req.url ?? '/', `http://${host}`)
+  const parts = url.pathname.split('/').filter(Boolean)
+  const hex = (parts[2] ?? '').trim().toLowerCase()
+  if (!/^[0-9a-f]{6}$/.test(hex)) {
+    sendJson(res, 400, { error: 'bad hex' })
+    return
+  }
+  const hit = photoCache.get(hex)
+  if (hit && Date.now() - hit.at < PHOTO_TTL_MS) {
+    sendJson(res, 200, hit.body ?? { src: null }, {
+      'cache-control': 'public, max-age=86400',
+    })
+    return
+  }
+  try {
+    const upstream = await fetch(
+      `https://api.planespotters.net/pub/photos/hex/${hex}`,
+      { headers: { 'User-Agent': 'flight-globe/0.1' } },
+    )
+    if (!upstream.ok) {
+      photoCache.set(hex, { at: Date.now(), body: null })
+      sendJson(res, 200, { src: null }, { 'cache-control': 'public, max-age=600' })
+      return
+    }
+    const data = (await upstream.json()) as {
+      photos?: Array<{
+        thumbnail?: { src?: string }
+        thumbnail_large?: { src?: string }
+        link?: string
+        photographer?: string
+      }>
+    }
+    const first = data.photos?.[0]
+    const src = first?.thumbnail_large?.src || first?.thumbnail?.src || null
+    const body = src
+      ? {
+          src,
+          link: first?.link || '',
+          photographer: first?.photographer || '',
+        }
+      : null
+    photoCache.set(hex, { at: Date.now(), body })
+    sendJson(res, 200, body ?? { src: null }, {
+      'cache-control': 'public, max-age=86400',
+    })
+  } catch {
+    sendJson(res, 200, { src: null }, { 'cache-control': 'public, max-age=60' })
+  }
+}
+
 const server = http.createServer((req, res) => {
   if (req.method === 'OPTIONS') {
     res.writeHead(204, {
@@ -255,6 +317,14 @@ const server = http.createServer((req, res) => {
     handlePlayback(req, res)
     return
   }
+  if (pathOnly.startsWith('/api/photos/')) {
+    if (req.method !== 'GET') {
+      sendJson(res, 405, { error: 'method not allowed' })
+      return
+    }
+    void handlePhoto(req, res)
+    return
+  }
   if (pathOnly.startsWith('/api/routes/')) {
     if (req.method !== 'GET') {
       sendJson(res, 405, { error: 'method not allowed' })
@@ -273,6 +343,7 @@ const server = http.createServer((req, res) => {
         'GET /api/flights?at=<ms>',
         'GET /api/playback',
         'GET /api/routes/:callsign',
+        'GET /api/photos/:hex',
       ],
     })
     return

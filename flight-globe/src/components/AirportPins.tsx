@@ -4,7 +4,7 @@ import { useFrame, type ThreeEvent } from '@react-three/fiber'
 import { Html } from '@react-three/drei'
 import { useStore } from '../store/useStore'
 import { AIRPORTS, type AirportSize } from '../lib/airports'
-import { airportIatasInCountry } from '../lib/countryFlights'
+import { airportPinsInCountry } from '../lib/countryFlights'
 import { GLOBE_RADIUS } from '../lib/geo'
 import {
   getMapBlend,
@@ -38,6 +38,7 @@ const _yAxis = new THREE.Vector3(0, 1, 0)
  */
 export function AirportPins() {
   const searchAirportIata = useStore((s) => s.searchAirportIata)
+  const selectedFlightId = useStore((s) => s.selectedFlightId)
   const setSearchAirportIata = useStore((s) => s.setSearchAirportIata)
   const setSelectedFlight = useStore((s) => s.setSelectedFlight)
   const selectedCountry = useStore((s) => s.selectedCountry)
@@ -50,7 +51,7 @@ export function AirportPins() {
   const [labelIata, setLabelIata] = useState<string | null>(null)
 
   const inSelectedCountry = useMemo(
-    () => (selectedCountry ? airportIatasInCountry(selectedCountry) : null),
+    () => (selectedCountry ? airportPinsInCountry(selectedCountry) : null),
     [selectedCountry],
   )
 
@@ -99,11 +100,13 @@ export function AirportPins() {
         (inSelectedCountry != null &&
           !inSelectedCountry.has(airport.iata) &&
           !isActive) ||
-        (mapMode &&
+        (inSelectedCountry == null &&
+          mapMode &&
           !isActive &&
           !isHovered &&
           !inMapFrame(airport.lat, airport.lon, 1.5)) ||
         (!mapMode &&
+          inSelectedCountry == null &&
           pos.dot(_camDir) / (pos.length() || 1) < frontThreshold &&
           !isActive &&
           !isHovered)
@@ -118,6 +121,7 @@ export function AirportPins() {
       }
 
       if (mapMode && map) {
+        pos.addScaledVector(map.origin, 0.018)
         _dummy.position.copy(pos)
         _dummy.quaternion.setFromUnitVectors(_yAxis, map.origin)
       } else {
@@ -129,7 +133,7 @@ export function AirportPins() {
       const scale =
         SIZE_SCALE[airport.size] *
         zoom *
-        featureScale *
+        (mapMode ? Math.max(0.85, featureScale) : featureScale) *
         (isActive ? 1.9 : isHovered ? 1.5 : 1)
       _dummy.scale.setScalar(scale)
       _dummy.updateMatrix()
@@ -145,7 +149,9 @@ export function AirportPins() {
     mesh.instanceMatrix.needsUpdate = true
     if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true
 
-    const nextLabel = searchAirportIata ?? hoveredRef.current
+    const nextLabel = selectedFlightId
+      ? null
+      : searchAirportIata ?? hoveredRef.current
     const key = nextLabel ?? ''
     if (key !== labelKeyRef.current) {
       labelKeyRef.current = key
@@ -190,7 +196,7 @@ export function AirportPins() {
   }
 
   return (
-    <group>
+    <group renderOrder={10}>
       <instancedMesh
         ref={meshRef}
         args={[geometry, undefined, layout.length]}
@@ -205,7 +211,7 @@ export function AirportPins() {
           transparent
           opacity={1}
           toneMapped={false}
-          depthTest={false}
+          depthTest
           depthWrite={false}
         />
       </instancedMesh>
@@ -214,7 +220,7 @@ export function AirportPins() {
           <Html
             center
             style={{ pointerEvents: 'none' }}
-            zIndexRange={[20, 0]}
+            zIndexRange={[8, 0]}
           >
             <div
               className={`airport-pin-label${

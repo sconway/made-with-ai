@@ -7,7 +7,11 @@ import {
   looksLikeAirlineCallsign,
 } from '../src/lib/callsignVariants'
 import { findAirport } from '../src/lib/airports'
-import { fetchOpenSkyFlightAirports, isOpenSkyUnreachable } from './opensky'
+import {
+  fetchOpenSkyFlightAirports,
+  isOpenSkyRouteFallbackPaused,
+  isOpenSkyUnreachable,
+} from './opensky'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const CACHE_PATH = path.join(__dirname, '.route-cache.json')
@@ -250,7 +254,8 @@ async function fetchUpstream(
     icao24 &&
     looksLikeAirlineCallsign(callsign) &&
     process.env.FLIGHT_ROUTE_OPENSKY_FALLBACK !== '0' &&
-    !isOpenSkyUnreachable()
+    !isOpenSkyUnreachable() &&
+    !isOpenSkyRouteFallbackPaused()
   ) {
     try {
       const route = await routeFromOpenSky(icao24.toLowerCase())

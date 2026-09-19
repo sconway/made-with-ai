@@ -109,9 +109,9 @@ export function DataLayer() {
     const base = backend ? Math.min(intervalForBBox(bbox), 12_000) : intervalForBBox(bbox)
 
     const run = async () => {
-      // Don't flash the global loading toast while scrubbing/playing history —
-      // those fetches are frequent and would bounce the bottom UI.
-      if (playbackLive) setLoading(true)
+      // Don't flash the global loading toast on background refreshes — that
+      // banner sits under the flight-detail actions and shoves them around.
+      if (playbackLive && !hadLiveData.current) setLoading(true)
       try {
         let states: FlightState[]
         let nextDelay = base

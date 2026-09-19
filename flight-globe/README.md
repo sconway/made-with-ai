@@ -112,6 +112,16 @@ filesystem persists (OpenSky snapshots only, max ~3 minutes old).
 
 Local check: `npm run preview` then open `http://localhost:8787`.
 
+**Hetzner VPS** (`root@178.156.214.95`, `/opt/flight-globe`):
+
+```bash
+npm run deploy
+```
+
+Rsyncs the tree (skips `.env`, `node_modules`, `dist`, route/flight caches), then `npm install`, `npm run build`, and `systemctl restart flight-globe` on the server. Override host/path with `DEPLOY_HOST` / `DEPLOY_PATH` if needed.
+
+Need SSH access as root (or whatever `DEPLOY_HOST` is). The server `.env` is never overwritten.
+
 ## Architecture
 
 ```

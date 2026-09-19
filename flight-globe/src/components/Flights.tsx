@@ -17,7 +17,13 @@ import {
   mapFeatureScale,
   projectPosition,
 } from '../lib/mapView'
-import { createAirplaneGeometry, createMapPlaneGeometry } from '../lib/airplaneGeometry'
+import {
+  createAirplaneGlowGeometry,
+  createAirplaneOutlineGeometry,
+  createMapPlaneGeometry,
+  createPlaneBloomGeometry,
+  createPlaneBloomTexture,
+} from '../lib/airplaneGeometry'
 import { getVisibleFlights } from '../lib/visibleFlights'
 import { filterFlightsByQuery, flightsForAirportIata, haversineKm } from '../lib/search'
 import { filterFlightsByTraffic } from '../lib/filters'
@@ -25,6 +31,7 @@ import { findAirport } from '../lib/airports'
 import { enqueueRoutes, getCachedRoute } from '../lib/routes'
 import { looksLikeAirlineCallsign } from '../lib/callsignVariants'
 import type { Route } from '../lib/flight'
+import { beginFlightAnchors, pushFlightAnchor } from '../lib/flightAnchors'
 import { isConfirmedEmergency } from '../lib/squawk'
 
 const MAX_INSTANCES = 20000
@@ -42,13 +49,11 @@ interface PerFlight {
   emergency: boolean
 }
 
-const COLOR_LOW = new THREE.Color('#ffb14e')
-const COLOR_HIGH = new THREE.Color('#4ea8ff')
-const COLOR_SELECTED = new THREE.Color('#ffffff')
-const COLOR_HOVER = new THREE.Color('#ffe08a')
-const COLOR_PINNED = new THREE.Color('#7dffb3')
-const COLOR_EMERGENCY = new THREE.Color('#ff3b3b')
-/** High-luminance map glyphs — readable on the navy country fill. */
+const COLOR_OUTLINE = new THREE.Color('#eaf8ff').multiplyScalar(1.65)
+const COLOR_SELECTED = new THREE.Color('#ffffff').multiplyScalar(1.8)
+const COLOR_HOVER = new THREE.Color('#ffe9a3').multiplyScalar(1.55)
+const COLOR_PINNED = new THREE.Color('#b6ffd6').multiplyScalar(1.45)
+const COLOR_EMERGENCY = new THREE.Color('#ff6b6b').multiplyScalar(1.5)
 const MAP_COLOR_LOW = new THREE.Color('#ffcc22')
 const MAP_COLOR_HIGH = new THREE.Color('#ffe566')
 const MAP_COLOR_SELECTED = new THREE.Color('#ffffff')
@@ -67,9 +72,19 @@ const _color = new THREE.Color()
 const _basis = new THREE.Matrix4()
 const _camDir = new THREE.Vector3()
 
-/** Invisible hit radius grows with camera distance (world ≈ 0.03–0.04). */
-function pickRadiusForCamera(camDist: number): number {
-  return Math.min(0.048, Math.max(0.01, camDist * 0.014))
+/**
+ * World-space pick radius that stays ~targetPx on screen, so zooming the
+ * country map does not turn every plane into a hundred-pixel hit blob.
+ */
+function pickRadiusForScreen(
+  dist: number,
+  fovDeg: number,
+  heightPx: number,
+  targetPx = 18,
+): number {
+  const tan = Math.tan(((fovDeg * Math.PI) / 180) / 2)
+  const r = Math.max(0.06, dist) * tan * ((targetPx * 2) / Math.max(1, heightPx))
+  return THREE.MathUtils.clamp(r, 0.001, 0.045)
 }
 
 export function Flights() {
@@ -95,6 +110,8 @@ export function Flights() {
   }, [pinnedFlightIds])
 
   const meshRef = useRef<THREE.InstancedMesh>(null)
+  const glowRef = useRef<THREE.InstancedMesh>(null)
+  const bloomRef = useRef<THREE.InstancedMesh>(null)
   const mapMeshRef = useRef<THREE.InstancedMesh>(null)
   const mapHaloRef = useRef<THREE.InstancedMesh>(null)
   const pickRef = useRef<THREE.InstancedMesh>(null)
@@ -113,9 +130,11 @@ export function Flights() {
     scopeBBoxRef.current = region.bbox
   }, [region])
 
-  // Shared low-poly airliner (+Z nose) — one InstancedMesh draw call for all aircraft.
-  const geometry = useMemo(() => createAirplaneGeometry(), [])
+  const geometry = useMemo(() => createAirplaneOutlineGeometry(), [])
+  const glowGeometry = useMemo(() => createAirplaneGlowGeometry(), [])
   const mapGeometry = useMemo(() => createMapPlaneGeometry(), [])
+  const bloomGeometry = useMemo(() => createPlaneBloomGeometry(), [])
+  const bloomTexture = useMemo(() => createPlaneBloomTexture(), [])
 
   // Resolve routes for the visible/thinned set (not only selection).
   // Priority: selected → pinned → airline-like callsigns → everything else.
@@ -194,10 +213,15 @@ export function Flights() {
   useEffect(() => {
     const map = statesRef.current
     const seen = new Set<string>()
-    const keepIds = [
+    const focusIds = [
       ...(selectedId ? [selectedId] : []),
       ...pinnedFlightIds,
-      ...flights.filter((f) => isConfirmedEmergency(f)).map((f) => f.icao24),
+    ]
+    const keepIds = [
+      ...focusIds,
+      ...(followFlight
+        ? []
+        : flights.filter((f) => isConfirmedEmergency(f)).map((f) => f.icao24)),
     ]
 
     let pool = filterFlightsByQuery(flights, searchQuery)
@@ -229,10 +253,11 @@ export function Flights() {
     )
 
     // Follow = focus mode: only the followed flight (+ pinned comparisons).
+    // Unusual squawks are not exempt — they hide with everyone else.
     if (followFlight && selectedId) {
-      const focus = new Set(keepIds)
+      const focus = new Set(focusIds)
       visible = visible.filter((f) => focus.has(f.icao24))
-      for (const id of keepIds) {
+      for (const id of focusIds) {
         if (visible.some((f) => f.icao24 === id)) continue
         const f = flights.find((x) => x.icao24 === id)
         if (f) visible.push(f)
@@ -277,6 +302,8 @@ export function Flights() {
 
     const n = Math.min(orderRef.current.length, MAX_INSTANCES)
     if (meshRef.current) meshRef.current.count = n
+    if (glowRef.current) glowRef.current.count = n
+    if (bloomRef.current) bloomRef.current.count = n
     if (mapMeshRef.current) mapMeshRef.current.count = n
     if (mapHaloRef.current) mapHaloRef.current.count = n
     if (pickRef.current) pickRef.current.count = n
@@ -320,16 +347,18 @@ export function Flights() {
     const mapMode = mapBlend > 0.2
     const frontThreshold = GLOBE_RADIUS / camDist - 0.02
     const mapHeight = Math.max(0.12, camDist - GLOBE_RADIUS)
-    const hitR = mapMode
-      ? THREE.MathUtils.clamp(mapHeight * 0.06, 0.01, 0.055)
-      : pickRadiusForCamera(camDist)
+    const fov =
+      state.camera instanceof THREE.PerspectiveCamera ? state.camera.fov : 45
     const featureScale = mapFeatureScale()
     const mapGlyph =
       mapEase > 0.03
         ? THREE.MathUtils.clamp(mapHeight * 1.05, 0.38, 2.1)
         : 0
+    const glow = glowRef.current
+    const bloom = bloomRef.current
     const mapMesh = mapMeshRef.current
     const mapHalo = mapHaloRef.current
+    beginFlightAnchors()
 
     for (let i = 0; i < count; i++) {
       const e = statesRef.current.get(order[i])
@@ -362,6 +391,8 @@ export function Flights() {
         _dummy.scale.setScalar(0)
         _dummy.updateMatrix()
         mesh.setMatrixAt(i, _dummy.matrix)
+        if (glow) glow.setMatrixAt(i, _dummy.matrix)
+        if (bloom) bloom.setMatrixAt(i, _dummy.matrix)
         if (mapMesh) mapMesh.setMatrixAt(i, _dummy.matrix)
         if (mapHalo) mapHalo.setMatrixAt(i, _dummy.matrix)
         if (pick) {
@@ -421,19 +452,27 @@ export function Flights() {
       _dummy.position.copy(e.dispVec)
       _dummy.quaternion.setFromRotationMatrix(_basis)
 
-      const globeScale = (1 - mapEase) * emphasis * featureScale
+      const globeScale = mapEase > 0.85 ? 0 : emphasis * featureScale
       if (globeScale > 0.02) {
         _dummy.scale.setScalar(globeScale)
+        _dummy.updateMatrix()
+        mesh.setMatrixAt(i, _dummy.matrix)
+        if (glow) glow.setMatrixAt(i, _dummy.matrix)
+        _dummy.scale.setScalar(globeScale * (isSelected || isEmergency ? 1.22 : 1.06))
+        _dummy.updateMatrix()
+        if (bloom) bloom.setMatrixAt(i, _dummy.matrix)
       } else {
         _dummy.scale.setScalar(0)
+        _dummy.updateMatrix()
+        mesh.setMatrixAt(i, _dummy.matrix)
+        if (glow) glow.setMatrixAt(i, _dummy.matrix)
+        if (bloom) bloom.setMatrixAt(i, _dummy.matrix)
       }
-      _dummy.updateMatrix()
-      mesh.setMatrixAt(i, _dummy.matrix)
 
       if (mapMesh && mapHalo) {
         const mapScale = mapGlyph * mapEase * (isSelected ? 1.35 : isHovered || isEmergency ? 1.2 : 1)
         if (mapScale > 0.02) {
-          _dummy.scale.setScalar(mapScale * 1.55)
+          _dummy.scale.setScalar(mapScale * 1.85)
           _dummy.updateMatrix()
           mapHalo.setMatrixAt(i, _dummy.matrix)
           _dummy.scale.setScalar(mapScale)
@@ -448,9 +487,13 @@ export function Flights() {
       }
 
       if (pick) {
+        const dist = state.camera.position.distanceTo(e.dispVec)
+        const hitR =
+          pickRadiusForScreen(dist, fov, state.size.height) *
+          (isEmergency ? 1.35 : 1)
         _pickDummy.position.copy(e.dispVec)
         _pickDummy.quaternion.identity()
-        _pickDummy.scale.setScalar(hitR * (isEmergency ? 1.35 : 1))
+        _pickDummy.scale.setScalar(hitR)
         _pickDummy.updateMatrix()
         pick.setMatrixAt(i, _pickDummy.matrix)
       }
@@ -478,14 +521,37 @@ export function Flights() {
       } else if (isHovered) {
         _color.copy(COLOR_HOVER)
       } else {
-        const altT = Math.min(1, e.alt / 12000)
-        _color.copy(COLOR_LOW).lerp(COLOR_HIGH, altT)
+        _color.copy(COLOR_OUTLINE)
       }
       mesh.setColorAt(i, _color)
+      if (bloom) bloom.setColorAt(i, _color)
+
+      const mapScale =
+        mapGlyph * mapEase * (isSelected ? 1.35 : isHovered || isEmergency ? 1.2 : 1)
+      if (globeScale > 0.02 || mapScale > 0.02) {
+        const f = useStore.getState().flightsById.get(order[i]!)
+        pushFlightAnchor({
+          id: order[i]!,
+          x: e.dispVec.x,
+          y: e.dispVec.y,
+          z: e.dispVec.z,
+          callsign: (f?.callsign || f?.icao24 || order[i]!).trim().toUpperCase(),
+          typeCode: (f?.typeCode || '').trim().toUpperCase(),
+          emergency: isEmergency,
+          selected: isSelected,
+          hovered: isHovered,
+          pinned: isPinned,
+        })
+      }
     }
 
     mesh.instanceMatrix.needsUpdate = true
     if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true
+    if (glow) glow.instanceMatrix.needsUpdate = true
+    if (bloom) {
+      bloom.instanceMatrix.needsUpdate = true
+      if (bloom.instanceColor) bloom.instanceColor.needsUpdate = true
+    }
     if (mapMesh) {
       mapMesh.instanceMatrix.needsUpdate = true
       if (mapMesh.instanceColor) mapMesh.instanceColor.needsUpdate = true
@@ -535,8 +601,41 @@ export function Flights() {
   }
 
   return (
-    <>
-      {/* Visual only — glyph is too small to raycast reliably at world zoom. */}
+    <group renderOrder={10}>
+      <instancedMesh
+        ref={bloomRef}
+        args={[bloomGeometry, undefined, MAX_INSTANCES]}
+        frustumCulled={false}
+        renderOrder={19}
+        raycast={() => {}}
+      >
+        <meshBasicMaterial
+          map={bloomTexture}
+          transparent
+          opacity={0.38}
+          blending={THREE.AdditiveBlending}
+          toneMapped={false}
+          depthTest
+          depthWrite={false}
+          side={THREE.DoubleSide}
+        />
+      </instancedMesh>
+      <instancedMesh
+        ref={glowRef}
+        args={[glowGeometry, undefined, MAX_INSTANCES]}
+        frustumCulled={false}
+        renderOrder={20}
+        raycast={() => {}}
+      >
+        <meshBasicMaterial
+          color="#000000"
+          transparent={false}
+          toneMapped={false}
+          depthTest
+          depthWrite={false}
+          side={THREE.DoubleSide}
+        />
+      </instancedMesh>
       <instancedMesh
         ref={meshRef}
         args={[geometry, undefined, MAX_INSTANCES]}
@@ -548,8 +647,9 @@ export function Flights() {
           transparent
           opacity={1}
           toneMapped={false}
-          depthTest={false}
+          depthTest
           depthWrite={false}
+          side={THREE.DoubleSide}
         />
       </instancedMesh>
       <instancedMesh
@@ -560,11 +660,10 @@ export function Flights() {
         raycast={() => {}}
       >
         <meshBasicMaterial
-          color="#061018"
-          transparent
-          opacity={1}
+          color="#000000"
+          transparent={false}
           toneMapped={false}
-          depthTest={false}
+          depthTest
           depthWrite={false}
           side={THREE.DoubleSide}
         />
@@ -580,7 +679,7 @@ export function Flights() {
           transparent
           opacity={1}
           toneMapped={false}
-          depthTest={false}
+          depthTest
           depthWrite={false}
           side={THREE.DoubleSide}
         />
@@ -603,6 +702,6 @@ export function Flights() {
           toneMapped={false}
         />
       </instancedMesh>
-    </>
+    </group>
   )
 }

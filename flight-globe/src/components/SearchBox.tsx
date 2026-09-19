@@ -9,7 +9,7 @@ import {
  * Sidebar search with autocomplete over live flights, airports, and airlines.
  * Enter or a suggestion applies the filter / jumps to the match.
  */
-export function SearchBox() {
+export function SearchBox({ onActivate }: { onActivate?: () => void } = {}) {
   const flights = useStore((s) => s.flights)
   const setSelectedFlight = useStore((s) => s.setSelectedFlight)
   const selectedCountry = useStore((s) => s.selectedCountry)
@@ -115,8 +115,16 @@ export function SearchBox() {
             if (searchAirportIata) setSearchAirportIata(null)
             setOpen(next.trim().length >= 2)
           }}
+          onPointerDown={(e) => e.stopPropagation()}
           onFocus={() => {
-            if (searchQuery.trim().length >= 2 && hits.length > 0) setOpen(true)
+            // After the focusing tap finishes — expanding immediately would
+            // slide a flight row under the finger and open its detail card.
+            window.setTimeout(() => {
+              onActivate?.()
+              if (searchQuery.trim().length >= 2 && hits.length > 0) {
+                setOpen(true)
+              }
+            }, 80)
           }}
           onBlur={() => {
             window.setTimeout(() => setOpen(false), 120)

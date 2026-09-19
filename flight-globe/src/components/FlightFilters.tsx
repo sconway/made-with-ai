@@ -9,7 +9,7 @@ import {
   type SpeedBand,
   type TrafficFilters,
 } from '../lib/filters'
-import type { TrailMode } from '../store/useStore'
+import type { LabelMode, TrailMode } from '../store/useStore'
 
 function Segmented<T extends string>({
   value,
@@ -45,6 +45,8 @@ export function FlightFilters() {
   const resetTrafficFilters = useStore((s) => s.resetTrafficFilters)
   const trailMode = useStore((s) => s.trailMode)
   const setTrailMode = useStore((s) => s.setTrailMode)
+  const labelMode = useStore((s) => s.labelMode)
+  const setLabelMode = useStore((s) => s.setLabelMode)
   const active = trafficFiltersActive(filters)
 
   const patch = (partial: Partial<TrafficFilters>) =>
@@ -183,6 +185,24 @@ export function FlightFilters() {
               title: 'Trail on selected / pinned',
             },
             { id: 'all', label: 'All', title: 'Short trails on visible traffic' },
+          ]}
+        />
+      </div>
+
+      <div className="flight-filters-row">
+        <span className="flight-filters-label">Tags</span>
+        <Segmented<LabelMode>
+          ariaLabel="Callsign labels"
+          value={labelMode}
+          onChange={setLabelMode}
+          options={[
+            {
+              id: 'auto',
+              label: 'Auto',
+              title: 'More labels as you zoom in',
+            },
+            { id: 'on', label: 'On', title: 'Always show callsign labels' },
+            { id: 'off', label: 'Off' },
           ]}
         />
       </div>

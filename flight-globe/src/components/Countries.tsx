@@ -10,14 +10,17 @@ import {
   polygonsToFillGeometry,
   polygonsToLineSegments,
   vector3ToLatLon,
+  type BBox,
 } from '../lib/geo'
 import {
   applyMapGroupTransform,
   frameFromCountry,
   getMapBlend,
   getMapEase,
+  getMapFrame,
   polygonsToMapFillGeometry,
   polygonsToMapLineSegments,
+  type MapFrame,
 } from '../lib/mapView'
 import type { Country } from '../lib/countries'
 
@@ -96,7 +99,7 @@ function CountryHighlight({
   })
 
   return (
-    <group ref={groupRef} renderOrder={3}>
+    <group ref={groupRef}>
       <mesh geometry={fill} renderOrder={3}>
         <meshBasicMaterial
           color={color}
@@ -127,15 +130,25 @@ function CountryHighlight({
   )
 }
 
+function bboxOverlapsFrame(b: BBox, frame: MapFrame, pad = 2): boolean {
+  return !(
+    b.maxLat < frame.minLat - pad ||
+    b.minLat > frame.maxLat + pad ||
+    b.maxLon < frame.minLon - pad ||
+    b.minLon > frame.maxLon + pad
+  )
+}
+
 function CountryMap({
   countries,
   selected,
+  frame,
 }: {
   countries: Country[]
-  selected: Country
+  selected: Country | null
+  frame: MapFrame
 }) {
   const groupRef = useRef<THREE.Group>(null)
-  const frame = useMemo(() => frameFromCountry(selected), [selected])
 
   const ocean = useMemo(() => {
     const w =
@@ -147,21 +160,32 @@ function CountryMap({
     return g
   }, [frame])
 
-  const fill = useMemo(
-    () => polygonsToMapFillGeometry(selected.polys, frame),
-    [selected, frame],
-  )
+  const fill = useMemo(() => {
+    const polys = selected
+      ? selected.polys
+      : countries
+          .filter((c) => bboxOverlapsFrame(c.bbox, frame))
+          .flatMap((c) => c.polys)
+    return polygonsToMapFillGeometry(polys, frame)
+  }, [countries, selected, frame])
+
   const outline = useMemo(() => {
-    const seg = polygonsToMapLineSegments(selected.polys, frame)
+    const polys = selected
+      ? selected.polys
+      : countries
+          .filter((c) => bboxOverlapsFrame(c.bbox, frame))
+          .flatMap((c) => c.polys)
+    const seg = polygonsToMapLineSegments(polys, frame)
     const g = new THREE.BufferGeometry()
     g.setAttribute('position', new THREE.Float32BufferAttribute(seg, 3))
     return g
-  }, [selected, frame])
+  }, [countries, selected, frame])
 
   const neighbors = useMemo(() => {
     const all: number[] = []
     for (const c of countries) {
-      if (c.id === selected.id) continue
+      if (selected && c.id === selected.id) continue
+      if (!selected && !bboxOverlapsFrame(c.bbox, frame, 8)) continue
       const seg = polygonsToMapLineSegments(c.polys, frame)
       for (let i = 0; i < seg.length; i++) all.push(seg[i]!)
     }
@@ -188,21 +212,26 @@ function CountryMap({
   })
 
   return (
-    <group ref={groupRef} renderOrder={1}>
+    <group ref={groupRef}>
       <mesh
         geometry={ocean}
-        position={[0, 0, -0.002]}
+        position={[0, 0, -0.006]}
         userData={{ mapOpacity: 1 }}
+        renderOrder={0}
         raycast={() => {}}
       >
         <meshBasicMaterial
           color={0x0c1a2e}
-          transparent
-          opacity={1}
-          depthWrite={false}
+          depthWrite
+          depthTest
         />
       </mesh>
-      <lineSegments geometry={neighbors} renderOrder={2} userData={{ mapOpacity: 0.35 }} raycast={() => {}}>
+      <lineSegments
+        geometry={neighbors}
+        renderOrder={1}
+        userData={{ mapOpacity: 0.35 }}
+        raycast={() => {}}
+      >
         <lineBasicMaterial
           color={0x3d6a9a}
           transparent
@@ -210,18 +239,31 @@ function CountryMap({
           depthWrite={false}
         />
       </lineSegments>
-      <mesh geometry={fill} renderOrder={3} userData={{ mapOpacity: 0.55 }} raycast={() => {}}>
+      <mesh
+        geometry={fill}
+        position={[0, 0, -0.003]}
+        renderOrder={1}
+        userData={{ mapOpacity: selected ? 0.55 : 0.38 }}
+        raycast={() => {}}
+      >
         <meshBasicMaterial
-          color={0x2d6cad}
+          color={selected ? 0x2d6cad : 0x1e4a72}
           transparent
-          opacity={0.55}
+          opacity={selected ? 0.55 : 0.38}
           depthWrite={false}
+          depthTest
           side={THREE.DoubleSide}
         />
       </mesh>
-      <lineSegments geometry={outline} renderOrder={4} userData={{ mapOpacity: 0.95 }} raycast={() => {}}>
+      <lineSegments
+        geometry={outline}
+        position={[0, 0, -0.002]}
+        renderOrder={1}
+        userData={{ mapOpacity: 0.95 }}
+        raycast={() => {}}
+      >
         <lineBasicMaterial
-          color={0xffcf6b}
+          color={selected ? 0xffcf6b : 0x7eb6ff}
           transparent
           opacity={0.95}
           depthWrite={false}
@@ -235,11 +277,19 @@ export function Countries() {
   const countries = useStore((s) => s.countries)
   const hovered = useStore((s) => s.hoveredCountry)
   const selected = useStore((s) => s.selectedCountry)
+  const flatMap = useStore((s) => s.flatMap)
+  const mapEpoch = useStore((s) => s.mapEpoch)
   const setHovered = useStore((s) => s.setHoveredCountry)
   const setSelected = useStore((s) => s.setSelectedCountry)
   const lastLookup = useRef<Country | null>(null)
   const drag = useRef({ x: 0, y: 0, moved: false })
   const pickSphere = useRef<THREE.Mesh>(null)
+  const mapFrame = selected
+    ? frameFromCountry(selected)
+    : flatMap
+      ? getMapFrame()
+      : null
+  void mapEpoch
 
   const findCountry = (point: THREE.Vector3): Country | null => {
     const { lat, lon } = vector3ToLatLon(point)
@@ -318,8 +368,12 @@ export function Countries() {
       {selected && (
         <CountryHighlight country={selected} color={0xffcf6b} opacity={0.3} />
       )}
-      {selected && (
-        <CountryMap countries={countries} selected={selected} />
+      {mapFrame && (
+        <CountryMap
+          countries={countries}
+          selected={selected}
+          frame={mapFrame}
+        />
       )}
     </group>
   )

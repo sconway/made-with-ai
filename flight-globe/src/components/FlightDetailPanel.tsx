@@ -18,6 +18,8 @@ import {
   copyText,
   deepLinkFromApp,
 } from '../lib/deepLink'
+import { aircraftTypeName } from '../lib/aircraftTypes'
+import { AircraftPhoto } from './AircraftPhoto'
 import { isConfirmedEmergency, emergencySquawkLabel, emergencySquawkHint } from '../lib/squawk'
 
 interface TrendSample {
@@ -166,6 +168,7 @@ export function FlightDetailPanel() {
 
   return (
     <aside className="panel flight-detail">
+      <div className="flight-detail-body">
       <header className="flight-detail-header">
         <div className="flight-detail-ident">
           <div className="airline-mark" aria-hidden title={details.airline}>
@@ -189,6 +192,8 @@ export function FlightDetailPanel() {
         </button>
       </header>
 
+      <AircraftPhoto icao24={flight.icao24} />
+
       {details.emergency && details.squawk && (
         <div className="flight-detail-emergency" role="status">
           <div>
@@ -209,43 +214,41 @@ export function FlightDetailPanel() {
           <span className="flight-route-pending">No route data</span>
         )}
       </div>
-      {details.origin && details.dest && (
-        <div className="flight-detail-route-full">
-          {(details.origin.airportName ?? details.origin.label) +
-            ' → ' +
-            (details.dest.airportName ?? details.dest.label)}
-        </div>
-      )}
+      <div className="flight-detail-route-full">
+        {details.origin && details.dest
+          ? `${details.origin.airportName ?? details.origin.label} → ${
+              details.dest.airportName ?? details.dest.label
+            }`
+          : '\u00a0'}
+      </div>
 
-      {times && (
-        <dl className="flight-detail-times">
-          <div>
-            <dt>Est. takeoff</dt>
-            <dd>{takeoffLabel}</dd>
-          </div>
-          <div>
-            <dt>Est. arrival</dt>
-            <dd>{arrivalLabel}</dd>
-          </div>
-          <div>
-            <dt>Remaining</dt>
-            <dd>
-              {times.arrived ? '—' : fmtDuration(times.remainingSec)}
-            </dd>
-          </div>
-          <div>
-            <dt>Progress</dt>
-            <dd>
-              {times.progress != null
-                ? `${Math.round(times.progress * 100)}%`
-                : '—'}
-            </dd>
-          </div>
-          <p className="flight-detail-times-note">
-            From position &amp; speed — not the airline schedule
-          </p>
-        </dl>
-      )}
+      <dl className="flight-detail-times">
+        <div>
+          <dt>Est. takeoff</dt>
+          <dd>{times ? takeoffLabel : '—'}</dd>
+        </div>
+        <div>
+          <dt>Est. arrival</dt>
+          <dd>{times ? arrivalLabel : '—'}</dd>
+        </div>
+        <div>
+          <dt>Remaining</dt>
+          <dd>
+            {!times || times.arrived ? '—' : fmtDuration(times.remainingSec)}
+          </dd>
+        </div>
+        <div>
+          <dt>Progress</dt>
+          <dd>
+            {times?.progress != null
+              ? `${Math.round(times.progress * 100)}%`
+              : '—'}
+          </dd>
+        </div>
+      </dl>
+      <p className="flight-detail-times-note">
+        From position &amp; speed — not the airline schedule
+      </p>
 
       <dl className="flight-detail-grid">
         <div>
@@ -284,18 +287,14 @@ export function FlightDetailPanel() {
             {details.squawk ?? '—'}
           </dd>
         </div>
-        {flight.registration && (
-          <div>
-            <dt>Reg</dt>
-            <dd>{flight.registration}</dd>
-          </div>
-        )}
-        {flight.typeCode && (
-          <div>
-            <dt>Type</dt>
-            <dd>{flight.typeCode}</dd>
-          </div>
-        )}
+        <div>
+          <dt>Reg</dt>
+          <dd>{flight.registration || '—'}</dd>
+        </div>
+        <div>
+          <dt>Type</dt>
+          <dd>{aircraftTypeName(flight.typeCode) || '—'}</dd>
+        </div>
         <div>
           <dt>Position</dt>
           <dd className="mono">
@@ -307,7 +306,15 @@ export function FlightDetailPanel() {
           <dd>{flight.originCountry || '—'}</dd>
         </div>
       </dl>
+      {followFlight && (
+        <p className="flight-detail-follow-hint">
+          Focus mode — other traffic hidden. Drag to orbit the globe · Esc to
+          exit. Selecting another plane transfers follow.
+        </p>
+      )}
+      </div>
 
+      <div className="flight-detail-footer">
       <div className="flight-detail-actions">
         <button
           type="button"
@@ -345,12 +352,7 @@ export function FlightDetailPanel() {
           {shareLabel}
         </button>
       </div>
-      {followFlight && (
-        <p className="flight-detail-follow-hint">
-          Focus mode — other traffic hidden. Drag to orbit the globe · Esc to
-          exit. Selecting another plane transfers follow.
-        </p>
-      )}
+      </div>
     </aside>
   )
 }
