@@ -5,6 +5,8 @@ interface ImportMetaEnv {
   readonly VITE_FLIGHT_SOURCE?: string
   /** Default on. Set to "0" to bypass the shared backend (local debug only). */
   readonly VITE_USE_BACKEND?: string
+  /** Canonical public origin (no trailing slash). Falls back to window.location.origin. */
+  readonly VITE_SITE_URL?: string
 }
 
 interface ImportMeta {

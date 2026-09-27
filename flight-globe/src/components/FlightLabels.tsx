@@ -16,7 +16,9 @@ export function FlightLabels() {
   const camera = useThree((s) => s.camera)
   const size = useThree((s) => s.size)
   const gl = useThree((s) => s.gl)
+  const followFlight = useStore((s) => s.followFlight)
   const labelMode = useStore((s) => s.labelMode)
+  const showPlanes = useStore((s) => s.display.planes)
   const selectedFlightId = useStore((s) => s.selectedFlightId)
   const setSelectedFlight = useStore((s) => s.setSelectedFlight)
   const pickRef = useRef<(id: string) => void>(() => {})
@@ -25,7 +27,6 @@ export function FlightLabels() {
   }
   const layerRef = useRef<HTMLDivElement | null>(null)
   const buttonsRef = useRef<HTMLButtonElement[]>([])
-  const lastKeyRef = useRef('')
 
   useEffect(() => {
     const host = gl.domElement.parentElement ?? document.getElementById('root')
@@ -45,11 +46,10 @@ export function FlightLabels() {
   useFrame(() => {
     const layer = layerRef.current
     if (!layer) return
-    if (labelMode === 'off') {
+    if (labelMode === 'off' || followFlight || !showPlanes) {
       if (layer.childElementCount) {
         layer.replaceChildren()
         buttonsRef.current = []
-        lastKeyRef.current = ''
       }
       return
     }
@@ -80,16 +80,7 @@ export function FlightLabels() {
       max,
     )
 
-    const key = layout
-      .map((l) => `${l.id}:${l.x | 0}:${l.y | 0}:${l.selected ? 1 : 0}`)
-      .join('|')
-    const movedOnly =
-      lastKeyRef.current.length > 0 &&
-      lastKeyRef.current.replace(/:\d+:\d+/g, '') ===
-        key.replace(/:\d+:\d+/g, '')
-    lastKeyRef.current = key
-
-    syncButtons(layer, buttonsRef.current, layout, movedOnly, pickRef)
+    syncButtons(layer, buttonsRef.current, layout, pickRef)
   })
 
   return null
@@ -99,7 +90,6 @@ function syncButtons(
   layer: HTMLDivElement,
   pool: HTMLButtonElement[],
   layout: LabelLayout[],
-  reuse: boolean,
   pickRef: { current: (id: string) => void },
 ) {
   while (pool.length < layout.length) {
@@ -117,16 +107,28 @@ function syncButtons(
   }
   for (let i = 0; i < layout.length; i++) {
     const l = layout[i]!
+    let idx = i
+    for (let j = i; j < pool.length; j++) {
+      if (pool[j]!.dataset.id === l.id) {
+        idx = j
+        break
+      }
+    }
+    if (idx !== i) {
+      const existing = pool[idx]!
+      pool.splice(idx, 1)
+      pool.splice(i, 0, existing)
+    }
     const btn = pool[i]!
     btn.hidden = false
-    btn.dataset.id = l.id
     btn.style.left = `${Math.round(l.x)}px`
     btn.style.top = `${Math.round(l.y)}px`
     const cls = `flight-label${l.selected ? ' is-selected' : ''}${
       l.hovered ? ' is-hovered' : ''
     }${l.emergency ? ' is-emergency' : ''}`
     if (btn.className !== cls) btn.className = cls
-    if (!reuse || btn.dataset.text !== l.text) {
+    if (btn.dataset.id !== l.id || btn.dataset.text !== l.text) {
+      btn.dataset.id = l.id
       btn.dataset.text = l.text
       btn.textContent = l.text
       btn.title = l.sub ? `${l.text} · ${l.sub}` : l.text

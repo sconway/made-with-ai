@@ -11,11 +11,19 @@ import {
   resolveRoute,
 } from '../lib/flightInfo'
 import { flightsForAirportIata, filterFlightsByQuery, scoreFlight } from '../lib/search'
-import { filterFlightsByTraffic, trafficFiltersActive } from '../lib/filters'
+import {
+  altBandFromFilters,
+  filterFlightsByTraffic,
+  speedBandFromFilters,
+  trafficFiltersActive,
+} from '../lib/filters'
 import { findAirport } from '../lib/airports'
 import { SearchBox } from './SearchBox'
 import { FlightFilters } from './FlightFilters'
+import { DisplayMenu } from './DisplayMenu'
 import { AlertsPanel } from './AlertsPanel'
+import { PinnedFlights } from './PinnedFlights'
+import { SidebarSection, useSidebarSections } from './SidebarSection'
 import { PlaybackBar } from './PlaybackBar'
 import { FlightDetailPanel } from './FlightDetailPanel'
 import { AirportDetailPanel } from './AirportDetailPanel'
@@ -132,6 +140,12 @@ export function HUD() {
   const selectedCountry = useStore((s) => s.selectedCountry)
   const flatMap = useStore((s) => s.flatMap)
   const setFlatMap = useStore((s) => s.setFlatMap)
+  const weatherMode = useStore((s) => s.weatherMode)
+  const trailMode = useStore((s) => s.trailMode)
+  const colorMode = useStore((s) => s.colorMode)
+  const alertWatches = useStore((s) => s.alertWatches)
+  const pinnedFlightIds = useStore((s) => s.pinnedFlightIds)
+  const clearPinnedFlights = useStore((s) => s.clearPinnedFlights)
   const routesVersion = useStore((s) => s.routesVersion)
   const searchAirportIata = useStore((s) => s.searchAirportIata)
   const setSearchAirportIata = useStore((s) => s.setSearchAirportIata)
@@ -247,6 +261,53 @@ export function HUD() {
     ? findAirport(searchAirportIata)
     : undefined
   const filtersOn = trafficFiltersActive(trafficFilters)
+  const { open: sectionOpen, toggle: toggleSection } = useSidebarSections()
+  const regionSummary = searchAirportIata
+    ? searchAirportIata
+    : searchQuery.trim()
+      ? 'Search'
+      : selectedCountry
+        ? selectedCountry.name
+        : flatMap
+          ? `${region.label} · Map`
+          : region.label
+  const filterParts: string[] = []
+  if (trafficFilters.phase === 'airborne') filterParts.push('Air')
+  else if (trafficFilters.phase === 'ground') filterParts.push('Gnd')
+  const altBand = altBandFromFilters(trafficFilters)
+  if (altBand === 'low') filterParts.push('Low')
+  else if (altBand === 'mid') filterParts.push('Mid')
+  else if (altBand === 'high') filterParts.push('High')
+  const speedBand = speedBandFromFilters(trafficFilters)
+  if (speedBand === 'slow') filterParts.push('<250')
+  else if (speedBand === 'cruise') filterParts.push('250–450')
+  else if (speedBand === 'fast') filterParts.push('450+')
+  if (trafficFilters.kind === 'commercial') filterParts.push('Airline')
+  else if (trafficFilters.kind === 'other') filterParts.push('GA')
+  if (trafficFilters.route === 'known') filterParts.push('Routed')
+  else if (trafficFilters.route === 'unknown') filterParts.push('No route')
+  if (trafficFilters.airline.trim()) filterParts.push(trafficFilters.airline.trim())
+  if (trailMode === 'off') filterParts.push('No trail')
+  else if (trailMode === 'all') filterParts.push('Trails')
+  if (colorMode === 'speed') filterParts.push('Speed color')
+  else if (colorMode === 'airline') filterParts.push('Airline color')
+  if (weatherMode === 'radar') filterParts.push('Radar')
+  const filterSummary = filterParts.length > 0 ? filterParts.join(' · ') : 'All'
+  const alertSummary =
+    alertWatches.length === 0
+      ? 'None'
+      : alertWatches.length === 1
+        ? '1 watch'
+        : `${alertWatches.length} watches`
+  const pinSummary = (() => {
+    if (pinnedFlightIds.length === 0) return 'None'
+    if (pinnedFlightIds.length === 1) {
+      const flight = flights.find((f) => f.icao24 === pinnedFlightIds[0])
+      const callsign = flight?.callsign?.trim()
+      return callsign ? callsign.toUpperCase() : '1'
+    }
+    return String(pinnedFlightIds.length)
+  })()
   const [sheetExpanded, setSheetExpanded] = useState(false)
   const [sheetDragging, setSheetDragging] = useState(false)
   const [sheetSnapping, setSheetSnapping] = useState(false)
@@ -468,6 +529,7 @@ export function HUD() {
     >
       <FlightDetailPanel />
       <AirportDetailPanel />
+      <DisplayMenu />
 
       <div className="hud-dock" ref={dockRef}>
       <div className="bottom-stack">
@@ -481,12 +543,22 @@ export function HUD() {
         </div>
         <div className="panel hint">
           {followFlight
-            ? 'Following — drag to orbit · pick another flight in the list to switch · Esc to exit'
+            ? 'Chasing — camera sits behind the aircraft · Esc to exit'
             : selectedCountry
               ? `Map of ${selectedCountry.name} — drag to pan · scroll to zoom · click a plane · pick a region to return`
               : flatMap
                 ? '2D map — drag to pan · scroll to zoom · Map again or ← Globe to return'
                 : '/ to search · Map for a 2D view · click a country · pick a flight'}
+          {weatherMode === 'radar' && (selectedCountry || flatMap) && (
+            <a
+              className="weather-credit"
+              href="https://www.rainviewer.com/api.html"
+              target="_blank"
+              rel="noreferrer"
+            >
+              Radar · RainViewer
+            </a>
+          )}
         </div>
         <PlaybackBar />
       </div>
@@ -576,7 +648,7 @@ export function HUD() {
           <div className="sidebar-title">
             <span className="dot" />
             <div>
-              <strong>Flights</strong>
+              <h1>Flight Globe</h1>
               <small>
                 {searchAirportIata
                   ? `${searchAirportIata}${airportMeta ? ` · ${airportMeta.city}` : ''}`
@@ -596,6 +668,13 @@ export function HUD() {
         </div>
 
         <div className="sheet-body">
+        <SidebarSection
+          id="region"
+          title="Region"
+          summary={regionSummary}
+          open={sectionOpen.region}
+          onToggle={() => toggleSection('region')}
+        >
         <div className="region-select sidebar-regions">
           {searchAirportIata && (
             <button
@@ -665,13 +744,50 @@ export function HUD() {
             </button>
           )}
         </div>
+        </SidebarSection>
 
-        <FlightFilters />
-        <AlertsPanel />
+        <SidebarSection
+          id="filters"
+          title="Filters"
+          summary={filterSummary}
+          open={sectionOpen.filters}
+          onToggle={() => toggleSection('filters')}
+        >
+          <FlightFilters />
+        </SidebarSection>
+        <SidebarSection
+          id="alerts"
+          title="Alerts"
+          summary={alertSummary}
+          open={sectionOpen.alerts}
+          onToggle={() => toggleSection('alerts')}
+        >
+          <AlertsPanel />
+        </SidebarSection>
+        <SidebarSection
+          id="pins"
+          title="Pins"
+          summary={pinSummary}
+          open={sectionOpen.pins}
+          onToggle={() => toggleSection('pins')}
+          action={
+            pinnedFlightIds.length > 0 ? (
+              <button
+                type="button"
+                className="sidebar-section-action"
+                onClick={() => clearPinnedFlights()}
+              >
+                Clear
+              </button>
+            ) : null
+          }
+        >
+          <PinnedFlights onOpen={collapseSheetOnMobile} />
+        </SidebarSection>
 
         <div className="sidebar-count">
           {followFlight && selectedFlightId
-            ? `Focusing · ${visible.length.toLocaleString()} in list`
+            ? `Chasing · ${visible.length.toLocaleString()} in list`
             : searchAirportIata
             ? `${visible.length.toLocaleString()} via / near ${searchAirportIata}`
             : searchQuery.trim() || filtersOn

@@ -1,7 +1,8 @@
-import { createReadStream, existsSync, statSync } from 'node:fs'
+import { createReadStream, existsSync, readFileSync, statSync } from 'node:fs'
 import path from 'node:path'
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import { fileURLToPath } from 'node:url'
+import { injectSeoHtml } from './seo'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 
@@ -24,6 +25,8 @@ const MIME: Record<string, string> = {
   '.woff2': 'font/woff2',
   '.map': 'application/json; charset=utf-8',
   '.txt': 'text/plain; charset=utf-8',
+  '.xml': 'application/xml; charset=utf-8',
+  '.webmanifest': 'application/manifest+json; charset=utf-8',
 }
 
 function safeJoin(root: string, reqPath: string): string | null {
@@ -48,8 +51,28 @@ function sendFile(
     'content-type': contentType(filePath),
     'content-length': stat.size,
     'cache-control': cacheControl,
+    'x-content-type-options': 'nosniff',
   })
   createReadStream(filePath).pipe(res)
+}
+
+function sendIndex(
+  req: IncomingMessage,
+  res: ServerResponse,
+  filePath: string,
+  cacheControl: string,
+): void {
+  const html = injectSeoHtml(readFileSync(filePath, 'utf8'), req)
+  const buf = Buffer.from(html, 'utf8')
+  res.writeHead(200, {
+    'content-type': 'text/html; charset=utf-8',
+    'content-length': buf.length,
+    'cache-control': cacheControl,
+    'x-content-type-options': 'nosniff',
+    'referrer-policy': 'strict-origin-when-cross-origin',
+    vary: 'Accept-Encoding',
+  })
+  res.end(buf)
 }
 
 /**
@@ -71,6 +94,10 @@ export function tryServeStatic(
 
   // Exact file hit (hashed assets, etc.)
   if (existsSync(filePath) && statSync(filePath).isFile()) {
+    if (path.basename(filePath) === 'index.html') {
+      sendIndex(req, res, filePath, 'public, max-age=60')
+      return true
+    }
     const immutable = filePath.includes(`${path.sep}assets${path.sep}`)
     sendFile(
       res,
@@ -83,7 +110,7 @@ export function tryServeStatic(
   // SPA fallback — client routes / deep links.
   const index = path.join(DIST_DIR, 'index.html')
   if (existsSync(index)) {
-    sendFile(res, index, 'public, max-age=60')
+    sendIndex(req, res, index, 'public, max-age=60')
     return true
   }
 

@@ -5,9 +5,11 @@ import { HUD } from './components/HUD'
 import { FlightTooltip } from './components/FlightTooltip'
 import { DataLayer } from './components/DataLayer'
 import { RouteResolver } from './components/RouteResolver'
+import { AircraftTypeResolver } from './components/AircraftTypeResolver'
 import { DeepLinkSync } from './components/DeepLinkSync'
 import { AlertWatcher } from './components/AlertWatcher'
 import { AlertToasts } from './components/AlertsPanel'
+import { SeoHead } from './components/SeoHead'
 
 export default function App() {
   return (
@@ -24,8 +26,10 @@ export default function App() {
         </Suspense>
       </Canvas>
 
+      <SeoHead />
       <DataLayer />
       <RouteResolver />
+      <AircraftTypeResolver />
       <DeepLinkSync />
       <AlertWatcher />
       <HUD />

@@ -61,7 +61,7 @@ export function SearchBox({ onActivate }: { onActivate?: () => void } = {}) {
       setSearchAirportIata(hit.airport.iata)
       setSearchQuery(hit.airport.iata)
       if (!selectedCountry) {
-        focusCamera(hit.airport.lat, hit.airport.lon, 1.75)
+        focusCamera(hit.airport.lat, hit.airport.lon, 1.48)
       }
     } else if (hit.kind === 'flight') {
       setSearchAirportIata(null)

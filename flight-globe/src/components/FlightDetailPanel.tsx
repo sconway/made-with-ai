@@ -19,6 +19,7 @@ import {
   deepLinkFromApp,
 } from '../lib/deepLink'
 import { aircraftTypeName } from '../lib/aircraftTypes'
+import { getCachedAircraftType } from '../lib/aircraftLookup'
 import { AircraftPhoto } from './AircraftPhoto'
 import { isConfirmedEmergency, emergencySquawkLabel, emergencySquawkHint } from '../lib/squawk'
 
@@ -293,7 +294,11 @@ export function FlightDetailPanel() {
         </div>
         <div>
           <dt>Type</dt>
-          <dd>{aircraftTypeName(flight.typeCode) || '—'}</dd>
+          <dd>
+            {aircraftTypeName(
+              flight.typeCode || getCachedAircraftType(flight.icao24),
+            ) || '—'}
+          </dd>
         </div>
         <div>
           <dt>Position</dt>
@@ -308,8 +313,8 @@ export function FlightDetailPanel() {
       </dl>
       {followFlight && (
         <p className="flight-detail-follow-hint">
-          Focus mode — other traffic hidden. Drag to orbit the globe · Esc to
-          exit. Selecting another plane transfers follow.
+          Chase cam — behind this aircraft. Other traffic hidden. Esc to exit.
+          Selecting another plane transfers chase.
         </p>
       )}
       </div>
@@ -322,8 +327,8 @@ export function FlightDetailPanel() {
           onClick={() => setFollowFlight(!followFlight)}
           title={
             followFlight
-              ? 'Exit focus (Esc)'
-              : 'Focus this flight: hide others, mild camera zoom'
+              ? 'Exit chase camera (Esc)'
+              : 'Chase this flight from behind'
           }
         >
           {followFlight ? 'Following' : 'Follow'}

@@ -7,11 +7,10 @@ interface PhotoInfo {
 }
 
 /**
- * Planespotters thumbnail for an ICAO24 hex. Same-height slot so the
- * detail panel does not jump when the image arrives.
+ * Planespotters thumbnail for an ICAO24 hex. Hidden until a photo exists.
  */
 export function AircraftPhoto({ icao24 }: { icao24: string }) {
-  const [photo, setPhoto] = useState<PhotoInfo | null | undefined>(undefined)
+  const [photo, setPhoto] = useState<PhotoInfo | null>(null)
 
   useEffect(() => {
     const hex = icao24.trim().toLowerCase()
@@ -20,7 +19,7 @@ export function AircraftPhoto({ icao24 }: { icao24: string }) {
       return
     }
     let cancelled = false
-    setPhoto(undefined)
+    setPhoto(null)
     fetch(`/api/photos/${hex}`)
       .then((r) => (r.ok ? r.json() : null))
       .then((data: { src?: string; link?: string; photographer?: string } | null) => {
@@ -43,26 +42,22 @@ export function AircraftPhoto({ icao24 }: { icao24: string }) {
     }
   }, [icao24])
 
+  if (!photo?.src) return null
+
   return (
     <div className="aircraft-photo">
-      {photo?.src ? (
-        <a
-          href={photo.link || undefined}
-          target="_blank"
-          rel="noreferrer"
-          title={
-            photo.photographer
-              ? `Photo © ${photo.photographer}`
-              : 'Aircraft photo'
-          }
-        >
-          <img src={photo.src} alt="" />
-        </a>
-      ) : (
-        <div className="aircraft-photo-empty">
-          {photo === undefined ? 'Loading photo…' : 'No photo'}
-        </div>
-      )}
+      <a
+        href={photo.link || undefined}
+        target="_blank"
+        rel="noreferrer"
+        title={
+          photo.photographer
+            ? `Photo © ${photo.photographer}`
+            : 'Aircraft photo'
+        }
+      >
+        <img src={photo.src} alt="" />
+      </a>
     </div>
   )
 }

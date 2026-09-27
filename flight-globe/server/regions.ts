@@ -13,4 +13,24 @@ export const REGIONS: Array<{ id: string; label: string; bbox: BBox | null }> = 
     label: 'Europe',
     bbox: { minLon: -12, minLat: 35, maxLon: 40, maxLat: 62 },
   },
+  {
+    id: 'as',
+    label: 'Asia',
+    bbox: { minLon: 32, minLat: -10, maxLon: 150, maxLat: 55 },
+  },
+  {
+    id: 'oc',
+    label: 'Oceania',
+    bbox: { minLon: 110, minLat: -48, maxLon: 180, maxLat: 0 },
+  },
+  {
+    id: 'sa',
+    label: 'S. America',
+    bbox: { minLon: -82, minLat: -56, maxLon: -34, maxLat: 13 },
+  },
+  {
+    id: 'af',
+    label: 'Africa',
+    bbox: { minLon: -18, minLat: -35, maxLon: 52, maxLat: 38 },
+  },
 ]

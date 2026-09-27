@@ -18,6 +18,7 @@ import {
   getMapBlend,
   getMapEase,
   getMapFrame,
+  MAP_LAND_Z,
   polygonsToMapFillGeometry,
   polygonsToMapLineSegments,
   type MapFrame,
@@ -33,8 +34,15 @@ const HIGHLIGHT_SUBDIVISIONS = 2
 const DRAG_CLICK_THRESHOLD_PX = 5
 
 /** Merged outlines for every country (single draw call). */
-function BaseBorders({ countries }: { countries: Country[] }) {
+function BaseBorders({
+  countries,
+  show,
+}: {
+  countries: Country[]
+  show: boolean
+}) {
   const matRef = useRef<THREE.LineBasicMaterial>(null)
+  const mapView = useStore((s) => Boolean(s.selectedCountry || s.flatMap))
   const geometry = useMemo(() => {
     const all: number[] = []
     for (const c of countries) {
@@ -47,10 +55,10 @@ function BaseBorders({ countries }: { countries: Country[] }) {
   }, [countries])
 
   useFrame(() => {
-    const fade = 1 - getMapEase()
+    const fade = mapView ? 0 : 1 - getMapEase()
     if (matRef.current) {
       matRef.current.opacity = 0.55 * fade
-      matRef.current.visible = fade > 0.04
+      matRef.current.visible = show && fade > 0.25
     }
   })
 
@@ -78,6 +86,7 @@ function CountryHighlight({
   opacity: number
 }) {
   const groupRef = useRef<THREE.Group>(null)
+  const mapView = useStore((s) => Boolean(s.selectedCountry || s.flatMap))
   const fill = useMemo(
     () =>
       polygonsToFillGeometry(
@@ -95,7 +104,7 @@ function CountryHighlight({
   }, [country])
 
   useFrame(() => {
-    if (groupRef.current) groupRef.current.visible = getMapEase() < 0.92
+    if (groupRef.current) groupRef.current.visible = !mapView && getMapEase() < 0.92
   })
 
   return (
@@ -150,16 +159,6 @@ function CountryMap({
 }) {
   const groupRef = useRef<THREE.Group>(null)
 
-  const ocean = useMemo(() => {
-    const w =
-      (frame.maxLon - frame.minLon) *
-      Math.cos((frame.lat0 * Math.PI) / 180) *
-      (Math.PI / 180)
-    const h = (frame.maxLat - frame.minLat) * (Math.PI / 180)
-    const g = new THREE.PlaneGeometry(w * 1.15, h * 1.15)
-    return g
-  }, [frame])
-
   const fill = useMemo(() => {
     const polys = selected
       ? selected.polys
@@ -213,19 +212,6 @@ function CountryMap({
 
   return (
     <group ref={groupRef}>
-      <mesh
-        geometry={ocean}
-        position={[0, 0, -0.006]}
-        userData={{ mapOpacity: 1 }}
-        renderOrder={0}
-        raycast={() => {}}
-      >
-        <meshBasicMaterial
-          color={0x0c1a2e}
-          depthWrite
-          depthTest
-        />
-      </mesh>
       <lineSegments
         geometry={neighbors}
         renderOrder={1}
@@ -241,18 +227,18 @@ function CountryMap({
       </lineSegments>
       <mesh
         geometry={fill}
-        position={[0, 0, -0.003]}
+        position={[0, 0, MAP_LAND_Z]}
         renderOrder={1}
-        userData={{ mapOpacity: selected ? 0.55 : 0.38 }}
+        userData={{ mapOpacity: selected ? 0.88 : 0.72 }}
         raycast={() => {}}
       >
         <meshBasicMaterial
           color={selected ? 0x2d6cad : 0x1e4a72}
           transparent
-          opacity={selected ? 0.55 : 0.38}
+          opacity={selected ? 0.88 : 0.72}
           depthWrite={false}
           depthTest
-          side={THREE.DoubleSide}
+          side={THREE.FrontSide}
         />
       </mesh>
       <lineSegments
@@ -278,6 +264,8 @@ export function Countries() {
   const hovered = useStore((s) => s.hoveredCountry)
   const selected = useStore((s) => s.selectedCountry)
   const flatMap = useStore((s) => s.flatMap)
+  const followFlight = useStore((s) => s.followFlight)
+  const showBorders = useStore((s) => s.display.borders)
   const mapEpoch = useStore((s) => s.mapEpoch)
   const setHovered = useStore((s) => s.setHoveredCountry)
   const setSelected = useStore((s) => s.setSelectedCountry)
@@ -343,8 +331,8 @@ export function Countries() {
   if (countries.length === 0) return null
 
   return (
-    <group>
-      <BaseBorders countries={countries} />
+    <group visible={!followFlight}>
+      <BaseBorders countries={countries} show={showBorders} />
 
       <mesh
         ref={pickSphere}

@@ -2,7 +2,14 @@ import { useEffect, useRef } from 'react'
 import { useFrame, useThree } from '@react-three/fiber'
 import * as THREE from 'three'
 import { useStore } from '../store/useStore'
-import { altitudeToRadius, deadReckon, latLonToVector3, vector3ToLatLon } from '../lib/geo'
+import {
+  altitudeToRadius,
+  deadReckon,
+  GLOBE_RADIUS,
+  latLonToVector3,
+  trackForward,
+  vector3ToLatLon,
+} from '../lib/geo'
 import { regionCameraDist } from '../lib/regions'
 import {
   getMapBlend,
@@ -36,6 +43,7 @@ type OrbitLike = {
   screenSpacePanning?: boolean
   minDistance?: number
   maxDistance?: number
+  rotateSpeed?: number
   mouseButtons?: { LEFT?: number; MIDDLE?: number; RIGHT?: number }
   touches?: { ONE?: number; TWO?: number }
 }
@@ -51,16 +59,90 @@ const MAP_MOUSE = {
   RIGHT: THREE.MOUSE.PAN,
 }
 
-const _dir = new THREE.Vector3()
-const _prev = new THREE.Vector3()
-const _quat = new THREE.Quaternion()
 const _mapPos = new THREE.Vector3()
 const _mapQuat = new THREE.Quaternion()
 const _mapQuatTo = new THREE.Quaternion()
 const _mapLook = new THREE.Vector3()
 const WORLD_UP = new THREE.Vector3(0, 1, 0)
-const FOLLOW_CAM_DIST = 1.85
+const FOLLOW_EXIT_DIST = 1.85
+const GLOBE_NEAR = 0.1
+const GLOBE_FOV = 45
+/** Drag speed when the camera is at a normal globe distance or farther. */
+const GLOBE_ROTATE_FAR = 0.5
+/** Drag speed at the closest zoom. Same pixel drag is a much bigger sweep up close. */
+const GLOBE_ROTATE_CLOSE = 0.12
+const GLOBE_ROTATE_CLOSE_HEIGHT = 0.25
+const GLOBE_ROTATE_FAR_HEIGHT = 1.5
+/** Log-radius change per wheel pixel. Applied on the scroll, not after it. */
+const GLOBE_ZOOM_PER_PX = 0.00086
+/** Share of each scroll that moves the camera immediately. */
+const GLOBE_ZOOM_IMMEDIATE = 0.92
+/** Fade for the small remainder. High so the tail is only a few frames. */
+const GLOBE_ZOOM_DECAY = 16
+const GLOBE_ZOOM_MAX_VEL = 2.4
+const CHASE_NEAR = 0.003
+const CHASE_FOV = 38
+const CHASE_BLEND_SEC = 1.2
 const _homeCam = new THREE.PerspectiveCamera()
+const _chasePos = new THREE.Vector3()
+const _chaseLook = new THREE.Vector3()
+const _chaseFwd = new THREE.Vector3()
+const _chaseUp = new THREE.Vector3()
+const _chaseRight = new THREE.Vector3()
+const _chaseQuat = new THREE.Quaternion()
+
+function chaseFraming(onGround: boolean, altM: number | null): {
+  back: number
+  lift: number
+  side: number
+} {
+  const altKm = Math.max(0, (altM ?? 0) / 1000)
+  // Three-quarter chase: behind, above, and off the right wing so we see the
+  // whole airframe instead of looking down the fuselage.
+  if (onGround || altKm < 0.35) {
+    return { back: 0.06, lift: 0.03, side: 0.028 }
+  }
+  const t = THREE.MathUtils.clamp((altKm - 0.35) / 10, 0, 1)
+  return {
+    back: THREE.MathUtils.lerp(0.075, 0.12, t),
+    lift: THREE.MathUtils.lerp(0.034, 0.048, t),
+    side: THREE.MathUtils.lerp(0.03, 0.045, t),
+  }
+}
+
+function writeChasePose(
+  lat: number,
+  lon: number,
+  radius: number,
+  forward: THREE.Vector3,
+  onGround: boolean,
+  altM: number | null,
+  outPos: THREE.Vector3,
+  outQuat: THREE.Quaternion,
+  outLook: THREE.Vector3,
+  outUp: THREE.Vector3,
+): void {
+  latLonToVector3(lat, lon, radius, outLook)
+  outUp.copy(outLook).normalize()
+  _chaseRight.crossVectors(outUp, forward)
+  if (_chaseRight.lengthSq() < 1e-10) {
+    _chaseRight.set(0, 1, 0).cross(outUp)
+  }
+  _chaseRight.normalize()
+  const { back, lift, side } = chaseFraming(onGround, altM)
+  outPos
+    .copy(outLook)
+    .addScaledVector(forward, -back)
+    .addScaledVector(outUp, lift)
+    .addScaledVector(_chaseRight, side)
+  const minR = radius + lift * 0.25
+  if (outPos.length() < minR) outPos.setLength(minR)
+  outLook.addScaledVector(outUp, lift * 0.08)
+  _homeCam.position.copy(outPos)
+  _homeCam.up.copy(outUp)
+  _homeCam.lookAt(outLook)
+  outQuat.copy(_homeCam.quaternion)
+}
 
 function writeGlobePoseFromDir(
   dir: THREE.Vector3,
@@ -104,6 +186,7 @@ function cameraIsValid(camera: THREE.Camera): boolean {
  */
 export function CameraRig() {
   const camera = useThree((s) => s.camera)
+  const gl = useThree((s) => s.gl)
   const size = useThree((s) => s.size)
   const controls = useThree((s) => s.controls) as OrbitLike | null
   const selectedCountry = useStore((s) => s.selectedCountry)
@@ -137,11 +220,58 @@ export function CameraRig() {
     duration: 1.1,
     active: false,
   })
-  const followPos = useRef(new THREE.Vector3())
-  const prevFollowDir = useRef(new THREE.Vector3(0, 0, 0))
-  const followReady = useRef(false)
+  const chaseMix = useRef(1)
+  const wasChasing = useRef(false)
+  const chaseFromPos = useRef(new THREE.Vector3())
+  const chaseFromQuat = useRef(new THREE.Quaternion())
+  const chaseForward = useRef(new THREE.Vector3())
   const savedMinDist = useRef(1.25)
   const savedMaxDist = useRef(6)
+  const savedNear = useRef(GLOBE_NEAR)
+  const savedFov = useRef(GLOBE_FOV)
+  const lastChase = useRef({ lat: 0, lon: 0, valid: false })
+  const zoomVel = useRef(0)
+
+  useEffect(() => {
+    // OrbitControls listens on the canvas parent and applies zoom in one step.
+    // Capture here first so a scroll moves the camera on this event.
+    const el = gl.domElement.parentElement ?? gl.domElement
+    const onWheel = (e: WheelEvent) => {
+      const { followFlight: chasing, selectedCountry: country, flatMap: flat } =
+        useStore.getState()
+      if (chasing || country || flat || getMapBlend() > 0.08) return
+      if (!controls?.enabled) return
+      e.preventDefault()
+      e.stopImmediatePropagation()
+      let dy = e.deltaY
+      if (e.deltaMode === 1) dy *= 16
+      else if (e.deltaMode === 2) dy *= el.clientHeight
+      if (!Number.isFinite(dy) || dy === 0) return
+      const vel = zoomVel.current
+      if (vel !== 0 && Math.sign(dy) !== Math.sign(vel) && Math.abs(dy) < 48) {
+        dy *= 0.2
+      }
+      const min = controls.minDistance ?? 1.25
+      const max = controls.maxDistance ?? 6
+      const len = camera.position.length()
+      if (len < 0.01) return
+      const ln = dy * GLOBE_ZOOM_PER_PX
+      const next = THREE.MathUtils.clamp(
+        len * Math.exp(ln * GLOBE_ZOOM_IMMEDIATE),
+        min,
+        max,
+      )
+      camera.position.setLength(next)
+      const applied = Math.log(next / len)
+      zoomVel.current = THREE.MathUtils.clamp(
+        vel + (ln - applied) * GLOBE_ZOOM_DECAY,
+        -GLOBE_ZOOM_MAX_VEL,
+        GLOBE_ZOOM_MAX_VEL,
+      )
+    }
+    el.addEventListener('wheel', onWheel, { capture: true, passive: false })
+    return () => el.removeEventListener('wheel', onWheel, true)
+  }, [gl, controls, camera])
 
   const startFly = (lat: number, lon: number, dist: number, duration: number) => {
     const dir = latLonToVector3(lat, lon, 1).normalize()
@@ -150,6 +280,8 @@ export function CameraRig() {
     fly.current.start = performance.now() / 1000
     fly.current.duration = duration
     fly.current.active = true
+    zoomVel.current = 0
+    if (controls) controls.enabled = false
   }
 
   const enableMapPan = (lookAt: THREE.Vector3) => {
@@ -265,7 +397,9 @@ export function CameraRig() {
         globeFromQuat.current,
       )
     } else if (!selectedCountry && !flatMap) {
-      pendingGlobeHome.current = true
+      const focus = useStore.getState().cameraFocus
+      pendingGlobeHome.current =
+        !focus || focus.dist >= regionCameraDist(region) - 0.02
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedCountry, flatMap, region])
@@ -299,31 +433,47 @@ export function CameraRig() {
     if (!controls) return
     if (selectedCountry || flatMap || wasMap.current) {
       if (selectedCountry && !mapNav.current) controls.enabled = false
-      followReady.current = false
-      prevFollowDir.current.set(0, 0, 0)
       fly.current.active = false
       return
     }
-    if (followFlight && selectedFlightId) {
+    const chasing = Boolean(followFlight && selectedFlightId)
+    if (chasing) {
       if (controls.minDistance != null) savedMinDist.current = controls.minDistance
       if (controls.maxDistance != null) savedMaxDist.current = controls.maxDistance
-      controls.enabled = true
-      if (controls.enablePan != null) controls.enablePan = false
-      if (controls.minDistance != null) controls.minDistance = 1.35
-      if (controls.maxDistance != null) controls.maxDistance = 4.5
-      followReady.current = false
-      prevFollowDir.current.set(0, 0, 0)
+      if (camera instanceof THREE.PerspectiveCamera) {
+        savedNear.current = camera.near
+        savedFov.current = camera.fov
+        camera.near = CHASE_NEAR
+        camera.fov = CHASE_FOV
+        camera.updateProjectionMatrix()
+      }
+      chaseFromPos.current.copy(camera.position)
+      chaseFromQuat.current.copy(camera.quaternion)
+      chaseMix.current = 0
+      chaseForward.current.set(0, 0, 0)
+      controls.enabled = false
+      wasChasing.current = true
       fly.current.active = false
     } else {
-      controls.enabled = true
+      const leaving = wasChasing.current
+      wasChasing.current = false
       if (controls.enablePan != null) controls.enablePan = false
       if (controls.minDistance != null) controls.minDistance = savedMinDist.current
       if (controls.maxDistance != null) controls.maxDistance = savedMaxDist.current
-      controls.target.set(0, 0, 0)
-      if (!cameraIsValid(camera)) resetCameraHome()
-      else controls.update()
-      followReady.current = false
-      prevFollowDir.current.set(0, 0, 0)
+      if (leaving && lastChase.current.valid) {
+        controls.enabled = false
+        startFly(
+          lastChase.current.lat,
+          lastChase.current.lon,
+          FOLLOW_EXIT_DIST,
+          1.05,
+        )
+      } else {
+        controls.enabled = true
+        controls.target.set(0, 0, 0)
+        if (!cameraIsValid(camera)) resetCameraHome()
+        else controls.update()
+      }
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [followFlight, selectedFlightId, selectedCountry, flatMap, controls])
@@ -333,7 +483,23 @@ export function CameraRig() {
     const map = getMapFrame()
     const t = getMapEase()
 
+    if (controls?.rotateSpeed != null && b < 0.2) {
+      const height = Math.max(0, camera.position.length() - GLOBE_RADIUS)
+      const span = GLOBE_ROTATE_FAR_HEIGHT - GLOBE_ROTATE_CLOSE_HEIGHT
+      const u = THREE.MathUtils.clamp(
+        (height - GLOBE_ROTATE_CLOSE_HEIGHT) / span,
+        0,
+        1,
+      )
+      controls.rotateSpeed = THREE.MathUtils.lerp(
+        GLOBE_ROTATE_CLOSE,
+        GLOBE_ROTATE_FAR,
+        u,
+      )
+    }
+
     if (b > 0.001 && map) {
+      zoomVel.current = 0
       wasMap.current = true
       const fov =
         camera instanceof THREE.PerspectiveCamera ? camera.fov : 45
@@ -401,21 +567,23 @@ export function CameraRig() {
 
     if (pendingGlobeHome.current && b < 0.05 && !selectedCountry && !flatMap) {
       pendingGlobeHome.current = false
-      startFly(
-        region.center.lat,
-        region.center.lon,
-        regionCameraDist(region),
-        1.05,
-      )
+      const focus = useStore.getState().cameraFocus
+      if (!fly.current.active && !(focus && focus.dist < regionCameraDist(region) - 0.05)) {
+        startFly(
+          region.center.lat,
+          region.center.lon,
+          regionCameraDist(region),
+          1.05,
+        )
+      }
     }
 
-    if (!cameraIsValid(camera)) {
+    if (!followFlight && !fly.current.active && !cameraIsValid(camera)) {
       resetCameraHome()
-      followReady.current = false
-      prevFollowDir.current.set(0, 0, 0)
     }
 
     if (followFlight && selectedFlightId && !selectedCountry && !flatMap) {
+      zoomVel.current = 0
       const f = flightsById.get(selectedFlightId)
       if (f) {
         const elapsed =
@@ -425,39 +593,77 @@ export function CameraRig() {
         const vel = f.onGround ? 0 : f.velocity ?? 0
         const pred = deadReckon(f.lat, f.lon, vel, f.track ?? 0, elapsed)
         const r = altitudeToRadius(f.geoAltitude ?? f.baroAltitude)
-        latLonToVector3(pred.lat, pred.lon, r, followPos.current)
-        _dir.copy(followPos.current).normalize()
-
-        if (!followReady.current) {
-          camera.position.copy(_dir).multiplyScalar(FOLLOW_CAM_DIST)
-          prevFollowDir.current.copy(_dir)
-          followReady.current = true
-          if (controls) {
-            controls.target.set(0, 0, 0)
-            controls.update()
-          } else {
-            camera.lookAt(0, 0, 0)
-          }
-          return
+        lastChase.current = { lat: pred.lat, lon: pred.lon, valid: true }
+        trackForward(pred.lat, pred.lon, f.track ?? 0, _chaseFwd)
+        if (chaseForward.current.lengthSq() < 0.5) {
+          chaseForward.current.copy(_chaseFwd)
+        } else if (chaseForward.current.dot(_chaseFwd) > 0.15) {
+          chaseForward.current.lerp(_chaseFwd, 1 - Math.exp(-delta * 3.2)).normalize()
+        } else {
+          chaseForward.current.copy(_chaseFwd)
         }
 
-        _prev.copy(prevFollowDir.current)
-        if (_prev.lengthSq() > 0.5) {
-          const dot = THREE.MathUtils.clamp(_prev.dot(_dir), -1, 1)
-          if (dot < 0.9999 && dot > -0.99) {
-            _quat.setFromUnitVectors(_prev, _dir)
-            camera.position.applyQuaternion(_quat)
-            if (!cameraIsValid(camera)) {
-              camera.position.copy(_dir).multiplyScalar(FOLLOW_CAM_DIST)
-            }
-          }
-        }
-        prevFollowDir.current.copy(_dir)
+        writeChasePose(
+          pred.lat,
+          pred.lon,
+          r,
+          chaseForward.current,
+          Boolean(f.onGround),
+          f.geoAltitude ?? f.baroAltitude,
+          _chasePos,
+          _chaseQuat,
+          _chaseLook,
+          _chaseUp,
+        )
 
-        if (controls) controls.target.set(0, 0, 0)
-        camera.lookAt(0, 0, 0)
+        if (chaseMix.current < 1) {
+          chaseMix.current = Math.min(1, chaseMix.current + delta / CHASE_BLEND_SEC)
+          const u = easeInOut(chaseMix.current)
+          camera.position.lerpVectors(chaseFromPos.current, _chasePos, u)
+          camera.quaternion.slerpQuaternions(chaseFromQuat.current, _chaseQuat, u)
+        } else {
+          const k = 1 - Math.exp(-delta * 5.5)
+          camera.position.lerp(_chasePos, k)
+          camera.quaternion.slerp(_chaseQuat, k)
+        }
+        camera.up.copy(_chaseUp)
+        camera.updateMatrixWorld()
+        if (controls) {
+          controls.target.copy(_chaseLook)
+          controls.enabled = false
+        }
         return
       }
+    }
+
+    if (
+      camera instanceof THREE.PerspectiveCamera &&
+      camera.near < GLOBE_NEAR - 0.001 &&
+      camera.position.length() > 1.32
+    ) {
+      camera.near = savedNear.current || GLOBE_NEAR
+      camera.fov = savedFov.current || GLOBE_FOV
+      camera.updateProjectionMatrix()
+    }
+
+    if (!fly.current.active && !followFlight && !selectedCountry && !flatMap) {
+      let nextVel = zoomVel.current
+      if (nextVel !== 0) {
+        const dt = Math.min(Math.max(delta, 0), 0.05)
+        const min = controls?.minDistance ?? 1.25
+        const max = controls?.maxDistance ?? 6
+        const len = camera.position.length()
+        let next = len * Math.exp(nextVel * dt)
+        if (next <= min || next >= max) {
+          next = THREE.MathUtils.clamp(next, min, max)
+          nextVel = 0
+        } else {
+          nextVel *= Math.exp(-GLOBE_ZOOM_DECAY * dt)
+          if (Math.abs(nextVel) < 0.02) nextVel = 0
+        }
+        if (len > 0.01 && Math.abs(next - len) > 1e-6) camera.position.setLength(next)
+      }
+      zoomVel.current = nextVel
     }
 
     const anim = fly.current
@@ -466,14 +672,25 @@ export function CameraRig() {
     if (ft >= 1) {
       camera.position.copy(anim.to)
       anim.active = false
+      camera.up.copy(WORLD_UP)
+      camera.lookAt(0, 0, 0)
+      camera.updateMatrixWorld()
+      if (controls) {
+        controls.target.set(0, 0, 0)
+        if (controls.enablePan != null) controls.enablePan = false
+        const spherical = (controls as { spherical?: { radius: number } }).spherical
+        if (spherical) spherical.radius = anim.to.length()
+        controls.enabled = true
+        controls.update()
+        camera.position.copy(anim.to)
+        camera.lookAt(0, 0, 0)
+        camera.updateMatrixWorld()
+      }
     } else {
       camera.position.lerpVectors(anim.from, anim.to, easeInOut(ft))
-    }
-    if (controls) {
-      controls.target.set(0, 0, 0)
-      controls.update()
-    } else {
+      camera.up.copy(WORLD_UP)
       camera.lookAt(0, 0, 0)
+      camera.updateMatrixWorld()
     }
   })
 

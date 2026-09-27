@@ -11,6 +11,11 @@ import {
 const DEG2RAD = Math.PI / 180
 /** Flatten + camera slerp, ~1.15s end-to-end. */
 const BLEND_PER_SEC = 0.88
+/**
+ * Country fill, in the map group's local up axis. Just inside the tangent
+ * plane so the polygon does not z-fight the globe while it flattens.
+ */
+export const MAP_LAND_Z = -0.003
 
 export interface MapFrame {
   lon0: number

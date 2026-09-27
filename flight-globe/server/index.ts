@@ -12,7 +12,14 @@ import { hasOpenSkyAuth } from './opensky'
 import { isMockMode, pollIntervalMs, startPoller } from './poller'
 import { loadRouteCache, resolveRoute, routeCacheSize } from './routes'
 import { distAvailable, tryServeStatic } from './static'
+import { sendRobots, sendSitemap } from './seo'
 import { runOutboundDiag } from './diag'
+import {
+  getWeatherCatalog,
+  getWeatherTile,
+  sendWeatherCatalog,
+  sendWeatherTile,
+} from './weather'
 import type { BBox, FlightsResponse, HealthResponse } from './types'
 
 /** Prefer host-provided PORT (Render/Fly/Railway); fall back to local default. */
@@ -203,6 +210,41 @@ async function handleRoute(
   }
 }
 
+async function handleWeather(
+  _req: http.IncomingMessage,
+  res: http.ServerResponse,
+): Promise<void> {
+  try {
+    const cat = await getWeatherCatalog()
+    sendWeatherCatalog(res, cat)
+  } catch {
+    sendJson(res, 502, { error: 'weather unavailable' })
+  }
+}
+
+async function handleWeatherTile(
+  req: http.IncomingMessage,
+  res: http.ServerResponse,
+): Promise<void> {
+  const hostHdr = req.headers.host ?? `localhost:${PORT}`
+  const url = new URL(req.url ?? '/', `http://${hostHdr}`)
+  const host = url.searchParams.get('host') ?? ''
+  const path = url.searchParams.get('path') ?? ''
+  const z = Number(url.searchParams.get('z'))
+  const x = Number(url.searchParams.get('x'))
+  const y = Number(url.searchParams.get('y'))
+  try {
+    const tile = await getWeatherTile(host, path, z, x, y)
+    if (!tile) {
+      sendJson(res, 404, { error: 'tile' })
+      return
+    }
+    sendWeatherTile(res, tile)
+  } catch {
+    sendJson(res, 502, { error: 'tile unavailable' })
+  }
+}
+
 type PhotoCache = {
   at: number
   body: { src: string; link: string; photographer: string } | null
@@ -317,6 +359,22 @@ const server = http.createServer((req, res) => {
     handlePlayback(req, res)
     return
   }
+  if (pathOnly === '/api/weather') {
+    if (req.method !== 'GET') {
+      sendJson(res, 405, { error: 'method not allowed' })
+      return
+    }
+    void handleWeather(req, res)
+    return
+  }
+  if (pathOnly === '/api/weather/tile') {
+    if (req.method !== 'GET') {
+      sendJson(res, 405, { error: 'method not allowed' })
+      return
+    }
+    void handleWeatherTile(req, res)
+    return
+  }
   if (pathOnly.startsWith('/api/photos/')) {
     if (req.method !== 'GET') {
       sendJson(res, 405, { error: 'method not allowed' })
@@ -339,11 +397,13 @@ const server = http.createServer((req, res) => {
       endpoints: [
         'GET /api/health',
         'GET /api/diag',
-        'GET /api/flights?scope=world|na|eu',
+        'GET /api/flights?scope=world|na|eu|as|oc|sa|af',
         'GET /api/flights?at=<ms>',
         'GET /api/playback',
         'GET /api/routes/:callsign',
         'GET /api/photos/:hex',
+        'GET /api/weather',
+        'GET /api/weather/tile?host&path&z&x&y',
       ],
     })
     return
@@ -351,6 +411,15 @@ const server = http.createServer((req, res) => {
 
   if (req.method !== 'GET' && req.method !== 'HEAD') {
     sendJson(res, 405, { error: 'method not allowed' })
+    return
+  }
+
+  if (pathOnly === '/robots.txt') {
+    sendRobots(req, res)
+    return
+  }
+  if (pathOnly === '/sitemap.xml') {
+    sendSitemap(req, res)
     return
   }
 

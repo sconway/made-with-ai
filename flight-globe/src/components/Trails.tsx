@@ -65,6 +65,7 @@ function appendTrailSegments(
  */
 export function Trails() {
   const size = useThree((s) => s.size)
+  const showPlanes = useStore((s) => s.display.planes)
   const flights = useStore((s) => s.flights)
   const lastUpdate = useStore((s) => s.lastUpdate)
   const selectedId = useStore((s) => s.selectedFlightId)
@@ -259,7 +260,7 @@ export function Trails() {
   })
 
   return (
-    <group>
+    <group visible={showPlanes}>
       <primitive object={layers.all} />
       <primitive object={layers.selected} />
     </group>

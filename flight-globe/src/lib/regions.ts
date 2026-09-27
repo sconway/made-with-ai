@@ -10,7 +10,10 @@ export interface Region {
 
 /** Camera distance from globe center for this region's home pose. */
 export function regionCameraDist(region: Region): number {
-  return region.bbox ? 2.4 : 3.0
+  if (!region.bbox) return 3.0
+  const latSpan = region.bbox.maxLat - region.bbox.minLat
+  const lonSpan = region.bbox.maxLon - region.bbox.minLon
+  return latSpan > 55 || lonSpan > 70 ? 2.65 : 2.4
 }
 
 export const REGIONS: Region[] = [
@@ -31,5 +34,29 @@ export const REGIONS: Region[] = [
     label: 'Europe',
     bbox: { minLon: -12, minLat: 35, maxLon: 40, maxLat: 62 },
     center: { lat: 50, lon: 12 },
+  },
+  {
+    id: 'as',
+    label: 'Asia',
+    bbox: { minLon: 32, minLat: -10, maxLon: 150, maxLat: 55 },
+    center: { lat: 28, lon: 95 },
+  },
+  {
+    id: 'oc',
+    label: 'Oceania',
+    bbox: { minLon: 110, minLat: -48, maxLon: 180, maxLat: 0 },
+    center: { lat: -26, lon: 145 },
+  },
+  {
+    id: 'sa',
+    label: 'S. America',
+    bbox: { minLon: -82, minLat: -56, maxLon: -34, maxLat: 13 },
+    center: { lat: -15, lon: -58 },
+  },
+  {
+    id: 'af',
+    label: 'Africa',
+    bbox: { minLon: -18, minLat: -35, maxLon: 52, maxLat: 38 },
+    center: { lat: 2, lon: 20 },
   },
 ]

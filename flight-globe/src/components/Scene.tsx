@@ -7,6 +7,7 @@ import { Atmosphere } from './Atmosphere'
 import { Countries } from './Countries'
 import { Flights } from './Flights'
 import { FlightLabels } from './FlightLabels'
+import { WeatherLayer } from './WeatherLayer'
 import { Arcs } from './Arcs'
 import { Trails } from './Trails'
 import { AirportPins } from './AirportPins'
@@ -14,11 +15,19 @@ import { CameraRig } from './CameraRig'
 import { sunDirection } from '../lib/sun'
 import { GLOBE_RADIUS } from '../lib/geo'
 import { getMapEase } from '../lib/mapView'
+import { useStore } from '../store/useStore'
 
 /** Plain dark sphere shown while the earth textures load. */
 function EarthFallback() {
+  const meshRef = useRef<THREE.Mesh>(null)
+  const mapView = useStore((s) => Boolean(s.selectedCountry || s.flatMap))
+  useFrame(() => {
+    if (meshRef.current) {
+      meshRef.current.visible = !mapView && 1 - getMapEase() > 0.25
+    }
+  })
   return (
-    <mesh>
+    <mesh ref={meshRef}>
       <sphereGeometry args={[GLOBE_RADIUS, 48, 48]} />
       <meshBasicMaterial color="#0a1526" />
     </mesh>
@@ -56,6 +65,7 @@ export function Scene() {
         <Earth sunDirection={sun} />
       </Suspense>
       <Atmosphere />
+      <WeatherLayer />
       <Countries />
       <AirportPins />
       <Trails />

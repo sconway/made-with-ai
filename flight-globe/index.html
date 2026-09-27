@@ -7,13 +7,107 @@
       content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content"
     />
     <title>Flight Globe — live global air traffic</title>
+    <meta name="description" content="Watch live flights on a 3D globe. Track callsigns, routes, altitude, and airports in real time — follow any aircraft around the world." />
+    <meta name="robots" content="index,follow,max-image-preview:large,max-snippet:-1,max-video-preview:-1" />
+    <meta name="keywords" content="flight tracker, live flights, ADS-B, air traffic, 3D globe, OpenSky, flight radar, aircraft tracker" />
+    <meta name="author" content="Flight Globe" />
+    <meta name="application-name" content="Flight Globe" />
+    <meta name="apple-mobile-web-app-title" content="Flight Globe" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="mobile-web-app-capable" content="yes" />
     <meta name="theme-color" content="#05070d" />
+    <meta name="color-scheme" content="dark" />
+    <meta name="referrer" content="strict-origin-when-cross-origin" />
+    <meta name="format-detection" content="telephone=no" />
+    <link rel="canonical" href="/" />
+    <link rel="manifest" href="/manifest.webmanifest" />
     <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
     <link rel="icon" href="/favicon.png" type="image/png" sizes="32x32" />
-    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png" sizes="180x180" />
+    <link rel="mask-icon" href="/favicon.svg" color="#4ea8ff" />
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="Flight Globe" />
+    <meta property="og:locale" content="en_US" />
+    <meta property="og:title" content="Flight Globe — live global air traffic" />
+    <meta property="og:description" content="Watch live flights on a 3D globe. Track callsigns, routes, altitude, and airports in real time — follow any aircraft around the world." />
+    <meta property="og:url" content="/" />
+    <meta property="og:image" content="/og-image.png" />
+    <meta property="og:image:type" content="image/png" />
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="630" />
+    <meta
+      property="og:image:alt"
+      content="Flight Globe — a 3D globe showing live air traffic"
+    />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="Flight Globe — live global air traffic" />
+    <meta name="twitter:description" content="Watch live flights on a 3D globe. Track callsigns, routes, altitude, and airports in real time." />
+    <meta name="twitter:image" content="/og-image.png" />
+    <meta
+      name="twitter:image:alt"
+      content="Flight Globe — a 3D globe showing live air traffic"
+    />
+
+    <script async src="https://www.googletagmanager.com/gtag/js?id=G-XXXXXXXXXX"></script>
+    <script>
+      window.dataLayer = window.dataLayer || []
+      function gtag(){dataLayer.push(arguments)}
+      gtag('js', new Date())
+      if (location.hostname !== 'localhost' && location.hostname !== '127.0.0.1') {
+        gtag('config', 'G-DRE4TG1EK8')
+      }
+    </script>
+
+    <script type="application/ld+json" id="seo-jsonld">
+      {
+        "@context": "https://schema.org",
+        "@graph": [
+          {
+            "@type": "WebApplication",
+            "name": "Flight Globe",
+            "url": "/",
+            "description": "Watch live flights on a 3D globe. Track callsigns, routes, altitude, and airports in real time — follow any aircraft around the world.",
+            "applicationCategory": "TravelApplication",
+            "operatingSystem": "Any",
+            "browserRequirements": "Requires JavaScript and WebGL",
+            "inLanguage": "en",
+            "offers": { "@type": "Offer", "price": "0", "priceCurrency": "USD" }
+          },
+          {
+            "@type": "WebSite",
+            "name": "Flight Globe",
+            "url": "/",
+            "description": "Live global air traffic on a 3D globe.",
+            "inLanguage": "en"
+          }
+        ]
+      }
+    </script>
   </head>
   <body>
     <div id="root"></div>
+    <noscript>
+      <header>
+        <h1>Flight Globe — live global air traffic</h1>
+        <p>
+          Flight Globe is a free 3D flight tracker. Watch live aircraft from the
+          OpenSky Network on a stylized globe — click a plane for callsign,
+          altitude, heading, and route, or open an airport to see nearby
+          traffic.
+        </p>
+      </header>
+      <nav>
+        <ul>
+          <li><a href="/">World</a></li>
+          <li><a href="/?region=na">North America</a></li>
+          <li><a href="/?region=eu">Europe</a></li>
+          <li><a href="/?region=as">Asia</a></li>
+          <li><a href="/?region=oc">Oceania</a></li>
+          <li><a href="/?region=sa">South America</a></li>
+          <li><a href="/?region=af">Africa</a></li>
+        </ul>
+      </nav>
+    </noscript>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>

@@ -9,9 +9,24 @@ import {
 } from '../lib/filters'
 import { observeEmergencySquawks } from '../lib/squawk'
 import type { LabelMode } from '../lib/flightLabels'
+import type { GlobeDisplay } from '../lib/prefs'
+import { readWeatherMode, type WeatherMode } from '../lib/weather'
+import { readColorMode, type ColorMode } from '../lib/flightColor'
+import {
+  readAlertWatches,
+  readDisplay,
+  readPinnedFlightIds,
+  readTrafficFilters,
+  readTrailMode,
+  writeAlertWatches,
+  writeDisplay,
+  writePinnedFlightIds,
+  writeTrafficFilters,
+  writeTrailMode,
+} from '../lib/prefs'
 
 export type TrailMode = 'off' | 'selected' | 'all'
-export type { LabelMode }
+export type { LabelMode, WeatherMode, ColorMode }
 
 function readLabelMode(): LabelMode {
   try {
@@ -111,6 +126,12 @@ interface AppState {
   flatMap: boolean
   /** Bumped when the 2D look-at frame is written so map meshes rebuild. */
   mapEpoch: number
+  /** RainViewer radar overlay. */
+  weatherMode: WeatherMode
+  /** Plane tint: altitude, speed, or airline code. */
+  colorMode: ColorMode
+  /** Which layers are drawn on the globe. */
+  display: GlobeDisplay
 
   setFlights: (flights: FlightState[], updatedAt?: number) => void
   setViewBBox: (b: BBox | null) => void
@@ -135,6 +156,7 @@ interface AppState {
   setPlaybackPlaying: (playing: boolean) => void
   setFollowFlight: (follow: boolean) => void
   togglePinnedFlight: (id: string) => void
+  clearPinnedFlights: () => void
   setTrafficFilters: (filters: TrafficFilters) => void
   resetTrafficFilters: () => void
   setTrailMode: (mode: TrailMode) => void
@@ -145,6 +167,9 @@ interface AppState {
   setLabelMode: (mode: LabelMode) => void
   setFlatMap: (flat: boolean) => void
   bumpMapEpoch: () => void
+  setWeatherMode: (mode: WeatherMode) => void
+  setColorMode: (mode: ColorMode) => void
+  setDisplay: (partial: Partial<GlobeDisplay>) => void
 }
 
 export const useStore = create<AppState>((set) => ({
@@ -173,15 +198,18 @@ export const useStore = create<AppState>((set) => ({
   playbackLatest: null,
   playbackPlaying: false,
   followFlight: false,
-  pinnedFlightIds: [],
-  trafficFilters: { ...DEFAULT_TRAFFIC_FILTERS },
-  trailMode: 'selected',
-  alertWatches: [],
+  pinnedFlightIds: readPinnedFlightIds(),
+  trafficFilters: readTrafficFilters(),
+  trailMode: readTrailMode(),
+  alertWatches: readAlertWatches(),
   alertToasts: [],
   emergencyVersion: 0,
   labelMode: readLabelMode(),
   flatMap: false,
   mapEpoch: 0,
+  weatherMode: readWeatherMode(),
+  colorMode: readColorMode(),
+  display: readDisplay(),
 
   setFlights: (flights, updatedAt = Date.now()) =>
     set((s) => {
@@ -305,16 +333,34 @@ export const useStore = create<AppState>((set) => ({
   setFollowFlight: (followFlight) => set({ followFlight }),
   togglePinnedFlight: (id) =>
     set((s) => {
+      let pinnedFlightIds: string[]
       if (s.pinnedFlightIds.includes(id)) {
-        return { pinnedFlightIds: s.pinnedFlightIds.filter((x) => x !== id) }
+        pinnedFlightIds = s.pinnedFlightIds.filter((x) => x !== id)
+      } else if (s.pinnedFlightIds.length >= MAX_PINNED_FLIGHTS) {
+        return s
+      } else {
+        pinnedFlightIds = [...s.pinnedFlightIds, id]
       }
-      if (s.pinnedFlightIds.length >= MAX_PINNED_FLIGHTS) return s
-      return { pinnedFlightIds: [...s.pinnedFlightIds, id] }
+      writePinnedFlightIds(pinnedFlightIds)
+      return { pinnedFlightIds }
     }),
-  setTrafficFilters: (trafficFilters) => set({ trafficFilters }),
-  resetTrafficFilters: () =>
-    set({ trafficFilters: { ...DEFAULT_TRAFFIC_FILTERS } }),
-  setTrailMode: (trailMode) => set({ trailMode }),
+  clearPinnedFlights: () => {
+    writePinnedFlightIds([])
+    set({ pinnedFlightIds: [] })
+  },
+  setTrafficFilters: (trafficFilters) => {
+    writeTrafficFilters(trafficFilters)
+    set({ trafficFilters })
+  },
+  resetTrafficFilters: () => {
+    const trafficFilters = { ...DEFAULT_TRAFFIC_FILTERS }
+    writeTrafficFilters(trafficFilters)
+    set({ trafficFilters })
+  },
+  setTrailMode: (trailMode) => {
+    writeTrailMode(trailMode)
+    set({ trailMode })
+  },
   addAlertWatch: (watch) =>
     set((s) => {
       const value = watch.value.trim()
@@ -325,14 +371,16 @@ export const useStore = create<AppState>((set) => ({
       if (dup) return s
       if (s.alertWatches.length >= 12) return s
       const id = `${watch.kind}-${value}-${Date.now().toString(36)}`
-      return {
-        alertWatches: [...s.alertWatches, { ...watch, id, value }],
-      }
+      const alertWatches = [...s.alertWatches, { ...watch, id, value }]
+      writeAlertWatches(alertWatches)
+      return { alertWatches }
     }),
   removeAlertWatch: (id) =>
-    set((s) => ({
-      alertWatches: s.alertWatches.filter((w) => w.id !== id),
-    })),
+    set((s) => {
+      const alertWatches = s.alertWatches.filter((w) => w.id !== id)
+      writeAlertWatches(alertWatches)
+      return { alertWatches }
+    }),
   pushAlertToast: (toast) =>
     set((s) => {
       const id = `toast-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`
@@ -360,4 +408,26 @@ export const useStore = create<AppState>((set) => ({
       followFlight: flatMap ? false : s.followFlight,
     })),
   bumpMapEpoch: () => set((s) => ({ mapEpoch: s.mapEpoch + 1 })),
+  setWeatherMode: (weatherMode) => {
+    try {
+      localStorage.setItem('fg-weather', weatherMode)
+    } catch {
+      /* ignore */
+    }
+    set({ weatherMode })
+  },
+  setColorMode: (colorMode) => {
+    try {
+      localStorage.setItem('fg-color', colorMode)
+    } catch {
+      /* ignore */
+    }
+    set({ colorMode })
+  },
+  setDisplay: (partial) =>
+    set((s) => {
+      const display = { ...s.display, ...partial }
+      writeDisplay(display)
+      return { display }
+    }),
 }))

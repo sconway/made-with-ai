@@ -49,6 +49,7 @@ export function Arcs() {
   const pinnedFlightIds = useStore((s) => s.pinnedFlightIds)
   const routesVersion = useStore((s) => s.routesVersion)
   const playbackLive = useStore((s) => s.playbackLive)
+  const showRoutes = useStore((s) => s.display.routes)
 
   const glowMat = useMemo(() => makeArcMaterial('#5eb8ff', 4.5, 0.18), [])
   const coreMat = useMemo(() => makeArcMaterial('#ffe08a', 2.25, 0.85), [])
@@ -108,6 +109,12 @@ export function Arcs() {
     glowMat.resolution.set(size.width, size.height)
     coreMat.resolution.set(size.width, size.height)
     pinMat.resolution.set(size.width, size.height)
+    if (!showRoutes) {
+      layers.glow.visible = false
+      layers.core.visible = false
+      layers.pinned.visible = false
+      return
+    }
 
     const elapsed =
       !playbackLive || lastUpdate <= 0

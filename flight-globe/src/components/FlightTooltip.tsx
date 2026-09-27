@@ -1,4 +1,6 @@
+import { useEffect, useState } from 'react'
 import { useStore } from '../store/useStore'
+import { getCachedAircraftType } from '../lib/aircraftLookup'
 import {
   airlineCodeFromCallsign,
   airlineName,
@@ -12,24 +14,33 @@ export function FlightTooltip() {
   const id = useStore((s) => s.hoveredFlightId)
   const pointer = useStore((s) => s.hoverPointer)
   const flight = useStore((s) => (id ? s.flightsById.get(id) : undefined))
+  const [shownId, setShownId] = useState<string | null>(null)
 
-  if (!id || !pointer || !flight) return null
+  useEffect(() => {
+    setShownId(null)
+    if (!id) return
+    const timer = window.setTimeout(() => setShownId(id), 200)
+    return () => window.clearTimeout(timer)
+  }, [id])
 
-  const callsign = flight.callsign || flight.icao24.toUpperCase()
-  const code = airlineCodeFromCallsign(flight.callsign)
+  const shown = shownId ? flight && shownId === id ? flight : null : null
+  if (!shown || !pointer) return null
+
+  const callsign = shown.callsign || shown.icao24.toUpperCase()
+  const code = airlineCodeFromCallsign(shown.callsign)
   const airline = code ? airlineName(code) : null
-  const alt = fmtAltitude(flight.geoAltitude ?? flight.baroAltitude)
-  const speed = fmtSpeed(flight.onGround ? 0 : flight.velocity)
-  const route = resolveRoute(flight)
+  const alt = fmtAltitude(shown.geoAltitude ?? shown.baroAltitude)
+  const speed = fmtSpeed(shown.onGround ? 0 : shown.velocity)
+  const route = resolveRoute(shown)
   const routeLabel =
     route?.oIata && route?.dIata ? `${route.oIata} → ${route.dIata}` : null
 
   const bits = [
-    flight.registration,
-    flight.typeCode,
-    flight.onGround ? 'On ground' : alt,
-    !flight.onGround ? speed : null,
-    flight.originCountry || null,
+    shown.registration,
+    shown.typeCode || getCachedAircraftType(shown.icao24),
+    shown.onGround ? 'On ground' : alt,
+    !shown.onGround ? speed : null,
+    shown.originCountry || null,
     routeLabel,
   ].filter(Boolean)
 

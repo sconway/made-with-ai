@@ -259,8 +259,166 @@ canvas {
   flex-direction: column;
   gap: 6px;
   padding: 0 12px 10px;
+}
+
+.sidebar-section {
   border-bottom: 1px solid rgba(255, 255, 255, 0.06);
-  margin-bottom: 2px;
+  min-width: 0;
+}
+
+.sidebar-section-head {
+  display: flex;
+  align-items: stretch;
+  min-width: 0;
+}
+
+.sidebar-section-toggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 1;
+  min-width: 0;
+  padding: 8px 14px;
+  border: 0;
+  background: transparent;
+  color: var(--text-dim);
+  font: inherit;
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  cursor: pointer;
+  text-align: left;
+}
+
+.sidebar-section-toggle:hover {
+  color: var(--text);
+}
+
+.sidebar-section-chevron {
+  flex: 0 0 auto;
+  width: 8px;
+  height: 8px;
+  display: block;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.4px;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  /* Collapsed points right. The path is centered in the box, so rotation stays on the title. */
+  transform: rotate(-90deg);
+  transform-origin: center;
+  transition: transform 0.15s ease;
+}
+
+.sidebar-section.open .sidebar-section-chevron {
+  transform: rotate(0deg);
+}
+
+.sidebar-section-title {
+  flex: 0 0 auto;
+}
+
+.sidebar-section-summary {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-align: right;
+  letter-spacing: 0.02em;
+  text-transform: none;
+  color: var(--text);
+}
+
+.sidebar-section-body[hidden] {
+  display: none;
+}
+
+.sidebar-section-action {
+  flex: 0 0 auto;
+  margin-right: 12px;
+  border: 0;
+  background: transparent;
+  color: var(--text-dim);
+  font: inherit;
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  cursor: pointer;
+}
+
+.sidebar-section-action:hover {
+  color: var(--text);
+}
+
+.pins-empty {
+  margin: 0;
+  padding: 0 14px 10px;
+  color: var(--text-dim);
+  font-size: 12px;
+}
+
+.pins-list {
+  list-style: none;
+  margin: 0;
+  padding: 0 10px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.pins-list li {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.pins-list li.active {
+  background: rgba(255, 207, 107, 0.12);
+}
+
+.pins-open {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 1px;
+  padding: 6px 8px;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.pins-callsign {
+  font-size: 12px;
+  letter-spacing: 0.04em;
+}
+
+.pins-route {
+  font-size: 11px;
+  color: var(--text-dim);
+}
+
+.pins-remove {
+  flex: 0 0 auto;
+  margin-right: 4px;
+  border: none;
+  background: transparent;
+  color: var(--text-dim);
+  cursor: pointer;
+  font-size: 14px;
+  line-height: 1;
+  padding: 6px;
+}
+
+.pins-remove:hover {
+  color: var(--text);
 }
 
 .flight-filters-row {
@@ -271,11 +429,56 @@ canvas {
 }
 
 .flight-filters-label {
-  flex: 0 0 34px;
+  flex: 0 0 40px;
   font-size: 10px;
   letter-spacing: 0.04em;
   text-transform: uppercase;
   color: var(--text-dim);
+}
+
+.display-menu {
+  position: absolute;
+  right: calc(18px + var(--safe-right));
+  bottom: calc(18px + var(--safe-bottom));
+  z-index: 16;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 8px;
+  pointer-events: none;
+}
+
+.display-menu > * {
+  pointer-events: auto;
+}
+
+.display-gear {
+  width: 36px;
+  height: 36px;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border-radius: 10px;
+  border: 1px solid var(--panel-border);
+  background: var(--panel);
+  color: var(--text-dim);
+  cursor: pointer;
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+}
+
+.display-gear:hover,
+.display-gear[aria-expanded='true'] {
+  color: var(--text);
+}
+
+.display-panel {
+  width: min(280px, calc(100vw - 36px));
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
 }
 
 .filter-seg {
@@ -313,6 +516,19 @@ canvas {
 .filter-seg button.active {
   color: var(--text);
   background: rgba(78, 168, 255, 0.18);
+}
+
+.weather-credit {
+  display: block;
+  margin-top: 4px;
+  font-size: 10px;
+  letter-spacing: 0.03em;
+  color: var(--text-dim);
+  text-decoration: none;
+}
+
+.weather-credit:hover {
+  color: var(--text);
 }
 
 .flight-filters-airline input {
@@ -354,41 +570,6 @@ canvas {
   color: var(--text);
 }
 
-.airport-pin-label {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 1px;
-  padding: 4px 8px;
-  border-radius: 8px;
-  background: rgba(10, 14, 24, 0.88);
-  border: 1px solid rgba(120, 170, 255, 0.35);
-  color: var(--text);
-  white-space: nowrap;
-  transform: translateY(-18px);
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
-}
-
-.airport-pin-label strong {
-  font-size: 12px;
-  letter-spacing: 0.04em;
-}
-
-.airport-pin-label span {
-  font-size: 10px;
-  color: var(--text-dim);
-}
-
-.airport-pin-label-map {
-  border-color: rgba(63, 212, 255, 0.55);
-  background: rgba(4, 16, 24, 0.9);
-}
-
-.airport-pin-label-map strong {
-  color: #7ee8ff;
-  letter-spacing: 0.08em;
-}
-
 .sidebar-title {
   display: flex;
   align-items: center;
@@ -405,9 +586,11 @@ canvas {
   flex-shrink: 0;
 }
 
-.sidebar-title strong {
+.sidebar-title h1 {
   display: block;
+  margin: 0;
   font-size: 15px;
+  font-weight: 700;
   letter-spacing: 0.02em;
 }
 
@@ -445,7 +628,7 @@ canvas {
 }
 
 .sidebar-count {
-  padding: 0 16px 10px;
+  padding: 8px 16px 10px;
   font-size: 11px;
   color: var(--text-dim);
   letter-spacing: 0.04em;
@@ -977,14 +1160,6 @@ canvas {
   object-fit: cover;
 }
 
-.aircraft-photo-empty {
-  height: 88px;
-  display: grid;
-  place-items: center;
-  font-size: 11px;
-  color: var(--text-dim);
-}
-
 .airport-board-group {
   margin: 4px 0 0;
 }
@@ -1461,6 +1636,11 @@ canvas {
     width: calc(100% - 24px);
     margin: 0 auto 6px;
     max-width: none;
+  }
+
+  .display-menu {
+    bottom: calc(var(--dock-h, 32dvh) + 10px);
+    right: calc(12px + var(--safe-right));
   }
 
   .bottom-status {

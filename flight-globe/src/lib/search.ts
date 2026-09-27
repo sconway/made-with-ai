@@ -109,6 +109,8 @@ export function scoreFlight(flight: FlightState, q: string): number {
   score = Math.max(score, scorePrefix(callsign, q))
   score = Math.max(score, scorePrefix(icao, q) * 0.95)
   if (reg) score = Math.max(score, scorePrefix(reg, q))
+  const type = norm(flight.typeCode || '')
+  if (type) score = Math.max(score, scorePrefix(type, q) * 0.92)
 
   // Airline-only queries (e.g. "UAL", "United") — weaker than a flight number.
   const qn = norm(q)

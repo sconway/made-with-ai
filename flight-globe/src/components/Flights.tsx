@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef } from 'react'
+import { useEffect, useLayoutEffect, useMemo, useRef } from 'react'
 import * as THREE from 'three'
 import { useFrame, type ThreeEvent } from '@react-three/fiber'
 import { useStore } from '../store/useStore'
@@ -18,12 +18,24 @@ import {
   projectPosition,
 } from '../lib/mapView'
 import {
+  createAirplaneGeometry,
   createAirplaneGlowGeometry,
   createAirplaneOutlineGeometry,
   createMapPlaneGeometry,
+  createMapPlaneOutlineGeometry,
   createPlaneBloomGeometry,
   createPlaneBloomTexture,
 } from '../lib/airplaneGeometry'
+import {
+  AIRCRAFT_FAMILIES,
+  FAMILY_SCALE,
+  aircraftFamily,
+  type AircraftFamily,
+} from '../lib/aircraftFamily'
+import {
+  enqueueAircraftTypes,
+  getCachedAircraftType,
+} from '../lib/aircraftLookup'
 import { getVisibleFlights } from '../lib/visibleFlights'
 import { filterFlightsByQuery, flightsForAirportIata, haversineKm } from '../lib/search'
 import { filterFlightsByTraffic } from '../lib/filters'
@@ -33,10 +45,26 @@ import { looksLikeAirlineCallsign } from '../lib/callsignVariants'
 import type { Route } from '../lib/flight'
 import { beginFlightAnchors, pushFlightAnchor } from '../lib/flightAnchors'
 import { isConfirmedEmergency } from '../lib/squawk'
+import { punchFlightColor, writeFlightColor } from '../lib/flightColor'
+import { airlineCodeFromCallsign } from '../lib/flightInfo'
 
 const MAX_INSTANCES = 20000
 /** Unit sphere; instance scale = world pick radius. */
 const pickGeometry = new THREE.SphereGeometry(1, 8, 6)
+/** Show the type mesh instead of the outline dart. */
+const BODY_DIST = 0.11
+/** Map / country view: camera height above the surface. Slightly generous so max zoom still reaches the mesh. */
+const MAP_BODY_HEIGHT = 0.42
+const FAMILY_INDEX: Record<AircraftFamily, number> = {
+  narrow: 0,
+  wide: 1,
+  jumbo: 2,
+  regional: 3,
+  turbo: 4,
+  bizjet: 5,
+  ga: 6,
+  helo: 7,
+}
 
 interface PerFlight {
   baseLat: number
@@ -47,15 +75,16 @@ interface PerFlight {
   dispVec: THREE.Vector3
   route: Route | null
   emergency: boolean
+  airline: string
+  family: AircraftFamily
+  typeCode: string
+  category: string
 }
 
-const COLOR_OUTLINE = new THREE.Color('#eaf8ff').multiplyScalar(1.65)
 const COLOR_SELECTED = new THREE.Color('#ffffff').multiplyScalar(1.8)
 const COLOR_HOVER = new THREE.Color('#ffe9a3').multiplyScalar(1.55)
 const COLOR_PINNED = new THREE.Color('#b6ffd6').multiplyScalar(1.45)
 const COLOR_EMERGENCY = new THREE.Color('#ff6b6b').multiplyScalar(1.5)
-const MAP_COLOR_LOW = new THREE.Color('#ffcc22')
-const MAP_COLOR_HIGH = new THREE.Color('#ffe566')
 const MAP_COLOR_SELECTED = new THREE.Color('#ffffff')
 const MAP_COLOR_HOVER = new THREE.Color('#fff36b')
 const MAP_COLOR_PINNED = new THREE.Color('#b6ffd4')
@@ -71,6 +100,7 @@ const _target = new THREE.Vector3()
 const _color = new THREE.Color()
 const _basis = new THREE.Matrix4()
 const _camDir = new THREE.Vector3()
+const _bodyCounts = new Uint16Array(AIRCRAFT_FAMILIES.length)
 
 /**
  * World-space pick radius that stays ~targetPx on screen, so zooming the
@@ -92,6 +122,7 @@ export function Flights() {
   const lastUpdate = useStore((s) => s.lastUpdate)
   const selectedId = useStore((s) => s.selectedFlightId)
   const hoveredId = useStore((s) => s.hoveredFlightId)
+  const showPlanes = useStore((s) => s.display.planes)
   const setSelectedFlight = useStore((s) => s.setSelectedFlight)
   const setHoveredFlight = useStore((s) => s.setHoveredFlight)
   const region = useStore((s) => s.region)
@@ -104,12 +135,22 @@ export function Flights() {
   const trafficFilters = useStore((s) => s.trafficFilters)
   const followFlight = useStore((s) => s.followFlight)
   const emergencyVersion = useStore((s) => s.emergencyVersion)
+  const colorMode = useStore((s) => s.colorMode)
+  const colorModeRef = useRef(colorMode)
+  colorModeRef.current = colorMode
+  const weatherMode = useStore((s) => s.weatherMode)
+  const flatMap = useStore((s) => s.flatMap)
+  const weatherOnRef = useRef(false)
+  weatherOnRef.current = weatherMode === 'radar' && Boolean(selectedCountry || flatMap)
   const pinnedSetRef = useRef(new Set<string>())
   useEffect(() => {
     pinnedSetRef.current = new Set(pinnedFlightIds)
   }, [pinnedFlightIds])
 
   const meshRef = useRef<THREE.InstancedMesh>(null)
+  const bodyRefs = useRef<(THREE.InstancedMesh | null)[]>(
+    AIRCRAFT_FAMILIES.map(() => null),
+  )
   const glowRef = useRef<THREE.InstancedMesh>(null)
   const bloomRef = useRef<THREE.InstancedMesh>(null)
   const mapMeshRef = useRef<THREE.InstancedMesh>(null)
@@ -119,6 +160,7 @@ export function Flights() {
   const orderRef = useRef<string[]>([])
   const selectedIdRef = useRef<string | null>(null)
   const hoveredIdRef = useRef<string | null>(null)
+  const showPlanesRef = useRef(true)
   const scopeBBoxRef = useRef<BBox | null>(region.bbox)
   useEffect(() => {
     selectedIdRef.current = selectedId
@@ -127,12 +169,25 @@ export function Flights() {
     hoveredIdRef.current = hoveredId
   }, [hoveredId])
   useEffect(() => {
+    showPlanesRef.current = showPlanes
+  }, [showPlanes])
+  useEffect(() => {
     scopeBBoxRef.current = region.bbox
   }, [region])
 
   const geometry = useMemo(() => createAirplaneOutlineGeometry(), [])
+  const bodyGeometries = useMemo(
+    () => AIRCRAFT_FAMILIES.map((fam) => createAirplaneGeometry(fam)),
+    [],
+  )
+  useLayoutEffect(() => {
+    for (const mesh of bodyRefs.current) {
+      if (mesh) mesh.count = 0
+    }
+  }, [])
   const glowGeometry = useMemo(() => createAirplaneGlowGeometry(), [])
   const mapGeometry = useMemo(() => createMapPlaneGeometry(), [])
+  const mapOutlineGeometry = useMemo(() => createMapPlaneOutlineGeometry(), [])
   const bloomGeometry = useMemo(() => createPlaneBloomGeometry(), [])
   const bloomTexture = useMemo(() => createPlaneBloomTexture(), [])
 
@@ -279,10 +334,19 @@ export function Flights() {
       setHoveredFlight(null)
     }
 
+    const needTypes: Array<{ icao24: string; priority: number }> = []
     for (const f of visible) {
       seen.add(f.icao24)
       const prev = map.get(f.icao24)
       const alt = f.geoAltitude ?? f.baroAltitude ?? 0
+      const cachedType = getCachedAircraftType(f.icao24)
+      const typeCode = (f.typeCode || cachedType || '').trim().toUpperCase()
+      if (!f.typeCode && cachedType === undefined) {
+        needTypes.push({
+          icao24: f.icao24,
+          priority: f.icao24 === selectedId ? 0 : 12,
+        })
+      }
       const entry: PerFlight = {
         baseLat: f.lat,
         baseLon: f.lon,
@@ -294,9 +358,14 @@ export function Flights() {
           latLonToVector3(f.lat, f.lon, altitudeToRadius(alt)),
         route: f.route ?? getCachedRoute(f.callsign) ?? null,
         emergency: isConfirmedEmergency(f),
+        airline: airlineCodeFromCallsign(f.callsign || ''),
+        typeCode,
+        category: f.category || '',
+        family: aircraftFamily(typeCode, f.category),
       }
       map.set(f.icao24, entry)
     }
+    if (needTypes.length) enqueueAircraftTypes(needTypes.slice(0, 400))
     for (const key of map.keys()) if (!seen.has(key)) map.delete(key)
     orderRef.current = Array.from(map.keys())
 
@@ -346,7 +415,11 @@ export function Flights() {
     const map = getMapFrame()
     const mapMode = mapBlend > 0.2
     const frontThreshold = GLOBE_RADIUS / camDist - 0.02
-    const mapHeight = Math.max(0.12, camDist - GLOBE_RADIUS)
+    // Height above the map. Camera distance from the origin grows when the
+    // view is panned, which kept meshes off even at maximum zoom.
+    const mapHeight = map
+      ? Math.max(0.12, state.camera.position.dot(map.origin) - GLOBE_RADIUS)
+      : Math.max(0.12, camDist - GLOBE_RADIUS)
     const fov =
       state.camera instanceof THREE.PerspectiveCamera ? state.camera.fov : 45
     const featureScale = mapFeatureScale()
@@ -356,8 +429,10 @@ export function Flights() {
         : 0
     const glow = glowRef.current
     const bloom = bloomRef.current
+    const bodies = bodyRefs.current
     const mapMesh = mapMeshRef.current
     const mapHalo = mapHaloRef.current
+    _bodyCounts.fill(0)
     beginFlightAnchors()
 
     for (let i = 0; i < count; i++) {
@@ -378,12 +453,13 @@ export function Flights() {
       const isEmergency = e.emergency
       const facing = e.dispVec.dot(_camDir) / (e.dispVec.length() || 1)
       if (
-        !mapMode &&
-        facing < frontThreshold &&
-        !isSelected &&
-        !isHovered &&
-        !isPinned &&
-        !isEmergency
+        !showPlanesRef.current ||
+        (!mapMode &&
+          facing < frontThreshold &&
+          !isSelected &&
+          !isHovered &&
+          !isPinned &&
+          !isEmergency)
       ) {
         // Behind the globe from the viewer — hide this instance (and its pick).
         _dummy.position.copy(e.dispVec)
@@ -442,7 +518,9 @@ export function Flights() {
         : 1
       const emphasis =
         (isSelected
-          ? 2.4
+          ? followFlight
+            ? 1.15
+            : 2.4
           : isEmergency
             ? 2.1
             : isHovered || isPinned
@@ -453,12 +531,21 @@ export function Flights() {
       _dummy.quaternion.setFromRotationMatrix(_basis)
 
       const globeScale = mapEase > 0.85 ? 0 : emphasis * featureScale
-      if (globeScale > 0.02) {
+      const weatherOn = weatherOnRef.current
+      const camDistTo = state.camera.position.distanceTo(e.dispVec)
+      const chaseBody = Boolean(followFlight && isSelected && !mapMode)
+      const showBody =
+        chaseBody ||
+        (!mapMode && camDistTo < BODY_DIST && globeScale > 0.02) ||
+        (mapMode && mapHeight < MAP_BODY_HEIGHT && mapEase > 0.55)
+      if (globeScale > 0.02 && !showBody) {
+        _dummy.scale.setScalar(globeScale * (weatherOn ? 1.62 : 1.4))
+        _dummy.updateMatrix()
+        if (glow) glow.setMatrixAt(i, _dummy.matrix)
         _dummy.scale.setScalar(globeScale)
         _dummy.updateMatrix()
         mesh.setMatrixAt(i, _dummy.matrix)
-        if (glow) glow.setMatrixAt(i, _dummy.matrix)
-        _dummy.scale.setScalar(globeScale * (isSelected || isEmergency ? 1.22 : 1.06))
+        _dummy.scale.setScalar(globeScale * (isSelected || isEmergency ? 1.28 : weatherOn ? 1.18 : 1.16))
         _dummy.updateMatrix()
         if (bloom) bloom.setMatrixAt(i, _dummy.matrix)
       } else {
@@ -471,11 +558,12 @@ export function Flights() {
 
       if (mapMesh && mapHalo) {
         const mapScale = mapGlyph * mapEase * (isSelected ? 1.35 : isHovered || isEmergency ? 1.2 : 1)
-        if (mapScale > 0.02) {
-          _dummy.scale.setScalar(mapScale * 1.85)
+        if (mapScale > 0.02 && !showBody) {
+          _dummy.scale.setScalar(mapScale * 1.2)
           _dummy.updateMatrix()
           mapHalo.setMatrixAt(i, _dummy.matrix)
-          _dummy.scale.setScalar(mapScale)
+          _dummy.position.addScaledVector(_up, 0.0006)
+          _dummy.scale.setScalar(mapScale * 0.78)
           _dummy.updateMatrix()
           mapMesh.setMatrixAt(i, _dummy.matrix)
         } else {
@@ -487,10 +575,24 @@ export function Flights() {
       }
 
       if (pick) {
-        const dist = state.camera.position.distanceTo(e.dispVec)
-        const hitR =
-          pickRadiusForScreen(dist, fov, state.size.height) *
+        const screenR =
+          pickRadiusForScreen(camDistTo, fov, state.size.height) *
           (isEmergency ? 1.35 : 1)
+        // Cover the graphic itself. The visible mesh does not raycast, and a
+        // short screen radius lets the airport disc under a wing take the hit.
+        const glyph =
+          mapGlyph *
+          mapEase *
+          (isSelected ? 1.35 : isHovered || isEmergency ? 1.2 : 1)
+        const spriteR = !showBody ? Math.max(globeScale, glyph) * 0.016 : 0
+        const bodyR = showBody
+          ? (chaseBody
+              ? 0.65
+              : mapMode
+                ? THREE.MathUtils.clamp(mapHeight * 0.95, 0.18, 0.36)
+                : 0.3) * 0.03
+          : 0
+        const hitR = Math.max(screenR, spriteR, bodyR)
         _pickDummy.position.copy(e.dispVec)
         _pickDummy.quaternion.identity()
         _pickDummy.scale.setScalar(hitR)
@@ -508,8 +610,8 @@ export function Flights() {
         } else if (isHovered) {
           _color.copy(MAP_COLOR_HOVER)
         } else {
-          const altT = Math.min(1, e.alt / 12000)
-          _color.copy(MAP_COLOR_LOW).lerp(MAP_COLOR_HIGH, altT)
+          writeFlightColor(_color, colorModeRef.current, e.alt, e.vel, e.airline)
+          punchFlightColor(_color, weatherOn, true)
         }
         if (mapMesh) mapMesh.setColorAt(i, _color)
       } else if (isEmergency) {
@@ -521,14 +623,47 @@ export function Flights() {
       } else if (isHovered) {
         _color.copy(COLOR_HOVER)
       } else {
-        _color.copy(COLOR_OUTLINE)
+        writeFlightColor(_color, colorModeRef.current, e.alt, e.vel, e.airline)
+        punchFlightColor(_color, weatherOn, false)
       }
       mesh.setColorAt(i, _color)
-      if (bloom) bloom.setColorAt(i, _color)
+      if (bloom) {
+        if (weatherOn && !isEmergency && !isSelected) {
+          _color.lerp(COLOR_SELECTED, 0.55)
+        }
+        bloom.setColorAt(i, _color)
+      }
+
+      if (showBody) {
+        const typeCode =
+          e.typeCode || getCachedAircraftType(order[i]!) || ''
+        const family = aircraftFamily(typeCode, e.category)
+        const fi = FAMILY_INDEX[family]
+        const body = bodies[fi]
+        const slot = _bodyCounts[fi]++
+        if (body && slot < MAX_INSTANCES) {
+          const famScale = FAMILY_SCALE[family]
+          const closeBoost = isSelected ? 1.1 : isHovered || isPinned ? 1.05 : 1
+          const bodyScale =
+            (chaseBody
+              ? 0.65
+              : mapMode
+                ? THREE.MathUtils.clamp(mapHeight * 0.95, 0.18, 0.36)
+                : 0.3) *
+            famScale *
+            closeBoost
+          _dummy.position.copy(e.dispVec)
+          _dummy.quaternion.setFromRotationMatrix(_basis)
+          _dummy.scale.setScalar(bodyScale)
+          _dummy.updateMatrix()
+          body.setMatrixAt(slot, _dummy.matrix)
+          body.setColorAt(slot, _color)
+        }
+      }
 
       const mapScale =
         mapGlyph * mapEase * (isSelected ? 1.35 : isHovered || isEmergency ? 1.2 : 1)
-      if (globeScale > 0.02 || mapScale > 0.02) {
+      if (globeScale > 0.02 || mapScale > 0.02 || showBody) {
         const f = useStore.getState().flightsById.get(order[i]!)
         pushFlightAnchor({
           id: order[i]!,
@@ -547,6 +682,13 @@ export function Flights() {
 
     mesh.instanceMatrix.needsUpdate = true
     if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true
+    for (let f = 0; f < AIRCRAFT_FAMILIES.length; f++) {
+      const body = bodies[f]
+      if (!body) continue
+      body.count = _bodyCounts[f]
+      body.instanceMatrix.needsUpdate = true
+      if (body.instanceColor) body.instanceColor.needsUpdate = true
+    }
     if (glow) glow.instanceMatrix.needsUpdate = true
     if (bloom) {
       bloom.instanceMatrix.needsUpdate = true
@@ -561,6 +703,7 @@ export function Flights() {
   })
 
   const drag = useRef({ x: 0, y: 0, moved: false })
+  const hoverEpoch = useRef(0)
   const DRAG_CLICK_THRESHOLD_PX = 5
 
   const onPointerDown = (e: ThreeEvent<PointerEvent>) => {
@@ -583,13 +726,19 @@ export function Flights() {
     e.stopPropagation()
     const icao = orderRef.current[e.instanceId]
     if (!icao) return
+    hoverEpoch.current += 1
     document.body.style.cursor = 'pointer'
     setHoveredFlight(icao, { x: e.clientX, y: e.clientY })
   }
 
   const onPointerOut = () => {
-    document.body.style.cursor = 'default'
-    setHoveredFlight(null)
+    const epoch = hoverEpoch.current
+    // Leaving one plane can land in the same turn as entering the next.
+    queueMicrotask(() => {
+      if (hoverEpoch.current !== epoch) return
+      document.body.style.cursor = 'default'
+      setHoveredFlight(null)
+    })
   }
 
   const onClick = (e: ThreeEvent<MouseEvent>) => {
@@ -652,9 +801,33 @@ export function Flights() {
           side={THREE.DoubleSide}
         />
       </instancedMesh>
+      {AIRCRAFT_FAMILIES.map((fam, fi) => (
+        <instancedMesh
+          key={fam}
+          ref={(el) => {
+            bodyRefs.current[fi] = el
+          }}
+          args={[bodyGeometries[fi], undefined, MAX_INSTANCES]}
+          frustumCulled={false}
+          renderOrder={22}
+          raycast={() => {}}
+        >
+          <meshStandardMaterial
+            color="#e8eef8"
+            metalness={0.28}
+            roughness={0.42}
+            emissive="#6a93c8"
+            emissiveIntensity={0.22}
+            toneMapped={false}
+            transparent
+            opacity={1}
+            depthWrite
+          />
+        </instancedMesh>
+      ))}
       <instancedMesh
         ref={mapHaloRef}
-        args={[mapGeometry, undefined, MAX_INSTANCES]}
+        args={[mapOutlineGeometry, undefined, MAX_INSTANCES]}
         frustumCulled={false}
         renderOrder={22}
         raycast={() => {}}
@@ -663,7 +836,7 @@ export function Flights() {
           color="#000000"
           transparent={false}
           toneMapped={false}
-          depthTest
+          depthTest={false}
           depthWrite={false}
           side={THREE.DoubleSide}
         />
@@ -679,7 +852,7 @@ export function Flights() {
           transparent
           opacity={1}
           toneMapped={false}
-          depthTest
+          depthTest={false}
           depthWrite={false}
           side={THREE.DoubleSide}
         />
@@ -690,6 +863,7 @@ export function Flights() {
         args={[pickGeometry, undefined, MAX_INSTANCES]}
         frustumCulled={false}
         renderOrder={7}
+        userData={{ flightPick: true }}
         onPointerDown={onPointerDown}
         onPointerMove={onPointerMove}
         onPointerOut={onPointerOut}

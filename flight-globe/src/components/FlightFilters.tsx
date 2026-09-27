@@ -9,7 +9,7 @@ import {
   type SpeedBand,
   type TrafficFilters,
 } from '../lib/filters'
-import type { LabelMode, TrailMode } from '../store/useStore'
+import type { ColorMode, TrailMode, WeatherMode } from '../store/useStore'
 
 function Segmented<T extends string>({
   value,
@@ -45,8 +45,10 @@ export function FlightFilters() {
   const resetTrafficFilters = useStore((s) => s.resetTrafficFilters)
   const trailMode = useStore((s) => s.trailMode)
   const setTrailMode = useStore((s) => s.setTrailMode)
-  const labelMode = useStore((s) => s.labelMode)
-  const setLabelMode = useStore((s) => s.setLabelMode)
+  const weatherMode = useStore((s) => s.weatherMode)
+  const setWeatherMode = useStore((s) => s.setWeatherMode)
+  const colorMode = useStore((s) => s.colorMode)
+  const setColorMode = useStore((s) => s.setColorMode)
   const active = trafficFiltersActive(filters)
 
   const patch = (partial: Partial<TrafficFilters>) =>
@@ -190,19 +192,44 @@ export function FlightFilters() {
       </div>
 
       <div className="flight-filters-row">
-        <span className="flight-filters-label">Tags</span>
-        <Segmented<LabelMode>
-          ariaLabel="Callsign labels"
-          value={labelMode}
-          onChange={setLabelMode}
+        <span className="flight-filters-label">Color</span>
+        <Segmented<ColorMode>
+          ariaLabel="Plane color mode"
+          value={colorMode}
+          onChange={setColorMode}
           options={[
             {
-              id: 'auto',
-              label: 'Auto',
-              title: 'More labels as you zoom in',
+              id: 'alt',
+              label: 'Alt',
+              title: 'Low orange → high cyan',
             },
-            { id: 'on', label: 'On', title: 'Always show callsign labels' },
+            {
+              id: 'speed',
+              label: 'Spd',
+              title: 'Slow gold → fast blue',
+            },
+            {
+              id: 'airline',
+              label: 'Aln',
+              title: 'Color by ICAO airline code',
+            },
+          ]}
+        />
+      </div>
+
+      <div className="flight-filters-row">
+        <span className="flight-filters-label">Wx</span>
+        <Segmented<WeatherMode>
+          ariaLabel="Weather overlay"
+          value={weatherMode}
+          onChange={setWeatherMode}
+          options={[
             { id: 'off', label: 'Off' },
+            {
+              id: 'radar',
+              label: 'Radar',
+              title: 'Precipitation on country / 2D map',
+            },
           ]}
         />
       </div>

@@ -122,6 +122,32 @@ function adsbdbProxy(): Plugin {
   }
 }
 
+function seoDevPlugin(): Plugin {
+  return {
+    name: 'flight-globe-seo',
+    configureServer(server) {
+      server.middlewares.use(async (req, res, next) => {
+        const pathOnly = (req.url ?? '/').split('?')[0]
+        if (pathOnly !== '/sitemap.xml') {
+          next()
+          return
+        }
+        try {
+          const { sitemapXml } = await import('./src/lib/seo')
+          const origin = `http://localhost:${server.config.server.port ?? 5180}`
+          const body = sitemapXml(origin)
+          res.statusCode = 200
+          res.setHeader('Content-Type', 'application/xml; charset=utf-8')
+          res.end(body)
+        } catch (e) {
+          res.statusCode = 500
+          res.end(String(e))
+        }
+      })
+    },
+  }
+}
+
 const BACKEND =
   process.env.FLIGHT_BACKEND_URL?.replace(/\/$/, '') || 'http://localhost:8787'
 
@@ -133,6 +159,7 @@ export default defineConfig(({ mode }) => {
   return {
     plugins: [
       react(),
+      seoDevPlugin(),
       adsbLiveProxy(),
       adsbdbProxy(),
       openSkyProxy(env.OPENSKY_CLIENT_ID, env.OPENSKY_CLIENT_SECRET),

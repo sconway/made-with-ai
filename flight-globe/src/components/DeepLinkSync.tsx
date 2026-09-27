@@ -77,7 +77,7 @@ export function DeepLinkSync() {
           setSearchAirportIata(ap.iata)
           setSearchQuery(ap.iata)
           if (link.lat == null && !link.icao && !link.flight) {
-            focusCamera(ap.lat, ap.lon, link.dist ?? 1.75)
+            focusCamera(ap.lat, ap.lon, link.dist ?? 1.48)
           }
         }
       }
