@@ -1,0 +1,8 @@
+User-agent: *
+Allow: /
+Disallow: /api/
+Disallow: /opensky/
+Disallow: /adsbdb/
+Disallow: /adsblive/
+
+Sitemap: /sitemap.xml
