@@ -3,50 +3,143 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Heliotrope — Sun-Mapped Garden Planner</title>
-  <meta name="description" content="Plan your garden on real satellite imagery. Simulate sun and shadow for any date, compute sun-hours maps, and check every plant against the light it will actually get." />
-  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🌻</text></svg>" />
+  <title>Heliotrope — Sun Hours Calculator for Your Garden</title>
+  <meta name="description" content="Free garden sun calculator on satellite imagery. Map hours of direct sun and shade from trees, houses, and fences, then check every plant against the light." />
+  <meta name="robots" content="index,follow,max-image-preview:large,max-snippet:-1,max-video-preview:-1" />
+  <meta name="author" content="Heliotrope" />
+  <meta name="application-name" content="Heliotrope" />
+  <meta name="theme-color" content="#14170e" />
+  <meta name="color-scheme" content="dark" />
+  <meta name="apple-mobile-web-app-title" content="Heliotrope" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <link rel="canonical" href="https://sconway.github.io/made-with-ai/garden-planner/" />
+  <link rel="help" href="https://sconway.github.io/made-with-ai/garden-planner/help.html" title="Field guide" />
+  <link rel="sitemap" type="application/xml" title="Sitemap" href="https://sconway.github.io/made-with-ai/garden-planner/sitemap.xml" />
+  <link rel="manifest" href="manifest.webmanifest" />
+  <link rel="icon" href="favicon.svg" type="image/svg+xml" />
+  <link rel="icon" href="favicon-32.png" type="image/png" sizes="32x32" />
+  <link rel="apple-touch-icon" href="apple-touch-icon.png" sizes="180x180" />
+
+  <meta property="og:type" content="website" />
+  <meta property="og:site_name" content="Heliotrope" />
+  <meta property="og:locale" content="en_US" />
+  <meta property="og:title" content="Heliotrope — Sun Hours Calculator for Your Garden" />
+  <meta property="og:description" content="Map hours of direct sun and shade from trees, houses, and fences on a satellite photo of your yard." />
+  <meta property="og:url" content="https://sconway.github.io/made-with-ai/garden-planner/" />
+  <meta property="og:image" content="https://sconway.github.io/made-with-ai/garden-planner/og-image.png" />
+  <meta property="og:image:type" content="image/png" />
+  <meta property="og:image:width" content="1200" />
+  <meta property="og:image:height" content="630" />
+  <meta property="og:image:alt" content="Heliotrope garden sun calculator: hours of direct sun painted from deep shade to full sun, beside a yard with a house and tree." />
+
+  <meta name="twitter:card" content="summary_large_image" />
+  <meta name="twitter:title" content="Heliotrope — Sun Hours Calculator for Your Garden" />
+  <meta name="twitter:description" content="Map hours of direct sun and shade from trees, houses, and fences on a satellite photo of your yard." />
+  <meta name="twitter:image" content="https://sconway.github.io/made-with-ai/garden-planner/og-image.png" />
+  <meta name="twitter:image:alt" content="Heliotrope garden sun calculator: hours of direct sun painted from deep shade to full sun, beside a yard with a house and tree." />
+
+  <script async src="https://www.googletagmanager.com/gtag/js?id=G-YGCVS443SX"></script>
+  <script>
+    window.dataLayer = window.dataLayer || [];
+    function gtag(){dataLayer.push(arguments);}
+    gtag('js', new Date());
+    if (location.hostname !== 'localhost' && location.hostname !== '127.0.0.1') {
+      gtag('config', 'G-YGCVS443SX');
+    }
+  </script>
+
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@graph": [
+      {
+        "@type": "WebSite",
+        "@id": "https://sconway.github.io/made-with-ai/garden-planner/#website",
+        "url": "https://sconway.github.io/made-with-ai/garden-planner/",
+        "name": "Heliotrope",
+        "description": "Garden sun calculator that maps hours of direct sun and shade on satellite imagery.",
+        "inLanguage": "en",
+        "publisher": { "@id": "https://sconway.github.io/made-with-ai/#org" }
+      },
+      {
+        "@type": "WebApplication",
+        "@id": "https://sconway.github.io/made-with-ai/garden-planner/#app",
+        "name": "Heliotrope",
+        "url": "https://sconway.github.io/made-with-ai/garden-planner/",
+        "image": "https://sconway.github.io/made-with-ai/garden-planner/og-image.png",
+        "screenshot": "https://sconway.github.io/made-with-ai/garden-planner/og-image.png",
+        "description": "Free garden sun calculator on satellite imagery. Map hours of direct sun and shade from trees, houses, and fences, then check every plant against the light.",
+        "applicationCategory": "LifestyleApplication",
+        "applicationSubCategory": "Garden planner",
+        "operatingSystem": "Any",
+        "browserRequirements": "Requires JavaScript. Works in current versions of Chrome, Safari, Firefox, and Edge.",
+        "isAccessibleForFree": true,
+        "inLanguage": "en",
+        "offers": { "@type": "Offer", "price": "0", "priceCurrency": "USD" },
+        "featureList": [
+          "Address search on satellite imagery",
+          "Sun-hour map for any date",
+          "Shadows from trees, buildings, and fences",
+          "Season presets for solstices and equinoxes",
+          "Light probe for a single spot",
+          "Plant library with sun requirements and companions"
+        ]
+      },
+      {
+        "@type": "Organization",
+        "@id": "https://sconway.github.io/made-with-ai/#org",
+        "name": "Made With AI",
+        "url": "https://sconway.github.io/made-with-ai/"
+      }
+    ]
+  }
+  </script>
 
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link rel="preconnect" href="https://unpkg.com" />
+  <link rel="preconnect" href="https://server.arcgisonline.com" />
   <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,600;9..144,700&family=Spline+Sans+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
 
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
     integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="" />
-  <link rel="stylesheet" href="styles.css?v=6" />
+  <link rel="stylesheet" href="styles.css?v=8" />
 </head>
 <body>
-  <div id="map"></div>
-  <canvas id="overlay"></canvas>
+  <a class="skip" href="#search">Skip to yard search</a>
+  <main id="map" aria-label="Satellite map of your garden"></main>
+  <canvas id="overlay" aria-hidden="true"></canvas>
 
   <!-- ======== top bar ======== -->
-  <div id="topbar">
+  <header id="topbar">
     <div id="brand" class="panel">
-      <span class="name">Heliotrope<span class="glyph">&nbsp;☀</span></span>
-      <span class="tag">sun-mapped garden planning</span>
+      <h1 class="name">Heliotrope<span class="glyph" aria-hidden="true">&nbsp;☀</span></h1>
+      <p class="tag">sun-mapped garden planning</p>
     </div>
-    <div id="searchwrap">
+    <div id="searchwrap" role="search">
       <div id="searchbox" class="panel">
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
           <circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/>
         </svg>
-        <input id="search" type="text" autocomplete="off" spellcheck="false"
+        <label class="sr-only" for="search">Find your yard by address, city, or landmark</label>
+        <input id="search" type="text" autocomplete="off" spellcheck="false" enterkeyhint="search"
           placeholder="Find your yard — address, city, or landmark…" />
-        <button id="locbtn" title="Use my location">◎</button>
+        <button id="locbtn" type="button" title="Use my location" aria-label="Use my location">◎</button>
       </div>
       <div id="results" class="panel"></div>
     </div>
     <div id="topactions">
-      <a class="chip" href="help.html" title="How to use Heliotrope">✦ Guide</a>
-      <button class="chip" id="exportbtn" title="Download garden as JSON">⇩ Export</button>
-      <button class="chip" id="importbtn" title="Load garden from JSON">⇧ Import</button>
-      <button class="chip" id="clearbtn" title="Clear the whole garden">✕ Clear</button>
+      <a class="chip" href="help.html" title="How to map sun hours and shade">✦ Field guide</a>
+      <button class="chip" id="exportbtn" type="button" title="Download garden as JSON">⇩ Export</button>
+      <button class="chip" id="importbtn" type="button" title="Load garden from JSON">⇧ Import</button>
+      <button class="chip" id="clearbtn" type="button" title="Clear the whole garden">✕ Clear</button>
       <input id="importfile" type="file" accept=".json,application/json" hidden />
     </div>
-  </div>
+  </header>
 
   <!-- ======== tool rail ======== -->
-  <div id="toolrail" class="panel">
+  <nav id="toolrail" class="panel" aria-label="Garden tools">
     <button class="tool on" data-tool="select">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round">
         <path d="M6 3l12 8.5-5.2 1.1L15 19l-2.6 1.2-2.2-6.4L6 17V3z"/>
@@ -108,20 +201,21 @@
       </svg>
       <span class="tip">Undo<b>⌘Z</b></span>
     </button>
-  </div>
+  </nav>
 
   <!-- ======== plant drawer ======== -->
-  <div id="plantdrawer" class="panel">
+  <aside id="plantdrawer" class="panel" aria-label="Plant library">
     <header>
       <h2 class="paneltitle">Plant library</h2>
+      <label class="sr-only" for="plantsearch">Search plants</label>
       <input id="plantsearch" type="text" placeholder="Search plants…" autocomplete="off" spellcheck="false" />
     </header>
     <div id="plantcats"></div>
     <div id="plantlist"></div>
-  </div>
+  </aside>
 
   <!-- ======== right column ======== -->
-  <div id="rightcol">
+  <aside id="rightcol" aria-label="Garden details">
     <div id="guide" class="panel">
       <div class="guide-head">
         <h2 class="paneltitle">Getting started</h2>
@@ -142,20 +236,20 @@
       </div>
       <div id="warnings"></div>
     </div>
-    <button class="guide-relink" id="guide-reopen" hidden>↺ Getting started</button>
-  </div>
+    <button class="guide-relink" id="guide-reopen" type="button" hidden>↺ Getting started</button>
+  </aside>
 
   <!-- ======== bottom dock ======== -->
-  <div id="dock" class="panel">
+  <div id="dock" class="panel" role="region" aria-label="Sun, date, and map layers">
     <div class="row">
-      <button id="playbtn" title="Animate the day">▶</button>
+      <button id="playbtn" type="button" title="Animate the day" aria-label="Animate the day">▶</button>
       <div class="sliderwrap">
         <div class="lab"><span id="riselab">—</span><span class="cur" id="timelab">12:00pm</span><span id="setlab">—</span></div>
-        <input id="timeslider" class="fat" type="range" min="0" max="24" step="0.05" value="12" />
+        <input id="timeslider" class="fat" type="range" min="0" max="24" step="0.05" value="12" aria-label="Time of day" />
       </div>
       <div class="sliderwrap" style="max-width:230px">
         <div class="lab"><span>JAN</span><span class="cur" id="datelab">Jun 21</span><span>DEC</span></div>
-        <input id="dateslider" class="fat" type="range" min="1" max="365" step="1" value="172" />
+        <input id="dateslider" class="fat" type="range" min="1" max="365" step="1" value="172" aria-label="Day of year" />
       </div>
     </div>
     <div class="row">
@@ -184,7 +278,7 @@
   </div>
 
   <!-- ======== sun dial ======== -->
-  <div id="sundial" class="panel">
+  <div id="sundial" class="panel" role="region" aria-label="Sun dial">
     <h2 class="paneltitle" style="font-size:13px">Sun dial</h2>
     <svg id="dialbox" width="128" height="128" viewBox="0 0 128 128"></svg>
     <div id="sunfacts">
@@ -201,16 +295,16 @@
   <!-- ======== intro ======== -->
   <div id="intro">
     <div id="introcard" class="panel">
-      <h1>Heliotrope
+      <p class="intro-title" id="intro-title">Heliotrope
         <span class="sub">sun-mapped garden planning · on real satellite imagery</span>
-      </h1>
+      </p>
       <div class="steps">
         <div class="step"><span class="num">1</span><span><b>Find your yard.</b> Search your address — the map flies to a satellite view of your actual garden, and the sun math locks to your latitude.</span></div>
         <div class="step"><span class="num">2</span><span><b>Trace what's there.</b> Drag out beds over the soil you can see, then outline trees, buildings and fences with their real heights — they will cast the shadows.</span></div>
         <div class="step"><span class="num">3</span><span><b>Plant by the light.</b> Scrub through the day and the seasons, switch on the sun-hours map, and Heliotrope flags every plant that won't get the light it needs.</span></div>
       </div>
-      <button id="introgo">Begin — find my garden</button>
-      <p class="fine" style="text-align:center"><a href="help.html" style="color:var(--brass); font-size:11px; letter-spacing:0.08em">☞ New here? Read the two-minute field guide</a></p>
+      <button id="introgo" type="button">Begin — find my garden</button>
+      <p class="fine" style="text-align:center"><a href="help.html" style="color:var(--brass); font-size:11px; letter-spacing:0.08em">☞ Read the field guide to sun hours and shade</a></p>
       <p class="fine">Imagery © Esri &amp; partners · Geocoding © OpenStreetMap/Nominatim · Clear-sky solar model — real light varies with weather and terrain. Your design saves in this browser automatically.</p>
     </div>
   </div>
