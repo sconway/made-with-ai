@@ -83,7 +83,8 @@
           "Shadows from trees, buildings, and fences",
           "Season presets for solstices and equinoxes",
           "Light probe for a single spot",
-          "Plant library with sun requirements and companions"
+          "Plant library with sun requirements and companions",
+          "Lawn areas with grass, seed, fertilizer, and watering advice"
         ]
       },
       {
@@ -104,7 +105,7 @@
 
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
     integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="" />
-  <link rel="stylesheet" href="styles.css?v=8" />
+  <link rel="stylesheet" href="styles.css?v=19" />
 </head>
 <body>
   <a class="skip" href="#search">Skip to yard search</a>
@@ -144,7 +145,7 @@
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round">
         <path d="M6 3l12 8.5-5.2 1.1L15 19l-2.6 1.2-2.2-6.4L6 17V3z"/>
       </svg>
-      <span class="tip">Select &amp; move<b>V</b></span>
+      <span class="tip">Select &amp; move · Shift for several<b>V</b></span>
     </button>
     <div class="rail-rule"></div>
     <button class="tool" data-tool="bed">
@@ -152,6 +153,15 @@
         <path d="M4 8l16-3v11l-16 3V8z"/><path d="M8 7.2v11M13 6.3v11M18 5.4v11" opacity="0.55"/>
       </svg>
       <span class="tip">Draw garden bed<b>B</b></span>
+    </button>
+    <button class="tool" data-tool="lawn">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M4 20h16"/>
+        <path d="M8 20c.2-6 1.6-9 4-13"/>
+        <path d="M12 20c.4-5 2.2-8 5-11"/>
+        <path d="M6 20c-.4-4-.2-7 1.5-10"/>
+      </svg>
+      <span class="tip">Draw lawn<b>G</b></span>
     </button>
     <button class="tool" data-tool="plant">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
@@ -202,6 +212,39 @@
       <span class="tip">Undo<b>⌘Z</b></span>
     </button>
   </nav>
+
+  <aside id="shortcuts" class="panel" aria-label="Shortcuts">
+    <div class="sc-head">
+      <h2 class="paneltitle">Shortcuts</h2>
+      <button class="guide-x" id="shortcuts-close" type="button" aria-label="Close shortcuts">✕</button>
+    </div>
+    <p class="sc-group">Selecting</p>
+    <dl>
+      <div><dt>Click</dt><dd>Select one item</dd></div>
+      <div><dt><kbd>Shift</kbd>-click</dt><dd>Add it, or drop it if it is already selected</dd></div>
+      <div><dt><kbd>Shift</kbd>-drag</dt><dd>Draw a box and select everything inside</dd></div>
+      <div><dt>Drag</dt><dd>Move what is selected. A group moves together.</dd></div>
+      <div><dt><kbd>Delete</kbd></dt><dd>Remove the selection</dd></div>
+    </dl>
+    <p class="sc-group">Drawing</p>
+    <dl>
+      <div><dt>Drag</dt><dd>A rectangle, or a straight fence</dd></div>
+      <div><dt>Drag a corner</dt><dd>Reshape or move it. A click, without dragging, keeps drawing.</dd></div>
+      <div><dt>Click corners</dt><dd>An outline that is not a rectangle</dd></div>
+      <div><dt><kbd>Shift</kbd></dt><dd>Square it, or snap a fence or a rotation to 15°</dd></div>
+      <div><dt><kbd>Alt</kbd></dt><dd>Ignore snapping for that gesture</dd></div>
+      <div><dt><kbd>Enter</kbd></dt><dd>Close the outline. Double-click does too.</dd></div>
+    </dl>
+    <p class="sc-group">Keys</p>
+    <dl>
+      <div><dt><kbd>V</kbd> <kbd>B</kbd> <kbd>G</kbd></dt><dd>Select, bed, lawn</dd></div>
+      <div><dt><kbd>P</kbd> <kbd>T</kbd> <kbd>U</kbd></dt><dd>Plant, tree, building</dd></div>
+      <div><dt><kbd>F</kbd> <kbd>L</kbd> <kbd>E</kbd></dt><dd>Fence, light probe, erase</dd></div>
+      <div><dt><kbd>⌘Z</kbd></dt><dd>Undo. Ctrl-Z does the same.</dd></div>
+      <div><dt><kbd>Esc</kbd></dt><dd>Cancel drawing, or clear the selection</dd></div>
+      <div><dt><kbd>Space</kbd></dt><dd>Play or pause the day</dd></div>
+    </dl>
+  </aside>
 
   <!-- ======== plant drawer ======== -->
   <aside id="plantdrawer" class="panel" aria-label="Plant library">
@@ -255,7 +298,7 @@
     <div class="row">
       <div id="seasons">
         <button class="season" data-doy="80">Spring eqx</button>
-        <button class="season on" data-doy="172">Summer sol</button>
+        <button class="season" data-doy="172">Summer sol</button>
         <button class="season" data-doy="266">Fall eqx</button>
         <button class="season" data-doy="355">Winter sol</button>
       </div>
@@ -289,7 +332,6 @@
     <div id="sunwarn">clear-sky model · local solar time</div>
   </div>
 
-  <div id="hint"></div>
   <div id="toast"></div>
 
   <!-- ======== intro ======== -->
@@ -300,7 +342,7 @@
       </p>
       <div class="steps">
         <div class="step"><span class="num">1</span><span><b>Find your yard.</b> Search your address — the map flies to a satellite view of your actual garden, and the sun math locks to your latitude.</span></div>
-        <div class="step"><span class="num">2</span><span><b>Trace what's there.</b> Drag out beds over the soil you can see, then outline trees, buildings and fences with their real heights — they will cast the shadows.</span></div>
+        <div class="step"><span class="num">2</span><span><b>Trace what's there.</b> Drag out beds or a lawn over the ground you can see, then outline trees, buildings and fences with their real heights — they will cast the shadows.</span></div>
         <div class="step"><span class="num">3</span><span><b>Plant by the light.</b> Scrub through the day and the seasons, switch on the sun-hours map, and Heliotrope flags every plant that won't get the light it needs.</span></div>
       </div>
       <button id="introgo" type="button">Begin — find my garden</button>
@@ -313,6 +355,7 @@
     integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
   <script src="js/sun.js?v=6"></script>
   <script src="js/plants.js?v=6"></script>
-  <script src="js/app.js?v=6"></script>
+  <script src="js/grass.js?v=8"></script>
+  <script src="js/app.js?v=16"></script>
 </body>
 </html>

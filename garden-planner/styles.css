@@ -25,6 +25,8 @@
   --font-display: 'Fraunces', Georgia, serif;
   --font-mono: 'Spline Sans Mono', ui-monospace, Menlo, monospace;
   --rail-w: 56px;
+  /* The sun dial is fixed at the bottom-right. The right column stops above it. */
+  --dial-clearance: 268px;
 }
 
 * { box-sizing: border-box; }
@@ -369,18 +371,50 @@ a.chip { text-decoration: none; }
   position: fixed;
   right: 14px;
   top: 74px;
-  bottom: 130px;
+  bottom: var(--dial-clearance);
   z-index: 18;
   width: 304px;
   display: flex;
   flex-direction: column;
   gap: 10px;
+  overflow-y: auto;
+  scrollbar-width: thin;
   pointer-events: none;
 }
 #rightcol > * { pointer-events: auto; }
 
 #inspector { padding: 16px; display: none; }
-#inspector.open { display: block; }
+/* Once something is selected, keep the advice on screen under the checklist. */
+#rightcol:has(#inspector.open) #guide {
+  flex: none;
+  max-height: min(160px, 24vh);
+  overflow-y: auto;
+  scrollbar-width: thin;
+}
+#inspector.open {
+  display: block;
+  flex: 1 1 auto;
+  overflow-y: auto;
+  min-height: 140px;
+  scrollbar-width: thin;
+}
+.sellist {
+  margin: 10px 0 0;
+  padding: 0;
+  list-style: none;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--ink);
+}
+.lawnblock { margin-top: 11px; }
+.lawnblock h3 {
+  margin: 0 0 3px;
+  font-family: var(--font-display);
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--brass);
+}
+.lawnblock p { margin: 0; }
 #inspector .kind {
   font-size: 10px;
   letter-spacing: 0.16em;
@@ -756,28 +790,59 @@ input[type='range'].fat::-moz-range-thumb {
 }
 #toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
 
-#hint {
-  position: fixed;
-  left: 50%;
-  bottom: 108px;
-  transform: translateX(-50%);
-  z-index: 15;
-  background: rgba(10, 12, 6, 0.82);
-  border: 1px solid var(--panel-edge);
-  border-radius: 20px;
-  padding: 7px 16px;
-  font-size: 11px;
-  color: var(--ink-dim);
-  pointer-events: none;
-  opacity: 0;
-  transition: opacity 0.2s;
-  /* the dock grows a row when the legend opens, so JS pins this above it */
-  max-width: calc(100vw - 32px);
-  text-align: center;
-  line-height: 1.5;
+.leaflet-control-zoom a.shortcuts-btn {
+  font-family: var(--font-display);
+  font-weight: 600;
+  font-size: 16px;
+  line-height: 26px;
 }
-#hint.show { opacity: 1; }
-#hint b { color: var(--brass); font-weight: 400; }
+.leaflet-control-zoom a.shortcuts-btn.on {
+  background: #e8b64c;
+  color: #241b06;
+}
+
+#shortcuts {
+  position: fixed;
+  left: calc(14px + var(--rail-w) + 12px);
+  top: 74px;
+  z-index: 24;
+  width: min(340px, calc(100vw - 100px));
+  max-height: calc(100vh - 230px);
+  overflow: auto;
+  padding: 14px 16px 16px;
+  display: none;
+  scrollbar-width: thin;
+}
+#shortcuts.open { display: block; }
+#shortcuts .sc-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+#shortcuts .sc-group {
+  margin: 14px 0 2px;
+  font-size: 10px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--brass);
+}
+#shortcuts dl { margin: 0; }
+#shortcuts dl div {
+  display: grid;
+  grid-template-columns: 108px 1fr;
+  gap: 8px;
+  align-items: baseline;
+  padding: 5px 0;
+  border-bottom: 1px solid rgba(236, 231, 212, 0.06);
+  font-size: 11px;
+  line-height: 1.35;
+}
+#shortcuts dt { color: var(--ink); }
+#shortcuts dd { margin: 0; color: var(--ink-dim); }
+#shortcuts kbd {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--brass);
+  border: 1px solid var(--panel-edge-lit);
+  border-radius: 3px;
+  padding: 0 4px;
+}
 
 #intro {
   position: fixed;
@@ -860,8 +925,6 @@ input[type='range'].fat::-moz-range-thumb {
   /* keep the inspector (plant cards, light probe) — drop only the ledger */
   #rightcol {
     width: 264px;
-    bottom: auto;
-    max-height: calc(100vh - 260px);
     overflow-y: auto; /* checklist + a long plant card can outrun the column */
     scrollbar-width: thin;
   }

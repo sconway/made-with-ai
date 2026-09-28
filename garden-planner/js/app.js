@@ -6,6 +6,15 @@
   'use strict';
 
   const YEAR = new Date().getFullYear();
+  /** Day-of-year for the local calendar date, matching dateLabel (1 = Jan 1). */
+  function todayDoy() {
+    const now = new Date();
+    const start = Date.UTC(now.getFullYear(), 0, 1);
+    const today = Date.UTC(now.getFullYear(), now.getMonth(), now.getDate());
+    return Math.round((today - start) / 86400000) + 1;
+  }
+  const PRESET_DOYS = [80, 172, 266, 355];
+  const isPresetDoy = (doy) => PRESET_DOYS.includes(doy);
   const R = Math.PI / 180;
   /* Below this altitude the sun is behind the neighborhood's own horizon —
      the far treeline, roofs, the slope of the land — none of which this app
@@ -34,18 +43,23 @@
     tool: 'select',
     selectedPlant: null,        // plant id armed in the drawer
     plantCat: 'All',
-    objects: { beds: [], trees: [], buildings: [], fences: [], plants: [] },
+    objects: { beds: [], lawns: [], trees: [], buildings: [], fences: [], plants: [] },
     rev: 0,                     // bumped on any object mutation
-    selection: null,            // { type, id }
+    selection: null,            // primary { type, id } — the inspector follows this
+    extra: [],                  // more { type, id } in a multi-selection
     drawing: null,              // { type, pts: [latlng], cursor: latlng }
     rectDraw: null,             // { type, start, cur, moved, shift } — drag-to-draw
     drag: null,
-    doy: 172,
+    marquee: null,              // shift-drag box select { x0, y0, x1, y1, moved }
+    doy: todayDoy(),
+    manualDoy: todayDoy(),       // date to restore when a season preset is turned off
     time: 12,
     playing: false,
     show: { shadows: true, heatmap: false, best: false, trails: false, spread: true, labels: true, snap: true },
     probe: null,                // { latlng } — the light-probe marker
     snap: null,                 // { at: latlng, marks: [...] } — live snap feedback
+    hover: null,                 // { type, id } under the pointer while a draw tool is active
+    arm: null,                   // grip pressed, not yet dragged — a click still draws
     loc: { lat: 39.8283, lng: -98.5795 },
     day: null,                  // Sun.dayInfo cache
     heat: null,                 // { canvas, bounds, grid, cell, nx, ny, rev, doy }
@@ -368,6 +382,7 @@
     const o = state.objects;
     const pts = [];
     o.beds.forEach((b) => pts.push(...b.pts));
+    o.lawns.forEach((b) => pts.push(...b.pts));
     o.plants.forEach((p) => pts.push(p.latlng));
     if (!pts.length) {
       o.trees.forEach((t) => pts.push(t.latlng));
@@ -438,7 +453,7 @@
     heatShade.forHeat = null; // force a recolor for the new grid
     ensureHeatColors();
     updateSummary();
-    if (state.selection && state.selection.type === 'plants') openInspector();
+    refreshSunSelection();
   }
 
   /* The displayed rasters follow the TIME slider: they show sun accumulated
@@ -599,6 +614,23 @@
         ctx.drawImage(bestCv, nw.x, nw.y, se.x - nw.x, se.y - nw.y);
       }
       ctx.restore();
+    }
+
+    // --- lawns, under the beds so a bed drawn on turf stays on top ---
+    for (const b of state.objects.lawns) {
+      const pts = b.pts.map(CP);
+      ctx.beginPath();
+      pts.forEach((p, i) => (i ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y)));
+      ctx.closePath();
+      ctx.fillStyle = state.show.heatmap ? 'rgba(70,120,55,0.16)' : 'rgba(70,120,55,0.38)';
+      ctx.fill();
+      ctx.strokeStyle = isSel('lawns', b.id) ? '#ffd97a' : 'rgba(164,196,101,0.95)';
+      ctx.lineWidth = isSel('lawns', b.id) ? 2.5 : 1.6;
+      ctx.stroke();
+      if (state.show.labels && showDetail) {
+        const c = polyCenterPx(pts);
+        label(`${b.name} · ${Math.round(polygonAreaM2(b.pts) * 10.7639)} ft²`, c.x, c.y, '#d5e7b8');
+      }
     }
 
     // --- beds ---
@@ -775,7 +807,9 @@
       pts.forEach((p, i) => (i ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y)));
       if (r.type !== 'fence') {
         ctx.closePath();
-        ctx.fillStyle = r.type === 'bed' ? 'rgba(122,84,48,0.28)' : 'rgba(105,110,122,0.28)';
+        ctx.fillStyle = r.type === 'bed' ? 'rgba(122,84,48,0.28)'
+          : r.type === 'lawn' ? 'rgba(70,120,55,0.34)'
+          : 'rgba(105,110,122,0.28)';
         ctx.fill();
       }
       ctx.stroke();
@@ -852,8 +886,27 @@
       ctx.restore();
     }
 
-    // --- selection handles ---
-    if (state.selection && showDetail) drawHandles();
+    // --- selection handles (a group moves as a whole, so it has no grips) ---
+    if (showDetail && state.selection && !state.extra.length) drawHandles();
+    // While a draw tool is active, hovering another shape reveals the same grips.
+    if (showDetail && state.hover && !state.extra.length &&
+        !(state.selection && state.selection.type === state.hover.type && state.selection.id === state.hover.id)) {
+      drawHandles(state.hover);
+    }
+
+    if (state.marquee && state.marquee.moved) {
+      const m = state.marquee;
+      const x = Math.min(m.x0, m.x1), y = Math.min(m.y0, m.y1);
+      const rw = Math.abs(m.x1 - m.x0), rh = Math.abs(m.y1 - m.y0);
+      ctx.save();
+      ctx.fillStyle = 'rgba(255,217,122,0.14)';
+      ctx.strokeStyle = '#ffd97a';
+      ctx.lineWidth = 1.25;
+      ctx.setLineDash([4, 3]);
+      ctx.fillRect(x, y, rw, rh);
+      ctx.strokeRect(x, y, rw, rh);
+      ctx.restore();
+    }
 
     // --- dusk / dawn / night tint ---
     if (altD < 10) {
@@ -897,7 +950,67 @@
     return { x: x / pts.length, y: y / pts.length };
   }
   function isSel(type, id) {
-    return state.selection && state.selection.type === type && state.selection.id === id;
+    if (state.selection && state.selection.type === type && state.selection.id === id) return true;
+    return state.extra.some((s) => s.type === type && s.id === id);
+  }
+
+  function selectOne(sel) {
+    state.extra = [];
+    state.selection = sel;
+  }
+  function clearSelection() {
+    state.selection = null;
+    state.extra = [];
+  }
+
+  /** Live objects in the current selection, primary first. The probe stays single. */
+  function selectedMembers() {
+    const out = [];
+    const push = (s) => {
+      if (!s || s.type === 'probe') return;
+      const obj = state.objects[s.type] && state.objects[s.type].find((o) => o.id === s.id);
+      if (obj) out.push({ type: s.type, id: s.id, obj });
+    };
+    push(state.selection);
+    state.extra.forEach(push);
+    return out;
+  }
+
+  function pruneSelection() {
+    const live = (s) => s && s.type !== 'probe' && state.objects[s.type] && state.objects[s.type].some((o) => o.id === s.id);
+    if (state.selection && state.selection.type !== 'probe' && !live(state.selection)) state.selection = null;
+    state.extra = state.extra.filter(live);
+    if (!state.selection && state.extra.length) state.selection = state.extra.shift();
+  }
+
+  function toggleSelection(hit) {
+    const type = hit.type, id = hit.obj.id;
+    if (type === 'probe' || (state.selection && state.selection.type === 'probe')) {
+      selectOne({ type, id });
+      return;
+    }
+    if (!state.selection) { state.selection = { type, id }; return; }
+    if (state.selection.type === type && state.selection.id === id) {
+      state.selection = state.extra.shift() || null;
+      return;
+    }
+    const i = state.extra.findIndex((s) => s.type === type && s.id === id);
+    if (i >= 0) state.extra.splice(i, 1);
+    else state.extra.push({ type, id });
+  }
+
+  function forgetSelection(type, id) {
+    state.extra = state.extra.filter((s) => !(s.type === type && s.id === id));
+    if (state.selection && state.selection.type === type && state.selection.id === id) {
+      state.selection = state.extra.shift() || null;
+    }
+  }
+
+  const MEMBER_KIND = { plants: 'Plant', trees: 'Tree', beds: 'Bed', lawns: 'Lawn', buildings: 'Building', fences: 'Fence' };
+  function memberLabel(type, obj) {
+    if (type === 'plants') return (PLANT_INDEX[obj.plantId] && PLANT_INDEX[obj.plantId].name) || 'Plant';
+    if (obj.name) return obj.name;
+    return MEMBER_KIND[type] || 'Item';
   }
 
   function selectedObj() {
@@ -915,8 +1028,11 @@
     return { x: c.x, y: top - 20, anchorY: top };
   }
 
-  function drawHandles() {
-    const o = selectedObj();
+  function drawHandles(ref) {
+    const spec = ref || state.selection;
+    if (!spec || spec.type === 'probe') return;
+    if (!ref && state.extra.length) return;
+    const o = (state.objects[spec.type] || []).find((x) => x.id === spec.id);
     if (!o) return;
     if (o.pts) {
       o.pts.forEach((ll) => {
@@ -946,7 +1062,7 @@
         ctx.stroke();
         ctx.restore();
       }
-    } else if (state.selection.type === 'trees') {
+    } else if (spec.type === 'trees') {
       const p = CP(o.latlng);
       const hp = CP(destLatLng(o.latlng, o.canopy, 0));
       ctx.beginPath();
@@ -1052,6 +1168,18 @@
         }
       }
     }
+    for (const lawn of state.objects.lawns) {
+      const profile = lawnProfile(lawn);
+      if (!profile) continue;
+      const h = Math.min(profile.summer.mean, profile.equinox.mean);
+      if (h < 3) {
+        warns.push({ level: 'bad', icon: '✗', focus: lawn, focusType: 'lawns',
+          text: `${lawn.name}: ${h.toFixed(1)}h at the equinox or solstice — turf will struggle here` });
+      } else if (Math.max(profile.summer.shade, profile.equinox.shade) >= 0.5) {
+        warns.push({ level: 'warn', icon: '⚠', focus: lawn, focusType: 'lawns',
+          text: `${lawn.name}: half the area is under 4h of sun at the equinox or the solstice` });
+      }
+    }
     return warns;
   }
 
@@ -1065,8 +1193,8 @@
     const box = document.getElementById('warnings');
     box.innerHTML = '';
     const warns = gatherWarnings();
-    if (!o.plants.length && !o.beds.length) {
-      box.innerHTML = `<div class="allclear" style="color:var(--ink-faint)">Nothing planted yet — trace a bed and open the plant library.</div>`;
+    if (!o.plants.length && !o.beds.length && !o.lawns.length) {
+      box.innerHTML = `<div class="allclear" style="color:var(--ink-faint)">Nothing planted yet — trace a bed or a lawn.</div>`;
       return;
     }
     if (!warns.length) {
@@ -1081,8 +1209,9 @@
       el.innerHTML = `<span class="ic">${w2.icon}</span><span>${w2.text}</span>`;
       el.addEventListener('click', () => {
         if (w2.focus) {
-          map.panTo(w2.focus.latlng);
-          state.selection = { type: 'plants', id: w2.focus.id };
+          const ll = w2.focus.latlng || polyCenterLL(w2.focus.pts);
+          map.panTo(ll);
+          selectOne({ type: w2.focusType || 'plants', id: w2.focus.id });
           openInspector();
           requestRender();
         }
@@ -1268,11 +1397,115 @@
   }
 
   /* ============================================================
+     Lawn sun — sampled across the outline, not one point.
+     The grass pick uses the shadier of the summer solstice and the local equinox,
+     so a June-only reading does not hide the shade a house throws in spring and fall.
+     The date slider is reported alongside it.
+     ============================================================ */
+  const lawnCache = new Map();
+
+  function samplePolygon(pts) {
+    const lat0 = pts.reduce((s, p) => s + p.lat, 0) / pts.length;
+    const kx = mPerDegLng(lat0);
+    let minN = Infinity, minE = Infinity, maxN = -Infinity, maxE = -Infinity;
+    pts.forEach((p) => {
+      minN = Math.min(minN, p.lat); maxN = Math.max(maxN, p.lat);
+      minE = Math.min(minE, p.lng); maxE = Math.max(maxE, p.lng);
+    });
+    const wM = Math.max((maxE - minE) * kx, 0.5);
+    const hM = Math.max((maxN - minN) * M_PER_DEG_LAT, 0.5);
+    const step = Math.min(4, Math.max(0.75, Math.sqrt(Math.max(polygonAreaM2(pts), 0.5) / 32)));
+    const out = [];
+    for (let y = step / 2; y < hM; y += step) {
+      for (let x = step / 2; x < wM; x += step) {
+        const ll = L.latLng(minN + y / M_PER_DEG_LAT, minE + x / kx);
+        if (pointInPoly(ll, pts)) out.push(ll);
+      }
+    }
+    if (!out.length) out.push(polyCenterLL(pts));
+    if (out.length > 48) {
+      const stride = Math.ceil(out.length / 48);
+      return out.filter((_, i) => i % stride === 0);
+    }
+    return out;
+  }
+
+  function summarizeHours(list) {
+    const n = list.length || 1;
+    const mean = list.reduce((s, h) => s + h, 0) / n;
+    return {
+      mean,
+      min: Math.min(...list),
+      full: list.filter((h) => h >= 6).length / n,
+      shade: list.filter((h) => h < 4).length / n,
+      n,
+    };
+  }
+
+  function hoursOnDay(ll, doy) {
+    if (doy === state.doy && state.heat && !heatStale()) {
+      const h = sampleSunHours(ll);
+      if (h !== null) return h;
+    }
+    const info = Sun.dayInfo(YEAR, doy, state.loc.lat, state.loc.lng, tz());
+    if (!info || info.polarNight) return 0;
+    const t0 = info.sunrise ?? 0, t1 = info.sunset ?? 24;
+    const n = 24;
+    const dt = (t1 - t0) / n;
+    const month = monthOfDoy(doy);
+    let sunH = 0;
+    for (let i = 0; i < n; i++) {
+      const t = t0 + (i + 0.5) * dt;
+      const sun = Sun.position(Sun.localDate(YEAR, doy, t, tz()), state.loc.lat, state.loc.lng);
+      sunH += (1 - shadeAtPoint(ll, sun, month).block) * dt;
+    }
+    return sunH;
+  }
+
+  function lawnProfile(lawn) {
+    const heatKey = state.heat && !heatStale() ? String(state.heat.doy) : 'x';
+    const key = `${state.rev}|${state.doy}|${state.loc.lat.toFixed(2)}|${state.loc.lng.toFixed(2)}|${heatKey}`;
+    const hit = lawnCache.get(lawn.id);
+    if (hit && hit.key === key) return hit.value;
+    const pts = samplePolygon(lawn.pts);
+    const summerDoy = state.loc.lat >= 0 ? 172 : 355;
+    const equinoxDoy = state.loc.lat >= 0 ? 80 : 266;
+    const at = (doy) => summarizeHours(pts.map((ll) => hoursOnDay(ll, doy)));
+    const summer = at(summerDoy);
+    const equinox = equinoxDoy === summerDoy ? summer : at(equinoxDoy);
+    const now = state.doy === summerDoy ? summer : state.doy === equinoxDoy ? equinox : at(state.doy);
+    const value = { summer, equinox, now };
+    lawnCache.set(lawn.id, { key, value });
+    return value;
+  }
+
+  function refreshSunSelection() {
+    if (state.extra.length) return;
+    const t = state.selection && state.selection.type;
+    if (t === 'probe' || t === 'lawns' || t === 'plants') openInspector();
+  }
+
+  /* ============================================================
      Inspector
      ============================================================ */
   const inspector = document.getElementById('inspector');
 
   function openInspector() {
+    pruneSelection();
+    const group = selectedMembers();
+    if (group.length > 1) {
+      const shown = group.slice(0, 8).map((m) => `<li>${esc(memberLabel(m.type, m.obj))}</li>`).join('');
+      const more = group.length > 8 ? `<li>${group.length - 8} more</li>` : '';
+      inspector.innerHTML = `
+        <div class="kind">Selection</div>
+        <h2 class="paneltitle" style="margin-top:4px">${group.length} items</h2>
+        <div class="inspector-actions" style="margin-top:8px"><button class="mini danger" id="i-del">Delete ${group.length}</button></div>
+        <ul class="sellist">${shown}${more}</ul>
+        <p style="margin:8px 0 0;font-size:11px;color:var(--ink-dim);line-height:1.45">Drag any of them to move the group. Shift-click drops one.</p>`;
+      inspector.classList.add('open');
+      document.getElementById('i-del').addEventListener('click', () => deleteSelection());
+      return;
+    }
     if (state.selection && state.selection.type === 'probe' && state.probe) {
       const data = probeDay(state.probe.latlng);
       const list = data ? data.intervals.slice(0, 5).map((iv) =>
@@ -1339,6 +1572,42 @@
         <div class="props">
           <div class="prop"><label>Height</label><input type="range" id="i-height" min="0.5" max="5" step="0.1" value="${o.height}"/><span class="val" id="i-height-v">${fmtFt(o.height)}</span></div>
         </div>`;
+    } else if (t === 'lawns') {
+      const area = polygonAreaM2(o.pts);
+      const profile = lawnProfile(o);
+      const advice = adviseLawn({
+        lat: state.loc.lat,
+        doy: state.doy,
+        areaM2: area,
+        summer: profile.summer,
+        equinox: profile.equinox,
+        now: profile.now,
+        openSky: shadeCasters() === 0,
+      });
+      const badge = advice.level === 'ok'
+        ? `<span class="sunbadge ok">☀ ${esc(advice.sunLine)}</span>`
+        : `<span class="sunbadge ${advice.level}">${advice.level === 'bad' ? '✗' : '⚠'} ${esc(advice.sunLine)}</span>`;
+      html = `
+        <div class="kind">Lawn · ${esc(advice.band)}</div>
+        <h2 class="paneltitle" style="margin-top:4px">${esc(o.name)}</h2>
+        <div class="props">
+          <div class="prop"><label>Name</label><input type="text" id="i-name" value="${esc(o.name)}"/></div>
+          <div class="prop"><label>Area</label><span class="val">${Math.round(area * 10.7639).toLocaleString()} ft²</span></div>
+        </div>
+        <div class="plantcard">
+          ${badge}
+          ${advice.nowLine ? `<div style="margin-top:6px">${esc(advice.nowLine)}</div>` : ''}
+          <div class="bot" style="margin-top:8px">${esc(advice.botanical)}</div>
+          <div style="margin-top:4px"><b style="color:var(--ink)">${esc(advice.name)}</b> — ${esc(advice.why)}</div>
+          ${advice.alt ? `<div class="tip" style="margin-top:6px">☞ ${esc(advice.alt)}</div>` : ''}
+          ${advice.caution ? `<div style="margin-top:6px;color:var(--warn)">${esc(advice.caution)}</div>` : ''}
+          ${advice.openSky ? `<div style="margin-top:6px;color:var(--warn)">${esc(advice.openSky)}</div>` : ''}
+          <div class="lawnblock"><h3>${esc(advice.seedTitle)}</h3><p>${esc(advice.seedBody)}</p></div>
+          <div class="lawnblock"><h3>Fertilizer</h3><p>${esc(advice.fertBody)}</p></div>
+          <div class="lawnblock"><h3>Water</h3><p>${esc(advice.waterBody)}</p></div>
+          <div class="tip" style="margin-top:8px">☞ ${esc(advice.mow)}</div>
+          <div style="margin-top:8px;font-size:10px;color:var(--ink-faint);line-height:1.5">Clear-sky model, local solar time. A soil test beats a guess for pH and phosphorus.</div>
+        </div>`;
     } else if (t === 'plants') {
       const m = PLANT_INDEX[o.plantId];
       const st = plantSunStatus(o);
@@ -1383,7 +1652,7 @@
       const el = document.getElementById(id);
       if (el) el.addEventListener('input', fn);
     };
-    bind('i-name', (e) => { o.name = e.target.value || 'Bed'; touch(); });
+    bind('i-name', (e) => { o.name = e.target.value || (t === 'lawns' ? 'Lawn' : 'Bed'); touch({ keepInspector: true }); });
     bind('i-height', (e) => {
       o.height = parseFloat(e.target.value);
       document.getElementById('i-height-v').textContent = fmtFt(o.height);
@@ -1404,7 +1673,7 @@
       if (copy.pts) copy.pts = copy.pts.map((p) => { const s = shift(p); return { lat: s.lat, lng: s.lng }; });
       if (copy.latlng) { const s = shift(copy.latlng); copy.latlng = { lat: s.lat, lng: s.lng }; }
       state.objects[t].push(copy);
-      state.selection = { type: t, id: copy.id };
+      selectOne({ type: t, id: copy.id });
       touch();
       openInspector();
     });
@@ -1413,20 +1682,24 @@
   const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 
   function deleteSelection() {
-    if (!state.selection) return;
-    if (state.selection.type === 'probe') {
+    if (!state.selection && !state.extra.length) return;
+    if (state.selection && state.selection.type === 'probe' && !state.extra.length) {
       state.probe = null;
-      state.selection = null;
+      clearSelection();
       openInspector();
       requestRender();
       scheduleSave();
       return;
     }
     pushUndo();
-    const arr = state.objects[state.selection.type];
-    const i = arr.findIndex((o) => o.id === state.selection.id);
-    if (i >= 0) arr.splice(i, 1);
-    state.selection = null;
+    const members = selectedMembers();
+    if (state.selection && state.selection.type === 'probe') state.probe = null;
+    for (const m of members) {
+      const arr = state.objects[m.type];
+      const i = arr.findIndex((o) => o.id === m.id);
+      if (i >= 0) arr.splice(i, 1);
+    }
+    clearSelection();
     openInspector();
     touch();
   }
@@ -1442,16 +1715,17 @@
     const prev = state.undoStack.pop();
     if (!prev) { toast('Nothing to undo'); return; }
     state.objects = JSON.parse(prev);
-    state.selection = null;
+    clearSelection();
     openInspector();
     touch();
   }
-  function touch() {
+  function touch(opts = {}) {
     state.rev++; // geometry and height changes both affect shadows
     updateSummary();
     refreshGuide();
     scheduleHeat(600);
-    if (state.selection && state.selection.type === 'probe') openInspector();
+    // a name edit must not rebuild the inspector or the caret jumps
+    if (!opts.keepInspector) refreshSunSelection();
     requestRender();
     scheduleSave();
   }
@@ -1460,48 +1734,52 @@
      Tools & interaction
      ============================================================ */
   const mapEl = document.getElementById('map');
-  const HINTS = {
-    bed: '<b>Drag</b> a rectangle, or <b>click</b> corner by corner · <b>Shift</b> squares it · corners snap (<b>Alt</b> to free)',
-    building: '<b>Drag</b> the footprint, or <b>click</b> corners · corners snap to what you have drawn (<b>Alt</b> to free)',
-    fence: '<b>Drag</b> a straight run, or <b>click</b> along the line · <b>Shift</b> snaps the angle · ends snap to corners',
-    tree: 'Click to place a tree — set its height &amp; canopy in the inspector',
-    plant: 'Pick a plant on the left, then click inside a bed to plant it',
-    probe: 'Click any spot to chart its sunlight through the whole day',
-    erase: 'Click anything to remove it',
-  };
 
   function setTool(tool) {
     state.tool = tool;
+    state.hover = null;
     cancelDrawing();
     document.querySelectorAll('.tool[data-tool]').forEach((b) =>
       b.classList.toggle('on', b.dataset.tool === tool && !b.dataset.momentary));
     document.getElementById('plantdrawer').classList.toggle('open', tool === 'plant');
     mapEl.style.cursor = tool === 'select' ? '' : tool === 'erase' ? 'not-allowed' : 'crosshair';
-    const hint = document.getElementById('hint');
-    if (HINTS[tool]) { hint.innerHTML = HINTS[tool]; hint.classList.add('show'); positionHint(); }
-    else hint.classList.remove('show');
   }
-
-  /** Keep the hint clear of the dock, which changes height as rows wrap. */
-  function positionHint() {
-    const hint = document.getElementById('hint');
-    if (!hint.classList.contains('show')) return;
-    const d = document.getElementById('dock').getBoundingClientRect();
-    hint.style.bottom = `${Math.round(window.innerHeight - d.top + 10)}px`;
-  }
-  window.addEventListener('resize', positionHint);
 
   document.querySelectorAll('.tool').forEach((b) => {
     b.addEventListener('click', () => {
       if (b.dataset.momentary) { undo(); return; }
+      if (!b.dataset.tool) return;
       setTool(b.dataset.tool);
     });
   });
 
+  const shortcutsEl = document.getElementById('shortcuts');
+  const shortcutsBtn = document.createElement('a');
+  shortcutsBtn.id = 'shortcutsbtn';
+  shortcutsBtn.href = '#';
+  shortcutsBtn.className = 'shortcuts-btn';
+  shortcutsBtn.title = 'Shortcuts';
+  shortcutsBtn.setAttribute('role', 'button');
+  shortcutsBtn.setAttribute('aria-label', 'Shortcuts');
+  shortcutsBtn.setAttribute('aria-expanded', 'false');
+  shortcutsBtn.setAttribute('aria-controls', 'shortcuts');
+  shortcutsBtn.textContent = '?';
+  const zoomBar = document.querySelector('.leaflet-control-zoom');
+  zoomBar.insertBefore(shortcutsBtn, zoomBar.firstChild);
+  L.DomEvent.disableClickPropagation(shortcutsBtn);
+  function toggleShortcuts(force) {
+    const open = typeof force === 'boolean' ? force : !shortcutsEl.classList.contains('open');
+    shortcutsEl.classList.toggle('open', open);
+    shortcutsBtn.classList.toggle('on', open);
+    shortcutsBtn.setAttribute('aria-expanded', open ? 'true' : 'false');
+  }
+  shortcutsBtn.addEventListener('click', (e) => { e.preventDefault(); toggleShortcuts(); });
+  document.getElementById('shortcuts-close').addEventListener('click', () => toggleShortcuts(false));
+
   function cancelDrawing() {
     state.drawing = null;
     state.snap = null;
-    if (state.rectDraw) { state.rectDraw = null; map.dragging.enable(); }
+    if (state.rectDraw || state.arm) { state.rectDraw = null; state.arm = null; map.dragging.enable(); }
     requestRender();
   }
 
@@ -1510,15 +1788,19 @@
     if (type === 'bed') {
       const bed = { id: nextId(), name: `Bed ${state.objects.beds.length + 1}`, pts };
       state.objects.beds.push(bed);
-      state.selection = { type: 'beds', id: bed.id };
+      selectOne({ type: 'beds', id: bed.id });
+    } else if (type === 'lawn') {
+      const lawn = { id: nextId(), name: `Lawn ${state.objects.lawns.length + 1}`, pts };
+      state.objects.lawns.push(lawn);
+      selectOne({ type: 'lawns', id: lawn.id });
     } else if (type === 'building') {
       const bl = { id: nextId(), pts, height: 5 };
       state.objects.buildings.push(bl);
-      state.selection = { type: 'buildings', id: bl.id };
+      selectOne({ type: 'buildings', id: bl.id });
     } else {
       const f = { id: nextId(), pts, height: 1.8 };
       state.objects.fences.push(f);
-      state.selection = { type: 'fences', id: f.id };
+      selectOne({ type: 'fences', id: f.id });
     }
     state.drawing = null;
     state.rectDraw = null;
@@ -1580,7 +1862,7 @@
     if (metersBetween(L.latLng(pts[0].lat, pts[0].lng), L.latLng(far.lat, far.lng)) < 0.3) return;
     createShape(r.type, pts);
     if (!dragTipShown) {
-      toast('Drag again for another · press V to pan the map and select what you have drawn.', 4500);
+      toast('Drag a corner or edge to reshape · a click keeps drawing · V pans the map.', 4500);
       dragTipShown = true;
     }
   }
@@ -1598,7 +1880,7 @@
   /** Every corner a new point may latch onto, in lat/lng. */
   function snapTargets(exclude) {
     const out = [];
-    for (const key of ['beds', 'buildings', 'fences']) {
+    for (const key of ['beds', 'lawns', 'buildings', 'fences']) {
       for (const o of state.objects[key]) {
         o.pts.forEach((p, i) => {
           if (exclude && exclude.obj === o && exclude.index === i) return;
@@ -1657,6 +1939,80 @@
     return true;
   }
 
+  function rectBounds(r) {
+    return {
+      x0: Math.min(r.x0, r.x1), x1: Math.max(r.x0, r.x1),
+      y0: Math.min(r.y0, r.y1), y1: Math.max(r.y0, r.y1),
+    };
+  }
+  function pointInRect(p, b) {
+    return p.x >= b.x0 && p.x <= b.x1 && p.y >= b.y0 && p.y <= b.y1;
+  }
+  function circleHitsRect(p, rad, b) {
+    const cx = Math.max(b.x0, Math.min(p.x, b.x1));
+    const cy = Math.max(b.y0, Math.min(p.y, b.y1));
+    return Math.hypot(p.x - cx, p.y - cy) <= rad;
+  }
+  function segsCross(a, b, c, d) {
+    const o = (p, q, r) => Math.sign((q.x - p.x) * (r.y - p.y) - (q.y - p.y) * (r.x - p.x));
+    return o(a, b, c) !== o(a, b, d) && o(c, d, a) !== o(c, d, b);
+  }
+  function segHitsRect(a, b, box) {
+    if (pointInRect(a, box) || pointInRect(b, box)) return true;
+    const edges = [
+      [{ x: box.x0, y: box.y0 }, { x: box.x1, y: box.y0 }],
+      [{ x: box.x1, y: box.y0 }, { x: box.x1, y: box.y1 }],
+      [{ x: box.x1, y: box.y1 }, { x: box.x0, y: box.y1 }],
+      [{ x: box.x0, y: box.y1 }, { x: box.x0, y: box.y0 }],
+    ];
+    return edges.some(([c, d]) => segsCross(a, b, c, d));
+  }
+  function shapeInMarquee(type, obj, box) {
+    if (obj.latlng) {
+      const p = CP(obj.latlng);
+      const pxm = pxPerMeter();
+      const rad = type === 'trees'
+        ? Math.max(obj.canopy * pxm, 12)
+        : Math.max(((PLANT_INDEX[obj.plantId] && PLANT_INDEX[obj.plantId].spread / 2) || 0.2) * pxm, 12);
+      return circleHitsRect(p, rad, box);
+    }
+    const pts = obj.pts.map(CP);
+    if (pts.some((p) => pointInRect(p, box))) return true;
+    for (let i = 0; i < pts.length - (type === 'fences' ? 1 : 0); i++) {
+      const a = pts[i], b = pts[(i + 1) % pts.length];
+      if (segHitsRect(a, b, box)) return true;
+    }
+    if (type !== 'fences' && obj.pts.length >= 3) {
+      const corners = [
+        map.containerPointToLatLng([box.x0, box.y0]),
+        map.containerPointToLatLng([box.x1, box.y0]),
+        map.containerPointToLatLng([box.x1, box.y1]),
+        map.containerPointToLatLng([box.x0, box.y1]),
+      ];
+      if (corners.some((ll) => pointInPoly(ll, obj.pts))) return true;
+    }
+    return false;
+  }
+  function applyMarquee(m) {
+    const box = rectBounds(m);
+    const found = [];
+    for (const type of ['plants', 'trees', 'fences', 'buildings', 'beds', 'lawns']) {
+      for (const obj of state.objects[type]) {
+        if (shapeInMarquee(type, obj, box)) found.push({ type, id: obj.id });
+      }
+    }
+    if (!found.length) return;
+    if (!state.selection || state.selection.type === 'probe') {
+      state.selection = found[0];
+      state.extra = found.slice(1);
+    } else {
+      for (const f of found) {
+        if (!isSel(f.type, f.id)) state.extra.push(f);
+      }
+    }
+    openInspector();
+  }
+
   function hitTest(cp, latlng) {
     const pxm = pxPerMeter();
     if (state.probe) {
@@ -1686,15 +2042,26 @@
     for (const b of [...state.objects.beds].reverse()) {
       if (pointInPoly(latlng, b.pts)) return { type: 'beds', obj: b };
     }
+    for (const b of [...state.objects.lawns].reverse()) {
+      if (pointInPoly(latlng, b.pts)) return { type: 'lawns', obj: b };
+    }
     return null;
   }
 
+  /** Rotate grip, including the short stem so the pointer can travel up to it. */
+  function rotGripHit(o, cp) {
+    const rh = rotHandle(o);
+    if (!rh) return false;
+    if (Math.hypot(cp.x - rh.x, cp.y - rh.y) < 10) return true;
+    return distToSegPx(cp, { x: rh.x, y: rh.anchorY }, { x: rh.x, y: rh.y }) < 6;
+  }
+
   function handleAt(cp) {
+    if (state.extra.length) return null;
     const o = selectedObj();
     if (!o) return null;
     if (o.pts) {
-      const rh = rotHandle(o);
-      if (rh && Math.hypot(cp.x - rh.x, cp.y - rh.y) < 9) return { kind: 'rotate' };
+      if (rotGripHit(o, cp)) return { kind: 'rotate' };
       for (let i = 0; i < o.pts.length; i++) {
         const p = CP(o.pts[i]);
         if (Math.hypot(cp.x - p.x, cp.y - p.y) < 8) return { kind: 'vertex', index: i };
@@ -1704,6 +2071,135 @@
       if (Math.hypot(cp.x - hp.x, cp.y - hp.y) < 9) return { kind: 'radius' };
     }
     return null;
+  }
+
+  const EDGE_PX = 8;
+  const DRAW_TOOL = { bed: 1, lawn: 1, building: 1, fence: 1, tree: 1, plant: 1 };
+
+  function gripsShown(type, id) {
+    if (state.extra.length) return false;
+    if (state.selection && state.selection.type === type && state.selection.id === id) return true;
+    return !!(state.hover && state.hover.type === type && state.hover.id === id);
+  }
+
+  function polyOutlineGrip(type, obj, cp) {
+    if (gripsShown(type, obj.id) && rotGripHit(obj, cp)) return { type, obj, handle: { kind: 'rotate' } };
+    const pts = obj.pts.map(CP);
+    for (let i = 0; i < pts.length; i++) {
+      if (Math.hypot(cp.x - pts[i].x, cp.y - pts[i].y) < 8) {
+        return { type, obj, handle: { kind: 'vertex', index: i } };
+      }
+    }
+    const segs = type === 'fences' ? pts.length - 1 : pts.length;
+    for (let i = 0; i < segs; i++) {
+      if (distToSegPx(cp, pts[i], pts[(i + 1) % pts.length]) < EDGE_PX) {
+        return { type, obj, handle: null };
+      }
+    }
+    return null;
+  }
+
+  function treeOutlineGrip(t, cp) {
+    const p = CP(t.latlng);
+    const r = Math.max(t.canopy * pxPerMeter(), 4);
+    if (gripsShown('trees', t.id)) {
+      const hp = CP(destLatLng(t.latlng, t.canopy, 0));
+      if (Math.hypot(cp.x - hp.x, cp.y - hp.y) < 9) return { type: 'trees', obj: t, handle: { kind: 'radius' } };
+    }
+    const d = Math.hypot(cp.x - p.x, cp.y - p.y);
+    if (Math.abs(d - r) < EDGE_PX || d < 10) return { type: 'trees', obj: t, handle: null };
+    return null;
+  }
+
+  function plantOutlineGrip(pl, cp) {
+    const meta = PLANT_INDEX[pl.plantId];
+    const p = CP(pl.latlng);
+    const r = Math.max(((meta ? meta.spread / 2 : 0.2) * pxPerMeter()), 12);
+    const d = Math.hypot(cp.x - p.x, cp.y - p.y);
+    if (d < 14 || Math.abs(d - r) < EDGE_PX) return { type: 'plants', obj: pl, handle: null };
+    return null;
+  }
+
+  /** Corner, edge, rotate, or radius under the pointer. Null when a group is selected. */
+  function gripAt(cp) {
+    if (state.extra.length) return null;
+    const h = handleAt(cp);
+    const sel = selectedObj();
+    if (h && sel) return { type: state.selection.type, obj: sel, handle: h };
+    const scan = (type, test) => {
+      for (const obj of [...state.objects[type]].reverse()) {
+        const g = test(obj);
+        if (g) return g;
+      }
+      return null;
+    };
+    return scan('plants', (pl) => plantOutlineGrip(pl, cp))
+      || scan('trees', (t) => treeOutlineGrip(t, cp))
+      || scan('fences', (f) => polyOutlineGrip('fences', f, cp))
+      || scan('buildings', (b) => polyOutlineGrip('buildings', b, cp))
+      || scan('beds', (b) => polyOutlineGrip('beds', b, cp))
+      || scan('lawns', (b) => polyOutlineGrip('lawns', b, cp));
+  }
+
+  function beginEditDrag(e, grip) {
+    const handle = grip.handle;
+    const changing = !isSel(grip.type, grip.obj.id) || state.extra.length;
+    if (state.tool !== 'select' || (handle && changing)) {
+      selectOne({ type: grip.type, id: grip.obj.id });
+      openInspector();
+    }
+    const hit = { type: grip.type, obj: grip.obj };
+    if (handle && handle.kind === 'rotate') {
+      const c = polyCenterLL(hit.obj.pts);
+      handle.center = c;
+      handle.orig = hit.obj.pts.map((p) => ({ lat: p.lat, lng: p.lng }));
+      handle.startAngle = bearingFrom(c, e.latlng);
+    }
+    pushUndo();
+    state.drag = {
+      hit,
+      handle: handle || null,
+      start: e.latlng,
+      moved: false,
+      fromDraw: state.tool !== 'select',
+    };
+    state.hover = null;
+    if (state.tool !== 'select') suppressClickUntil = performance.now() + 700;
+    map.dragging.disable();
+    L.DomEvent.stop(e.originalEvent);
+    requestRender();
+  }
+
+  function syncPointer(e) {
+    if (state.arm) return;
+    const busy = state.drag || state.marquee || state.rectDraw || (state.drawing && state.drawing.pts.length);
+    if (busy) {
+      if (state.hover) { state.hover = null; requestRender(); }
+      return;
+    }
+    const drawTool = !!DRAW_TOOL[state.tool];
+    if (!drawTool && state.tool !== 'select') {
+      if (state.hover) { state.hover = null; requestRender(); }
+      return;
+    }
+    const grip = gripAt(e.containerPoint);
+    if (!drawTool) {
+      if (state.hover) { state.hover = null; requestRender(); }
+      const hit = grip || hitTest(e.containerPoint, e.latlng);
+      const kind = grip && grip.handle && grip.handle.kind;
+      mapEl.style.cursor = kind === 'rotate' ? 'grab' : hit ? 'pointer' : '';
+      return;
+    }
+    const under = grip || hitTest(e.containerPoint, e.latlng);
+    const hover = under && under.type !== 'probe' && under.obj && under.obj.id
+      ? { type: under.type, id: under.obj.id } : null;
+    const prev = state.hover;
+    const changed = (!prev && hover) || (prev && !hover) ||
+      (prev && hover && (prev.type !== hover.type || prev.id !== hover.id));
+    state.hover = hover;
+    const kind = grip && grip.handle && grip.handle.kind;
+    mapEl.style.cursor = !grip ? 'crosshair' : kind === 'rotate' ? 'grab' : 'pointer';
+    if (changed) requestRender();
   }
 
   function requireZoom(minZ, what) {
@@ -1725,7 +2221,7 @@
     if (now - lastClick.t < 350 && Math.hypot(cp.x - lastClick.x, cp.y - lastClick.y) < 4) return;
     lastClick = { t: now, x: cp.x, y: cp.y };
     const tool = state.tool;
-    if (tool === 'bed' || tool === 'building' || tool === 'fence') {
+    if (tool === 'bed' || tool === 'lawn' || tool === 'building' || tool === 'fence') {
       if (!requireZoom(16, 'draw')) return;
       if (!state.drawing) state.drawing = { type: tool, pts: [], cursor: null };
       const d = state.drawing;
@@ -1743,7 +2239,7 @@
       pushUndo();
       const t = { id: nextId(), latlng: { lat: e.latlng.lat, lng: e.latlng.lng }, height: 8, canopy: 3.5, type: 'deciduous' };
       state.objects.trees.push(t);
-      state.selection = { type: 'trees', id: t.id };
+      selectOne({ type: 'trees', id: t.id });
       openInspector();
       touch();
     } else if (tool === 'plant') {
@@ -1754,13 +2250,13 @@
       state.objects.plants.push(pl);
       const inBed = state.objects.beds.some((b) => pointInPoly(pl.latlng, b.pts));
       if (state.objects.beds.length && !inBed) toast(`${PLANT_INDEX[state.selectedPlant].name} planted outside your beds — that's allowed, just saying.`);
-      state.selection = { type: 'plants', id: pl.id };
+      selectOne({ type: 'plants', id: pl.id });
       openInspector();
       touch();
     } else if (tool === 'probe') {
       if (!requireZoom(16, 'probe the light')) return;
       state.probe = { latlng: { lat: e.latlng.lat, lng: e.latlng.lng } };
-      state.selection = { type: 'probe', id: 'probe' };
+      selectOne({ type: 'probe', id: 'probe' });
       openInspector();
       requestRender();
       scheduleSave();
@@ -1769,7 +2265,7 @@
       if (hit) {
         if (hit.type === 'probe') {
           state.probe = null;
-          if (state.selection && state.selection.type === 'probe') { state.selection = null; openInspector(); }
+          if (state.selection && state.selection.type === 'probe') { clearSelection(); openInspector(); }
           requestRender();
           scheduleSave();
           return;
@@ -1777,13 +2273,14 @@
         pushUndo();
         const arr = state.objects[hit.type];
         arr.splice(arr.indexOf(hit.obj), 1);
-        if (isSel(hit.type, hit.obj.id)) { state.selection = null; openInspector(); }
+        if (isSel(hit.type, hit.obj.id)) { forgetSelection(hit.type, hit.obj.id); openInspector(); }
         touch();
       }
     } else {
       // select
       const hit = hitTest(e.containerPoint, e.latlng);
-      state.selection = hit ? { type: hit.type, id: hit.obj.id } : null;
+      if (e.originalEvent.shiftKey && hit && hit.type !== 'probe') toggleSelection(hit);
+      else if (!e.originalEvent.shiftKey) selectOne(hit ? { type: hit.type, id: hit.obj.id } : null);
       openInspector();
       requestRender();
     }
@@ -1807,19 +2304,26 @@
           `${hrs.toFixed(1)}h here${partial ? ` by ${Sun.formatHour(Math.max(state.time, state.heat.t0))}` : ''}`;
       }
     }
-    if (state.tool === 'select' && !state.drag) {
-      const h = handleAt(e.containerPoint);
-      const hit = h || hitTest(e.containerPoint, e.latlng);
-      mapEl.style.cursor = h && h.kind === 'rotate' ? 'grab' : hit ? 'pointer' : '';
-    }
+    syncPointer(e);
   });
 
   // ---- drag-to-draw / dragging objects & handles ----
   map.on('mousedown', (e) => {
     const tool = state.tool;
-    if (tool === 'bed' || tool === 'building' || tool === 'fence') {
+    const midPoly = state.drawing && state.drawing.pts.length > 1;
+    if (DRAW_TOOL[tool] && !midPoly) {
+      const grip = gripAt(e.containerPoint);
+      if (grip) {
+        // Hold still and the draw tool places a point. Drag, and this grip edits.
+        state.arm = { grip, latlng: e.latlng, x: e.containerPoint.x, y: e.containerPoint.y };
+        map.dragging.disable();
+        L.DomEvent.stop(e.originalEvent);
+        return;
+      }
+    }
+    if (tool === 'bed' || tool === 'lawn' || tool === 'building' || tool === 'fence') {
       // mid-polygon (2+ corners down), clicks keep placing corners
-      if (state.drawing && state.drawing.pts.length > 1) return;
+      if (midPoly) return;
       if (!requireZoom(16, 'draw')) return;
       snapOff = e.originalEvent.altKey;
       const start = applySnap(e.latlng);
@@ -1829,23 +2333,44 @@
       return;
     }
     if (tool !== 'select') return;
-    const handle = handleAt(e.containerPoint);
-    const hit = handle ? { type: state.selection.type, obj: selectedObj() } : hitTest(e.containerPoint, e.latlng);
-    if (!hit) return;
-    if (handle && handle.kind === 'rotate') {
-      const c = polyCenterLL(hit.obj.pts);
-      handle.center = c;
-      handle.orig = hit.obj.pts.map((p) => ({ lat: p.lat, lng: p.lng }));
-      handle.startAngle = bearingFrom(c, e.latlng);
+    const grip = gripAt(e.containerPoint);
+    // Shift-drag boxes up a group. A grip keeps its own gesture (reshape, rotate).
+    if (e.originalEvent.shiftKey && !(grip && grip.handle)) {
+      const cp = e.containerPoint;
+      state.marquee = { x0: cp.x, y0: cp.y, x1: cp.x, y1: cp.y, moved: false };
+      map.dragging.disable();
+      mapEl.style.cursor = 'crosshair';
+      L.DomEvent.stop(e.originalEvent);
+      return;
     }
+    if (grip) { beginEditDrag(e, grip); return; }
+    const hit = hitTest(e.containerPoint, e.latlng);
+    if (!hit) return;
     pushUndo();
-    state.drag = { hit, handle, start: e.latlng, moved: false };
+    state.drag = { hit, handle: null, start: e.latlng, moved: false };
     map.dragging.disable();
     L.DomEvent.stop(e.originalEvent);
   });
 
   window.addEventListener('mousemove', (e) => {
+    if (state.marquee) {
+      const cp = map.mouseEventToContainerPoint(e);
+      const m = state.marquee;
+      m.x1 = cp.x;
+      m.y1 = cp.y;
+      if (!m.moved && Math.hypot(m.x1 - m.x0, m.y1 - m.y0) > 4) m.moved = true;
+      requestRender();
+      return;
+    }
     snapOff = e.altKey;
+    if (state.arm) {
+      const cp = map.mouseEventToContainerPoint(e);
+      const arm = state.arm;
+      if (Math.hypot(cp.x - arm.x, cp.y - arm.y) <= 5) return;
+      state.arm = null;
+      state.drawing = null;
+      beginEditDrag({ latlng: arm.latlng, originalEvent: e }, arm.grip);
+    }
     if (state.rectDraw) {
       const r = state.rectDraw;
       r.shift = e.shiftKey;
@@ -1883,17 +2408,32 @@
       d.hit.obj.pts[d.handle.index] = { lat: s.lat, lng: s.lng };
     } else if (d.handle && d.handle.kind === 'radius') {
       d.hit.obj.canopy = Math.max(0.5, Math.min(15, metersBetween(d.hit.obj.latlng, ll)));
-    } else if (d.hit.obj.pts) {
-      d.hit.obj.pts = d.hit.obj.pts.map((p) => ({ lat: p.lat + dLat, lng: p.lng + dLng }));
-      d.start = ll;
     } else {
-      d.hit.obj.latlng = { lat: d.hit.obj.latlng.lat + dLat, lng: d.hit.obj.latlng.lng + dLng };
+      const members = selectedMembers();
+      const inGroup = members.length > 1 && members.some((m) => m.obj === d.hit.obj);
+      const moving = inGroup ? members : [{ obj: d.hit.obj }];
+      for (const m of moving) {
+        if (m.obj.pts) m.obj.pts = m.obj.pts.map((p) => ({ lat: p.lat + dLat, lng: p.lng + dLng }));
+        else if (m.obj.latlng) m.obj.latlng = { lat: m.obj.latlng.lat + dLat, lng: m.obj.latlng.lng + dLng };
+      }
       d.start = ll;
     }
     requestRender();
   });
 
   window.addEventListener('mouseup', (e) => {
+    if (state.marquee) {
+      const m = state.marquee;
+      state.marquee = null;
+      map.dragging.enable();
+      if (state.tool === 'select') mapEl.style.cursor = '';
+      if (Math.hypot(m.x1 - m.x0, m.y1 - m.y0) > 12) {
+        applyMarquee(m);
+        suppressClickUntil = performance.now() + 400;
+      }
+      requestRender();
+      return;
+    }
     if (state.rectDraw) {
       const r = state.rectDraw;
       state.rectDraw = null;
@@ -1915,13 +2455,21 @@
       requestRender();
       return;
     }
+    if (state.arm) {
+      state.arm = null;
+      map.dragging.enable();
+      return;
+    }
     if (!state.drag) return;
     const moved = state.drag.moved;
+    const fromDraw = state.drag.fromDraw;
     if (!moved) state.undoStack.pop(); // no-op drag: drop the snapshot
     state.drag = null;
     clearSnap();
     map.dragging.enable();
+    if (fromDraw) suppressClickUntil = performance.now() + 400;
     if (moved) { touch(); openInspector(); }
+    else requestRender();
   });
 
   /* ============================================================
@@ -1935,11 +2483,14 @@
     const k = e.key.toLowerCase();
     if ((e.metaKey || e.ctrlKey) && k === 'z') { e.preventDefault(); undo(); return; }
     if (e.metaKey || e.ctrlKey) return;
-    const tools = { v: 'select', b: 'bed', p: 'plant', t: 'tree', u: 'building', f: 'fence', l: 'probe', e: 'erase' };
+    const tools = { v: 'select', b: 'bed', g: 'lawn', p: 'plant', t: 'tree', u: 'building', f: 'fence', l: 'probe', e: 'erase' };
     if (tools[k]) { setTool(tools[k]); return; }
+    if (e.key === '?' ) { toggleShortcuts(); return; }
     if (e.key === 'Escape') {
+      if (document.getElementById('shortcuts').classList.contains('open')) { toggleShortcuts(false); return; }
       if (state.drawing) cancelDrawing();
-      else { state.selection = null; openInspector(); setTool('select'); requestRender(); }
+      else if (state.marquee) { state.marquee = null; map.dragging.enable(); requestRender(); }
+      else { clearSelection(); openInspector(); setTool('select'); requestRender(); }
     }
     if (e.key === 'Enter' && state.drawing) finishDrawing();
     if ((e.key === 'Delete' || e.key === 'Backspace') && state.selection) { e.preventDefault(); deleteSelection(); }
@@ -1994,6 +2545,7 @@
   function updateDock() {
     document.getElementById('timelab').textContent = Sun.formatHour(state.time);
     document.getElementById('datelab').textContent = dateLabel(state.doy);
+    dateSlider.value = state.doy;
     if (state.day) {
       document.getElementById('riselab').textContent = state.day.polarNight ? 'polar night'
         : state.day.polarDay ? 'midnight sun' : `↑ ${Sun.formatHour(state.day.sunrise)}`;
@@ -2020,24 +2572,33 @@
     scheduleSave();
   });
   dateSlider.addEventListener('input', () => {
-    state.doy = parseInt(dateSlider.value, 10);
+    const next = parseInt(dateSlider.value, 10);
+    if (!isPresetDoy(next)) state.manualDoy = next;
+    state.doy = next;
     refreshDay();
     updateDock();
     scheduleHeat(400);
     updateSummary();
-    if (state.selection && state.selection.type === 'probe') openInspector();
+    refreshSunSelection();
     requestRender();
     scheduleSave();
   });
   document.querySelectorAll('.season').forEach((b) =>
     b.addEventListener('click', () => {
-      state.doy = parseInt(b.dataset.doy, 10);
+      const preset = parseInt(b.dataset.doy, 10);
+      if (state.doy === preset) {
+        const back = state.manualDoy === preset ? todayDoy() : state.manualDoy;
+        state.doy = back;
+      } else {
+        if (!isPresetDoy(state.doy)) state.manualDoy = state.doy;
+        state.doy = preset;
+      }
       dateSlider.value = state.doy;
       refreshDay();
       updateDock();
       scheduleHeat(200);
       updateSummary();
-      if (state.selection && state.selection.type === 'probe') openInspector();
+      refreshSunSelection();
       requestRender();
       scheduleSave();
     }));
@@ -2063,8 +2624,6 @@
       if (key === 'heatmap' || key === 'best') {
         document.getElementById('legend').classList.toggle('open', heatModeOn());
         buildLegend();
-        positionHint();
-        setTimeout(positionHint, 350); // after the legend finishes opening
         if (heatModeOn()) {
           if (!heatRegion()) {
             toast('Zoom in to your yard first — then the sun analysis covers everything on screen.');
@@ -2212,7 +2771,7 @@
       const c = map.getCenter();
       localStorage.setItem(SAVE_KEY, JSON.stringify({
         v: 1, center: { lat: c.lat, lng: c.lng }, zoom: map.getZoom(),
-        objects: state.objects, doy: state.doy, time: state.time, show: state.show,
+        objects: state.objects, doy: state.doy, manualDoy: state.manualDoy, time: state.time, show: state.show,
         probe: state.probe, guideOff,
       }));
     } catch { /* storage may be unavailable */ }
@@ -2222,10 +2781,12 @@
       const raw = localStorage.getItem(SAVE_KEY);
       if (!raw) return false;
       const s = JSON.parse(raw);
-      if (s.objects) state.objects = { beds: [], trees: [], buildings: [], fences: [], plants: [], ...s.objects };
+      if (s.objects) state.objects = { beds: [], lawns: [], trees: [], buildings: [], fences: [], plants: [], ...s.objects };
       if (s.probe && s.probe.latlng) state.probe = s.probe;
       if (s.guideOff) guideOff = true;
       if (s.doy) { state.doy = s.doy; dateSlider.value = s.doy; }
+      if (s.manualDoy) state.manualDoy = s.manualDoy;
+      else state.manualDoy = isPresetDoy(state.doy) ? todayDoy() : state.doy;
       if (typeof s.time === 'number') { state.time = s.time; timeSlider.value = s.time; }
       if (s.show) {
         state.show = { ...state.show, ...s.show };
@@ -2258,9 +2819,9 @@
       const data = JSON.parse(await file.text());
       if (!data.objects) throw new Error('bad file');
       pushUndo();
-      state.objects = { beds: [], trees: [], buildings: [], fences: [], plants: [], ...data.objects };
+      state.objects = { beds: [], lawns: [], trees: [], buildings: [], fences: [], plants: [], ...data.objects };
       if (data.center) map.setView([data.center.lat, data.center.lng], data.zoom || 18);
-      state.selection = null;
+      clearSelection();
       openInspector();
       touch();
       toast('Garden imported.');
@@ -2272,8 +2833,8 @@
   document.getElementById('clearbtn').addEventListener('click', () => {
     if (!confirm('Clear the entire garden? (Undo can bring it back this session.)')) return;
     pushUndo();
-    state.objects = { beds: [], trees: [], buildings: [], fences: [], plants: [] };
-    state.selection = null;
+    state.objects = { beds: [], lawns: [], trees: [], buildings: [], fences: [], plants: [] };
+    clearSelection();
     openInspector();
     touch();
   });

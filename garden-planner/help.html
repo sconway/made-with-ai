@@ -226,6 +226,25 @@
       box-shadow: 0 6px 24px rgba(232, 182, 76, 0.22);
     }
     .backlink:hover { filter: brightness(1.07); }
+    a.return {
+      position: fixed;
+      top: 14px;
+      left: 14px;
+      z-index: 30;
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 8px 12px;
+      background: rgba(20, 23, 14, 0.94);
+      border: 1px solid var(--panel-edge);
+      border-radius: 8px;
+      color: var(--brass);
+      text-decoration: none;
+      font-size: 12px;
+      letter-spacing: 0.04em;
+      box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
+    }
+    a.return:hover { color: var(--brass-bright); border-color: var(--panel-edge-lit); }
 
     /* ---------- table of contents ---------- */
     nav.toc {
@@ -446,6 +465,7 @@
   </style>
 </head>
 <body>
+  <a class="return" href="./">← Back to the yard</a>
   <main class="wrap">
     <header>
       <div class="kicker">Heliotrope ☀ Field Guide</div>
@@ -504,7 +524,13 @@
           <p>Click anything to inspect it; drag to move it. Selected beds and buildings grow white
             corner handles — drag a handle to reshape — plus a gold <b>rotate</b> grip above the
             shape: drag it to spin the whole outline, with <kbd>Shift</kbd> snapping to 15°.
-            Trees get a radius handle on the canopy edge.</p>
+            Trees get a radius handle on the canopy edge. While a draw tool is active, drag a
+            corner, an edge, or that radius handle to edit without switching back to Select.
+            A click, without dragging, still starts the tool you have selected.</p>
+          <p><b>Shift-click</b> adds or removes an item. <b>Shift-drag</b> draws a box and adds
+            everything inside it. Drag any of the highlighted items to move them together, and
+            <kbd>Delete</kbd> removes the whole group. A group has no reshape handles — click one
+            item on its own to edit its corners again.</p>
           <p class="tip">Drag-drawn rectangles come out square to north. Rotate them to sit true to your house.</p></div>
         <div class="card"><h4><span class="ic">▦</span>Garden bed <kbd>B</kbd></h4>
           <p><b>Drag a rectangle</b> over the soil and let go — that's the whole gesture, and the
@@ -512,6 +538,12 @@
             perfect square. For an L-shape or a curve, <b>click</b> corner by corner instead and
             close with <kbd>Enter</kbd>, a double-click, or by clicking the first corner again.</p>
           <p class="tip">Name beds in the inspector — "Tomato row", "Shade corner" — the labels render on the map.</p></div>
+        <div class="card"><h4><span class="ic">🌿</span>Lawn <kbd>G</kbd></h4>
+          <p><b>Drag a rectangle</b> over the ground you want in grass, the same gesture as a bed.
+            The inspector reads the outline's sun on the summer solstice and the equinox, plus your latitude, then recommends a grass
+            and the seed, fertilizer, and watering that go with it. Scrub the date to see whether
+            that day falls in the seeding window.</p>
+          <p class="tip">Trace the house and trees first. An empty yard is scored as open sky, and the grass pick will be too sunny.</p></div>
         <div class="card"><h4><span class="ic">🌳</span>Tree <kbd>T</kbd></h4>
           <p>One click plants it. Set <b>height</b>, <b>canopy radius</b>, and — crucially —
             <b>deciduous vs. evergreen</b>. Deciduous trees barely block winter sun once leafless;
@@ -745,9 +777,11 @@
     <!-- ================= KEYBOARD ================= -->
     <section id="keyboard">
       <h2><span class="no">05</span>Keyboard reference</h2>
+      <p>The same list sits in the app: the <b>?</b> button just above the zoom controls, or the <b>?</b> key.</p>
       <table>
         <tr><td><kbd>V</kbd></td><td>Select &amp; move</td></tr>
         <tr><td><kbd>B</kbd></td><td>Draw garden bed</td></tr>
+        <tr><td><kbd>G</kbd></td><td>Draw lawn</td></tr>
         <tr><td><kbd>P</kbd></td><td>Plant from library</td></tr>
         <tr><td><kbd>T</kbd></td><td>Tree</td></tr>
         <tr><td><kbd>U</kbd></td><td>Building / structure</td></tr>
@@ -755,11 +789,12 @@
         <tr><td><kbd>L</kbd></td><td>Light probe</td></tr>
         <tr><td><kbd>E</kbd></td><td>Erase</td></tr>
         <tr><td>Drag</td><td>Draw a rectangle (bed, building) or a straight run (fence)</td></tr>
-        <tr><td><kbd>Shift</kbd> + drag</td><td>Square the rectangle · snap the fence or rotation to 15°</td></tr>
+        <tr><td><kbd>Shift</kbd> + click</td><td>Add or remove an item from the selection</td></tr>
+        <tr><td><kbd>Shift</kbd> + drag</td><td>Box-select (select tool) · square a rectangle, or snap a fence or rotation to 15°</td></tr>
         <tr><td><kbd>Alt</kbd> + draw</td><td>Ignore corner snapping for one gesture</td></tr>
         <tr><td><kbd>Enter</kbd> / dbl-click</td><td>Close a polygon or fence line</td></tr>
         <tr><td><kbd>Esc</kbd></td><td>Cancel drawing · deselect</td></tr>
-        <tr><td><kbd>⌫</kbd></td><td>Delete selection</td></tr>
+        <tr><td><kbd>⌫</kbd></td><td>Delete the selection, including every item in a group</td></tr>
         <tr><td><kbd>Space</kbd></td><td>Play / pause the day</td></tr>
         <tr><td><kbd>⌘Z</kbd> / <kbd>Ctrl Z</kbd></td><td>Undo</td></tr>
       </table>
@@ -879,6 +914,7 @@
     </section>
 
     <footer>
+      <p><a class="backlink" href="./">← Back to the yard</a></p>
       Heliotrope · a <a href="../">Made With AI</a> project ·
       Imagery © Esri, Maxar, Earthstar Geographics · Geocoding © OpenStreetMap/Nominatim ·
       Your designs never leave your browser.
