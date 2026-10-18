@@ -10,6 +10,7 @@ import {
 import { observeEmergencySquawks } from '../lib/squawk'
 import type { LabelMode } from '../lib/flightLabels'
 import type { GlobeDisplay } from '../lib/prefs'
+import type { TrackPoint } from '../lib/api'
 import { readWeatherMode, type WeatherMode } from '../lib/weather'
 import { readColorMode, type ColorMode } from '../lib/flightColor'
 import {
@@ -132,6 +133,8 @@ interface AppState {
   colorMode: ColorMode
   /** Which layers are drawn on the globe. */
   display: GlobeDisplay
+  /** A stored past flight drawn on the globe (from the flight panel's history). */
+  historyTrack: HistoryTrack | null
 
   setFlights: (flights: FlightState[], updatedAt?: number) => void
   setViewBBox: (b: BBox | null) => void
@@ -170,6 +173,14 @@ interface AppState {
   setWeatherMode: (mode: WeatherMode) => void
   setColorMode: (mode: ColorMode) => void
   setDisplay: (partial: Partial<GlobeDisplay>) => void
+  setHistoryTrack: (track: HistoryTrack | null) => void
+}
+
+export interface HistoryTrack {
+  icao24: string
+  /** Flight start (ms) — identifies which logged flight is shown. */
+  start: number
+  points: TrackPoint[]
 }
 
 export const useStore = create<AppState>((set) => ({
@@ -210,6 +221,7 @@ export const useStore = create<AppState>((set) => ({
   weatherMode: readWeatherMode(),
   colorMode: readColorMode(),
   display: readDisplay(),
+  historyTrack: null,
 
   setFlights: (flights, updatedAt = Date.now()) =>
     set((s) => {
@@ -265,12 +277,15 @@ export const useStore = create<AppState>((set) => ({
     set((s) => {
       // Deselect clears follow. Selecting another plane while following
       // transfers focus to that flight (single-follow, not multi-cam).
+      const historyTrack =
+        s.historyTrack?.icao24 === selectedFlightId ? s.historyTrack : null
       if (!selectedFlightId) {
-        return { selectedFlightId: null, followFlight: false }
+        return { selectedFlightId: null, followFlight: false, historyTrack }
       }
       return {
         selectedFlightId,
         followFlight: s.followFlight,
+        historyTrack,
       }
     }),
   setHoveredFlight: (hoveredFlightId, pointer) =>
@@ -424,6 +439,7 @@ export const useStore = create<AppState>((set) => ({
     }
     set({ colorMode })
   },
+  setHistoryTrack: (historyTrack) => set({ historyTrack }),
   setDisplay: (partial) =>
     set((s) => {
       const display = { ...s.display, ...partial }

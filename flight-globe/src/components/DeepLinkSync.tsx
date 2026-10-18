@@ -26,6 +26,7 @@ let bootstrapped = false
 export function DeepLinkSync() {
   const region = useStore((s) => s.region)
   const setRegion = useStore((s) => s.setRegion)
+  const selectedCountry = useStore((s) => s.selectedCountry)
   const selectedFlightId = useStore((s) => s.selectedFlightId)
   const setSelectedFlight = useStore((s) => s.setSelectedFlight)
   const flightsById = useStore((s) => s.flightsById)
@@ -37,6 +38,7 @@ export function DeepLinkSync() {
   const setSearchQuery = useStore((s) => s.setSearchQuery)
   const focusCamera = useStore((s) => s.focusCamera)
   const lastUpdate = useStore((s) => s.lastUpdate)
+  const trafficFilters = useStore((s) => s.trafficFilters)
 
   const pendingRef = useRef<DeepLink | null>(null)
   const syncReadyRef = useRef(false)
@@ -52,13 +54,15 @@ export function DeepLinkSync() {
     applyingUrlRef.current = true
 
     const link = parseDeepLink(window.location.search)
+    if (link.filters) useStore.getState().setTrafficFilters(link.filters)
     const hasIntent =
       link.regionId != null ||
       link.icao != null ||
       link.flight != null ||
       link.airport != null ||
       link.lat != null ||
-      link.follow === true
+      link.follow === true ||
+      link.filters != null
 
     if (hasIntent) {
       const r = regionById(link.regionId)
@@ -153,7 +157,9 @@ export function DeepLinkSync() {
       selected: selected ?? null,
       airportIata: s.searchAirportIata,
       follow: s.followFlight,
+      countrySelected: s.selectedCountry != null,
       includeCamera: false,
+      filters: s.trafficFilters,
     })
     // Keep pending icao/flight in the bar until resolved so refresh still works.
     const pending = pendingRef.current
@@ -174,10 +180,12 @@ export function DeepLinkSync() {
     writeUrlFromStore()
   }, [
     region.id,
+    selectedCountry,
     selectedFlightId,
     followFlight,
     searchAirportIata,
     flightsById,
+    trafficFilters,
   ])
 
   return null

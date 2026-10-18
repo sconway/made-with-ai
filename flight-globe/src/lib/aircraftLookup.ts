@@ -12,9 +12,15 @@ function keyOf(hex: string): string {
   return hex.trim().toLowerCase()
 }
 
+const regCache = new Map<string, string>()
+
 /** Cached ICAO type, null if known-missing, undefined if not looked up yet. */
 export function getCachedAircraftType(icao24: string): string | null | undefined {
   return cache.get(keyOf(icao24))
+}
+
+export function getCachedRegistration(icao24: string): string | undefined {
+  return regCache.get(keyOf(icao24))
 }
 
 export function enqueueAircraftTypes(
@@ -24,9 +30,15 @@ export function enqueueAircraftTypes(
     const hex = item.icao24?.trim()
     if (!hex) continue
     const key = keyOf(hex)
-    if (cache.has(key) || queued.has(key)) continue
+    const priority = item.priority ?? 50
+    if (cache.has(key)) continue
+    if (queued.has(key)) {
+      const existing = queue.find((q) => keyOf(q.icao24) === key)
+      if (existing && priority < existing.priority) existing.priority = priority
+      continue
+    }
     queued.add(key)
-    queue.push({ icao24: hex, priority: item.priority ?? 50 })
+    queue.push({ icao24: hex, priority })
   }
   queue.sort((a, b) => a.priority - b.priority)
   if (queue.length > MAX_QUEUE) {
@@ -40,6 +52,7 @@ interface AdsbdbAircraft {
     aircraft?: {
       icao_type?: string
       type?: string
+      registration?: string
     }
   }
 }
@@ -50,6 +63,8 @@ async function fetchType(icao24: string): Promise<string | null | undefined> {
     if (res.status === 404) return null
     if (!res.ok) return undefined
     const d = (await res.json()) as AdsbdbAircraft
+    const reg = (d.response?.aircraft?.registration || '').trim().toUpperCase()
+    if (reg) regCache.set(keyOf(icao24), reg)
     const code = (d.response?.aircraft?.icao_type || '').trim().toUpperCase()
     return code || null
   } catch {

@@ -2,6 +2,7 @@ import { callsignLookupVariants } from './callsignVariants'
 import { REGIONS, type Region } from './regions'
 import type { FlightState } from './flight'
 import { findAirport } from './airports'
+import { decodeFilters, encodeFilters, type TrafficFilters } from './filters'
 
 /** Default region in the store (`REGIONS[0]` World). Omitted from the URL when active. */
 export const DEFAULT_REGION_ID = REGIONS[0]!.id
@@ -17,6 +18,8 @@ export interface DeepLink {
   lon?: number
   dist?: number
   follow?: boolean
+  /** Traffic filters (validated on parse). */
+  filters?: TrafficFilters
 }
 
 function normCallsign(s: string): string {
@@ -60,6 +63,9 @@ export function parseDeepLink(search: string): DeepLink {
   if (lon != null && lon >= -180 && lon <= 180) out.lon = lon
   if (dist != null && dist > 0.5 && dist < 20) out.dist = dist
   if (follow) out.follow = true
+  const filtersRaw = params.get('f')
+  const filters = filtersRaw ? decodeFilters(filtersRaw) : null
+  if (filters) out.filters = filters
   return out
 }
 
@@ -77,6 +83,8 @@ export function serializeDeepLink(link: DeepLink): string {
   if (link.lon != null) params.set('lon', link.lon.toFixed(4))
   if (link.dist != null) params.set('dist', link.dist.toFixed(2))
   if (link.follow) params.set('follow', '1')
+  const f = link.filters ? encodeFilters(link.filters) : ''
+  if (f) params.set('f', f)
   const s = params.toString()
   return s ? `?${s}` : ''
 }
@@ -117,16 +125,23 @@ export function deepLinkFromApp(state: {
   selected?: FlightState | null
   airportIata?: string | null
   follow?: boolean
+  /** Country view isn't scoped to the region, so the region is left out. */
+  countrySelected?: boolean
   /** When true, include a camera snapshot (share button / bootstrap fallback). */
   includeCamera?: boolean
   camera?: { lat: number; lon: number; dist?: number } | null
+  filters?: TrafficFilters
 }): DeepLink {
   const link: DeepLink = {}
+  if (state.filters) link.filters = state.filters
   const hasFocus =
     !!state.selected || !!state.airportIata || !!state.follow || state.includeCamera
   // Include region whenever the link carries focus, or when it isn't the app default
   // (so refresh keeps NA/Europe). Bare default World stays as a clean URL.
-  if (hasFocus || state.regionId !== DEFAULT_REGION_ID) {
+  if (
+    !state.countrySelected &&
+    (hasFocus || state.regionId !== DEFAULT_REGION_ID)
+  ) {
     link.regionId = state.regionId
   }
   if (state.airportIata) link.airport = state.airportIata

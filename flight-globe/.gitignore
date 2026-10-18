@@ -9,3 +9,4 @@ dist-ssr
 .vite
 server/.route-cache.json
 server/.flights-cache.json
+server/data/

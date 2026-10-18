@@ -10,8 +10,8 @@ import {
   getMapEase,
   getMapFrame,
   inMapFrame,
-  MAP_LAND_Z,
   mapFeatureScale,
+  mapMarkerScale,
   projectPosition,
 } from '../lib/mapView'
 import {
@@ -27,7 +27,8 @@ const SURFACE_RADIUS = GLOBE_RADIUS + 0.0004
 const SURFACE_BIAS = SURFACE_RADIUS - GLOBE_RADIUS
 /** Steel field marks — same as --text-dim, apart from the plane ramps. */
 const COLOR_IDLE = new THREE.Color('#8fa3bd')
-const COLOR_MAP = new THREE.Color('#8fa3bd')
+/** Over 1 on purpose: lifts the gray apron and runway off the dark street map. */
+const COLOR_MAP = new THREE.Color('#cfe6ff').multiplyScalar(2.2)
 const COLOR_ACTIVE = new THREE.Color('#ffcf6b')
 const COLOR_HOVER = new THREE.Color('#ffffff')
 
@@ -54,7 +55,10 @@ const HOVER_LABEL_DELAY_MS = 220
 /** Keep the last hover label through brief gaps between meshes. */
 const HOVER_LABEL_GAP_MS = 100
 
-/** Match the country fill as the globe flattens, so markers do not hover over it. */
+/**
+ * Sit on the street basemap plane once the globe flattens. Any gap above or
+ * below it shows as parallax against the streets while panning.
+ */
 function seatOnLand(
   target: THREE.Vector3,
   map: { origin: THREE.Vector3 } | null,
@@ -62,7 +66,7 @@ function seatOnLand(
   if (!map) return
   const ease = getMapEase()
   if (ease <= 0) return
-  target.addScaledVector(map.origin, -(SURFACE_BIAS - MAP_LAND_Z) * ease)
+  target.addScaledVector(map.origin, -SURFACE_BIAS * ease)
 }
 
 const _dummy = new THREE.Object3D()
@@ -341,9 +345,12 @@ export function AirportPins() {
       : Math.max(0, camDist - GLOBE_RADIUS)
     const showBuildings = airportShouldShowBuilding(mapMode ? mapHeight : camDist)
     const featureScale = mapFeatureScale()
-    const viewScale =
+    let viewScale =
       (mapMode ? Math.max(0.85, featureScale) : featureScale) *
       (mapMode ? MAP_AIRPORT_SCALE : GLOBE_AIRPORT_SCALE)
+    if (mapMode && mapHeight < 0.12) {
+      viewScale = mapMarkerScale(mapHeight, viewScale)
+    }
 
     for (let i = 0; i < layout.length; i++) {
       const entry = layout[i]!
@@ -595,6 +602,7 @@ export function AirportPins() {
       >
         <meshBasicMaterial
           vertexColors
+          transparent
           toneMapped={false}
           depthTest
           depthWrite
@@ -612,6 +620,7 @@ export function AirportPins() {
       >
         <meshBasicMaterial
           vertexColors
+          transparent
           toneMapped={false}
           depthTest
           depthWrite
@@ -629,6 +638,7 @@ export function AirportPins() {
       >
         <meshBasicMaterial
           vertexColors
+          transparent
           toneMapped={false}
           depthTest
           depthWrite

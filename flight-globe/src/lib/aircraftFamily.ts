@@ -30,7 +30,7 @@ export const FAMILY_SCALE: Record<AircraftFamily, number> = {
   turbo: 0.86,
   bizjet: 0.8,
   ga: 0.62,
-  helo: 0.7,
+  helo: 0.92,
 }
 
 const HELO = new Set([
@@ -39,6 +39,7 @@ const HELO = new Set([
   'A139',
   'A169',
   'A189',
+  'AS32',
   'AS50',
   'AS55',
   'AS65',
@@ -46,6 +47,7 @@ const HELO = new Set([
   'AW14',
   'AW16',
   'AW18',
+  'AW19',
   'B06',
   'B06T',
   'B212',
@@ -60,11 +62,16 @@ const HELO = new Set([
   'B47G',
   'CH47',
   'EC20',
+  'EC25',
   'EC30',
   'EC35',
   'EC45',
   'EC55',
+  'EC75',
   'H60',
+  'H64',
+  'H500',
+  'MD52',
   'MI8',
   'MI17',
   'R22',
@@ -244,11 +251,34 @@ function categoryFamily(category: string): AircraftFamily | null {
   return null
 }
 
-/** Map an ICAO type / ADS-B category to the close-up mesh family. */
-export function aircraftFamily(
+/** ICAO class code (L2J, H1T, L1P…): kind, engine count, engine type. */
+function classFamily(cls: string): AircraftFamily | null {
+  const c = cls.toUpperCase()
+  if (c.length < 3) return null
+  const kind = c[0]
+  const engines = c[1]
+  const engine = c[2]
+  if (kind === 'H' || kind === 'G') return 'helo'
+  if (kind !== 'L' && kind !== 'A') return null
+  if (engine === 'P' || engine === 'E') return 'ga'
+  if (engine === 'T') return engines === '1' ? 'ga' : 'turbo'
+  if (engine === 'J') {
+    if (engines === '4' || engines === '3') return 'wide'
+    // Unlisted twinjets are overwhelmingly bizjets; airliners are in the sets above.
+    if (engines === '2' || engines === '1') return 'bizjet'
+  }
+  return null
+}
+
+/**
+ * Family from type / ICAO class / ADS-B category, or `null` when nothing is known.
+ * Filters use this so unknown airframes don't masquerade as narrowbodies.
+ */
+export function classifyAircraft(
   typeCode?: string | null,
+  typeClass?: string | null,
   category?: string | null,
-): AircraftFamily {
+): AircraftFamily | null {
   const code = (typeCode || '').trim().toUpperCase()
   if (code) {
     if (HELO.has(code)) return 'helo'
@@ -261,10 +291,36 @@ export function aircraftFamily(
     const fromPrefix = prefixFamily(code)
     if (fromPrefix) return fromPrefix
   }
+  const cls = (typeClass || '').trim()
+  if (cls) {
+    const fromClass = classFamily(cls)
+    if (fromClass) return fromClass
+  }
   const cat = (category || '').trim()
   if (cat) {
     const fromCat = categoryFamily(cat)
     if (fromCat) return fromCat
   }
-  return 'narrow'
+  // A known type that no table covers is most likely an airliner variant.
+  return code ? 'narrow' : null
+}
+
+/** Map an ICAO type / ADS-B category to the close-up mesh family. */
+export function aircraftFamily(
+  typeCode?: string | null,
+  category?: string | null,
+  typeClass?: string | null,
+): AircraftFamily {
+  return classifyAircraft(typeCode, typeClass, category) ?? 'narrow'
+}
+
+export const FAMILY_LABEL: Record<AircraftFamily, string> = {
+  narrow: 'Narrow',
+  wide: 'Wide',
+  jumbo: 'Jumbo',
+  regional: 'Regional',
+  turbo: 'Turboprop',
+  bizjet: 'Bizjet',
+  ga: 'GA',
+  helo: 'Heli',
 }

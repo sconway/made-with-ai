@@ -66,7 +66,10 @@ const _mapLook = new THREE.Vector3()
 const WORLD_UP = new THREE.Vector3(0, 1, 0)
 const FOLLOW_EXIT_DIST = 1.85
 const GLOBE_NEAR = 0.1
+const GLOBE_FAR = 100
 const GLOBE_FOV = 45
+/** Building-level height above the map. Matches OpenStreetMap zoom 19. */
+const MAP_MIN_DIST = 0.00002
 /** Drag speed when the camera is at a normal globe distance or farther. */
 const GLOBE_ROTATE_FAR = 0.5
 /** Drag speed at the closest zoom. Same pixel drag is a much bigger sweep up close. */
@@ -228,7 +231,9 @@ export function CameraRig() {
   const savedMinDist = useRef(1.25)
   const savedMaxDist = useRef(6)
   const savedNear = useRef(GLOBE_NEAR)
+  const savedFar = useRef(GLOBE_FAR)
   const savedFov = useRef(GLOBE_FOV)
+  const mapClip = useRef(false)
   const lastChase = useRef({ lat: 0, lon: 0, valid: false })
   const zoomVel = useRef(0)
 
@@ -303,16 +308,48 @@ export function CameraRig() {
       controls.touches.ONE = THREE.TOUCH.PAN
       controls.touches.TWO = THREE.TOUCH.DOLLY_PAN
     }
-    if (controls.minDistance != null) {
-      controls.minDistance = Math.max(0.14, dist * 0.22)
-    }
+    if (controls.minDistance != null) controls.minDistance = MAP_MIN_DIST
     if (controls.maxDistance != null) controls.maxDistance = dist * 2.6
     controls.enabled = true
     controls.update()
   }
 
+  const beginMapClip = () => {
+    if (mapClip.current || !(camera instanceof THREE.PerspectiveCamera)) return
+    savedNear.current = camera.near
+    savedFar.current = camera.far
+    mapClip.current = true
+  }
+
+  const updateMapClip = (origin: THREE.Vector3) => {
+    if (!(camera instanceof THREE.PerspectiveCamera)) return
+    const height = Math.max(
+      1e-6,
+      camera.position.dot(origin) - GLOBE_RADIUS,
+    )
+    const near = Math.max(1e-7, height * 0.04)
+    const far = Math.max(height * 80, near * 200)
+    if (
+      Math.abs(camera.near - near) / camera.near > 0.18 ||
+      Math.abs(camera.far - far) / camera.far > 0.18
+    ) {
+      camera.near = near
+      camera.far = far
+      camera.updateProjectionMatrix()
+    }
+  }
+
+  const endMapClip = () => {
+    if (!mapClip.current || !(camera instanceof THREE.PerspectiveCamera)) return
+    camera.near = savedNear.current || GLOBE_NEAR
+    camera.far = savedFar.current || GLOBE_FAR
+    camera.updateProjectionMatrix()
+    mapClip.current = false
+  }
+
   const restoreGlobeOrbit = () => {
     mapNav.current = false
+    endMapClip()
     camera.up.copy(WORLD_UP)
     if (controls) {
       controls.target.set(0, 0, 0)
@@ -532,7 +569,9 @@ export function CameraRig() {
           mapLeaveQuat.current.copy(camera.quaternion)
           enableMapPan(_mapLook)
           mapNav.current = true
+          beginMapClip()
         }
+        updateMapClip(map.origin)
         return
       }
 

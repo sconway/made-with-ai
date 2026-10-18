@@ -4,7 +4,7 @@ export type SidebarSectionId = 'region' | 'filters' | 'alerts' | 'pins'
 
 type OpenMap = Record<SidebarSectionId, boolean>
 
-const KEY = 'fg-sidebar'
+const KEY = 'fg-sidebar-v2'
 
 /** Region stays open; the taller blocks start closed so the flight list is visible. */
 const DEFAULT_OPEN: OpenMap = {

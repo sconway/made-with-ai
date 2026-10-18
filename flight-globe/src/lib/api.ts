@@ -67,6 +67,46 @@ export async function fetchPlaybackMeta(): Promise<PlaybackMeta> {
   return (await res.json()) as PlaybackMeta
 }
 
+export interface LoggedAirport {
+  iata: string
+  name: string
+  city: string
+}
+
+/** A past (or in-progress) flight reconstructed from stored positions. */
+export interface LoggedFlight {
+  callsign: string
+  start: number
+  end: number
+  from: LoggedAirport | null
+  to: LoggedAirport | null
+  inProgress: boolean
+  maxAltM: number | null
+  distanceKm: number
+  samples: number
+}
+
+/** [t ms, lat, lon, alt m] */
+export type TrackPoint = [number, number, number, number]
+
+export async function fetchAircraftFlights(icao24: string): Promise<LoggedFlight[]> {
+  const res = await fetch(`/api/aircraft/${encodeURIComponent(icao24)}/flights?limit=12`)
+  if (!res.ok) throw new Error(`flights ${res.status}`)
+  return ((await res.json()) as { flights: LoggedFlight[] }).flights
+}
+
+export async function fetchAircraftTrack(
+  icao24: string,
+  from: number,
+  to: number,
+): Promise<TrackPoint[]> {
+  const res = await fetch(
+    `/api/aircraft/${encodeURIComponent(icao24)}/track?from=${Math.floor(from)}&to=${Math.ceil(to)}`,
+  )
+  if (!res.ok) throw new Error(`track ${res.status}`)
+  return ((await res.json()) as { points: TrackPoint[] }).points
+}
+
 export async function fetchRouteFromBackend(
   callsign: string,
   icao24?: string,

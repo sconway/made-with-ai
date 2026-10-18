@@ -1,5 +1,6 @@
 import http from 'node:http'
 import { URL } from 'node:url'
+import { gzipSync } from 'node:zlib'
 import {
   flightsForScope,
   getCache,
@@ -14,6 +15,10 @@ import { loadRouteCache, resolveRoute, routeCacheSize } from './routes'
 import { distAvailable, tryServeStatic } from './static'
 import { sendRobots, sendSitemap } from './seo'
 import { runOutboundDiag } from './diag'
+import { fetchTypePhoto, type PhotoBody } from './typePhotos'
+import { historyDbStats, openHistoryDb } from './historyDb'
+import { aircraftTrack, flightLog } from './flightlog'
+import { aircraftDbReady, openAircraftDb } from './aircraftDb'
 import {
   getWeatherCatalog,
   getWeatherTile,
@@ -33,16 +38,36 @@ function sendJson(
   status: number,
   body: unknown,
   extraHeaders?: Record<string, string>,
+  /** Same key ⇒ same body; reuses the serialized + gzipped bytes. */
+  cacheKey?: string,
 ): void {
-  const payload = JSON.stringify(body)
+  const cached = cacheKey ? bodyCache.get(cacheKey) : undefined
+  const payload = cached?.json ?? JSON.stringify(body)
+  const gzip =
+    payload.length > GZIP_MIN_BYTES &&
+    /\bgzip\b/.test(String(res.req?.headers['accept-encoding'] ?? ''))
+  let gz = cached?.gz
+  if (gzip && !gz) gz = gzipSync(payload, { level: 5 })
+  if (cacheKey && !cached) {
+    bodyCache.set(cacheKey, { json: payload, gz })
+    while (bodyCache.size > BODY_CACHE_MAX) bodyCache.delete(bodyCache.keys().next().value!)
+  } else if (cached && gz && !cached.gz) {
+    cached.gz = gz
+  }
   res.writeHead(status, {
     'content-type': 'application/json; charset=utf-8',
     'cache-control': 'no-store',
     'access-control-allow-origin': '*',
+    vary: 'accept-encoding',
+    ...(gzip ? { 'content-encoding': 'gzip' } : {}),
     ...extraHeaders,
   })
-  res.end(payload)
+  res.end(gzip && gz ? gz : payload)
 }
+
+const GZIP_MIN_BYTES = 8 * 1024
+const BODY_CACHE_MAX = 16
+const bodyCache = new Map<string, { json: string; gz?: Buffer }>()
 
 function parseBBox(url: URL): Partial<BBox> | null {
   const minLat = url.searchParams.get('minLat')
@@ -94,7 +119,48 @@ function handleHealth(_req: http.IncomingMessage, res: http.ServerResponse): voi
     routeCacheSize: routeCacheSize(),
     creditsRemaining: c.creditsRemaining,
     cacheSource: c.source,
+    history: historyDbStats(),
+    aircraftDb: aircraftDbReady(),
   })
+}
+
+const HISTORY_WINDOW_MS = 8 * 24 * 60 * 60 * 1000
+
+function handleAircraft(req: http.IncomingMessage, res: http.ServerResponse): void {
+  const host = req.headers.host ?? `localhost:${PORT}`
+  const url = new URL(req.url ?? '/', `http://${host}`)
+  // /api/aircraft/:hex/(flights|track)
+  const parts = url.pathname.split('/').filter(Boolean)
+  const hex = (parts[2] ?? '').trim().toLowerCase()
+  const what = parts[3]
+  if (!/^[0-9a-f]{6}$/.test(hex)) {
+    sendJson(res, 400, { error: 'bad hex' })
+    return
+  }
+  const now = Date.now()
+  try {
+    if (what === 'flights') {
+      const limit = Math.min(50, Math.max(1, Number(url.searchParams.get('limit')) || 20))
+      sendJson(res, 200, { icao24: hex, flights: flightLog(hex, now - HISTORY_WINDOW_MS, now, limit) })
+      return
+    }
+    if (what === 'track') {
+      const from = Number(url.searchParams.get('from'))
+      const to = Number(url.searchParams.get('to'))
+      if (!Number.isFinite(from) || !Number.isFinite(to) || to <= from) {
+        sendJson(res, 400, { error: 'from/to (ms) required' })
+        return
+      }
+      sendJson(res, 200, { icao24: hex, points: aircraftTrack(hex, from, to) }, {
+        'cache-control': to < now - 10 * 60 * 1000 ? 'public, max-age=3600' : 'no-store',
+      })
+      return
+    }
+    sendJson(res, 404, { error: 'not found' })
+  } catch (e) {
+    console.error('[history] aircraft query failed:', e instanceof Error ? e.message : e)
+    sendJson(res, 500, { error: 'history unavailable' })
+  }
 }
 
 function handleFlights(req: http.IncomingMessage, res: http.ServerResponse): void {
@@ -162,12 +228,19 @@ function handleFlights(req: http.IncomingMessage, res: http.ServerResponse): voi
   }
 
   // Short TTL hint for any reverse proxy; browsers still poll on their cadence.
-  sendJson(res, 200, body, {
-    'cache-control': 'public, max-age=5',
-    'x-cache-age-ms': String(ageMs),
-    'x-upstream-polls': String(c.upstreamPolls),
-    'x-api-hits': String(c.apiHits),
-  })
+  // Body `ageMs` is as of first serve for this poll; the header is always fresh.
+  sendJson(
+    res,
+    200,
+    body,
+    {
+      'cache-control': 'public, max-age=5',
+      'x-cache-age-ms': String(ageMs),
+      'x-upstream-polls': String(c.upstreamPolls),
+      'x-api-hits': String(c.apiHits),
+    },
+    `flights:${key}:${c.updatedAt}`,
+  )
 }
 
 function handlePlayback(_req: http.IncomingMessage, res: http.ServerResponse): void {
@@ -247,10 +320,44 @@ async function handleWeatherTile(
 
 type PhotoCache = {
   at: number
-  body: { src: string; link: string; photographer: string } | null
+  body: PhotoBody | null
 }
 const photoCache = new Map<string, PhotoCache>()
+const typePhotoCache = new Map<string, PhotoCache>()
 const PHOTO_TTL_MS = 24 * 60 * 60 * 1000
+
+/** Planespotters and Wikipedia both reject requests without a contact URL. */
+const PHOTO_UA = `flight-globe/0.1 (+${
+  process.env.PUBLIC_SITE_URL?.replace(/\/+$/, '') ||
+  'https://github.com/sconway/made-with-ai'
+})`
+
+async function handleTypePhoto(
+  code: string,
+  res: http.ServerResponse,
+): Promise<void> {
+  const key = code.trim().toUpperCase()
+  if (!/^[A-Z0-9]{2,4}$/.test(key)) {
+    sendJson(res, 400, { error: 'bad type' })
+    return
+  }
+  const hit = typePhotoCache.get(key)
+  if (hit && Date.now() - hit.at < PHOTO_TTL_MS) {
+    sendJson(res, 200, hit.body ?? { src: null }, {
+      'cache-control': 'public, max-age=86400',
+    })
+    return
+  }
+  try {
+    const body = await fetchTypePhoto(key, PHOTO_UA)
+    typePhotoCache.set(key, { at: Date.now(), body })
+    sendJson(res, 200, body ?? { src: null }, {
+      'cache-control': 'public, max-age=86400',
+    })
+  } catch {
+    sendJson(res, 200, { src: null }, { 'cache-control': 'public, max-age=60' })
+  }
+}
 
 async function handlePhoto(
   req: http.IncomingMessage,
@@ -259,6 +366,10 @@ async function handlePhoto(
   const host = req.headers.host ?? `localhost:${PORT}`
   const url = new URL(req.url ?? '/', `http://${host}`)
   const parts = url.pathname.split('/').filter(Boolean)
+  if (parts[2] === 'type') {
+    await handleTypePhoto(parts[3] ?? '', res)
+    return
+  }
   const hex = (parts[2] ?? '').trim().toLowerCase()
   if (!/^[0-9a-f]{6}$/.test(hex)) {
     sendJson(res, 400, { error: 'bad hex' })
@@ -274,7 +385,7 @@ async function handlePhoto(
   try {
     const upstream = await fetch(
       `https://api.planespotters.net/pub/photos/hex/${hex}`,
-      { headers: { 'User-Agent': 'flight-globe/0.1' } },
+      { headers: { 'User-Agent': PHOTO_UA } },
     )
     if (!upstream.ok) {
       photoCache.set(hex, { at: Date.now(), body: null })
@@ -383,6 +494,14 @@ const server = http.createServer((req, res) => {
     void handlePhoto(req, res)
     return
   }
+  if (pathOnly.startsWith('/api/aircraft/')) {
+    if (req.method !== 'GET') {
+      sendJson(res, 405, { error: 'method not allowed' })
+      return
+    }
+    handleAircraft(req, res)
+    return
+  }
   if (pathOnly.startsWith('/api/routes/')) {
     if (req.method !== 'GET') {
       sendJson(res, 405, { error: 'method not allowed' })
@@ -402,6 +521,9 @@ const server = http.createServer((req, res) => {
         'GET /api/playback',
         'GET /api/routes/:callsign',
         'GET /api/photos/:hex',
+        'GET /api/photos/type/:icaoType',
+        'GET /api/aircraft/:hex/flights?limit',
+        'GET /api/aircraft/:hex/track?from&to',
         'GET /api/weather',
         'GET /api/weather/tile?host&path&z&x&y',
       ],
@@ -431,6 +553,12 @@ const server = http.createServer((req, res) => {
   })
 })
 
+openAircraftDb()
+try {
+  openHistoryDb(isMockMode())
+} catch (e) {
+  console.error('[history] disabled — could not open sqlite:', e instanceof Error ? e.message : e)
+}
 await loadRouteCache()
 await loadFlightCache(isMockMode() ? 'mock' : 'live')
 startPoller()

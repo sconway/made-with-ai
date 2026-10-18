@@ -14,6 +14,7 @@ import {
   getMapBlend,
   getMapEase,
   getMapFrame,
+  mapAircraftScale,
   mapFeatureScale,
   projectPosition,
 } from '../lib/mapView'
@@ -21,6 +22,10 @@ import {
   createAirplaneGeometry,
   createAirplaneGlowGeometry,
   createAirplaneOutlineGeometry,
+  createHelicopterGlowGeometry,
+  createHelicopterOutlineGeometry,
+  createMapHeloGeometry,
+  createMapHeloOutlineGeometry,
   createMapPlaneGeometry,
   createMapPlaneOutlineGeometry,
   createPlaneBloomGeometry,
@@ -38,7 +43,7 @@ import {
 } from '../lib/aircraftLookup'
 import { getVisibleFlights } from '../lib/visibleFlights'
 import { filterFlightsByQuery, flightsForAirportIata, haversineKm } from '../lib/search'
-import { filterFlightsByTraffic } from '../lib/filters'
+import { airframeFiltersActive, filterFlightsByTraffic } from '../lib/filters'
 import { findAirport } from '../lib/airports'
 import { enqueueRoutes, getCachedRoute } from '../lib/routes'
 import { looksLikeAirlineCallsign } from '../lib/callsignVariants'
@@ -79,6 +84,7 @@ interface PerFlight {
   family: AircraftFamily
   typeCode: string
   category: string
+  typeClass: string
 }
 
 const COLOR_SELECTED = new THREE.Color('#ffffff').multiplyScalar(1.8)
@@ -89,6 +95,23 @@ const MAP_COLOR_SELECTED = new THREE.Color('#ffffff')
 const MAP_COLOR_HOVER = new THREE.Color('#fff36b')
 const MAP_COLOR_PINNED = new THREE.Color('#b6ffd4')
 const MAP_COLOR_EMERGENCY = new THREE.Color('#ff5c5c')
+
+/**
+ * Map view looks straight down, often at the night side, where the sun light
+ * leaves the 3D bodies a dim gray. This self-lit share keeps their color.
+ */
+const BODY_MAP_LIFT = 0.65
+const _bodyLift = { value: 0 }
+
+function liftBodyShader(shader: THREE.WebGLProgramParametersWithUniforms): void {
+  shader.uniforms.uMapLift = _bodyLift
+  shader.fragmentShader = shader.fragmentShader
+    .replace('void main() {', 'uniform float uMapLift;\nvoid main() {')
+    .replace(
+      '#include <emissivemap_fragment>',
+      '#include <emissivemap_fragment>\n  totalEmissiveRadiance += diffuseColor.rgb * uMapLift;',
+    )
+}
 
 // Scratch objects reused every frame to avoid per-flight allocation.
 const _dummy = new THREE.Object3D()
@@ -101,20 +124,27 @@ const _color = new THREE.Color()
 const _basis = new THREE.Matrix4()
 const _camDir = new THREE.Vector3()
 const _bodyCounts = new Uint16Array(AIRCRAFT_FAMILIES.length)
+const _hidden = new THREE.Matrix4().makeScale(0, 0, 0)
 
 /**
  * World-space pick radius that stays ~targetPx on screen, so zooming the
  * country map does not turn every plane into a hundred-pixel hit blob.
  */
+/** Pick sphere per unit of body scale: half the narrowbody wingspan, plus margin. */
+const MAP_BODY_PICK = 0.017
+
 function pickRadiusForScreen(
   dist: number,
   fovDeg: number,
   heightPx: number,
   targetPx = 18,
+  /** Map zoom goes far below the globe floor; keep the radius in screen pixels. */
+  exact = false,
 ): number {
   const tan = Math.tan(((fovDeg * Math.PI) / 180) / 2)
-  const r = Math.max(0.06, dist) * tan * ((targetPx * 2) / Math.max(1, heightPx))
-  return THREE.MathUtils.clamp(r, 0.001, 0.045)
+  const d = exact ? Math.max(1e-7, dist) : Math.max(0.06, dist)
+  const r = d * tan * ((targetPx * 2) / Math.max(1, heightPx))
+  return exact ? Math.min(r, 0.045) : THREE.MathUtils.clamp(r, 0.001, 0.045)
 }
 
 export function Flights() {
@@ -132,6 +162,8 @@ export function Flights() {
   const pinnedFlightIds = useStore((s) => s.pinnedFlightIds)
   const searchQuery = useStore((s) => s.searchQuery)
   const searchAirportIata = useStore((s) => s.searchAirportIata)
+  // The airport board lists traffic the sidebar filters may hide on the globe.
+  const airportHoverId = searchAirportIata ? hoveredId : null
   const trafficFilters = useStore((s) => s.trafficFilters)
   const followFlight = useStore((s) => s.followFlight)
   const emergencyVersion = useStore((s) => s.emergencyVersion)
@@ -152,9 +184,13 @@ export function Flights() {
     AIRCRAFT_FAMILIES.map(() => null),
   )
   const glowRef = useRef<THREE.InstancedMesh>(null)
+  const heloMeshRef = useRef<THREE.InstancedMesh>(null)
+  const heloGlowRef = useRef<THREE.InstancedMesh>(null)
   const bloomRef = useRef<THREE.InstancedMesh>(null)
   const mapMeshRef = useRef<THREE.InstancedMesh>(null)
   const mapHaloRef = useRef<THREE.InstancedMesh>(null)
+  const mapHeloMeshRef = useRef<THREE.InstancedMesh>(null)
+  const mapHeloHaloRef = useRef<THREE.InstancedMesh>(null)
   const pickRef = useRef<THREE.InstancedMesh>(null)
   const statesRef = useRef<Map<string, PerFlight>>(new Map())
   const orderRef = useRef<string[]>([])
@@ -176,6 +212,7 @@ export function Flights() {
   }, [region])
 
   const geometry = useMemo(() => createAirplaneOutlineGeometry(), [])
+  const heloGeometry = useMemo(() => createHelicopterOutlineGeometry(), [])
   const bodyGeometries = useMemo(
     () => AIRCRAFT_FAMILIES.map((fam) => createAirplaneGeometry(fam)),
     [],
@@ -186,8 +223,11 @@ export function Flights() {
     }
   }, [])
   const glowGeometry = useMemo(() => createAirplaneGlowGeometry(), [])
+  const heloGlowGeometry = useMemo(() => createHelicopterGlowGeometry(), [])
   const mapGeometry = useMemo(() => createMapPlaneGeometry(), [])
   const mapOutlineGeometry = useMemo(() => createMapPlaneOutlineGeometry(), [])
+  const mapHeloGeometry = useMemo(() => createMapHeloGeometry(), [])
+  const mapHeloOutlineGeometry = useMemo(() => createMapHeloOutlineGeometry(), [])
   const bloomGeometry = useMemo(() => createPlaneBloomGeometry(), [])
   const bloomTexture = useMemo(() => createPlaneBloomTexture(), [])
 
@@ -274,12 +314,23 @@ export function Flights() {
     ]
     const keepIds = [
       ...focusIds,
+      ...(airportHoverId ? [airportHoverId] : []),
       ...(followFlight
         ? []
         : flights.filter((f) => isConfirmedEmergency(f)).map((f) => f.icao24)),
     ]
 
     let pool = filterFlightsByQuery(flights, searchQuery)
+    if (airframeFiltersActive(trafficFilters)) {
+      // Unknown airframes are filtered out, so they'd never be looked up as visible.
+      const unknown: Array<{ icao24: string; priority: number }> = []
+      for (const f of pool) {
+        if (f.typeCode || getCachedAircraftType(f.icao24) !== undefined) continue
+        unknown.push({ icao24: f.icao24, priority: 30 })
+        if (unknown.length >= 200) break
+      }
+      if (unknown.length) enqueueAircraftTypes(unknown)
+    }
     pool = filterFlightsByTraffic(pool, trafficFilters)
     if (searchAirportIata) {
       pool = flightsForAirportIata(pool, searchAirportIata)
@@ -361,7 +412,8 @@ export function Flights() {
         airline: airlineCodeFromCallsign(f.callsign || ''),
         typeCode,
         category: f.category || '',
-        family: aircraftFamily(typeCode, f.category),
+        typeClass: f.typeClass || '',
+        family: aircraftFamily(typeCode, f.category, f.typeClass),
       }
       map.set(f.icao24, entry)
     }
@@ -372,9 +424,13 @@ export function Flights() {
     const n = Math.min(orderRef.current.length, MAX_INSTANCES)
     if (meshRef.current) meshRef.current.count = n
     if (glowRef.current) glowRef.current.count = n
+    if (heloMeshRef.current) heloMeshRef.current.count = n
+    if (heloGlowRef.current) heloGlowRef.current.count = n
     if (bloomRef.current) bloomRef.current.count = n
     if (mapMeshRef.current) mapMeshRef.current.count = n
     if (mapHaloRef.current) mapHaloRef.current.count = n
+    if (mapHeloMeshRef.current) mapHeloMeshRef.current.count = n
+    if (mapHeloHaloRef.current) mapHeloHaloRef.current.count = n
     if (pickRef.current) pickRef.current.count = n
   }, [
     flights,
@@ -385,6 +441,7 @@ export function Flights() {
     pinnedFlightIds,
     searchQuery,
     searchAirportIata,
+    airportHoverId,
     trafficFilters,
     followFlight,
     emergencyVersion,
@@ -414,24 +471,34 @@ export function Flights() {
     const mapEase = getMapEase()
     const map = getMapFrame()
     const mapMode = mapBlend > 0.2
+    _bodyLift.value = BODY_MAP_LIFT * mapEase
     const frontThreshold = GLOBE_RADIUS / camDist - 0.02
     // Height above the map. Camera distance from the origin grows when the
     // view is panned, which kept meshes off even at maximum zoom.
-    const mapHeight = map
-      ? Math.max(0.12, state.camera.position.dot(map.origin) - GLOBE_RADIUS)
-      : Math.max(0.12, camDist - GLOBE_RADIUS)
+    const mapHeightRaw = map
+      ? Math.max(0, state.camera.position.dot(map.origin) - GLOBE_RADIUS)
+      : Math.max(0, camDist - GLOBE_RADIUS)
+    const mapHeight = Math.max(0.12, mapHeightRaw)
     const fov =
       state.camera instanceof THREE.PerspectiveCamera ? state.camera.fov : 45
+    const mapBodyScale =
+      mapHeightRaw >= 0.12
+        ? THREE.MathUtils.clamp(mapHeight * 0.95, 0.18, 0.36)
+        : mapAircraftScale(mapHeightRaw, 0.18, fov, state.size.height)
     const featureScale = mapFeatureScale()
     const mapGlyph =
       mapEase > 0.03
         ? THREE.MathUtils.clamp(mapHeight * 1.05, 0.38, 2.1)
         : 0
     const glow = glowRef.current
+    const heloMesh = heloMeshRef.current
+    const heloGlow = heloGlowRef.current
     const bloom = bloomRef.current
     const bodies = bodyRefs.current
     const mapMesh = mapMeshRef.current
     const mapHalo = mapHaloRef.current
+    const mapHeloMesh = mapHeloMeshRef.current
+    const mapHeloHalo = mapHeloHaloRef.current
     _bodyCounts.fill(0)
     beginFlightAnchors()
 
@@ -443,10 +510,27 @@ export function Flights() {
       const isSelected = order[i] === selectedId
 
       projectPosition(pred.lat, pred.lon, radius, _target)
-      if (mapMode && map) _target.addScaledVector(map.origin, 0.012)
+      if (mapMode && map) {
+        // Cruise altitude is exaggerated well above street-level camera
+        // height. Keep the aircraft under the camera, just above the map.
+        const above = _target.dot(map.origin) - GLOBE_RADIUS
+        const ceiling = Math.max(mapHeightRaw * 0.25, 2e-6)
+        const lift = Math.min(above + 0.012, ceiling)
+        if (lift !== above) _target.addScaledVector(map.origin, lift - above)
+      }
       // Selected aircraft must sit exactly on the route arc (no smoothing lag).
       if (isSelected || mapBlend > 0.02) e.dispVec.copy(_target)
       else e.dispVec.lerp(_target, 0.2)
+      // Close map sizes are in screen pixels at ground level. A plane lifted
+      // toward the camera would otherwise draw larger than intended.
+      const mapNear =
+        mapMode && map && mapHeightRaw < 0.12
+          ? THREE.MathUtils.clamp(
+              1 - (e.dispVec.dot(map.origin) - GLOBE_RADIUS) / Math.max(mapHeightRaw, 1e-6),
+              0.2,
+              1,
+            )
+          : 1
 
       const isHovered = order[i] === hoveredIdRef.current
       const isPinned = pinnedSetRef.current.has(order[i]!)
@@ -538,22 +622,37 @@ export function Flights() {
         chaseBody ||
         (!mapMode && camDistTo < BODY_DIST && globeScale > 0.02) ||
         (mapMode && mapHeight < MAP_BODY_HEIGHT && mapEase > 0.55)
+      const isHelo = e.family === 'helo'
       if (globeScale > 0.02 && !showBody) {
         _dummy.scale.setScalar(globeScale * (weatherOn ? 1.62 : 1.4))
         _dummy.updateMatrix()
-        if (glow) glow.setMatrixAt(i, _dummy.matrix)
+        if (isHelo) {
+          if (heloGlow) heloGlow.setMatrixAt(i, _dummy.matrix)
+          if (glow) {
+            glow.setMatrixAt(i, _hidden)
+          }
+        } else if (glow) {
+          glow.setMatrixAt(i, _dummy.matrix)
+          if (heloGlow) heloGlow.setMatrixAt(i, _hidden)
+        }
         _dummy.scale.setScalar(globeScale)
         _dummy.updateMatrix()
-        mesh.setMatrixAt(i, _dummy.matrix)
+        if (isHelo) {
+          if (heloMesh) heloMesh.setMatrixAt(i, _dummy.matrix)
+          mesh.setMatrixAt(i, _hidden)
+        } else {
+          mesh.setMatrixAt(i, _dummy.matrix)
+          if (heloMesh) heloMesh.setMatrixAt(i, _hidden)
+        }
         _dummy.scale.setScalar(globeScale * (isSelected || isEmergency ? 1.28 : weatherOn ? 1.18 : 1.16))
         _dummy.updateMatrix()
         if (bloom) bloom.setMatrixAt(i, _dummy.matrix)
       } else {
-        _dummy.scale.setScalar(0)
-        _dummy.updateMatrix()
-        mesh.setMatrixAt(i, _dummy.matrix)
-        if (glow) glow.setMatrixAt(i, _dummy.matrix)
-        if (bloom) bloom.setMatrixAt(i, _dummy.matrix)
+        mesh.setMatrixAt(i, _hidden)
+        if (glow) glow.setMatrixAt(i, _hidden)
+        if (heloMesh) heloMesh.setMatrixAt(i, _hidden)
+        if (heloGlow) heloGlow.setMatrixAt(i, _hidden)
+        if (bloom) bloom.setMatrixAt(i, _hidden)
       }
 
       if (mapMesh && mapHalo) {
@@ -561,22 +660,35 @@ export function Flights() {
         if (mapScale > 0.02 && !showBody) {
           _dummy.scale.setScalar(mapScale * 1.2)
           _dummy.updateMatrix()
-          mapHalo.setMatrixAt(i, _dummy.matrix)
+          if (isHelo) {
+            if (mapHeloHalo) mapHeloHalo.setMatrixAt(i, _dummy.matrix)
+            mapHalo.setMatrixAt(i, _hidden)
+          } else {
+            mapHalo.setMatrixAt(i, _dummy.matrix)
+            if (mapHeloHalo) mapHeloHalo.setMatrixAt(i, _hidden)
+          }
           _dummy.position.addScaledVector(_up, 0.0006)
           _dummy.scale.setScalar(mapScale * 0.78)
           _dummy.updateMatrix()
-          mapMesh.setMatrixAt(i, _dummy.matrix)
+          if (isHelo) {
+            if (mapHeloMesh) mapHeloMesh.setMatrixAt(i, _dummy.matrix)
+            mapMesh.setMatrixAt(i, _hidden)
+          } else {
+            mapMesh.setMatrixAt(i, _dummy.matrix)
+            if (mapHeloMesh) mapHeloMesh.setMatrixAt(i, _hidden)
+          }
+          _dummy.position.copy(e.dispVec)
         } else {
-          _dummy.scale.setScalar(0)
-          _dummy.updateMatrix()
-          mapHalo.setMatrixAt(i, _dummy.matrix)
-          mapMesh.setMatrixAt(i, _dummy.matrix)
+          mapHalo.setMatrixAt(i, _hidden)
+          mapMesh.setMatrixAt(i, _hidden)
+          if (mapHeloHalo) mapHeloHalo.setMatrixAt(i, _hidden)
+          if (mapHeloMesh) mapHeloMesh.setMatrixAt(i, _hidden)
         }
       }
 
       if (pick) {
         const screenR =
-          pickRadiusForScreen(camDistTo, fov, state.size.height) *
+          pickRadiusForScreen(camDistTo, fov, state.size.height, 18, mapMode) *
           (isEmergency ? 1.35 : 1)
         // Cover the graphic itself. The visible mesh does not raycast, and a
         // short screen radius lets the airport disc under a wing take the hit.
@@ -586,13 +698,16 @@ export function Flights() {
           (isSelected ? 1.35 : isHovered || isEmergency ? 1.2 : 1)
         const spriteR = !showBody ? Math.max(globeScale, glyph) * 0.016 : 0
         const bodyR = showBody
-          ? (chaseBody
-              ? 0.65
-              : mapMode
-                ? THREE.MathUtils.clamp(mapHeight * 0.95, 0.18, 0.36)
-                : 0.3) * 0.03
+          ? chaseBody
+            ? 0.65 * 0.03
+            : mapMode
+              ? mapBodyScale * mapNear * MAP_BODY_PICK
+              : 0.3 * 0.03
           : 0
-        const hitR = Math.max(screenR, spriteR, bodyR)
+        let hitR = Math.max(screenR, spriteR, bodyR)
+        // A ray from inside the sphere never hits it, so the camera must
+        // stay outside every pick sphere at street-level zoom.
+        if (mapMode) hitR = Math.min(hitR, camDistTo * 0.5)
         _pickDummy.position.copy(e.dispVec)
         _pickDummy.quaternion.identity()
         _pickDummy.scale.setScalar(hitR)
@@ -614,6 +729,7 @@ export function Flights() {
           punchFlightColor(_color, weatherOn, true)
         }
         if (mapMesh) mapMesh.setColorAt(i, _color)
+        if (mapHeloMesh) mapHeloMesh.setColorAt(i, _color)
       } else if (isEmergency) {
         _color.copy(COLOR_EMERGENCY).multiplyScalar(0.65 + 0.35 * pulse)
       } else if (isSelected) {
@@ -627,6 +743,7 @@ export function Flights() {
         punchFlightColor(_color, weatherOn, false)
       }
       mesh.setColorAt(i, _color)
+      if (heloMesh) heloMesh.setColorAt(i, _color)
       if (bloom) {
         if (weatherOn && !isEmergency && !isSelected) {
           _color.lerp(COLOR_SELECTED, 0.55)
@@ -637,7 +754,7 @@ export function Flights() {
       if (showBody) {
         const typeCode =
           e.typeCode || getCachedAircraftType(order[i]!) || ''
-        const family = aircraftFamily(typeCode, e.category)
+        const family = aircraftFamily(typeCode, e.category, e.typeClass)
         const fi = FAMILY_INDEX[family]
         const body = bodies[fi]
         const slot = _bodyCounts[fi]++
@@ -648,7 +765,7 @@ export function Flights() {
             (chaseBody
               ? 0.65
               : mapMode
-                ? THREE.MathUtils.clamp(mapHeight * 0.95, 0.18, 0.36)
+                ? mapBodyScale * mapNear
                 : 0.3) *
             famScale *
             closeBoost
@@ -690,6 +807,11 @@ export function Flights() {
       if (body.instanceColor) body.instanceColor.needsUpdate = true
     }
     if (glow) glow.instanceMatrix.needsUpdate = true
+    if (heloMesh) {
+      heloMesh.instanceMatrix.needsUpdate = true
+      if (heloMesh.instanceColor) heloMesh.instanceColor.needsUpdate = true
+    }
+    if (heloGlow) heloGlow.instanceMatrix.needsUpdate = true
     if (bloom) {
       bloom.instanceMatrix.needsUpdate = true
       if (bloom.instanceColor) bloom.instanceColor.needsUpdate = true
@@ -699,6 +821,11 @@ export function Flights() {
       if (mapMesh.instanceColor) mapMesh.instanceColor.needsUpdate = true
     }
     if (mapHalo) mapHalo.instanceMatrix.needsUpdate = true
+    if (mapHeloMesh) {
+      mapHeloMesh.instanceMatrix.needsUpdate = true
+      if (mapHeloMesh.instanceColor) mapHeloMesh.instanceColor.needsUpdate = true
+    }
+    if (mapHeloHalo) mapHeloHalo.instanceMatrix.needsUpdate = true
     if (pick) pick.instanceMatrix.needsUpdate = true
   })
 
@@ -786,8 +913,40 @@ export function Flights() {
         />
       </instancedMesh>
       <instancedMesh
+        ref={heloGlowRef}
+        args={[heloGlowGeometry, undefined, MAX_INSTANCES]}
+        frustumCulled={false}
+        renderOrder={20}
+        raycast={() => {}}
+      >
+        <meshBasicMaterial
+          color="#000000"
+          transparent={false}
+          toneMapped={false}
+          depthTest
+          depthWrite={false}
+          side={THREE.DoubleSide}
+        />
+      </instancedMesh>
+      <instancedMesh
         ref={meshRef}
         args={[geometry, undefined, MAX_INSTANCES]}
+        frustumCulled={false}
+        renderOrder={21}
+        raycast={() => {}}
+      >
+        <meshBasicMaterial
+          transparent
+          opacity={1}
+          toneMapped={false}
+          depthTest
+          depthWrite={false}
+          side={THREE.DoubleSide}
+        />
+      </instancedMesh>
+      <instancedMesh
+        ref={heloMeshRef}
+        args={[heloGeometry, undefined, MAX_INSTANCES]}
         frustumCulled={false}
         renderOrder={21}
         raycast={() => {}}
@@ -818,6 +977,7 @@ export function Flights() {
             roughness={0.42}
             emissive="#6a93c8"
             emissiveIntensity={0.22}
+            onBeforeCompile={liftBodyShader}
             toneMapped={false}
             transparent
             opacity={1}
@@ -842,8 +1002,40 @@ export function Flights() {
         />
       </instancedMesh>
       <instancedMesh
+        ref={mapHeloHaloRef}
+        args={[mapHeloOutlineGeometry, undefined, MAX_INSTANCES]}
+        frustumCulled={false}
+        renderOrder={22}
+        raycast={() => {}}
+      >
+        <meshBasicMaterial
+          color="#000000"
+          transparent={false}
+          toneMapped={false}
+          depthTest={false}
+          depthWrite={false}
+          side={THREE.DoubleSide}
+        />
+      </instancedMesh>
+      <instancedMesh
         ref={mapMeshRef}
         args={[mapGeometry, undefined, MAX_INSTANCES]}
+        frustumCulled={false}
+        renderOrder={23}
+        raycast={() => {}}
+      >
+        <meshBasicMaterial
+          transparent
+          opacity={1}
+          toneMapped={false}
+          depthTest={false}
+          depthWrite={false}
+          side={THREE.DoubleSide}
+        />
+      </instancedMesh>
+      <instancedMesh
+        ref={mapHeloMeshRef}
+        args={[mapHeloGeometry, undefined, MAX_INSTANCES]}
         frustumCulled={false}
         renderOrder={23}
         raycast={() => {}}

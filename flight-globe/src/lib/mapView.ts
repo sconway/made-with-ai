@@ -241,6 +241,40 @@ export function mapFeatureScale(): number {
   return THREE.MathUtils.lerp(1, mapScale, easeInOutCubic(blend))
 }
 
+/**
+ * Regional map zoom keeps `baseScale`. Closer than that, hold the regional
+ * screen size so markers don't cover the streets.
+ */
+const MAP_MARKER_FLOOR = 0.12
+
+export function mapMarkerScale(height: number, baseScale: number): number {
+  if (height >= MAP_MARKER_FLOOR) return baseScale
+  return baseScale * (Math.max(height, 1e-6) / MAP_MARKER_FLOOR)
+}
+
+/**
+ * Close map zoom for the aircraft mesh. The mesh wingspan is about 0.028,
+ * so a unit-sized screen scale would shrink it to a pixel.
+ */
+const MAP_AIRCRAFT_NATIVE = 0.028
+const MAP_AIRCRAFT_PX = 42
+
+export function mapAircraftScale(
+  height: number,
+  baseScale: number,
+  fovDeg: number,
+  viewPx: number,
+): number {
+  if (height >= MAP_MARKER_FLOOR) return baseScale
+  const tan = Math.tan(((fovDeg * DEG2RAD) / 2) || 0.4)
+  const h = Math.max(height, 1e-6)
+  const worldPerPx = (2 * tan * h) / Math.max(1, viewPx)
+  const u = THREE.MathUtils.smoothstep(h, 0.02, MAP_MARKER_FLOOR)
+  const close = (MAP_AIRCRAFT_PX * worldPerPx) / MAP_AIRCRAFT_NATIVE
+  const shrunk = baseScale * (h / MAP_MARKER_FLOOR)
+  return THREE.MathUtils.lerp(close, shrunk, u)
+}
+
 export function inMapFrame(
   lat: number,
   lon: number,

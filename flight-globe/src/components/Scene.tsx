@@ -8,8 +8,10 @@ import { Countries } from './Countries'
 import { Flights } from './Flights'
 import { FlightLabels } from './FlightLabels'
 import { WeatherLayer } from './WeatherLayer'
+import { MapBasemap } from './MapBasemap'
 import { Arcs } from './Arcs'
 import { Trails } from './Trails'
+import { HistoryTrack } from './HistoryTrack'
 import { AirportPins } from './AirportPins'
 import { CameraRig } from './CameraRig'
 import { sunDirection } from '../lib/sun'
@@ -67,8 +69,10 @@ export function Scene() {
       <Atmosphere />
       <WeatherLayer />
       <Countries />
+      <MapBasemap />
       <AirportPins />
       <Trails />
+      <HistoryTrack />
       <Arcs />
       <Flights />
       <FlightLabels />

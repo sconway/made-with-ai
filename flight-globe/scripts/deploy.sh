@@ -22,6 +22,7 @@ rsync -avz --delete \
   --exclude .vite \
   --exclude server/.route-cache.json \
   --exclude server/.flights-cache.json \
+  --exclude server/data \
   "$ROOT/" \
   "$HOST:$DEST/"
 

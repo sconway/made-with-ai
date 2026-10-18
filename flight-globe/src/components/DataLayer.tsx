@@ -49,8 +49,8 @@ function liveDataErrorMessage(err: unknown): string {
 }
 
 /**
- * Loads country geometry once, then polls flight data for the active region.
- * Country view filters that same feed in the client. When playback is scrubbed
+ * Loads country geometry once, then polls flight data for the active region
+ * (or the world while a country is selected, filtered in the client). When playback is scrubbed
  * off live, fetches a historical snapshot instead of the live cache.
  */
 export function DataLayer() {
@@ -60,6 +60,7 @@ export function DataLayer() {
   const setError = useStore((s) => s.setError)
   const setPlaybackRange = useStore((s) => s.setPlaybackRange)
   const region = useStore((s) => s.region)
+  const selectedCountry = useStore((s) => s.selectedCountry)
   const playbackLive = useStore((s) => s.playbackLive)
   const playbackAt = useStore((s) => s.playbackAt)
 
@@ -95,12 +96,13 @@ export function DataLayer() {
     }
   }, [backend, setPlaybackRange])
 
-  // Country view filters the existing region/world feed client-side. Refetching
-  // a country bbox would drop departed originating flights and can clear the
-  // globe while that query is pending.
-  const bbox: BBox | null = region.bbox
+  // Country view filters the world feed client-side: the country may lie outside
+  // the active region, and a country bbox would drop departed originating flights.
+  const countryView = selectedCountry != null
+  const scope = countryView ? 'world' : region.id
+  const bbox: BBox | null = countryView ? null : region.bbox
   const histKey = playbackLive ? 'live' : `at:${playbackAt ?? 0}`
-  const key = `${backend ? 'be' : 'direct'}|${region.id}|${bboxKey(bbox)}|${histKey}`
+  const key = `${backend ? 'be' : 'direct'}|${scope}|${bboxKey(bbox)}|${histKey}`
 
   useEffect(() => {
     let cancelled = false
@@ -118,7 +120,7 @@ export function DataLayer() {
 
         if (backend) {
           const data = await fetchFlightsFromBackend({
-            scope: region.id,
+            scope,
             at: playbackLive ? null : playbackAt,
           })
 

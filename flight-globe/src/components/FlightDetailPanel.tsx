@@ -19,8 +19,12 @@ import {
   deepLinkFromApp,
 } from '../lib/deepLink'
 import { aircraftTypeName } from '../lib/aircraftTypes'
-import { getCachedAircraftType } from '../lib/aircraftLookup'
+import {
+  enqueueAircraftTypes,
+  getCachedAircraftType,
+} from '../lib/aircraftLookup'
 import { AircraftPhoto } from './AircraftPhoto'
+import { AircraftHistory } from './AircraftHistory'
 import { isConfirmedEmergency, emergencySquawkLabel, emergencySquawkHint } from '../lib/squawk'
 
 interface TrendSample {
@@ -71,6 +75,12 @@ export function FlightDetailPanel() {
     const id = window.setInterval(() => setTick((n) => n + 1), 30_000)
     return () => clearInterval(id)
   }, [selectedId])
+
+  useEffect(() => {
+    if (flight && !flight.typeCode) {
+      enqueueAircraftTypes([{ icao24: flight.icao24, priority: -1 }])
+    }
+  }, [flight?.icao24, flight?.typeCode])
 
   // Esc exits follow (or closes the panel if not following).
   useEffect(() => {
@@ -156,7 +166,9 @@ export function FlightDetailPanel() {
         selected: flight,
         airportIata: searchAirportIata,
         follow: followFlight,
+        countrySelected: useStore.getState().selectedCountry != null,
         includeCamera: true,
+        filters: useStore.getState().trafficFilters,
       }),
     )
     const ok = await copyText(url)
@@ -193,7 +205,10 @@ export function FlightDetailPanel() {
         </button>
       </header>
 
-      <AircraftPhoto icao24={flight.icao24} />
+      <AircraftPhoto
+        icao24={flight.icao24}
+        typeCode={flight.typeCode || getCachedAircraftType(flight.icao24)}
+      />
 
       {details.emergency && details.squawk && (
         <div className="flight-detail-emergency" role="status">
@@ -311,6 +326,7 @@ export function FlightDetailPanel() {
           <dd>{flight.originCountry || '—'}</dd>
         </div>
       </dl>
+      <AircraftHistory icao24={flight.icao24} />
       {followFlight && (
         <p className="flight-detail-follow-hint">
           Chase cam — behind this aircraft. Other traffic hidden. Esc to exit.

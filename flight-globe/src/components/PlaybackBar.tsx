@@ -2,13 +2,18 @@ import { useEffect, useMemo, useRef } from 'react'
 import { useStore } from '../store/useStore'
 import { useBackend } from '../lib/api'
 
+/** Autoplay advance per 250ms tick: ~2 minutes per second of playback at most. */
+const MAX_PLAY_STEP_MS = 30_000
+
 function fmtClock(ms: number): string {
   const d = new Date(ms)
-  return d.toLocaleTimeString([], {
+  const time = d.toLocaleTimeString([], {
     hour: '2-digit',
     minute: '2-digit',
     second: '2-digit',
   })
+  if (d.toDateString() === new Date().toDateString()) return time
+  return `${d.toLocaleDateString([], { weekday: 'short', month: 'short', day: 'numeric' })} ${time}`
 }
 
 /**
@@ -42,7 +47,7 @@ export function PlaybackBar() {
   useEffect(() => {
     if (!playbackPlaying || !ready || earliest == null || latest == null) return
     const span = latest - earliest
-    const step = Math.max(1_000, Math.floor(span / 120))
+    const step = Math.min(MAX_PLAY_STEP_MS, Math.max(1_000, Math.floor(span / 120)))
     const id = window.setInterval(() => {
       if (!playRef.current) return
       const cur = useStore.getState().playbackAt ?? earliest
@@ -90,7 +95,9 @@ export function PlaybackBar() {
           if (playbackPlaying) {
             setPlaybackPlaying(false)
           } else {
-            if (playbackLive && latest != null) setPlaybackAt(earliest ?? latest)
+            if (playbackLive && latest != null) {
+              setPlaybackAt(Math.max(earliest ?? latest, latest - 60 * 60 * 1000))
+            }
             setPlaybackPlaying(true)
           }
         }}

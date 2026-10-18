@@ -274,20 +274,22 @@ export function createAirplaneGeometry(
     g.translate(0, 0, -s.fuseLen * 0.5 - s.tailcone * 0.22)
     push(g)
   }
-  {
-    const g = new THREE.BoxGeometry(s.wingSpan, s.wingThick, s.wingChord)
-    g.translate(0, s.wingY, s.wingZ)
-    push(g)
-  }
-  {
-    const g = new THREE.BoxGeometry(s.stabSpan, s.wingThick * 0.8, s.stabChord)
-    g.translate(0, s.stabY, s.stabZ)
-    push(g)
-  }
-  {
-    const g = new THREE.BoxGeometry(s.wingThick * 0.9, s.finH, s.finC)
-    g.translate(0, s.finH * 0.52, s.finZ)
-    push(g)
+  if (!s.rotor) {
+    {
+      const g = new THREE.BoxGeometry(s.wingSpan, s.wingThick, s.wingChord)
+      g.translate(0, s.wingY, s.wingZ)
+      push(g)
+    }
+    {
+      const g = new THREE.BoxGeometry(s.stabSpan, s.wingThick * 0.8, s.stabChord)
+      g.translate(0, s.stabY, s.stabZ)
+      push(g)
+    }
+    {
+      const g = new THREE.BoxGeometry(s.wingThick * 0.9, s.finH, s.finC)
+      g.translate(0, s.finH * 0.52, s.finZ)
+      push(g)
+    }
   }
   for (const e of s.engines) {
     const g = alongZ(new THREE.CylinderGeometry(e.r * 0.85, e.r, e.len, 6, 1))
@@ -310,12 +312,31 @@ export function createAirplaneGeometry(
     const disc = new THREE.CylinderGeometry(s.rotor.r, s.rotor.r, 0.00022, 16, 1)
     disc.translate(0, s.rotor.y, 0)
     push(disc)
+    const bladeW = 0.00055
+    const bladeH = 0.00018
+    for (const yaw of [0, Math.PI / 4, Math.PI / 2, (3 * Math.PI) / 4]) {
+      const blade = new THREE.BoxGeometry(s.rotor.r * 2, bladeH, bladeW)
+      blade.translate(0, s.rotor.y + 0.00012, 0)
+      blade.rotateY(yaw)
+      push(blade)
+    }
     const mast = new THREE.CylinderGeometry(0.00028, 0.00028, s.rotor.y, 5, 1)
     mast.translate(0, s.rotor.y * 0.5, 0)
     push(mast)
     const boom = alongZ(new THREE.CylinderGeometry(0.00045, 0.0007, 0.0078, 5, 1))
     boom.translate(0, 0.0004, -0.0064)
     push(boom)
+    const skidY = -0.00205
+    for (const x of [-0.00155, 0.00155]) {
+      const skid = alongZ(new THREE.CylinderGeometry(0.00016, 0.00016, 0.0074, 4, 1))
+      skid.translate(x, skidY, -0.0004)
+      push(skid)
+      for (const z of [0.0024, -0.0028]) {
+        const strut = new THREE.CylinderGeometry(0.00012, 0.00012, 0.0017, 4, 1)
+        strut.translate(x, skidY + 0.00085, z)
+        push(strut)
+      }
+    }
   }
   if (s.tailRotor) {
     const g = new THREE.CylinderGeometry(s.tailRotor.r, s.tailRotor.r, 0.00018, 10, 1)
@@ -333,6 +354,56 @@ export function createAirplaneGeometry(
 }
 
 type XZ = { x: number; z: number }
+
+/**
+ * Top-down helicopter as a rotor cross with a tail boom — reads as a helo
+ * even at a few pixels, unlike a short-wing airplane silhouette.
+ */
+function helicopterSilhouette(): XZ[] {
+  const r = 0.0082
+  const t = 0.00115
+  const tail = 0.0118
+  const tr = 0.0028
+  return [
+    { x: -t, z: r },
+    { x: t, z: r },
+    { x: t, z: t },
+    { x: r, z: t },
+    { x: r, z: -t },
+    { x: t, z: -t },
+    { x: t, z: -tail + 0.0012 },
+    { x: t + tr, z: -tail + 0.0012 },
+    { x: t + tr, z: -tail - t },
+    { x: -t, z: -tail - t },
+    { x: -t, z: -t },
+    { x: -r, z: -t },
+    { x: -r, z: t },
+    { x: -t, z: t },
+  ]
+}
+
+function rectXZ(
+  hw: number,
+  hz: number,
+  ox = 0,
+  oz = 0,
+): THREE.BufferGeometry {
+  const x0 = ox - hw
+  const x1 = ox + hw
+  const z0 = oz - hz
+  const z1 = oz + hz
+  const g = new THREE.BufferGeometry()
+  g.setAttribute(
+    'position',
+    new THREE.Float32BufferAttribute(
+      [x0, 0, z1, x1, 0, z1, x0, 0, z0, x0, 0, z0, x1, 0, z1, x1, 0, z0],
+      3,
+    ),
+  )
+  g.computeVertexNormals()
+  g.computeBoundingSphere()
+  return g
+}
 
 /** Closed top-down airliner silhouette, +Z nose, +X right. */
 function airplaneSilhouette(): XZ[] {
@@ -454,9 +525,17 @@ export function createAirplaneOutlineGeometry(): THREE.BufferGeometry {
   return strokeLoopXZ(airplaneSilhouette(), 0.0017)
 }
 
+export function createHelicopterOutlineGeometry(): THREE.BufferGeometry {
+  return strokeLoopXZ(helicopterSilhouette(), 0.0015)
+}
+
 /** Dark rim just outside the bright stroke so nearby planes stay separable. */
 export function createAirplaneGlowGeometry(): THREE.BufferGeometry {
   return strokeLoopXZ(airplaneSilhouette(), 0.0034)
+}
+
+export function createHelicopterGlowGeometry(): THREE.BufferGeometry {
+  return strokeLoopXZ(helicopterSilhouette(), 0.003)
 }
 
 const MAP_CHEVRON: XZ[] = [
@@ -473,9 +552,29 @@ export function createMapPlaneGeometry(): THREE.BufferGeometry {
   return triangleGeometry(MAP_CHEVRON)
 }
 
+function heloGlyphParts(scale: number): THREE.BufferGeometry[] {
+  const r = 0.0072 * scale
+  const t = 0.00105 * scale
+  return [
+    rectXZ(r, t),
+    rectXZ(t, r),
+    rectXZ(0.00145 * scale, 0.0036 * scale, 0, -0.0008 * scale),
+    rectXZ(0.00055 * scale, 0.0032 * scale, 0, -0.008 * scale),
+    rectXZ(0.0024 * scale, 0.00055 * scale, 0.0017 * scale, -0.0108 * scale),
+  ]
+}
+
+export function createMapHeloGeometry(): THREE.BufferGeometry {
+  return mergeParts(heloGlyphParts(1))
+}
+
 /** Larger solid chevron drawn behind the fill — a fat black frame, not a 1px stroke. */
 export function createMapPlaneOutlineGeometry(): THREE.BufferGeometry {
   return triangleGeometry(expandLoopXZ(MAP_CHEVRON, 0.0044))
+}
+
+export function createMapHeloOutlineGeometry(): THREE.BufferGeometry {
+  return mergeParts(heloGlyphParts(1.38))
 }
 
 /** Soft circular sprite used as a point-light halo behind each plane. */

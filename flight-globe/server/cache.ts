@@ -4,6 +4,8 @@ import { fileURLToPath } from 'node:url'
 import type { BBox, FlightState } from './types'
 import { REGIONS } from './regions'
 import { pushSnapshot } from './history'
+import { recordPoll } from './historyDb'
+import { enrichFlights } from './aircraftDb'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const DISK_PATH = path.join(__dirname, '.flights-cache.json')
@@ -52,7 +54,8 @@ export function setCreditsRemaining(n: number | null): void {
   state.creditsRemaining = n
 }
 
-export function setFlights(flights: FlightState[], source: CacheSource): void {
+export function setFlights(raw: FlightState[], source: CacheSource): void {
+  const flights = enrichFlights(raw)
   state.flights = flights
   state.updatedAt = Date.now()
   state.source = source
@@ -61,6 +64,11 @@ export function setFlights(flights: FlightState[], source: CacheSource): void {
   state.upstreamPolls += 1
   state.hitsSinceLastPoll = 0
   pushSnapshot(flights, state.updatedAt)
+  try {
+    recordPoll(flights, state.updatedAt)
+  } catch (e) {
+    console.error('[history] write failed:', e instanceof Error ? e.message : e)
+  }
   schedulePersist()
 }
 

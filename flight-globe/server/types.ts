@@ -37,6 +37,11 @@ export interface FlightState {
   registration?: string
   typeCode?: string
   category?: string
+  /** ICAO class, e.g. L2J (land, 2 jets), H1T (helicopter, 1 turbine). */
+  typeClass?: string
+  operator?: string
+  /** Likely military / government (hex block or operator name). */
+  military?: boolean
   route?: Route
 }
 

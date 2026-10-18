@@ -1,4 +1,5 @@
 import type { BBox, FlightState } from './types'
+import { dbBracket, historyDbStats } from './historyDb'
 
 export interface HistoryPoint {
   t: number
@@ -73,13 +74,22 @@ export function historyMeta(): {
   count: number
   points: HistoryPoint[]
 } {
+  const stored = historyDbStats()
   if (snapshots.length === 0) {
-    return { earliest: null, latest: null, count: 0, points: [] }
+    return {
+      earliest: stored.earliest,
+      latest: stored.latest,
+      count: stored.polls,
+      points: [],
+    }
   }
+  const memEarliest = snapshots[0]!.t
   return {
-    earliest: snapshots[0]!.t,
+    earliest:
+      stored.earliest != null ? Math.min(stored.earliest, memEarliest) : memEarliest,
     latest: snapshots[snapshots.length - 1]!.t,
-    count: snapshots.length,
+    count: Math.max(stored.polls, snapshots.length),
+    // Recent ring only — a week of per-poll points would bloat every meta poll.
     points: snapshots.map((s) => ({ t: s.t, count: s.flights.length })),
   }
 }
@@ -165,15 +175,42 @@ function mergeFlight(a: FlightState, b: FlightState, t: number): FlightState {
   }
 }
 
+/** Polls further apart than this (poller idled) are shown as-is, not blended. */
+const MAX_INTERP_GAP_MS = 10 * 60 * 1000
+
 /**
  * Flights at time `at`, interpolated between adjacent history frames so
  * scrubbing stays continuous (selected aircraft don't blink out between polls).
+ * Older than the in-memory ring falls back to the SQLite history.
  */
 export function flightsAt(at: number, bbox: BBox | null): FlightState[] {
+  if (snapshots.length === 0 || at < snapshots[0]!.t) {
+    const pair = dbBracket(at)
+    if (pair) {
+      const span = pair.b.t - pair.a.t
+      return blend(
+        pair.a,
+        pair.b,
+        span > 0 ? clamp01((at - pair.a.t) / span) : 0,
+        bbox,
+      )
+    }
+  }
   const pair = bracketing(at)
   if (!pair) return []
+  return blend(pair.a, pair.b, pair.t, bbox)
+}
 
-  const { a, b, t } = pair
+function blend(
+  a: FlightSnapshot,
+  b: FlightSnapshot,
+  t: number,
+  bbox: BBox | null,
+): FlightState[] {
+  if (b.t - a.t > MAX_INTERP_GAP_MS) {
+    const near = t < 0.5 ? a : b
+    return bbox ? near.flights.filter((f) => inBBox(f, bbox)) : near.flights
+  }
   if (a === b || t === 0) {
     const flights = a.flights
     return bbox ? flights.filter((f) => inBBox(f, bbox)) : flights

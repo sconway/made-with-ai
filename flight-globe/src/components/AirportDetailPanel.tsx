@@ -138,6 +138,7 @@ function AirportGroup({
   iata: string
   onPick: (f: FlightState) => void
 }) {
+  const setHoveredFlight = useStore((s) => s.setHoveredFlight)
   return (
     <section className="airport-board-group">
       <h3>{title}</h3>
@@ -147,7 +148,15 @@ function AirportGroup({
         <ul>
           {flights.map((f) => (
             <li key={f.icao24}>
-              <button type="button" onClick={() => onPick(f)}>
+              <button
+                type="button"
+                onClick={() => {
+                  setHoveredFlight(null)
+                  onPick(f)
+                }}
+                onMouseEnter={() => setHoveredFlight(f.icao24, null)}
+                onMouseLeave={() => setHoveredFlight(null)}
+              >
                 <span className="airport-board-cs">
                   {f.callsign || f.icao24.toUpperCase()}
                 </span>

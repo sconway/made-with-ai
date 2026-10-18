@@ -1,11 +1,13 @@
 import {
-  DEFAULT_TRAFFIC_FILTERS,
+  nonDefaultFilters,
+  sanitizeTrafficFilters,
   type TrafficFilters,
 } from './filters'
 import type { AlertWatch, AlertWatchKind, TrailMode } from '../store/useStore'
 
 const KEY_PINS = 'fg-pins'
 const KEY_FILTERS = 'fg-filters'
+const KEY_PRESETS = 'fg-filter-presets'
 const KEY_WATCHES = 'fg-watches'
 const KEY_TRAILS = 'fg-trails'
 
@@ -25,24 +27,6 @@ function writeJson(key: string, value: unknown): void {
   } catch {
     /* ignore quota / private mode */
   }
-}
-
-function isPhase(v: unknown): v is TrafficFilters['phase'] {
-  return v === 'all' || v === 'airborne' || v === 'ground'
-}
-
-function isKind(v: unknown): v is TrafficFilters['kind'] {
-  return v === 'all' || v === 'commercial' || v === 'other'
-}
-
-function isRoute(v: unknown): v is TrafficFilters['route'] {
-  return v === 'all' || v === 'known' || v === 'unknown'
-}
-
-function numOrNull(v: unknown): number | null {
-  if (v == null) return null
-  if (typeof v !== 'number' || !Number.isFinite(v)) return null
-  return v
 }
 
 export function readPinnedFlightIds(): string[] {
@@ -65,27 +49,57 @@ export function writePinnedFlightIds(ids: string[]): void {
 }
 
 export function readTrafficFilters(): TrafficFilters {
-  const raw = readJson(KEY_FILTERS)
-  if (!raw || typeof raw !== 'object') return { ...DEFAULT_TRAFFIC_FILTERS }
-  const o = raw as Record<string, unknown>
-  const airline =
-    typeof o.airline === 'string'
-      ? o.airline.toUpperCase().replace(/[^A-Z]/g, '').slice(0, 3)
-      : ''
-  return {
-    phase: isPhase(o.phase) ? o.phase : 'all',
-    altMinM: numOrNull(o.altMinM),
-    altMaxM: numOrNull(o.altMaxM),
-    speedMinMs: numOrNull(o.speedMinMs),
-    speedMaxMs: numOrNull(o.speedMaxMs),
-    airline,
-    kind: isKind(o.kind) ? o.kind : 'all',
-    route: isRoute(o.route) ? o.route : 'all',
-  }
+  return sanitizeTrafficFilters(readJson(KEY_FILTERS))
 }
 
 export function writeTrafficFilters(filters: TrafficFilters): void {
   writeJson(KEY_FILTERS, filters)
+}
+
+export interface FilterPreset {
+  name: string
+  filters: TrafficFilters
+}
+
+const MAX_PRESETS = 12
+
+export function readFilterPresets(): FilterPreset[] {
+  const raw = readJson(KEY_PRESETS)
+  if (!Array.isArray(raw)) return []
+  const out: FilterPreset[] = []
+  for (const item of raw) {
+    if (!item || typeof item !== 'object') continue
+    const o = item as Record<string, unknown>
+    const name = typeof o.name === 'string' ? o.name.trim().slice(0, 40) : ''
+    if (!name || out.some((p) => p.name === name)) continue
+    out.push({ name, filters: sanitizeTrafficFilters(o.filters) })
+    if (out.length >= MAX_PRESETS) break
+  }
+  return out
+}
+
+/** Saves (or replaces by name) and returns the new list, newest first. */
+export function saveFilterPreset(name: string, filters: TrafficFilters): FilterPreset[] {
+  const trimmed = name.trim().slice(0, 40)
+  if (!trimmed) return readFilterPresets()
+  const next = [
+    { name: trimmed, filters },
+    ...readFilterPresets().filter((p) => p.name !== trimmed),
+  ].slice(0, MAX_PRESETS)
+  writeJson(
+    KEY_PRESETS,
+    next.map((p) => ({ name: p.name, filters: nonDefaultFilters(p.filters) })),
+  )
+  return next
+}
+
+export function deleteFilterPreset(name: string): FilterPreset[] {
+  const next = readFilterPresets().filter((p) => p.name !== name)
+  writeJson(
+    KEY_PRESETS,
+    next.map((p) => ({ name: p.name, filters: nonDefaultFilters(p.filters) })),
+  )
+  return next
 }
 
 export function readAlertWatches(): AlertWatch[] {

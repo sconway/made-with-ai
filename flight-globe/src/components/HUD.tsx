@@ -12,9 +12,8 @@ import {
 } from '../lib/flightInfo'
 import { flightsForAirportIata, filterFlightsByQuery, scoreFlight } from '../lib/search'
 import {
-  altBandFromFilters,
+  describeFilters,
   filterFlightsByTraffic,
-  speedBandFromFilters,
   trafficFiltersActive,
 } from '../lib/filters'
 import { findAirport } from '../lib/airports'
@@ -271,22 +270,7 @@ export function HUD() {
         : flatMap
           ? `${region.label} · Map`
           : region.label
-  const filterParts: string[] = []
-  if (trafficFilters.phase === 'airborne') filterParts.push('Air')
-  else if (trafficFilters.phase === 'ground') filterParts.push('Gnd')
-  const altBand = altBandFromFilters(trafficFilters)
-  if (altBand === 'low') filterParts.push('Low')
-  else if (altBand === 'mid') filterParts.push('Mid')
-  else if (altBand === 'high') filterParts.push('High')
-  const speedBand = speedBandFromFilters(trafficFilters)
-  if (speedBand === 'slow') filterParts.push('<250')
-  else if (speedBand === 'cruise') filterParts.push('250–450')
-  else if (speedBand === 'fast') filterParts.push('450+')
-  if (trafficFilters.kind === 'commercial') filterParts.push('Airline')
-  else if (trafficFilters.kind === 'other') filterParts.push('GA')
-  if (trafficFilters.route === 'known') filterParts.push('Routed')
-  else if (trafficFilters.route === 'unknown') filterParts.push('No route')
-  if (trafficFilters.airline.trim()) filterParts.push(trafficFilters.airline.trim())
+  const filterParts: string[] = describeFilters(trafficFilters).map((c) => c.label)
   if (trailMode === 'off') filterParts.push('No trail')
   else if (trailMode === 'all') filterParts.push('Trails')
   if (colorMode === 'speed') filterParts.push('Speed color')
@@ -545,9 +529,9 @@ export function HUD() {
           {followFlight
             ? 'Chasing — camera sits behind the aircraft · Esc to exit'
             : selectedCountry
-              ? `Map of ${selectedCountry.name} — drag to pan · scroll to zoom · click a plane · pick a region to return`
+              ? `Map of ${selectedCountry.name} — drag to pan · scroll to zoom in for streets · click a plane · pick a region to return`
               : flatMap
-                ? '2D map — drag to pan · scroll to zoom · Map again or ← Globe to return'
+                ? '2D map — drag to pan · scroll to zoom in for streets · Map again or ← Globe to return'
                 : '/ to search · Map for a 2D view · click a country · pick a flight'}
           {weatherMode === 'radar' && (selectedCountry || flatMap) && (
             <a
@@ -557,6 +541,16 @@ export function HUD() {
               rel="noreferrer"
             >
               Radar · RainViewer
+            </a>
+          )}
+          {(selectedCountry || flatMap) && (
+            <a
+              className="weather-credit"
+              href="https://www.openstreetmap.org/copyright"
+              target="_blank"
+              rel="noreferrer"
+            >
+              © OpenStreetMap
             </a>
           )}
         </div>
