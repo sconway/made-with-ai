@@ -87,9 +87,12 @@
   --success-500: #3f8f52;
   --success-600: #2f6f3f;  /* 4.9:1 on paper ✓ AA */
   --error-100:   #fbe8e5;
+  --error-300:   #eda79d;  /* soft border on an error surface — non-text,
+                              3.1:1 on --error-100 ✓ AA non-text */
   --error-500:   #cf4436;
   --error-600:   #ab3327;  /* 5.3:1 on paper ✓ AA */
   --warning-100: #fdf1de;
+  --warning-300: #e8c489;  /* soft border on a warning surface — non-text */
   --warning-500: #cc8324;
   --warning-600: #96601a;  /* 4.6:1 on paper ✓ AA */
   --info-100:    var(--indigo-100);
@@ -261,6 +264,61 @@
   [data-density="tool"] {
     --control-height: var(--tap-target-min);
   }
+}
+
+/* ================================================================
+   CANVAS — the drawing surfaces inside the editors.
+
+   Deliberately NEUTRAL, not warm. The rest of the app sits on warm
+   paper; a floor plan does not. A drawing is read for accuracy —
+   wall weights, material fills, whether two lines are the same
+   colour — and a warm cast makes every grey judgement harder and
+   every wood swatch a lie. Principle 3: one product, two densities.
+
+   These are consumed from JavaScript, not CSS: floorPlanEditor.js
+   writes SVG presentation attributes, which cannot take var(). It
+   resolves them once via getComputedStyle (see buildCanvasPalette)
+   and falls back to the same literals if a token is ever missing.
+
+   NOT in here: the furniture catalogue's material colours (walnut,
+   porcelain, brushed steel …). Those are content, not chrome — they
+   describe a real object and must not move with a theme.
+   ================================================================ */
+
+:root {
+  /* Surface + ink */
+  --canvas-paper:        var(--color-bg-canvas);
+  --canvas-ink:          #333333;  /* wall strokes, primary linework */
+  --canvas-ink-muted:    #666666;  /* dimensions, secondary annotation */
+  --canvas-ink-faint:    #9ca3af;  /* hints, disabled handles */
+
+  /* Grid — three weights, each must stay distinguishable on paper */
+  --canvas-grid-fine:    #e8e8e8;  /* 1ft */
+  --canvas-grid-major:   #d0d0d0;  /* 5ft */
+  --canvas-grid-bold:    #bbbbbb;  /* 25ft */
+
+  /* Architectural elements */
+  --canvas-door:         #8b4513;  /* saddle — door swings and leaves */
+  --canvas-window:       #87ceeb;  /* glazing fill */
+  --canvas-window-frame: #4a90a4;  /* glazing frame, darker for contrast */
+  --canvas-garage:       #607d8b;  /* garage openings */
+
+  /* Interaction feedback */
+  --canvas-selection:    var(--indigo-600);
+  --canvas-selection-alt: var(--indigo-500);
+  --canvas-selection-soft: #e0e7ff;
+  --canvas-snap-ok:      #22c55e;  /* valid snap / square angle */
+  --canvas-snap-warn:    #f59e0b;
+  --canvas-snap-error:   #ef4444;
+
+  /* Rulers — chrome around the drawing, not part of it */
+  --canvas-ruler-bg:     #f8f9fa;
+  --canvas-ruler-line:   #d1d5db;
+  --canvas-ruler-text:   #4b5563;
+
+  /* Reference-image scaling handles — distinct from selection on purpose:
+     the traced image is underlay, not a selected object. */
+  --canvas-reference:    #4a90e2;
 }
 
 /* ================================================================

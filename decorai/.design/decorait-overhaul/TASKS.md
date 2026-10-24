@@ -48,12 +48,12 @@ Three forces, resolved in this order:
   on `styles.css` returns only intentional exceptions. **Highest-risk task.**
   _Depends on: F1._
 
-- [ ] **F3 · Tokenize the woodworking editor** _(L)_ — `src/woodworking/styles.css`
+- [x] **F3 · Tokenize the woodworking editor** _(L)_ ✅ — `src/woodworking/styles.css`
   has 117 hardcoded colors and **zero** `var()` references. Full pass, not a
   migration. Apply `[data-density="tool"]` and route all numerics through
   `--font-family-mono` with tabular figures. _Depends on: F1._
 
-- [ ] **F4 · Tokenize editor canvas colors** _(M)_ — 130 hardcoded hex values in
+- [x] **F4 · Tokenize editor canvas colors** _(M)_ ✅ — 130 hardcoded hex values in
   `floorPlanEditor.js` (SVG fills/strokes) plus the 5 grid-pattern colors in
   `index.html` (`#e8e8e8`, `#d0d0d0`, `#bbb`). Read from CSS custom properties via
   `getComputedStyle` so the canvas follows the theme. Keep the canvas **neutral**,

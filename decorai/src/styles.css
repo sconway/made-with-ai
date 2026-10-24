@@ -1070,59 +1070,278 @@ main {
   cursor: not-allowed;
 }
 
-/* ── Quick Edit modal ─────────────────────────────────────────── */
-.quick-edit-modal-content {
-  max-width: 560px;
+/* ── Quick Edit mode ──────────────────────────────────────────────
+   A focused mode of the configure view. Style, furniture and approach are
+   irrelevant to a targeted change, so they're hidden rather than covered. */
+.wizard-container.is-quick-edit .configure-options > :not(.quick-edit-panel) {
+  display: none;
 }
 
+.quick-edit-action-btn[aria-pressed="true"] {
+  background: var(--color-accent-primary);
+  border-color: var(--color-accent-primary);
+  color: var(--color-text-on-brand, #fff);
+}
+
+/* Quick edit is an editor, not a form: one centered column with the photo on
+   top and the prompt composer docked below. The bottom action bar is replaced
+   by the header's Back and the composer's Apply.
+
+   It's exactly one window tall, so the page never scrolls: the photo column
+   takes whatever height is left between the header and the docked composer,
+   and the photo is capped to that column. fitQuickEdit() measures the parts
+   that vary — where this view starts (--qe-top), the composer's height
+   (--qe-composer-h, it grows as you type) and the photo's cap
+   (--qe-photo-max). The fallbacks only apply until that first runs. */
+.quick-edit-topbar { display: none; }
+
+.wizard-container.is-quick-edit {
+  --qe-width: 880px;
+  --qe-composer-gap: calc(var(--space-5) + var(--space-4));   /* docked 20px up, plus breathing room */
+  display: flex;
+  flex-direction: column;
+  box-sizing: border-box;
+  height: calc(100dvh - var(--qe-top, 118px));
+  padding-bottom: calc(var(--qe-composer-h, 8.5rem) + var(--qe-composer-gap));
+}
+/* Nothing below the view may add height. */
+main:has(#wizard-container.is-quick-edit:not(.hidden)) { padding-bottom: 0; }
+.upload-section:has(#wizard-container.is-quick-edit:not(.hidden)) { margin-bottom: 0; }
+
+.wizard-container.is-quick-edit .quick-edit-topbar {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  flex: none;
+  width: 100%;
+  max-width: var(--qe-width);
+  margin: 0 auto var(--space-5);
+}
+
+.quick-edit-back {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-shrink: 0;
+  min-height: var(--tap-target-min);
+  padding: 0 var(--space-4) 0 var(--space-3);
+  border: 1px solid var(--color-border-primary);
+  border-radius: var(--radius-pill);
+  background: var(--color-bg-primary);
+  color: var(--color-text-secondary);
+  font: inherit;
+  font-size: var(--text-sm);
+  font-weight: var(--font-weight-medium, 500);
+  cursor: pointer;
+  transition: background var(--duration-fast) var(--ease-out), color var(--duration-fast) var(--ease-out);
+}
+.quick-edit-back:hover { background: var(--color-bg-tertiary); color: var(--color-text-primary); }
+.quick-edit-back:focus-visible { outline: 2px solid var(--color-border-focus); outline-offset: 2px; }
+.quick-edit-back svg { width: 16px; height: 16px; }
+
+.quick-edit-titles { min-width: 0; }
+.quick-edit-titles h2 {
+  margin: 0;
+  font-size: var(--font-size-lg);
+  line-height: 1.2;
+}
 .quick-edit-intro {
-  margin: 0 0 var(--space-4);
-  color: var(--text-secondary, var(--color-text-secondary));
-  font-size: 0.95rem;
+  margin: 2px 0 0;
+  color: var(--color-text-tertiary);
+  font-size: var(--text-sm);
+}
+
+.wizard-container.is-quick-edit .configure-layout {
+  display: flex;
+  flex-direction: column;
+  /* The base grid's align-items: start would shrink the photo column to the
+     photo's width and pin it to the left edge. */
+  align-items: stretch;
+  flex: 1 1 0;
+  min-height: 0;
+  width: 100%;
+  max-width: var(--qe-width);
+  margin-inline: auto;
+  gap: 0;
+}
+
+/* Sized by the layout, never by the photo inside it, so it can be measured
+   to cap the photo. */
+.wizard-container.is-quick-edit .configure-photo {
+  position: static;
+  flex: 1 1 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+}
+.wizard-container.is-quick-edit .configure-options { flex: none; }
+.wizard-container.is-quick-edit .wizard-upload-actions,
+.wizard-container.is-quick-edit .configure-actionbar,
+.wizard-container.is-quick-edit .image-overlay { display: none; }
+
+/* The photo shrink-wraps so there's no letterboxing around it, and stays
+   still: no hover zoom on something you're about to paint on. */
+.wizard-container.is-quick-edit .configure-photo .image-preview-wrapper,
+.wizard-container.is-quick-edit .configure-photo .image-preview-wrapper:hover {
+  width: fit-content;
+  max-width: 100%;
+  max-height: none;
+  margin-inline: auto;
+  transform: none;
+  background: transparent;
+}
+/* Specific enough to beat the .masking photo rules further down. */
+.wizard-container.is-quick-edit .configure-photo .image-preview-wrapper #room-preview {
+  width: auto;
+  max-width: 100%;
+  max-height: var(--qe-photo-max);
+  object-fit: contain;
+  box-shadow: none;
+}
+
+/* The photo is the region tool; one line under it says so. */
+/* Only meaningful in Quick Edit. Scoped, so the general .region-hint rule
+   further down can't turn it back on in the redesign view. */
+.wizard-container:not(.is-quick-edit) .quick-edit-region-hint { display: none; }
+.wizard-container.is-quick-edit .quick-edit-region-hint {
+  display: flex;
+  justify-content: center;
+  margin: var(--space-3) auto 0;
+}
+
+.quick-edit-panel {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.quick-edit-composer {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-3);
+  border: 1px solid var(--color-border-primary);
+  border-radius: var(--radius-lg);
+  background: var(--color-bg-primary);
+  box-shadow: var(--shadow-sm);
+  transition: border-color var(--duration-fast) var(--ease-out), box-shadow var(--duration-fast) var(--ease-out);
+}
+.quick-edit-composer:focus-within {
+  border-color: var(--color-accent-primary);
+  box-shadow: 0 0 0 3px rgba(79, 70, 229, 0.12);
 }
 
 .quick-edit-input {
   width: 100%;
   box-sizing: border-box;
-  resize: vertical;
-  min-height: 84px;
-  padding: 12px 14px;
-  border: 1px solid var(--color-border-primary);
-  border-radius: 10px;
-  background: var(--color-bg-primary);
+  resize: none;
+  min-height: 52px;
+  padding: var(--space-1) var(--space-1);
+  border: 0;
+  background: transparent;
   color: var(--color-text-primary);
   font-family: inherit;
-  font-size: 0.95rem;
+  font-size: max(16px, 1rem);   /* ≥16px: stops iOS zooming on focus */
   line-height: 1.5;
 }
+.quick-edit-input::placeholder { color: var(--color-text-tertiary); }
+.quick-edit-input:focus { outline: none; }
 
-.quick-edit-input::placeholder {
-  color: var(--color-text-tertiary);
-}
-
-.quick-edit-input:focus {
-  outline: none;
-  border-color: var(--color-accent-primary);
-  box-shadow: 0 0 0 2px rgba(79, 70, 229, 0.15);
-}
-
-.quick-edit-footer {
+.quick-edit-composer-bar {
   display: flex;
-  justify-content: flex-end;
-  gap: 10px;
-  margin-top: var(--space-5, 20px);
+  align-items: center;
+  gap: var(--space-2);
 }
 
-.quick-edit-footer .secondary-btn,
-.quick-edit-footer .primary-btn {
-  width: auto;
+/* Compact version of the premium switch. */
+.model-pref-toggle.quick-edit-premium {
+  align-items: center;
+  gap: var(--space-2);
+  min-height: 36px;
+  padding: 0 var(--space-3);
+  border-radius: var(--radius-pill);
+}
+.quick-edit-premium .model-pref-track { margin-top: 0; }
+.quick-edit-premium-label {
+  font-size: var(--text-sm);
+  font-weight: var(--font-weight-medium, 500);
+  color: var(--color-text-primary);
+}
+/* Locked: still tappable — it opens sign in or the token options. */
+.model-pref-toggle.quick-edit-premium.model-pref-disabled { cursor: pointer; }
+
+.quick-edit-apply {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: 40px;
+  padding: 0 var(--space-4);
+  border-radius: var(--radius-pill);
+}
+.quick-edit-apply svg { width: 16px; height: 16px; }
+
+/* Desktop: the composer docks to the bottom of the window too, so Apply stays
+   in reach while the page scrolls. */
+@media (min-width: 900px) {
+  .quick-edit-composer {
+    position: fixed;
+    left: 50%;
+    bottom: var(--space-5);
+    transform: translateX(-50%);
+    width: min(var(--qe-width), calc(100vw - 2 * var(--space-6)));
+    z-index: 1400;
+    box-shadow: var(--shadow-lg);
+  }
+  .quick-edit-composer:focus-within {
+    box-shadow: 0 0 0 3px rgba(79, 70, 229, 0.12), var(--shadow-lg);
+  }
 }
 
-.quick-edit-note {
-  margin: 10px 0 0;
-  text-align: right;
-  font-size: 0.78rem;
-  color: var(--color-text-tertiary);
+/* Below 1200px the docked composer reaches the feedback button's corner. */
+@media (min-width: 900px) and (max-width: 1199px) {
+  body:has(#wizard-container.is-quick-edit:not(.hidden)) .feedback-fab { display: none; }
+}
+
+@media (max-width: 899px) {
+  /* The composer is pinned flush to the bottom here (its height includes
+     the safe area). */
+  .wizard-container.is-quick-edit { --qe-composer-gap: var(--space-3); }
+
+  .wizard-container.is-quick-edit .quick-edit-topbar { margin-bottom: var(--space-4); gap: var(--space-3); }
+  .quick-edit-intro { display: none; }
+
+  /* Beats the 30vh cover crop the configure view uses on phones. */
+  .wizard-container.is-quick-edit .configure-photo .image-preview-wrapper,
+  .wizard-container.is-quick-edit .configure-photo .image-preview-wrapper #room-preview {
+    max-height: var(--qe-photo-max);
+  }
+
+  /* The composer takes the action bar's place, pinned to the bottom. */
+  .quick-edit-composer {
+    position: fixed;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 1400;
+    border-width: 1px 0 0;
+    border-radius: var(--radius-lg) var(--radius-lg) 0 0;
+    padding: var(--space-3) var(--space-4) max(var(--space-3), var(--safe-bottom));
+    background: color-mix(in srgb, var(--color-bg-primary) 94%, transparent);
+    backdrop-filter: saturate(180%) blur(16px);
+    -webkit-backdrop-filter: saturate(180%) blur(16px);
+    box-shadow: 0 -4px 16px rgba(32, 30, 26, 0.06);
+  }
+  .quick-edit-composer:focus-within { box-shadow: 0 -4px 16px rgba(32, 30, 26, 0.06); border-color: var(--color-border-primary); }
+
+  /* The redesign options sit in a card on phones; quick edit doesn't need it. */
+  .wizard-container.is-quick-edit .configure-options {
+    padding: 0;
+    background: none;
+    border: 0;
+    box-shadow: none;
+  }
 }
 
 .results-display {
@@ -1339,6 +1558,7 @@ main {
   background: var(--surface);
   resize: vertical;
   min-height: 96px;
+  margin-bottom: var(--space-3);
   transition: background-color var(--duration-base) var(--ease-out),
               box-shadow var(--duration-base) var(--ease-out);
   box-sizing: border-box;
@@ -1358,14 +1578,6 @@ main {
   color: var(--text-tertiary);
 }
 
-.refinement-chips {
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--space-2);
-  padding: var(--space-3) var(--space-5);
-  margin-top: 0;
-}
-
 .refinement-footer {
   display: flex;
   justify-content: flex-end;
@@ -1374,39 +1586,6 @@ main {
 
 .refinement-footer .primary-btn {
   min-width: 180px;
-}
-
-.refinement-chip {
-  display: inline-flex;
-  align-items: center;
-  padding: var(--space-2) var(--space-3);
-  background: var(--surface);
-  color: var(--text-secondary);
-  border: 1px solid var(--border-default);
-  border-radius: var(--radius-pill);
-  font-family: var(--font-sans);
-  font-size: var(--text-xs);
-  font-weight: var(--weight-medium);
-  cursor: pointer;
-  white-space: nowrap;
-  transition: background-color var(--duration-base) var(--ease-out),
-              border-color var(--duration-base) var(--ease-out),
-              color var(--duration-base) var(--ease-out);
-}
-
-.refinement-chip:hover {
-  background: var(--brand-50);
-  border-color: var(--brand-400);
-  color: var(--brand-700);
-}
-
-.refinement-chip:active {
-  transform: translateY(0.5px);
-}
-
-.refinement-chip:focus-visible {
-  outline: none;
-  box-shadow: var(--shadow-focus);
 }
 
 .results-actions {
@@ -1883,6 +2062,9 @@ main {
     margin-bottom: 0;
     flex-wrap: wrap;
   }
+
+  .results-header-actions { width: 100%; }
+  .results-header-actions > .secondary-btn { flex: 1 1 0; width: auto; }
 
   .feng-shui-action-btn {
     width: 100%;
@@ -4905,6 +5087,14 @@ body.layout-editor-active:has(.modal.show) .layout-editor-screen .layout-sidebar
   display: block;
 }
 
+/* Grid weights come from the canvas tokens. The markup keeps literal
+   `stroke` attributes as a fallback; the CSS `stroke` property wins over a
+   presentation attribute, so these override them wherever tokens.css loaded.
+   Attributes can't take var() — that's why this lives here and not inline. */
+#layout-svg .grid-line-fine  { stroke: var(--canvas-grid-fine); }
+#layout-svg .grid-line-major { stroke: var(--canvas-grid-major); }
+#layout-svg .grid-line-bold  { stroke: var(--canvas-grid-bold); }
+
 .canvas-zoom-controls {
   display: flex;
   align-items: center;
@@ -7646,6 +7836,81 @@ body.layout-editor-active:has(.modal.show) .layout-editor-screen .layout-sidebar
 }
 .toast-info    { border-left: 4px solid var(--indigo-500); }
 
+/* Every toast can be closed, and lays its text out left-aligned beside the
+   close button (src/toast.js adds both). */
+.toast-dismissable {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  text-align: left;
+  padding-right: 8px;
+}
+.toast-dismissable .toast-text {
+  flex: 1;
+  line-height: 1.4;
+}
+.toast-close {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  margin: -4px 0;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: inherit;
+  opacity: 0.7;
+  cursor: pointer;
+  transition: opacity 0.15s var(--ease-out), background-color 0.15s var(--ease-out);
+}
+.toast-close:hover {
+  opacity: 1;
+  background: color-mix(in srgb, currentColor 14%, transparent);
+}
+
+/* A toast with a follow-up button needs the room for its message to stay
+   on two lines. */
+/* width: max-content — a toast is centred with left: 50%, so without it the
+   box can only grow into the right half of a phone screen. */
+.toast.toast-dismissable:has(.toast-action) {
+  width: max-content;
+  max-width: min(480px, calc(100vw - 2 * var(--space-4)));
+}
+/* Narrow screens: the button goes under the message instead of squeezing it. */
+@media (max-width: 520px) {
+  .toast.toast-dismissable:has(.toast-action) { flex-wrap: wrap; row-gap: var(--space-2); }
+  .toast-dismissable:has(.toast-action) .toast-text { flex: 1 1 calc(100% - 48px); }
+  .toast-action { order: 3; margin: 0; }
+}
+
+/* An optional follow-up ("Try Premium"), between the message and the close button. */
+.toast-action {
+  flex: none;
+  min-height: 30px;
+  margin: -4px 0;
+  padding: 0 var(--space-3);
+  border: 1px solid color-mix(in srgb, currentColor 35%, transparent);
+  border-radius: 6px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-size: var(--text-sm);
+  font-weight: var(--font-weight-medium, 500);
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background-color 0.15s var(--ease-out);
+}
+.toast-action:hover { background: color-mix(in srgb, currentColor 14%, transparent); }
+.toast-action:focus-visible { outline: 2px solid currentColor; outline-offset: 2px; }
+.toast-close:focus-visible {
+  opacity: 1;
+  outline: 2px solid currentColor;
+  outline-offset: 1px;
+}
+
 /* ============================================================
    Feedback widget
    ============================================================ */
@@ -8651,3 +8916,224 @@ body.woodworking-active .feedback-fab {
 .upload-actions > .camera-btn span {
   white-space: nowrap;
 }
+
+/* ── Region mask ───────────────────────────────────────────────────────────
+   "Change only this" / "keep only this", on the uploaded photo or a result.
+   The editor lays its canvas exactly over the <img> (inline left/top/size),
+   so it only exists while painting.
+
+   While .masking is on, both views show the WHOLE photo (contain) instead of
+   their cropped thumbnail: you can't choose a region of an image you can only
+   see a strip of. The editor maps strokes through object-fit itself, so this
+   is for the user, not for correctness. */
+
+.mask-canvas {
+  position: absolute;
+  z-index: 6;                 /* above the result image (3), compare chrome (5)
+                                 and the photo's hover overlay */
+  cursor: crosshair;
+  touch-action: none;         /* painting must not scroll the page */
+  display: block;
+}
+
+/* Result card: the whole generated image, no compare split. The mask is
+   painted on the generated image, so half of it showing the original would
+   mean painting over pixels you aren't editing. */
+/* The box takes the image's own shape: the image sits in normal flow at its
+   natural proportions, capped in height, and the box wraps it. A fixed box
+   height left wide images letterboxed in 300px+ of empty space. */
+.image-reveal-container.masking {
+  height: auto;
+  background: var(--color-bg-canvas);
+}
+.image-reveal-container.masking .generated-image {
+  position: relative;
+  display: block;
+  width: auto;
+  max-width: 100%;
+  height: auto;
+  max-height: min(70vh, 640px);
+  margin-inline: auto;
+  object-fit: contain;
+  clip-path: none;
+}
+.image-reveal-container.masking .original-image,
+.image-reveal-container.masking .compare-handle,
+.image-reveal-container.masking .compare-label { visibility: hidden; }
+
+/* Uploaded photo: uncap it, stop the hover zoom (it would move the image
+   under the brush), and get the change-image overlay out of the way. */
+.image-preview-wrapper.masking,
+.image-preview-wrapper.masking:hover {
+  transform: none;
+  max-height: none;
+  background: var(--color-bg-canvas);
+}
+.configure-photo .image-preview-wrapper.masking #room-preview,
+.image-preview-wrapper.masking #room-preview {
+  object-fit: contain;
+  max-height: 70vh;
+}
+.image-preview-wrapper.masking .image-overlay { display: none; }
+
+/* "Edit one thing" on a result: in the header, right above the image. */
+.results-header-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: var(--space-2);
+  flex-shrink: 0;
+}
+.region-select-btn svg { width: 16px; height: 16px; }
+.region-select-btn[aria-pressed="true"] {
+  background: var(--color-accent-primary-subtle);
+  border-color: var(--color-accent-primary);
+  color: var(--color-accent-primary);
+}
+
+.region-hint {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin: 0;
+  font-size: var(--text-sm);
+  color: var(--color-text-tertiary);
+}
+.region-hint svg { width: 15px; height: 15px; flex-shrink: 0; }
+
+/* The menu beside the strokes: what to do with what you painted. Lives on
+   <body> (absolute, document coordinates) so the image's overflow can't clip it. */
+.region-menu {
+  position: absolute;
+  z-index: 1450;              /* above the docked composer (1400) */
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  /* Fixed, so opening "Change it…" doesn't make the menu jump. */
+  width: min(264px, calc(100vw - 2 * var(--space-4)));
+  padding: var(--space-2);
+  background: var(--color-bg-primary);
+  border: 1px solid var(--color-border-subtle);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-lg);
+  animation: region-menu-in var(--duration-fast, 150ms) var(--ease-out, ease-out);
+}
+.region-menu.hidden { display: none; }
+@keyframes region-menu-in {
+  from { opacity: 0; transform: translateY(4px) scale(0.98); }
+}
+@media (prefers-reduced-motion: reduce) { .region-menu { animation: none; } }
+
+.region-menu-actions { display: flex; flex-direction: column; gap: 2px; }
+.region-menu-btn {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: 40px;
+  padding: 0 var(--space-3);
+  border: 0;
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--color-text-primary);
+  font: inherit;
+  font-size: var(--text-sm);
+  font-weight: var(--font-weight-medium, 500);
+  text-align: left;
+  cursor: pointer;
+}
+.region-menu-btn:hover:not(:disabled) { background: var(--color-bg-tertiary); }
+.region-menu-btn.is-primary { background: var(--color-accent-primary); color: var(--color-text-on-brand, #fff); }
+.region-menu-btn.is-primary:hover:not(:disabled) { background: var(--brand-700, var(--color-accent-primary)); }
+.region-menu-btn[aria-expanded="true"] { background: var(--color-bg-tertiary); }
+.region-menu-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+.region-menu-btn svg { width: 16px; height: 16px; }
+
+.region-menu-change { display: flex; gap: var(--space-1); padding: 2px 0; }
+.region-menu-change.hidden { display: none; }
+.region-menu-input {
+  flex: 1;
+  min-width: 0;
+  min-height: 38px;
+  padding: 0 var(--space-3);
+  border: 1px solid var(--color-border-primary);
+  border-radius: var(--radius-md);
+  background: var(--color-bg-canvas);
+  color: var(--color-text-primary);
+  font: inherit;
+  font-size: max(16px, 1rem);   /* ≥16px: stops iOS zooming on focus */
+}
+.region-menu-input:focus { outline: none; border-color: var(--color-accent-primary); box-shadow: 0 0 0 3px rgba(79, 70, 229, 0.12); }
+.region-menu-apply {
+  min-height: 38px;
+  padding: 0 var(--space-3);
+  border: 0;
+  border-radius: var(--radius-md);
+  background: var(--color-accent-primary);
+  color: var(--color-text-on-brand, #fff);
+  font: inherit;
+  font-size: var(--text-sm);
+  font-weight: var(--font-weight-medium, 500);
+  cursor: pointer;
+}
+.region-menu-apply:disabled { opacity: 0.5; cursor: not-allowed; }
+
+.region-menu-tools {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-1);
+  margin-top: 2px;
+  padding-top: var(--space-1);
+  border-top: 1px solid var(--color-border-subtle);
+}
+.region-menu-tool,
+.region-menu-size {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--color-text-secondary);
+  cursor: pointer;
+}
+.region-menu-tool:hover,
+.region-menu-size:hover { background: var(--color-bg-tertiary); color: var(--color-text-primary); }
+.region-menu-tool svg { width: 16px; height: 16px; }
+.region-menu-sizes,
+.region-menu-edits { display: inline-flex; gap: 2px; }
+.region-menu-dot { display: block; border-radius: 50%; background: currentColor; }
+.region-menu-size[data-size="s"] .region-menu-dot { width: 6px; height: 6px; }
+.region-menu-size[data-size="m"] .region-menu-dot { width: 10px; height: 10px; }
+.region-menu-size[data-size="l"] .region-menu-dot { width: 15px; height: 15px; }
+.region-menu-size[aria-checked="true"] { color: var(--color-accent-primary); background: var(--color-accent-primary-subtle); }
+.region-menu :focus-visible { outline: 2px solid var(--color-border-focus); outline-offset: 1px; }
+
+/* Phones: a bottom sheet, the way phone photo editors do it. Always in reach
+   wherever the image is, with the actions side by side. */
+.region-menu.is-docked {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  width: auto;
+  gap: var(--space-2);
+  padding: var(--space-3) var(--space-4) max(var(--space-3), var(--safe-bottom, 0px));
+  border-width: 1px 0 0;
+  border-radius: var(--radius-lg) var(--radius-lg) 0 0;
+  box-shadow: 0 -4px 16px rgba(32, 30, 26, 0.08);
+  animation-name: region-sheet-in;
+}
+@keyframes region-sheet-in {
+  from { opacity: 0; transform: translateY(16px); }
+}
+.region-menu.is-docked .region-menu-actions { flex-direction: row; gap: var(--space-2); }
+.region-menu.is-docked .region-menu-btn { flex: 1; justify-content: center; min-height: 44px; }
+.region-menu.is-docked .region-menu-btn:not(.is-primary) { border: 1px solid var(--color-border-primary); }
+/* While the sheet is up it stands in for the composer and the feedback button
+   that share the bottom of the screen. */
+body:has(.region-menu.is-docked:not(.hidden)) .quick-edit-composer,
+body:has(.region-menu.is-docked:not(.hidden)) .feedback-fab { visibility: hidden; }

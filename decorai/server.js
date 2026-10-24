@@ -3,7 +3,7 @@ import fetch from 'node-fetch';
 import cors from 'cors';
 import path from 'path';
 import { fileURLToPath } from 'url';
-import { randomUUID } from 'crypto';
+import { randomUUID, randomBytes, createHmac, timingSafeEqual } from 'crypto';
 import dotenv from 'dotenv';
 import Stripe from 'stripe';
 import nodemailer from 'nodemailer';
@@ -93,6 +93,48 @@ const DESIGNS_STORAGE_BUCKET = process.env.SUPABASE_DESIGNS_BUCKET?.trim() || 'g
 const MAX_SAVED_DESIGNS_SUBSCRIBER = parseInt(process.env.MAX_SAVED_DESIGNS_SUBSCRIBER) || 200;
 const DESIGN_SIGNED_URL_TTL_SEC = parseInt(process.env.DESIGN_SIGNED_URL_TTL_SEC) || 3600;
 
+// ── Anonymous (pre-signup) generations ─────────────────────────────────────
+// A first-time visitor gets this many generations before being asked to create
+// an account, so the product proves itself before it asks for anything.
+//
+// Fails closed: requires ANON_DEVICE_SECRET (used to sign the device cookie).
+// Without it the feature stays off no matter what ANON_FREE_GENERATIONS says,
+// because an unsigned device id is trivially forged and the grant would be
+// worthless. Setting the secret is the deliberate act that turns this on.
+const ANON_FREE_GENERATIONS = parseEnvInt('ANON_FREE_GENERATIONS', 1);
+const ANON_DEVICE_SECRET = process.env.ANON_DEVICE_SECRET?.trim() || '';
+// Backstop for the obvious attack: clear the cookie, get another free run.
+// Caps grants per client IP per rolling day. Keep this low — but not so low
+// that an office or campus behind one NAT locks everyone out.
+const ANON_MAX_PER_IP_PER_DAY = parseEnvInt('ANON_MAX_PER_IP_PER_DAY', 5);
+const ANON_COOKIE_NAME = 'decorait_did';
+const ANON_COOKIE_MAX_AGE_SEC = 60 * 60 * 24 * 365;
+// Anonymous callers may only run the cheap staging models — never the premium
+// edit path, the vectorizer, the feng-shui LLM, or anything else that costs
+// real money per call. This is a subset of REPLICATE_ALLOWED_MODELS, enforced
+// on top of it rather than instead of it.
+const ANON_ALLOWED_MODELS = new Set([
+  'proplabs/virtual-staging:635d607efc6e3a6016ef6d655327cd35f3d792e84b8f110688b04498c6e94cfb',
+  'google/nano-banana',
+  // "Remove this" region erase: mask-based object removal.
+  'bria/eraser',
+]);
+
+const anonymousGenerationsEnabled = () =>
+  ANON_FREE_GENERATIONS > 0 && !!ANON_DEVICE_SECRET && !!supabase;
+
+if (ANON_FREE_GENERATIONS > 0 && !ANON_DEVICE_SECRET) {
+  console.warn(
+    '[anon] ANON_FREE_GENERATIONS is set but ANON_DEVICE_SECRET is missing — ' +
+      'pre-signup generations are DISABLED. Generate a secret (e.g. `openssl rand -hex 32`) to enable them.',
+  );
+} else if (anonymousGenerationsEnabled()) {
+  console.log(
+    `[anon] Pre-signup generations enabled: ${ANON_FREE_GENERATIONS} per device, ` +
+      `max ${ANON_MAX_PER_IP_PER_DAY} per IP per day`,
+  );
+}
+
 // ── Abuse-prevention configuration ─────────────────────────────────────────
 // Allowlist of Replicate model versions the proxy is permitted to run. Without
 // this, any authenticated user could invoke ANY Replicate model (including very
@@ -105,6 +147,7 @@ const DEFAULT_REPLICATE_MODELS = [
   'lllyasviel/sd-controlnet-depth',
   'nightmareai/real-esrgan',
   'google/nano-banana',
+  'bria/eraser',
 ];
 const REPLICATE_ALLOWED_MODELS = new Set(
   process.env.REPLICATE_ALLOWED_MODELS
@@ -960,10 +1003,11 @@ if (process.env.NODE_ENV === 'production') {
 // downstream AI call fails so the user isn't charged for a no-op.
 app.post('/replicate/predictions', genIpLimiter, genUserLimiter, async (req, res) => {
   // Replicate calls don't count against the monthly token quota, but they DO
-  // cost the owner money per prediction. Require a confirmed account and cap
-  // volume via the rate limiters above so the proxy can't be abused.
-  const user = await getAuthUser(req, res, { requireConfirmed: true });
-  if (!user) return;
+  // cost the owner money per prediction. A confirmed account is the normal
+  // path; a first-time visitor may instead spend one anonymous grant (see the
+  // anonymous device helpers). Either way the rate limiters above apply.
+  let user = null;
+  let anonDeviceId = null;
 
   try {
     const apiKey = process.env.REPLICATE_API_KEY;
@@ -975,10 +1019,34 @@ app.post('/replicate/predictions', genIpLimiter, genUserLimiter, async (req, res
     // Allowlist guard: only run the specific models the app uses. Without this,
     // a logged-in user could invoke ANY (potentially very expensive) Replicate
     // model on the owner's account by passing an arbitrary `version`.
+    // Checked before auth so an anonymous caller can't even be considered for
+    // a model that isn't on the cheap list.
     const requestedVersion = typeof req.body?.version === 'string' ? req.body.version : '';
     if (!REPLICATE_ALLOWED_MODELS.has(requestedVersion)) {
       console.warn(`[replicate] Rejected disallowed model version: ${requestedVersion.slice(0, 120)}`);
       return res.status(400).json({ error: 'Unsupported model' });
+    }
+
+    // Who's calling? A confirmed account, or a first-time visitor spending
+    // their one pre-signup generation.
+    const auth = await getAuthUserQuiet(req, { requireConfirmed: true });
+    if (auth.reject) return res.status(auth.reject.status).json({ error: auth.reject.error });
+    user = auth.user;
+    if (!user) {
+      if (!anonymousGenerationsEnabled() || !ANON_ALLOWED_MODELS.has(requestedVersion)) {
+        return res.status(401).json({ error: 'Unauthorized' });
+      }
+      anonDeviceId = getOrCreateDeviceId(req, res);
+      const claim = await claimAnonymousGeneration(anonDeviceId, req.ip);
+      if (!claim.ok) {
+        return res.status(claim.status).json({
+          error: claim.error === 'ANON_EXHAUSTED'
+            ? 'Create a free account to keep designing.'
+            : claim.error,
+          anonExhausted: claim.error === 'ANON_EXHAUSTED',
+        });
+      }
+      console.log(`[anon] Granted a pre-signup generation to device ${anonDeviceId.slice(0, 8)}…`);
     }
 
     // Some models (e.g. proplabs/virtual-staging) require the Replicate API
@@ -1030,6 +1098,11 @@ app.post('/replicate/predictions', genIpLimiter, genUserLimiter, async (req, res
 
     const data = await response.json();
     console.log('Replicate API response:', data);
+    // Bind the prediction to the anonymous device so /replicate/poll will
+    // serve it back to this visitor and nobody else.
+    if (anonDeviceId && data?.id) {
+      await recordAnonPrediction(anonDeviceId, data.id);
+    }
     res.json(data);
   } catch (error) {
     console.error('Error in /replicate/predictions:', error);
@@ -1050,7 +1123,7 @@ app.post('/openai/image-edit', genIpLimiter, genUserLimiter, async (req, res) =>
       return res.status(500).json({ error: 'Server OpenAI key not configured' });
     }
 
-    const { imageBase64, prompt, savePrompt, size, quality, sourceType, metadata } = req.body || {};
+    const { imageBase64, prompt, savePrompt, size, quality, sourceType, metadata, skipSave } = req.body || {};
     if (!imageBase64 || !prompt) {
       await slot.refund();
       return res.status(400).json({ error: 'imageBase64 and prompt are required' });
@@ -1098,7 +1171,11 @@ app.post('/openai/image-edit', genIpLimiter, genUserLimiter, async (req, res) =>
     await incrementLifetimeGenerations(slot.userId);
 
     const outBuf = Buffer.from(b64Out, 'base64');
-    const saved = await persistGeneratedDesign(slot.userId, {
+    // A region-masked run is composited against the original in the browser,
+    // so this raw output is NOT what the user ends up with. Saving it here
+    // would put a different image in My Designs than the one on screen — the
+    // client saves the composited result instead.
+    const saved = skipSave ? null : await persistGeneratedDesign(slot.userId, {
       imageSource: { buffer: outBuf, contentType: 'image/png' },
       prompt: savePrompt || prompt,
       model: 'openai',
@@ -1118,11 +1195,16 @@ app.post('/openai/image-edit', genIpLimiter, genUserLimiter, async (req, res) =>
 });
 
 app.post('/replicate/poll', async (req, res) => {
-  // Auth required: this proxy attaches the Replicate API token to the outbound
-  // request. If it were callable anonymously against an arbitrary URL, an
-  // attacker could exfiltrate the token (SSRF). Require a confirmed account.
-  const user = await getAuthUser(req, res, { requireConfirmed: true });
-  if (!user) return;
+  // This proxy attaches the Replicate API token to the outbound request, so it
+  // must never become a general-purpose fetcher. Two guards, both required:
+  //   1. isValidReplicatePollUrl pins the host to api.replicate.com and the
+  //      path to /v1/predictions/ — that's the SSRF / token-leak boundary.
+  //   2. The caller must own the prediction. A confirmed account may poll
+  //      anything (unchanged); an anonymous visitor may poll ONLY the
+  //      prediction ids their own device started, so one visitor can't read
+  //      another's in-flight generation by guessing ids.
+  let user = null;
+  let anonDeviceId = null;
 
   try {
     const apiKey = process.env.REPLICATE_API_KEY;
@@ -1140,6 +1222,17 @@ app.post('/replicate/poll', async (req, res) => {
     // never a client-controlled host.
     if (!isValidReplicatePollUrl(predictionUrl)) {
       return res.status(400).json({ error: 'Invalid prediction URL' });
+    }
+
+    const auth = await getAuthUserQuiet(req, { requireConfirmed: true });
+    if (auth.reject) return res.status(auth.reject.status).json({ error: auth.reject.error });
+    user = auth.user;
+    if (!user) {
+      anonDeviceId = anonymousGenerationsEnabled() ? readDeviceCookie(req) : null;
+      const predictionId = predictionIdFromPollUrl(predictionUrl);
+      if (!anonDeviceId || !(await anonOwnsPrediction(anonDeviceId, predictionId))) {
+        return res.status(401).json({ error: 'Unauthorized' });
+      }
     }
 
     console.log('Polling Replicate API:', predictionUrl);
@@ -1167,7 +1260,9 @@ app.post('/replicate/poll', async (req, res) => {
     console.log('Replicate API polling response:', data);
 
     let savedDesignId = null;
-    if (data.status === 'succeeded' && saveContext && supabase) {
+    // Anonymous results aren't persisted — there's no account to own them.
+    // The client turns that into the signup prompt ("sign up to save this").
+    if (user && data.status === 'succeeded' && saveContext && supabase) {
       const imageUrl = extractReplicateImageUrl(data.output);
       if (imageUrl) {
         const saved = await persistGeneratedDesign(user.id, {
@@ -1621,6 +1716,89 @@ Return this exact JSON structure:
   }
 });
 
+// Name what the user highlighted for a region edit ("the grey sofa under the
+// window"). Image models given only a magenta marker plus "remove this" tend
+// to clean off the marker and keep the object; told what to remove by name,
+// they do it. A cheap vision call that runs before the region removal,
+// so it has its own limiter and doesn't count as a generation.
+const identifyRegionLimiter = createRateLimiter({
+  windowMs: GEN_WINDOW_MS,
+  max: parseInt(process.env.RATE_LIMIT_IDENTIFY_MAX_PER_IP) || 60,
+  keyFn: ipKey,
+  message: 'Too many requests — please try again shortly.',
+});
+
+const IDENTIFY_REGION_SYSTEM = `You identify objects in room photos for an image editor.
+Image 1 is a full room photo. One area is marked on it with a translucent magenta tint and a solid magenta outline. The marker is NOT part of the room; the user drew it to select something.
+Image 2 is a close-up of the same area from the original photo, without the marker.
+Name the object (or objects) the user selected: the thing the marker sits on.
+Users paint roughly and often cover only part of an item. Name the whole piece of furniture, decor or fixture, not a part of it: "the armchair", not "the armchair's seat cushion"; "the floor lamp", not "the lampshade". Only name a smaller item when the marker clearly sits on a separate loose thing on top of something else (a throw pillow on a sofa, a vase on a table) and not on the larger item around it.
+Return ONLY JSON: {"target": "<noun phrase>"}.
+The noun phrase starts with "the", gives the object's real colour or material (from image 2, never magenta or pink because of the marker), and gives its position relative to other things so an editor can find it without the marker, e.g. "the grey fabric sofa against the back wall, under the window". Keep it under 20 words.
+If several objects are marked, name all of them in one phrase. If you can't tell what is marked, return {"target": null}.`;
+
+app.post('/api/identify-region', identifyRegionLimiter, async (req, res) => {
+  try {
+    const auth = await getAuthUserQuiet(req, { requireConfirmed: true });
+    if (auth.reject) return res.status(auth.reject.status).json({ error: auth.reject.error });
+    // A first-time visitor's one free generation can be a region removal too.
+    if (!auth.user && !anonymousGenerationsEnabled()) {
+      return res.status(401).json({ error: 'Unauthorized' });
+    }
+
+    const apiKey = process.env.OPENAI_API_KEY;
+    if (!apiKey) return res.status(500).json({ error: 'OpenAI API key not configured' });
+
+    const { markedImage, cropImage } = req.body || {};
+    const isImage = (v) => typeof v === 'string' && /^data:image\/(png|jpe?g|webp);base64,/.test(v);
+    if (!isImage(markedImage) || (cropImage && !isImage(cropImage))) {
+      return res.status(400).json({ error: 'markedImage (data URL) is required' });
+    }
+    // The client sends small JPEGs; anything this large isn't from the app.
+    if (markedImage.length + (cropImage?.length || 0) > 4 * 1024 * 1024) {
+      return res.status(413).json({ error: 'Images too large' });
+    }
+
+    const content = [{ type: 'image_url', image_url: { url: markedImage, detail: 'high' } }];
+    if (cropImage) content.push({ type: 'image_url', image_url: { url: cropImage, detail: 'high' } });
+    content.push({ type: 'text', text: 'What did the user mark?' });
+
+    const response = await fetch('https://api.openai.com/v1/chat/completions', {
+      method: 'POST',
+      headers: { 'Authorization': `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        model: process.env.REGION_IDENTIFY_MODEL || 'gpt-4o',
+        messages: [
+          { role: 'system', content: IDENTIFY_REGION_SYSTEM },
+          { role: 'user', content },
+        ],
+        response_format: { type: 'json_object' },
+        max_tokens: 120,
+        temperature: 0,
+      }),
+    });
+    if (!response.ok) {
+      const err = await response.json().catch(() => ({}));
+      console.error('identify-region OpenAI error:', err);
+      return res.status(502).json({ error: 'Could not identify the selection' });
+    }
+    const data = await response.json();
+    let target = null;
+    try {
+      target = JSON.parse(data.choices?.[0]?.message?.content || '{}').target;
+    } catch { /* fall through to null */ }
+    // It goes into an image prompt: one short line, no quotes or markup.
+    target = typeof target === 'string'
+      ? target.replace(/[\r\n"`<>{}]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 160)
+      : '';
+    if (target && !/^the\b/i.test(target)) target = `the ${target}`;
+    res.json({ target: target || null });
+  } catch (err) {
+    console.error('identify-region error:', err);
+    res.status(500).json({ error: 'Server error identifying the selection' });
+  }
+});
+
 // Convert an uploaded floor-plan image into a structured layout via Claude vision.
 app.post('/api/import-floor-plan', genIpLimiter, genUserLimiter, async (req, res) => {
   try {
@@ -1774,7 +1952,27 @@ app.get('/api/config', (req, res) => {
     tokenPacks: getConfiguredTokenPacks(),
     // Public GA4 Measurement ID (e.g. G-XXXXXXXXXX). Empty disables analytics.
     gaMeasurementId: process.env.GA_MEASUREMENT_ID?.trim() || '',
+    anonGenerationsEnabled: anonymousGenerationsEnabled(),
   });
+});
+
+// How many pre-signup generations this visitor has left. Issues the device
+// cookie on first contact so the id is stable by the time they hit Generate.
+// Deliberately cheap and unauthenticated — it leaks nothing but a yes/no about
+// the caller's own device.
+app.get('/api/anon-status', async (req, res) => {
+  if (!anonymousGenerationsEnabled()) {
+    return res.json({ enabled: false, remaining: 0 });
+  }
+  try {
+    const deviceId = getOrCreateDeviceId(req, res);
+    const hasGrant = await anonDeviceHasGrantLeft(deviceId);
+    res.json({ enabled: true, remaining: hasGrant ? ANON_FREE_GENERATIONS : 0 });
+  } catch (err) {
+    console.error('Error in GET /api/anon-status:', err);
+    // Fail closed: the client just shows the normal sign-up gate.
+    res.json({ enabled: false, remaining: 0 });
+  }
 });
 
 // ── Feedback ────────────────────────────────────────────────────────────────
@@ -1877,6 +2075,221 @@ async function getAuthUser(req, res, { requireConfirmed = false } = {}) {
     return null;
   }
   return user;
+}
+
+// ── Anonymous device identity ──────────────────────────────────────────────
+// A random device id in an HttpOnly cookie, signed with ANON_DEVICE_SECRET so
+// a visitor can't mint their own. This is NOT a security boundary on its own —
+// anyone can clear a cookie — which is why every grant is also counted per IP
+// and restricted to the cheap models. It exists to make the honest path work,
+// not to make the dishonest one impossible.
+
+function parseCookies(req) {
+  const header = req.headers.cookie;
+  if (!header) return {};
+  const out = {};
+  for (const part of header.split(';')) {
+    const eq = part.indexOf('=');
+    if (eq < 0) continue;
+    const k = part.slice(0, eq).trim();
+    if (!k) continue;
+    try { out[k] = decodeURIComponent(part.slice(eq + 1).trim()); } catch { /* skip malformed */ }
+  }
+  return out;
+}
+
+const signDeviceId = (id) =>
+  createHmac('sha256', ANON_DEVICE_SECRET).update(id).digest('base64url');
+
+/** Read a valid device id from the request cookie, or null. */
+function readDeviceCookie(req) {
+  if (!ANON_DEVICE_SECRET) return null;
+  const raw = parseCookies(req)[ANON_COOKIE_NAME];
+  if (!raw) return null;
+  const dot = raw.lastIndexOf('.');
+  if (dot <= 0) return null;
+  const id = raw.slice(0, dot);
+  const sig = raw.slice(dot + 1);
+  if (!/^[A-Za-z0-9_-]{16,64}$/.test(id)) return null;
+  const expected = signDeviceId(id);
+  // Constant-time compare; Buffer lengths must match or timingSafeEqual throws.
+  const a = Buffer.from(sig);
+  const b = Buffer.from(expected);
+  if (a.length !== b.length || !timingSafeEqual(a, b)) return null;
+  return id;
+}
+
+/** Mint a new device id and set it on the response. */
+function issueDeviceCookie(res) {
+  const id = randomBytes(16).toString('base64url');
+  res.cookie?.(ANON_COOKIE_NAME, `${id}.${signDeviceId(id)}`, {
+    httpOnly: true,
+    sameSite: 'lax',
+    secure: process.env.NODE_ENV === 'production',
+    maxAge: ANON_COOKIE_MAX_AGE_SEC * 1000,
+    path: '/',
+  });
+  return id;
+}
+
+/** Existing device id, or a freshly minted one. Null when the feature is off. */
+function getOrCreateDeviceId(req, res) {
+  if (!anonymousGenerationsEnabled()) return null;
+  return readDeviceCookie(req) || issueDeviceCookie(res);
+}
+
+/**
+ * How many anonymous grants this IP has taken in the last 24h.
+ * Returns { ok: false } when the counter itself is broken — the caller must
+ * fail closed, but the distinction matters: a missing table is an ops problem
+ * to surface, not a visitor who hit their limit.
+ */
+async function anonGrantsForIpToday(ip) {
+  const since = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+  const { count, error } = await supabase
+    .from('anonymous_generations')
+    .select('device_id', { count: 'exact', head: true })
+    .eq('ip', ip)
+    .gte('created_at', since);
+  // A null count with no error is NOT "zero grants" — it means the query
+  // didn't actually count anything (missing table, PostgREST quirk). Treating
+  // it as 0 would silently remove the only backstop against cookie-clearing,
+  // so it fails closed exactly like an explicit error.
+  if (error || typeof count !== 'number') {
+    console.error(
+      '[anon] IP cap lookup failed — pre-signup generations are refused until this is fixed. ' +
+        'Did you run sql/anonymous_generations.sql?',
+      error || `(no error, but count was ${JSON.stringify(count)})`,
+    );
+    return { ok: false, count: 0 };
+  }
+  return { ok: true, count };
+}
+
+/**
+ * Claim this device's anonymous generation.
+ *
+ * The INSERT is the lock: device_id is the primary key, so two concurrent
+ * requests from one device race to create the row and exactly one wins. A
+ * conflict means the device has already spent its grant.
+ *
+ * Returns { ok: true } or { ok: false, status, error }.
+ */
+async function claimAnonymousGeneration(deviceId, ip) {
+  if (!anonymousGenerationsEnabled()) {
+    return { ok: false, status: 401, error: 'Unauthorized' };
+  }
+  const ipGrants = await anonGrantsForIpToday(ip);
+  if (!ipGrants.ok) {
+    // Counter unavailable. Refuse rather than hand out ungoverned free runs.
+    return { ok: false, status: 503, error: 'Free trials are temporarily unavailable. Please sign up to continue.' };
+  }
+  if (ipGrants.count >= ANON_MAX_PER_IP_PER_DAY) {
+    return {
+      ok: false,
+      status: 429,
+      error: 'Too many free trials from this network today. Please sign up to keep designing.',
+    };
+  }
+  const { data, error } = await supabase
+    .from('anonymous_generations')
+    .insert({ device_id: deviceId, ip, used: 1 })
+    .select('device_id');
+  if (error) {
+    // 23505 = unique_violation → this device already used its free generation.
+    if (error.code === '23505') {
+      return { ok: false, status: 401, error: 'ANON_EXHAUSTED' };
+    }
+    console.error('[anon] Failed to claim generation:', error);
+    return { ok: false, status: 500, error: 'Could not start generation' };
+  }
+  if (!data || data.length === 0) {
+    return { ok: false, status: 401, error: 'ANON_EXHAUSTED' };
+  }
+  return { ok: true };
+}
+
+/** Has this device already spent its grant? */
+async function anonDeviceHasGrantLeft(deviceId) {
+  if (!anonymousGenerationsEnabled() || !deviceId) return false;
+  const { data, error } = await supabase
+    .from('anonymous_generations')
+    .select('used')
+    .eq('device_id', deviceId)
+    .maybeSingle();
+  if (error) {
+    console.error('[anon] Status lookup failed:', error);
+    return false;
+  }
+  return !data;
+}
+
+/** Remember a prediction id so this device — and only it — can poll the result. */
+async function recordAnonPrediction(deviceId, predictionId) {
+  if (!deviceId || !predictionId) return;
+  const { data } = await supabase
+    .from('anonymous_generations')
+    .select('prediction_ids')
+    .eq('device_id', deviceId)
+    .maybeSingle();
+  const next = [...(data?.prediction_ids || []), predictionId].slice(-10);
+  const { error } = await supabase
+    .from('anonymous_generations')
+    .update({ prediction_ids: next })
+    .eq('device_id', deviceId);
+  if (error) console.error('[anon] Failed to record prediction id:', error);
+}
+
+/** Did this device start that prediction? Gates anonymous polling. */
+async function anonOwnsPrediction(deviceId, predictionId) {
+  if (!deviceId || !predictionId) return false;
+  const { data, error } = await supabase
+    .from('anonymous_generations')
+    .select('prediction_ids')
+    .eq('device_id', deviceId)
+    .maybeSingle();
+  if (error || !data) return false;
+  return (data.prediction_ids || []).includes(predictionId);
+}
+
+/** Prediction id out of a Replicate poll URL, or null. */
+function predictionIdFromPollUrl(urlStr) {
+  try {
+    const u = new URL(urlStr);
+    const m = u.pathname.match(/^\/v1\/predictions\/([A-Za-z0-9]+)\/?$/);
+    return m ? m[1] : null;
+  } catch { return null; }
+}
+
+/**
+ * Resolve the caller WITHOUT sending a response, so a handler can fall through
+ * to the anonymous path instead of 401-ing immediately.
+ *
+ * Returns { user } when signed in and allowed, { user: null } when there is no
+ * credential at all (→ try anonymous), or { reject: {status, error} } when
+ * there IS a credential but it isn't usable. That last case must not fall
+ * through: someone who signed up but hasn't confirmed their email needs to be
+ * told that, not handed a bare "Unauthorized".
+ */
+async function getAuthUserQuiet(req, { requireConfirmed = false } = {}) {
+  if (!supabase) return { user: null };
+  const authHeader = req.headers.authorization;
+  if (!authHeader || !authHeader.startsWith('Bearer ')) return { user: null };
+  const token = authHeader.split(' ')[1];
+  const { data: { user } = {}, error } = await supabase.auth.getUser(token);
+  if (error || !user) {
+    return { user: null, reject: { status: 401, error: 'Invalid token' } };
+  }
+  if (requireConfirmed && !user.email_confirmed_at && !user.confirmed_at) {
+    return {
+      user: null,
+      reject: {
+        status: 403,
+        error: 'Email not verified. Please confirm your email before generating.',
+      },
+    };
+  }
+  return { user };
 }
 
 // ── Woodworking projects (simple single-project-per-user persistence for v1) ──

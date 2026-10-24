@@ -1,0 +1,28 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="DecorAIt">
+  <title>DecorAIt</title>
+  <!-- Brand mark: the idea inside your home. Colours are the app's own tokens —
+       indigo-500/600 ground, warm clay-300 for the light. Stroke weights are
+       tuned to stay legible at 48px, where the home-screen icon actually
+       lives. The scalable `any` icon: rounded square, mark at ~70%. -->
+  <defs>
+    <linearGradient id="g" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#6366f1"/>
+      <stop offset="1" stop-color="#4f46e5"/>
+    </linearGradient>
+  </defs>
+
+  <rect width="512" height="512" rx="112" fill="url(#g)"/>
+
+  <g transform="translate(256 256) scale(3.1) translate(-50 -51)"
+     fill="none" stroke="#ffffff" stroke-width="7"
+     stroke-linecap="round" stroke-linejoin="round">
+    <!-- roof -->
+    <path d="M18 50 L50 22 L82 50"/>
+    <!-- walls + floor -->
+    <path d="M27 45 L27 79 L73 79 L73 45"/>
+  </g>
+
+  <!-- The light inside. A plain disc on purpose: a drawn bulb silhouette
+       collapses into a blob by the time it reaches a 48px home screen. -->
+  <circle cx="256" cy="266" r="26" fill="#e8b48c"/>
+</svg>

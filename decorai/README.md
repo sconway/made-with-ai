@@ -1,59 +1,122 @@
-# DecorAIt - AI-Powered Interior Design
+# DecorAIt — AI-Powered Interior Design
 
-DecorAIt is a mobile-first web application that uses AI to generate interior design concepts based on user-uploaded room photos. Whether you have an empty room or a furnished space, DecorAIt transforms _your actual room_ with furniture rearrangements or additions to help you visualize new design possibilities.
+DecorAIt is a mobile-first web app for making a room decision you can actually
+act on. Photograph the room you have, see it redesigned, draw the plan, and
+work out what you need to build. Everything happens to _your actual room_ —
+not a mood board of somebody else's.
 
-## Features
+## What's in it
 
-- **AI Image Transformation**: Uses advanced AI models to transform your actual room photos
-- **User Authentication**: Simple login system that securely manages your sessions
-- **Room Photo Upload**: Upload existing photos or take new ones directly in the app
-- **Multiple Design Options**: For empty rooms, get various furniture arrangement ideas; for furnished rooms, see different ways to rearrange existing furniture
-- **Compare Feature**: Easily toggle between your original photo and the AI-generated design
-- **Mobile-First Design**: Optimized for use on smartphones and tablets, but works great on desktop too
-- **User-Friendly Interface**: Simple step-by-step process from upload to design generation
+Three workspaces share one shell, plus a set of AI tools that cut across them.
 
-## How It Works
+**Redesign** (`/`, `/design`, `/result`) — the core flow.
+Upload or photograph a room. Room type is **detected, not asked**. Pick one of
+ten styles (Minimalist, Scandinavian, Industrial, Bohemian, Mid-Century,
+Traditional, Coastal, Farmhouse, Art Deco, Japandi), optionally choose which
+items to include, and for a furnished room say whether to rearrange, add to, or
+start over. Generate, then compare against the original with a drag divider,
+refine in plain language, and keep every version in the history strip.
 
-1. **Sign Up/Login**: Create an account or login to access the design generation service
-2. **Upload a Room Photo**: Take a picture of your room or upload an existing one
-3. **Specify Room Type**: Tell the app if your room is empty or already furnished
-4. **Generate Designs**: The app will transform your actual room photo with different design concepts
-5. **Save Your Favorites**: Save or download designs you like
+**Quick Edit** is a focused mode of the configure view for targeted changes
+("make the walls sage"): the style, furniture and approach options step aside
+and an edit panel takes their place. Inside it, **Only change part of the
+photo** lets you paint an area and choose *Change this* (only the paint
+changes) or *Keep this* (everything except the paint changes). The same region
+tools sit in the refine area of the results view. You don't need to cover the
+whole item — paint part of it.
 
-### AI Prompts
+How a "change this" region edit works (`src/maskEditor.js`):
 
-The application uses different prompts with various AI models depending on the type of room:
+- **The model is shown the target.** Every tier gets one image: the photo with
+  the painted area marked in magenta (a translucent tint plus an outline), and a
+  prompt that explains the marker and says to remove it. Without this, "remove
+  this" names nothing the model can see. (A separate guide image or OpenAI's
+  mask field didn't work: models didn't link the guide to the photo, and
+  gpt-image never sees a mask as an image.) If the result still shows the
+  marker, the user is told so.
+- **The model gets the full photo**, so whole objects are in view.
+- **The result keeps the object the model changed, not the brush strokes.** The
+  edit is compared with the original. Kept: every change touching the stroke
+  (the whole couch, even if you painted one end), the softer change around it
+  (the glow a removed lamp cast on the wall), and changes elsewhere of the same
+  kind (a headboard on the far side of the duvet). Everything else is restored
+  exactly. If the marked area barely changed, the app says so instead of
+  presenting an unchanged room as a result.
 
-- **For Empty Rooms**:
+Works on every tier.
 
-  > "You are an interior designer. Given this image of an empty room, furnish it with the items that would make it more aesthetic. The furniture should be fairly common for this type of room and could include things like: couches, ottomans, coffee tables, television, lamps, paintings, etc. Ensure the color scheme is well balanced and ensure that the layout allows enough room for movement."
+**Floor Plan** (`/plan`) — an SVG editor with real drafting mechanics: walls
+with magnetic/angle/alignment snapping, wall splitting, doors, windows and
+freeform openings, room fills, a dimension layer, ~30 top-down furniture
+pieces, PNG/SVG export, and multiple saved layouts. A reference photo can be
+traced, with AI-detected snap points. A three.js preview renders the room in 3D.
 
-- **For Furnished Rooms**:
-  > "You are an interior designer. Given this image of a furnished room, rearrange the furniture and items to improve the aesthetics of the room. Ensure that only the furniture and items already present in the room are used, and ensure that the layout allows enough room for movement."
+**Woodworking** (`/build`) — a 3D board editor with a cut list, cut
+optimization, CSV/PNG export, and saved projects.
 
-## Authentication and Security
+**AI tools** — feng shui analysis (scored, five-element, works on both a photo
+and a plan), Quick Edit for targeted changes, image-to-SVG vectorization, and
+AI floor-plan import.
 
-- **User Accounts**: Create an account using your email and password
-- **Secure Storage**: User credentials are securely stored in the backend
-- **JWT Authentication**: Uses JSON Web Tokens for secure session management
-- **Privacy Focus**: Your room images are only used for generating designs and are not shared
+**Library** (`/library`) — saved designs, plans and builds.
 
-## Running the Application
+## How a redesign runs
 
-You can run DecorAIt with a single command:
+1. Upload a photo (or reuse a saved design).
+2. Adjust style/items if you want — every option has a default, so Generate is
+   live the moment the photo lands.
+3. Generate. Which model runs depends on what you asked for:
+
+| Path | Model | Cost to the user |
+| --- | --- | --- |
+| Free, nothing for the enum to lose | `proplabs/virtual-staging` | Unlimited |
+| Free, carries items / a style the enum can't express / refinement text | `google/nano-banana` | Unlimited |
+| Premium toggle | OpenAI `gpt-image-2` | One generation against the monthly cap |
+
+   The free models are rate-limited per IP and per account but don't touch the
+   quota. `freeRouteAwayFromProplabs()` in `src/main.js` decides the route —
+   proplabs takes only a `room` and `furniture_style` enum, so anything it
+   would silently drop goes to the prompt-capable model instead.
+4. Compare, refine, regenerate. Subscribers' results are saved to Supabase
+   Storage and appear in My Designs.
+
+## Accounts, credits and limits
+
+- Supabase email auth; email confirmation is enforced server-side on every paid
+  endpoint, not just in the dashboard.
+- A first-time visitor can generate once before creating an account
+  (off by default — see **Pre-signup generations**).
+- One-time token packs ($4.99/10, $9.99/20, $19.99/50) via Stripe, plus a
+  subscription capped at `SUBSCRIPTION_MONTHLY_LIMIT` (default 50) generations
+  per calendar month. Token packs act as overflow once the cap is spent.
+- Credit and quota spending is atomic — see `sql/atomic_credits.sql`.
+
+## Running it locally
 
 ```bash
-# Navigate to the decorai project directory (DecorAIt app)
-cd /path/to/made-with-ai/decorai
-
-# Make the run script executable (first time only)
-chmod +x run.sh
-
-# Run the application
-./run.sh
+npm install
+npm run dev
 ```
 
-This will start a local web server and open the application in your default browser. The application will be available at `http://localhost:8080`.
+That runs Vite on **5173** and the API server on **3001**, with `/api`,
+`/replicate` and `/openai` proxied to the latter. Open http://localhost:5173.
+
+Node **18+** is required (`vite` fails on 16 with a `crypto.getRandomValues`
+error). Copy `.env.example` to `.env` first — without `SUPABASE_URL` and
+`SUPABASE_ANON_KEY` the client disables sign-in, and `/api/config` is what
+feeds those to the browser.
+
+`./run.sh` serves static files only and has no `/api` — it cannot sign you in
+or generate anything. Use `npm run dev`.
+
+To check a production build the way it actually deploys:
+
+```bash
+npm run build && NODE_ENV=production npm start
+```
+
+That serves `dist/` and the API together on 3001, which is also the only way to
+exercise the service worker (it is disabled in dev on purpose).
 
 ## Stripe token packs (production)
 
@@ -83,8 +146,6 @@ The client loads Supabase credentials from `/api/config`. Set these in `.env` lo
 
 If either `SUPABASE_URL` or `SUPABASE_ANON_KEY` is missing, sign-in is disabled and the login form shows a configuration error.
 
-Local development: run `npm run dev` (starts both Vite and the API server). Do not use `./run.sh` alone — it only serves static files and has no `/api/config` endpoint.
-
 ## Security & abuse prevention
 
 Before opening the app to the public, complete this checklist:
@@ -93,6 +154,8 @@ Before opening the app to the public, complete this checklist:
    - `sql/credit_tokens_for_session.sql` (idempotent token crediting)
    - `sql/atomic_credits.sql` — **required**: makes credit/quota spending atomic so
      concurrent requests can't over-spend a user's credits or monthly cap.
+   - `sql/anonymous_generations.sql` — only if you enable pre-signup generations
+     (see below). Without it the feature refuses every request and logs why.
 2. **Enable "Confirm email"** in Supabase (Authentication → Providers → Email). The
    server also enforces this on every paid endpoint (`requireConfirmed`), so disposable
    accounts can't farm the AI providers — but the dashboard toggle should be on too.
@@ -106,29 +169,132 @@ Before opening the app to the public, complete this checklist:
    They are in-memory per-instance — if you scale to multiple instances, move the
    counters to a shared store (e.g. Redis).
 
+### Pre-signup generations
+
+A first-time visitor can generate one design before creating an account, so the
+product proves itself before it asks for anything. This deliberately opens a paid
+AI endpoint to unauthenticated traffic, so it is **off unless you configure it**:
+
+| Variable | Default | Meaning |
+| --- | --- | --- |
+| `ANON_DEVICE_SECRET` | *(empty)* | HMAC key for the device cookie. **Required** — without it the feature stays off regardless of the settings below, because an unsigned device id is trivially forged. Generate with `openssl rand -hex 32`. |
+| `ANON_FREE_GENERATIONS` | `1` | Generations granted per device before signup. `0` disables. |
+| `ANON_MAX_PER_IP_PER_DAY` | `5` | Backstop against "clear the cookie, get another run". Don't set this so low that an office behind one NAT locks everyone out. |
+
+What bounds the exposure:
+
+- **Signed `HttpOnly` cookie** identifies the device; the grant row's PRIMARY KEY
+  makes the claim atomic, so concurrent requests can't both win.
+- **Per-IP daily cap** backstops the cookie, which a visitor can always clear.
+- **Model allowlist within the allowlist** — anonymous callers may only run the two
+  cheap staging models, never the premium edit path, the vectorizer, the feng-shui
+  LLM, or anything else billed per call.
+- **Prediction ownership** — an anonymous caller may poll only the prediction ids
+  their own device started, so one visitor can't read another's generation.
+- **Fails closed** — if the quota table is missing or the counter errors, requests
+  are refused rather than handed out ungoverned.
+- Anonymous results are **not persisted** (no account to own them), which is also
+  the conversion hook: sign up to save this design.
+
+Watch the cost: this shifts first-run volume onto the AI providers with no account
+behind it. Start with a low `ANON_MAX_PER_IP_PER_DAY` and raise it once you can see
+spend per visitor.
+
 What's enforced in code: auth + email-verification + per-IP/per-account rate limits on
 all paid AI endpoints; a Replicate model allowlist; SSRF guards on the poll proxy
 (locked to `api.replicate.com`) and on server-side image fetches (host allowlist);
 atomic credit/quota accounting; Stripe webhook signature verification; and idempotent,
 ownership-checked purchase fulfillment.
 
-## Technical Architecture
+## Installable app (PWA)
 
-This application follows a client-server architecture:
+The app installs to a phone home screen and runs without browser chrome. Source
+lives in `public/` and is copied verbatim to `dist/` by Vite:
 
-- **Frontend**: HTML, CSS, and JavaScript for the user interface
-- **Backend**: RESTful API that handles authentication and image processing
-- **AI Integration**: Backend processes images through AI models and returns the results
-- **Security**: Authentication tokens ensure only authorized users can access the service
+| File | Purpose |
+| --- | --- |
+| `manifest.webmanifest` | Name, colours, icons, and three shortcuts (`/`, `/plan`, `/library/designs`) |
+| `icon.svg` | Scalable brand mark — the source the PNGs are rendered from |
+| `icon-192.png`, `icon-512.png` | Standard icons |
+| `icon-maskable-512.png` | Android adaptive icon; mark sits inside the centre-80% safe zone |
+| `apple-touch-icon.png` | 180×180 — iOS ignores the manifest for this |
+| `sw.js` | App-shell service worker |
 
-## Future Enhancements
+**The service worker is deliberately conservative**, because it is the one thing
+that can keep serving stale code after a deploy:
 
-- **Premium Subscription**: Unlimited design generations with priority processing
-- **Style Preferences**: Select specific interior design styles
-- **Room Type Selection**: Specialized designs for bedrooms, living rooms, kitchens, etc.
-- **Color Palette Options**: Choose specific color schemes for your designs
-- **Furniture Type Preferences**: Specify furniture styles and types you prefer
-- **Saving and Sharing Collections**: Create and share design collections
+- `/api`, `/replicate`, `/openai`, `/webhook` and `/health` are **never**
+  intercepted. Caching a generation, a credit balance or an auth response would
+  be wrong at best and cross-account leakage at worst.
+- Navigations are **network-first**, so a deploy lands on the next load. The
+  cached shell is only an offline fallback.
+- Static assets are stale-while-revalidate, which is safe because Vite
+  fingerprints bundle filenames.
+- Only same-origin `GET`s with a `200`/`basic` response are stored.
+
+It registers **in production builds only** — in dev it actively unregisters
+itself, so a worker left behind by a local production build can't shadow the
+Vite dev server.
+
+To invalidate everything on a deploy, bump `CACHE_VERSION` in `public/sw.js`.
+Kill switch, from the page or devtools console:
+
+```js
+navigator.serviceWorker.controller?.postMessage({ type: 'UNREGISTER' })
+```
+
+Regenerating the icons: edit `public/icon.svg`, then re-render the PNGs from it
+(any SVG rasterizer, or a canvas `drawImage` + `toDataURL('image/png')` at 192,
+512 and 180). The maskable variant drops the corner radius and scales the mark
+to ~0.77 so the adaptive mask can't clip it.
+
+## Architecture
+
+Vanilla JavaScript and Vite — no framework, no CSS tooling, no component
+library. "Components" are CSS class conventions.
+
+| Path | What it is |
+| --- | --- |
+| `index.html` | Every screen's markup, `.hidden`-toggled |
+| `src/main.js` | Redesign flow, auth, generation, designs, modals |
+| `src/floorPlanEditor.js` | The SVG floor plan editor |
+| `src/woodworking/` | The 3D woodworking editor (isolated module) |
+| `src/router.js` | History API routing — see the route table there |
+| `src/compare.js`, `src/waitState.js`, `src/sheets.js` | Compare divider, generation wait state, mobile sheets |
+| `src/tokens.css` | The design token layer — load it before `styles.css` |
+| `src/styles.css` | Everything else |
+| `server.js` | Express: auth, Stripe, quotas, and the AI proxies |
+| `sql/` | Supabase migrations — run these, they are not optional |
+
+**Design system.** The visual direction is *Warm Precision*: warm paper
+neutrals and an editorial serif, executed with the state completeness and
+spacing discipline of a software tool. Tokens live in `src/tokens.css` and the
+full rationale is in [.design/decorait-overhaul/](.design/decorait-overhaul/).
+Three things to know before editing CSS:
+
+- There is a **backwards-compatibility alias layer** near the bottom of
+  `tokens.css` (`--primary-color`, `--text-color`, `--card-bg`, …). The editors
+  and hundreds of rules in `styles.css` consume it. Don't drop it.
+- **Dark mode is defined but deliberately not shipped** — the
+  `prefers-color-scheme` block is commented out, with the reason stated inline.
+- The **editor canvases are neutral, not warm**, on purpose: a drawing is read
+  for accuracy. Canvas colours are `--canvas-*` tokens, resolved from JS via
+  `buildCanvasPalette()` because SVG presentation attributes can't take
+  `var()`. The furniture catalogue's material colours are content, not theme,
+  and stay literal.
+
+**Known rough edges.** `floorPlanEditor.js` (~9.5k lines), `main.js` (~6k) and
+`styles.css` (~8.7k) are monoliths; there are no automated tests; the client
+bundle ships as a single ~1.2 MB chunk.
+
+## Where this is going
+
+Near-term work and the competitive reasoning behind it are in
+[.design/competitive/COMPETITIVE_PLAN.md](.design/competitive/COMPETITIVE_PLAN.md).
+The short version: the biggest gap against the rest of the market is that the
+output is a picture and the user's actual job is a purchase — shoppable results
+are the next significant piece of work. Remaining design-overhaul tasks are
+tracked in [.design/decorait-overhaul/TASKS.md](.design/decorait-overhaul/TASKS.md).
 
 ## Credits
 
@@ -136,4 +302,4 @@ Created with AI as part of the Made With AI showcase.
 
 ## License
 
-This project is open source and available under the MIT License.
+MIT.

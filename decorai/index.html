@@ -13,6 +13,23 @@
     <link rel="stylesheet" href="/src/tokens.css">
     <link rel="stylesheet" href="/src/styles.css">
     <link rel="icon" href="/favicon.png" />
+
+    <!-- Installable app. theme_color matches the app's paper background so the
+         status bar blends into the header rather than banding against it. -->
+    <link rel="manifest" href="/manifest.webmanifest">
+    <!-- Single value on purpose. The dark palette is defined but intentionally
+         not applied (see the note above the disabled prefers-color-scheme block
+         in src/tokens.css), so a dark theme-color would put a dark status bar
+         above a light app. Add the dark variant when dark mode actually ships. -->
+    <meta name="theme-color" content="#fdfcfa">
+    <meta name="description" content="Upload a photo of your room and see it redesigned. Draw a floor plan, check what fits, and plan the build.">
+    <!-- iOS ignores the manifest for these, so they have to be stated twice. -->
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="default">
+    <meta name="apple-mobile-web-app-title" content="DecorAIt">
+
     <script src="https://unpkg.com/feather-icons"></script>
 </head>
 
@@ -131,6 +148,19 @@
                      live the moment a photo lands ("proof before configuration").
                      Sections reveal by relevance, not by step number. -->
                 <div class="wizard-container hidden" id="wizard-container">
+                    <!-- Quick edit header. Shown only in quick edit mode, where it
+                         replaces the bottom action bar's Back button. -->
+                    <div class="quick-edit-topbar">
+                        <button type="button" id="quick-edit-back" class="quick-edit-back" aria-label="Back to redesign options">
+                            <i data-feather="arrow-left"></i>
+                            <span>Back</span>
+                        </button>
+                        <div class="quick-edit-titles">
+                            <h2 id="quick-edit-title">Quick edit</h2>
+                            <p class="quick-edit-intro">Change one thing, or the whole room. Everything else stays as it is.</p>
+                        </div>
+                    </div>
+
                     <div class="configure-layout">
 
                         <!-- Photo — the anchor for every choice below it -->
@@ -148,12 +178,17 @@
                                     </button>
                                 </div>
                             </div>
+                            <!-- Quick edit: the photo itself is the region tool. -->
+                            <p class="region-hint quick-edit-region-hint">
+                                <i data-feather="edit-3"></i>
+                                <span>Brush over anything to remove or change it.</span>
+                            </p>
                             <div class="wizard-upload-actions">
                                 <button type="button" id="wizard-feng-shui-btn" class="secondary-btn feng-shui-action-btn">
                                     <i data-feather="compass"></i>
                                     <span>Feng Shui Analysis</span>
                                 </button>
-                                <button type="button" id="wizard-quick-edit-btn" class="secondary-btn quick-edit-action-btn">
+                                <button type="button" id="wizard-quick-edit-btn" class="secondary-btn quick-edit-action-btn" aria-pressed="false" aria-controls="quick-edit-panel">
                                     <i data-feather="droplet"></i>
                                     <span>Quick Edit</span>
                                 </button>
@@ -162,6 +197,39 @@
 
                         <!-- Options — ordered by how much each changes the output -->
                         <div class="configure-options">
+
+                            <!-- Quick edit — a focused mode of this view. A targeted
+                                 change ("make the walls sage") has nothing to do with
+                                 style, furniture or approach, so entering it hides
+                                 those sections instead of stacking a modal on top of
+                                 them. Region painting lives here because it's only
+                                 meaningful for a targeted change, and the photo it's
+                                 painted on is already on screen. -->
+                            <section class="quick-edit-panel hidden" id="quick-edit-panel" aria-labelledby="quick-edit-title">
+
+                                <!-- Composer: prompt, region toggle, model and Apply in
+                                     one place. Pinned to the bottom on mobile. -->
+                                <div class="quick-edit-composer">
+                                    <textarea
+                                        id="quick-edit-input"
+                                        class="quick-edit-input"
+                                        rows="2"
+                                        aria-label="Describe a change to the whole room"
+                                        placeholder="Or describe a change to the whole room"
+                                    ></textarea>
+                                    <div class="quick-edit-composer-bar">
+                                        <label class="model-pref-toggle quick-edit-premium" title="Higher fidelity. Counts as one generation.">
+                                            <input type="checkbox" id="quick-edit-premium-toggle">
+                                            <span class="model-pref-track"><span class="model-pref-thumb"></span></span>
+                                            <span class="quick-edit-premium-label">Premium</span>
+                                        </label>
+                                        <button type="button" id="quick-edit-apply" class="primary-btn quick-edit-apply" disabled>
+                                            <span>Apply edit</span>
+                                            <i data-feather="arrow-up"></i>
+                                        </button>
+                                    </div>
+                                </div>
+                            </section>
 
                             <section class="configure-section" id="configure-style" data-section="style">
                                 <button type="button" class="configure-section-toggle" aria-expanded="true" aria-controls="configure-style-body">
@@ -299,12 +367,21 @@
                 <div class="results-header">
                     <div class="results-header-text">
                         <h2>Your <em>design</em></h2>
-                        <p>Drag the divider to compare with your original, or refine the result below.</p>
+                        <p class="results-header-hint" data-region-hint="Brush over anything to remove or change it.">Drag the divider to compare with your original, or refine the result below.</p>
                     </div>
-                    <button type="button" id="results-feng-shui-btn" class="secondary-btn feng-shui-action-btn" disabled>
-                        <i data-feather="compass"></i>
-                        <span>Feng Shui Analysis</span>
-                    </button>
+                    <div class="results-header-actions">
+                        <!-- Region editing on the result. Off by default: dragging on
+                             the image moves the compare divider, so painting is
+                             switched on here, right above the image. -->
+                        <button type="button" class="secondary-btn region-select-btn" aria-pressed="false">
+                            <i data-feather="edit-3"></i>
+                            <span>Edit one thing</span>
+                        </button>
+                        <button type="button" id="results-feng-shui-btn" class="secondary-btn feng-shui-action-btn" disabled>
+                            <i data-feather="compass"></i>
+                            <span>Feng Shui Analysis</span>
+                        </button>
+                    </div>
                 </div>
                 <div class="results-display">
                     <!-- Unused by the app (generation renders its wait state
@@ -321,21 +398,15 @@
                             <i data-feather="edit-2"></i>
                             <span>Refine this design</span>
                         </label>
-                        <p class="refinement-hint">Describe what you'd like to change, or pick a suggestion.</p>
+                        <p class="refinement-hint">Describe what you'd like to change.</p>
                     </div>
+
                     <textarea
                         id="refinement-input"
                         class="refinement-textarea"
                         placeholder="e.g. make the walls a warm light grey, add more plants near the window…"
                         rows="3"
                     ></textarea>
-                    <div class="refinement-chips" role="group" aria-label="Suggested refinements">
-                        <button type="button" class="refinement-chip" data-chip="Make the walls a warm light grey">Lighter walls</button>
-                        <button type="button" class="refinement-chip" data-chip="Add more plants and greenery">More plants</button>
-                        <button type="button" class="refinement-chip" data-chip="Use warmer, cozier lighting">Warmer lighting</button>
-                        <button type="button" class="refinement-chip" data-chip="Make the space feel more minimal and uncluttered">More minimal</button>
-                        <button type="button" class="refinement-chip" data-chip="Add textured natural materials like wood and linen">Natural textures</button>
-                    </div>
                     <div class="model-pref-row">
                         <label class="model-pref-toggle">
                             <input type="checkbox" id="default-model-toggle-results">
@@ -369,7 +440,7 @@
     </div>
 
     <!-- Woodworking 3D Editor Screen (isolated module: src/woodworking/) -->
-    <div id="woodworking-editor-screen" class="hidden">
+    <div id="woodworking-editor-screen" class="hidden" data-density="tool">
         <div class="ww-toolbar">
             <button type="button" class="ww-btn" data-action="back" aria-label="Back">
                 <i data-feather="arrow-left"></i>
@@ -507,7 +578,7 @@
     </div>
 
     <!-- Layout Editor Screen -->
-    <div class="layout-editor-screen hidden" id="layout-editor-screen">
+    <div class="layout-editor-screen hidden" id="layout-editor-screen" data-density="tool">
         <div class="layout-editor-header">
             <div class="layout-editor-title">
                 <button type="button" id="layout-editor-back-btn" class="back-btn" data-tooltip="Back to DecorAIt" aria-label="Back to DecorAIt (close floor plan editor)">
@@ -660,17 +731,17 @@
                         <defs>
                             <!-- Small grid: 10px subdivisions (1/5 foot) -->
                             <pattern id="grid-small" width="10" height="10" patternUnits="userSpaceOnUse">
-                                <path d="M 10 0 L 0 0 0 10" fill="none" stroke="#e8e8e8" stroke-width="0.5"/>
+                                <path class="grid-line-fine" d="M 10 0 L 0 0 0 10" fill="none" stroke="#e8e8e8" stroke-width="0.5"/>
                             </pattern>
                             <!-- Medium grid: 50px = 1 foot -->
                             <pattern id="grid-medium" width="50" height="50" patternUnits="userSpaceOnUse">
                                 <rect width="50" height="50" fill="url(#grid-small)"/>
-                                <path d="M 50 0 L 0 0 0 50" fill="none" stroke="#d0d0d0" stroke-width="0.5"/>
+                                <path class="grid-line-major" d="M 50 0 L 0 0 0 50" fill="none" stroke="#d0d0d0" stroke-width="0.5"/>
                             </pattern>
                             <!-- Large grid: 250px = 5 feet -->
                             <pattern id="grid-large" width="250" height="250" patternUnits="userSpaceOnUse">
                                 <rect width="250" height="250" fill="url(#grid-medium)"/>
-                                <path d="M 250 0 L 0 0 0 250" fill="none" stroke="#bbb" stroke-width="1"/>
+                                <path class="grid-line-bold" d="M 250 0 L 0 0 0 250" fill="none" stroke="#bbb" stroke-width="1"/>
                             </pattern>
                         </defs>
                         <g id="floor-plan-group" transform="translate(0,0) scale(1)">
@@ -966,44 +1037,6 @@
     </div>
 
     <!-- Quick Edit Modal -->
-    <div class="modal" id="quick-edit-modal">
-        <div class="modal-content quick-edit-modal-content">
-            <div class="modal-header">
-                <h2>Quick Edit</h2>
-                <button type="button" id="quick-edit-close" class="close-modal-btn" aria-label="Close">
-                    <i data-feather="x"></i>
-                </button>
-            </div>
-            <div class="modal-body">
-                <p class="quick-edit-intro">Describe a simple change to your room photo. Everything else stays the same.</p>
-                <textarea
-                    id="quick-edit-input"
-                    class="quick-edit-input"
-                    rows="3"
-                    placeholder="e.g. make the walls blue, make the floors granite, change the cabinets to white…"
-                ></textarea>
-                <div class="model-pref-row">
-                    <label class="model-pref-toggle">
-                        <input type="checkbox" id="quick-edit-premium-toggle">
-                        <span class="model-pref-track"><span class="model-pref-thumb"></span></span>
-                        <span class="model-pref-text">
-                            <span class="model-pref-label">Use premium model</span>
-                            <span class="model-pref-hint">Higher fidelity. Counts against your monthly limit.</span>
-                        </span>
-                    </label>
-                </div>
-                <div class="quick-edit-footer">
-                    <button type="button" id="quick-edit-clear" class="secondary-btn">Clear</button>
-                    <button type="button" id="quick-edit-apply" class="primary-btn" disabled>
-                        <i data-feather="zap"></i>
-                        <span>Apply edit</span>
-                    </button>
-                </div>
-                <p class="quick-edit-note">The standard model is free. Premium is higher fidelity and counts as one generation.</p>
-            </div>
-        </div>
-    </div>
-
     <!-- Generic Alert Modal -->
     <div class="modal" id="alert-modal">
         <div class="modal-content alert-modal">

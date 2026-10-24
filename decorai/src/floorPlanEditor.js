@@ -1,5 +1,6 @@
 import feather from 'feather-icons';
 import * as THREE from 'three';
+import { presentToast } from './toast.js';
 
 // ==========================================
 // FLOOR PLAN EDITOR
@@ -118,6 +119,85 @@ const FloorPlanEditor = (() => {
         return false;
     }
     
+    // ── Canvas palette ────────────────────────────────────────────────────
+    // SVG presentation attributes (setAttribute('stroke', …)) can't take
+    // var(), so the --canvas-* tokens are resolved once here and handed out as
+    // literals. Read lazily: at module scope the stylesheet may not have
+    // parsed yet, and getComputedStyle would hand back empty strings.
+    //
+    // The fallbacks are the same values as the tokens. They exist so the
+    // editor still draws correctly if tokens.css fails to load — a floor plan
+    // rendering in all-black would be worse than a floor plan not following
+    // the theme.
+    const CANVAS_FALLBACKS = {
+        paper: '#ffffff',
+        ink: '#333333',
+        inkMuted: '#666666',
+        inkFaint: '#9ca3af',
+        gridFine: '#e8e8e8',
+        gridMajor: '#d0d0d0',
+        gridBold: '#bbbbbb',
+        door: '#8b4513',
+        window: '#87ceeb',
+        windowFrame: '#4a90a4',
+        garage: '#607d8b',
+        selection: '#4f46e5',
+        selectionAlt: '#6366f1',
+        selectionSoft: '#e0e7ff',
+        snapOk: '#22c55e',
+        snapWarn: '#f59e0b',
+        snapError: '#ef4444',
+        rulerBg: '#f8f9fa',
+        rulerLine: '#d1d5db',
+        rulerText: '#4b5563',
+        reference: '#4a90e2',
+    };
+    const CANVAS_TOKENS = {
+        paper: '--canvas-paper',
+        ink: '--canvas-ink',
+        inkMuted: '--canvas-ink-muted',
+        inkFaint: '--canvas-ink-faint',
+        gridFine: '--canvas-grid-fine',
+        gridMajor: '--canvas-grid-major',
+        gridBold: '--canvas-grid-bold',
+        door: '--canvas-door',
+        window: '--canvas-window',
+        windowFrame: '--canvas-window-frame',
+        garage: '--canvas-garage',
+        selection: '--canvas-selection',
+        selectionAlt: '--canvas-selection-alt',
+        selectionSoft: '--canvas-selection-soft',
+        snapOk: '--canvas-snap-ok',
+        snapWarn: '--canvas-snap-warn',
+        snapError: '--canvas-snap-error',
+        rulerBg: '--canvas-ruler-bg',
+        rulerLine: '--canvas-ruler-line',
+        rulerText: '--canvas-ruler-text',
+        reference: '--canvas-reference',
+    };
+
+    let _canvasPalette = null;
+    function buildCanvasPalette() {
+        const out = { ...CANVAS_FALLBACKS };
+        try {
+            const cs = getComputedStyle(document.documentElement);
+            for (const [key, token] of Object.entries(CANVAS_TOKENS)) {
+                const value = cs.getPropertyValue(token).trim();
+                if (value) out[key] = value;
+            }
+        } catch {
+            // Non-browser context or detached document — fallbacks stand.
+        }
+        return out;
+    }
+    /** Canvas palette, resolved from --canvas-* tokens on first use. */
+    function canvas() {
+        if (!_canvasPalette) _canvasPalette = buildCanvasPalette();
+        return _canvasPalette;
+    }
+    /** Drop the cache so a theme change is picked up on the next draw. */
+    function invalidateCanvasPalette() { _canvasPalette = null; }
+
     // Furniture library
     const furnitureLibrary = [
         { id: 'sofa', name: 'Sofa', category: 'living', width: 7, height: 3, color: '#8B7355' },
@@ -2050,17 +2130,17 @@ const FloorPlanEditor = (() => {
         const hCtx = hCanvas.getContext('2d');
         hCtx.setTransform(dpr, 0, 0, dpr, 0, 0);
         hCtx.clearRect(0, 0, wrapperRect.width, RULER_SIZE);
-        hCtx.fillStyle = '#f8f9fa';
+        hCtx.fillStyle = canvas().rulerBg;
         hCtx.fillRect(0, 0, wrapperRect.width, RULER_SIZE);
         
-        hCtx.strokeStyle = '#d1d5db';
+        hCtx.strokeStyle = canvas().rulerLine;
         hCtx.lineWidth = 1;
         hCtx.beginPath();
         hCtx.moveTo(0, RULER_SIZE - 0.5);
         hCtx.lineTo(wrapperRect.width, RULER_SIZE - 0.5);
         hCtx.stroke();
         
-        hCtx.fillStyle = '#4b5563';
+        hCtx.fillStyle = canvas().rulerText;
         hCtx.font = '500 9px system-ui, -apple-system, sans-serif';
         hCtx.textAlign = 'left';
         
@@ -2068,7 +2148,7 @@ const FloorPlanEditor = (() => {
             const x = foot * pxPerFoot;
             if (x > wrapperRect.width) break;
             
-            hCtx.strokeStyle = '#9ca3af';
+            hCtx.strokeStyle = canvas().inkFaint;
             hCtx.lineWidth = 1;
             hCtx.beginPath();
             hCtx.moveTo(x + 0.5, RULER_SIZE);
@@ -2082,24 +2162,24 @@ const FloorPlanEditor = (() => {
         const vCtx = vCanvas.getContext('2d');
         vCtx.setTransform(dpr, 0, 0, dpr, 0, 0);
         vCtx.clearRect(0, 0, RULER_SIZE, wrapperRect.height);
-        vCtx.fillStyle = '#f8f9fa';
+        vCtx.fillStyle = canvas().rulerBg;
         vCtx.fillRect(0, 0, RULER_SIZE, wrapperRect.height);
         
-        vCtx.strokeStyle = '#d1d5db';
+        vCtx.strokeStyle = canvas().rulerLine;
         vCtx.lineWidth = 1;
         vCtx.beginPath();
         vCtx.moveTo(RULER_SIZE - 0.5, 0);
         vCtx.lineTo(RULER_SIZE - 0.5, wrapperRect.height);
         vCtx.stroke();
         
-        vCtx.fillStyle = '#4b5563';
+        vCtx.fillStyle = canvas().rulerText;
         vCtx.font = '500 9px system-ui, -apple-system, sans-serif';
         
         for (let foot = 0; foot <= MAX_FEET; foot += interval) {
             const y = foot * pxPerFoot;
             if (y > wrapperRect.height) break;
             
-            vCtx.strokeStyle = '#9ca3af';
+            vCtx.strokeStyle = canvas().inkFaint;
             vCtx.lineWidth = 1;
             vCtx.beginPath();
             vCtx.moveTo(RULER_SIZE, y + 0.5);
@@ -2345,7 +2425,7 @@ const FloorPlanEditor = (() => {
         canvas.width = sw;
         canvas.height = sh;
         const ctx = canvas.getContext('2d', { willReadFrequently: true });
-        ctx.fillStyle = '#ffffff';
+        ctx.fillStyle = canvas().paper;
         ctx.fillRect(0, 0, sw, sh);
         ctx.drawImage(img, 0, 0, sw, sh);
         const { data } = ctx.getImageData(0, 0, sw, sh);
@@ -2967,7 +3047,7 @@ const FloorPlanEditor = (() => {
             const arc = document.createElementNS('http://www.w3.org/2000/svg', 'path');
             arc.setAttribute('d', `M ${x1} ${y1} A ${arcRadius} ${arcRadius} 0 ${largeArc} 1 ${x2} ${y2}`);
             arc.setAttribute('fill', 'none');
-            arc.setAttribute('stroke', degrees === 90 ? '#22c55e' : '#6366f1');
+            arc.setAttribute('stroke', degrees === 90 ? canvas().snapOk : canvas().selectionAlt);
             arc.setAttribute('stroke-width', 1.5 / zoom);
             arc.setAttribute('opacity', '0.8');
             g.appendChild(arc);
@@ -2985,7 +3065,7 @@ const FloorPlanEditor = (() => {
                 const square = document.createElementNS('http://www.w3.org/2000/svg', 'path');
                 square.setAttribute('d', `M ${sx} ${sy} L ${mx} ${my} L ${ex} ${ey}`);
                 square.setAttribute('fill', 'none');
-                square.setAttribute('stroke', '#22c55e');
+                square.setAttribute('stroke', canvas().snapOk);
                 square.setAttribute('stroke-width', 1.5 / zoom);
                 square.setAttribute('opacity', '0.8');
                 g.appendChild(square);
@@ -3003,7 +3083,7 @@ const FloorPlanEditor = (() => {
             text.setAttribute('dominant-baseline', 'central');
             text.setAttribute('font-size', 11 / zoom);
             text.setAttribute('font-weight', '600');
-            text.setAttribute('fill', degrees === 90 ? '#16a34a' : '#4f46e5');
+            text.setAttribute('fill', degrees === 90 ? canvas().snapOk : canvas().selection);
             text.textContent = degrees + '°';
             g.appendChild(text);
         }
@@ -3105,7 +3185,7 @@ const FloorPlanEditor = (() => {
         ring.setAttribute('cy', point.y);
         ring.setAttribute('r', 12 / zoom);
         ring.setAttribute('fill', 'none');
-        ring.setAttribute('stroke', '#22c55e');
+        ring.setAttribute('stroke', canvas().snapOk);
         ring.setAttribute('stroke-width', 2 / zoom);
         ring.setAttribute('opacity', '0.7');
         ring.classList.add('magnetic-pulse');
@@ -3116,7 +3196,7 @@ const FloorPlanEditor = (() => {
         dot.setAttribute('cx', point.x);
         dot.setAttribute('cy', point.y);
         dot.setAttribute('r', 4 / zoom);
-        dot.setAttribute('fill', '#22c55e');
+        dot.setAttribute('fill', canvas().snapOk);
         dot.setAttribute('opacity', '0.9');
         g.appendChild(dot);
         
@@ -3128,7 +3208,7 @@ const FloorPlanEditor = (() => {
             line.setAttribute('y1', point.y + dy * (6 / zoom));
             line.setAttribute('x2', point.x + dx * (6 / zoom + size));
             line.setAttribute('y2', point.y + dy * (6 / zoom + size));
-            line.setAttribute('stroke', '#22c55e');
+            line.setAttribute('stroke', canvas().snapOk);
             line.setAttribute('stroke-width', 1.5 / zoom);
             line.setAttribute('opacity', '0.6');
             g.appendChild(line);
@@ -3337,7 +3417,7 @@ const FloorPlanEditor = (() => {
         // Light handle line from start→control→end so the user sees where the control point is
         const handle = document.createElementNS('http://www.w3.org/2000/svg', 'path');
         handle.setAttribute('d', `M ${start.x} ${start.y} L ${control.x} ${control.y} L ${end.x} ${end.y}`);
-        handle.setAttribute('stroke', '#4a90e2');
+        handle.setAttribute('stroke', canvas().reference);
         handle.setAttribute('stroke-width', 1 / zoom);
         handle.setAttribute('stroke-dasharray', `${4 / zoom} ${3 / zoom}`);
         handle.setAttribute('fill', 'none');
@@ -3369,7 +3449,7 @@ const FloorPlanEditor = (() => {
         dot.setAttribute('cx', point.x);
         dot.setAttribute('cy', point.y);
         dot.setAttribute('r', 4 / zoom);
-        dot.setAttribute('fill', '#4a90e2');
+        dot.setAttribute('fill', canvas().reference);
         dot.setAttribute('stroke', 'white');
         dot.setAttribute('stroke-width', 1.5 / zoom);
         dot.setAttribute('pointer-events', 'none');
@@ -3619,7 +3699,7 @@ const FloorPlanEditor = (() => {
                 line.setAttribute('y2', g.corner.y);
             }
             line.classList.add('alignment-guide');
-            line.setAttribute('stroke', '#4a90e2');
+            line.setAttribute('stroke', canvas().reference);
             line.setAttribute('stroke-width', 1 / zoom);
             line.setAttribute('stroke-dasharray', `${6 / zoom} ${4 / zoom}`);
             line.setAttribute('pointer-events', 'none');
@@ -3870,9 +3950,9 @@ const FloorPlanEditor = (() => {
     }
     
     function openingMarkerColor(type) {
-        if (type === 'door') return '#8B4513';
-        if (type === 'garage') return '#607D8B';
-        return '#87CEEB';
+        if (type === 'door') return canvas().door;
+        if (type === 'garage') return canvas().garage;
+        return canvas().window;
     }
 
     // Show a marker at the start point when placing door/window
@@ -3884,7 +3964,7 @@ const FloorPlanEditor = (() => {
         marker.setAttribute('cy', point.y);
         marker.setAttribute('r', 6);
         marker.setAttribute('fill', openingMarkerColor(currentTool));
-        marker.setAttribute('stroke', '#333');
+        marker.setAttribute('stroke', canvas().ink);
         marker.setAttribute('stroke-width', '2');
         marker.classList.add('opening-preview', 'opening-start-marker');
         
@@ -3905,7 +3985,7 @@ const FloorPlanEditor = (() => {
         startMarker.setAttribute('cy', startPoint.y);
         startMarker.setAttribute('r', 5);
         startMarker.setAttribute('fill', openingMarkerColor(type));
-        startMarker.setAttribute('stroke', '#333');
+        startMarker.setAttribute('stroke', canvas().ink);
         startMarker.setAttribute('stroke-width', '1');
         group.appendChild(startMarker);
         
@@ -3915,7 +3995,7 @@ const FloorPlanEditor = (() => {
         endMarker.setAttribute('cy', endPoint.y);
         endMarker.setAttribute('r', 5);
         endMarker.setAttribute('fill', openingMarkerColor(type));
-        endMarker.setAttribute('stroke', '#333');
+        endMarker.setAttribute('stroke', canvas().ink);
         endMarker.setAttribute('stroke-width', '1');
         group.appendChild(endMarker);
         
@@ -3941,7 +4021,7 @@ const FloorPlanEditor = (() => {
         label.setAttribute('y', midY - 15);
         label.setAttribute('text-anchor', 'middle');
         label.setAttribute('font-size', '12');
-        label.setAttribute('fill', '#333');
+        label.setAttribute('fill', canvas().ink);
         label.textContent = formatDimension(width);
         group.appendChild(label);
         
@@ -3990,7 +4070,7 @@ const FloorPlanEditor = (() => {
             line.setAttribute('y1', startY);
             line.setAttribute('x2', endX);
             line.setAttribute('y2', endY);
-            line.setAttribute('stroke', '#8B4513');
+            line.setAttribute('stroke', canvas().door);
             line.setAttribute('stroke-width', wallThickness + 2);
             line.setAttribute('stroke-linecap', 'round');
             group.appendChild(line);
@@ -4002,7 +4082,7 @@ const FloorPlanEditor = (() => {
             
             const arc = document.createElementNS('http://www.w3.org/2000/svg', 'path');
             arc.setAttribute('d', `M ${startX} ${startY} A ${arcRadius} ${arcRadius} 0 0 1 ${arcEndX} ${arcEndY}`);
-            arc.setAttribute('stroke', '#8B4513');
+            arc.setAttribute('stroke', canvas().door);
             arc.setAttribute('stroke-width', '1.5');
             arc.setAttribute('fill', 'none');
             arc.setAttribute('stroke-dasharray', '4,2');
@@ -4014,7 +4094,7 @@ const FloorPlanEditor = (() => {
             doorLine.setAttribute('y1', startY);
             doorLine.setAttribute('x2', arcEndX);
             doorLine.setAttribute('y2', arcEndY);
-            doorLine.setAttribute('stroke', '#8B4513');
+            doorLine.setAttribute('stroke', canvas().door);
             doorLine.setAttribute('stroke-width', '2');
             group.appendChild(doorLine);
         } else if (type === 'garage') {
@@ -4023,7 +4103,7 @@ const FloorPlanEditor = (() => {
             rect.setAttribute('y1', startY);
             rect.setAttribute('x2', endX);
             rect.setAttribute('y2', endY);
-            rect.setAttribute('stroke', '#607D8B');
+            rect.setAttribute('stroke', canvas().garage);
             rect.setAttribute('stroke-width', wallThickness + 2);
             rect.setAttribute('stroke-linecap', 'round');
             rect.setAttribute('stroke-dasharray', '3 2');
@@ -4035,7 +4115,7 @@ const FloorPlanEditor = (() => {
             rect.setAttribute('y1', startY);
             rect.setAttribute('x2', endX);
             rect.setAttribute('y2', endY);
-            rect.setAttribute('stroke', '#87CEEB');
+            rect.setAttribute('stroke', canvas().window);
             rect.setAttribute('stroke-width', wallThickness + 2);
             rect.setAttribute('stroke-linecap', 'round');
             group.appendChild(rect);
@@ -4046,7 +4126,7 @@ const FloorPlanEditor = (() => {
             frame1.setAttribute('y1', startY + perpY * wallThickness/2);
             frame1.setAttribute('x2', endX + perpX * wallThickness/2);
             frame1.setAttribute('y2', endY + perpY * wallThickness/2);
-            frame1.setAttribute('stroke', '#4A90A4');
+            frame1.setAttribute('stroke', canvas().windowFrame);
             frame1.setAttribute('stroke-width', '2');
             group.appendChild(frame1);
             
@@ -4055,7 +4135,7 @@ const FloorPlanEditor = (() => {
             frame2.setAttribute('y1', startY - perpY * wallThickness/2);
             frame2.setAttribute('x2', endX - perpX * wallThickness/2);
             frame2.setAttribute('y2', endY - perpY * wallThickness/2);
-            frame2.setAttribute('stroke', '#4A90A4');
+            frame2.setAttribute('stroke', canvas().windowFrame);
             frame2.setAttribute('stroke-width', '2');
             group.appendChild(frame2);
         }
@@ -4066,7 +4146,7 @@ const FloorPlanEditor = (() => {
         dimLabel.setAttribute('y', centerY + perpY * 20);
         dimLabel.setAttribute('text-anchor', 'middle');
         dimLabel.setAttribute('font-size', '12');
-        dimLabel.setAttribute('fill', '#333');
+        dimLabel.setAttribute('fill', canvas().ink);
         dimLabel.textContent = formatDimension(width / scale);
         group.appendChild(dimLabel);
         
@@ -4076,7 +4156,7 @@ const FloorPlanEditor = (() => {
         startMarker.setAttribute('cy', startY);
         startMarker.setAttribute('r', 4);
         startMarker.setAttribute('fill', openingMarkerColor(type));
-        startMarker.setAttribute('stroke', '#333');
+        startMarker.setAttribute('stroke', canvas().ink);
         group.appendChild(startMarker);
         
         const endMarker = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
@@ -4084,7 +4164,7 @@ const FloorPlanEditor = (() => {
         endMarker.setAttribute('cy', endY);
         endMarker.setAttribute('r', 4);
         endMarker.setAttribute('fill', openingMarkerColor(type));
-        endMarker.setAttribute('stroke', '#333');
+        endMarker.setAttribute('stroke', canvas().ink);
         group.appendChild(endMarker);
         
         // "Attached to wall" indicator
@@ -4093,7 +4173,7 @@ const FloorPlanEditor = (() => {
         indicator.setAttribute('y', centerY + perpY * 35);
         indicator.setAttribute('text-anchor', 'middle');
         indicator.setAttribute('font-size', '10');
-        indicator.setAttribute('fill', '#27ae60');
+        indicator.setAttribute('fill', canvas().snapOk);
         indicator.textContent = '⚓ On wall';
         group.appendChild(indicator);
         
@@ -4127,7 +4207,7 @@ const FloorPlanEditor = (() => {
             frameLine.setAttribute('y1', 0);
             frameLine.setAttribute('x2', halfLength);
             frameLine.setAttribute('y2', 0);
-            frameLine.setAttribute('stroke', '#8B4513');
+            frameLine.setAttribute('stroke', canvas().door);
             frameLine.setAttribute('stroke-width', wallThickness);
             frameLine.setAttribute('stroke-linecap', 'round');
             group.appendChild(frameLine);
@@ -4136,7 +4216,7 @@ const FloorPlanEditor = (() => {
             const arcRadius = length * 0.9;
             const arc = document.createElementNS('http://www.w3.org/2000/svg', 'path');
             arc.setAttribute('d', `M ${-halfLength} 0 A ${arcRadius} ${arcRadius} 0 0 1 ${-halfLength + arcRadius} ${-arcRadius}`);
-            arc.setAttribute('stroke', '#8B4513');
+            arc.setAttribute('stroke', canvas().door);
             arc.setAttribute('stroke-width', '1');
             arc.setAttribute('fill', 'none');
             arc.setAttribute('stroke-dasharray', '4,2');
@@ -4148,8 +4228,8 @@ const FloorPlanEditor = (() => {
             windowRect.setAttribute('y', -wallThickness / 2);
             windowRect.setAttribute('width', length);
             windowRect.setAttribute('height', wallThickness);
-            windowRect.setAttribute('fill', '#87CEEB');
-            windowRect.setAttribute('stroke', '#4A90A4');
+            windowRect.setAttribute('fill', canvas().window);
+            windowRect.setAttribute('stroke', canvas().windowFrame);
             windowRect.setAttribute('stroke-width', '2');
             group.appendChild(windowRect);
         }
@@ -4160,7 +4240,7 @@ const FloorPlanEditor = (() => {
         dimLabel.setAttribute('y', -20);
         dimLabel.setAttribute('text-anchor', 'middle');
         dimLabel.setAttribute('font-size', '12');
-        dimLabel.setAttribute('fill', '#333');
+        dimLabel.setAttribute('fill', canvas().ink);
         dimLabel.setAttribute('transform', `rotate(${-angle})`);
         dimLabel.textContent = formatDimension(length / scale);
         group.appendChild(dimLabel);
@@ -4171,7 +4251,7 @@ const FloorPlanEditor = (() => {
         startMarker.setAttribute('cy', 0);
         startMarker.setAttribute('r', 4);
         startMarker.setAttribute('fill', openingMarkerColor(type));
-        startMarker.setAttribute('stroke', '#333');
+        startMarker.setAttribute('stroke', canvas().ink);
         group.appendChild(startMarker);
         
         const endMarker = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
@@ -4179,7 +4259,7 @@ const FloorPlanEditor = (() => {
         endMarker.setAttribute('cy', 0);
         endMarker.setAttribute('r', 4);
         endMarker.setAttribute('fill', openingMarkerColor(type));
-        endMarker.setAttribute('stroke', '#333');
+        endMarker.setAttribute('stroke', canvas().ink);
         group.appendChild(endMarker);
         
         wallsLayer.appendChild(group);
@@ -4256,7 +4336,7 @@ const FloorPlanEditor = (() => {
             frameLine.setAttribute('y1', 0);
             frameLine.setAttribute('x2', halfLength);
             frameLine.setAttribute('y2', 0);
-            frameLine.setAttribute('stroke', '#8B4513');
+            frameLine.setAttribute('stroke', canvas().door);
             frameLine.setAttribute('stroke-width', wallThickness);
             frameLine.setAttribute('stroke-linecap', 'round');
             group.appendChild(frameLine);
@@ -4269,7 +4349,7 @@ const FloorPlanEditor = (() => {
             const arcEndX = swingRight ? hingeX - arcRadius : hingeX + arcRadius;
             const arc = document.createElementNS('http://www.w3.org/2000/svg', 'path');
             arc.setAttribute('d', `M ${hingeX} 0 A ${arcRadius} ${arcRadius} 0 0 ${sweep} ${arcEndX} ${-arcRadius}`);
-            arc.setAttribute('stroke', '#8B4513');
+            arc.setAttribute('stroke', canvas().door);
             arc.setAttribute('stroke-width', '1');
             arc.setAttribute('fill', 'none');
             arc.setAttribute('stroke-dasharray', '4,2');
@@ -4280,7 +4360,7 @@ const FloorPlanEditor = (() => {
             doorPanel.setAttribute('y1', 0);
             doorPanel.setAttribute('x2', hingeX);
             doorPanel.setAttribute('y2', -arcRadius);
-            doorPanel.setAttribute('stroke', '#8B4513');
+            doorPanel.setAttribute('stroke', canvas().door);
             doorPanel.setAttribute('stroke-width', '3');
             
             let swingParentFf = group;
@@ -4299,7 +4379,7 @@ const FloorPlanEditor = (() => {
             frame.setAttribute('width', length);
             frame.setAttribute('height', wallThickness);
             frame.setAttribute('fill', 'white');
-            frame.setAttribute('stroke', '#607D8B');
+            frame.setAttribute('stroke', canvas().garage);
             frame.setAttribute('stroke-width', 1.5);
             group.appendChild(frame);
 
@@ -4312,7 +4392,7 @@ const FloorPlanEditor = (() => {
                 tick.setAttribute('y1', -wallThickness / 2);
                 tick.setAttribute('x2', x);
                 tick.setAttribute('y2', wallThickness / 2);
-                tick.setAttribute('stroke', '#607D8B');
+                tick.setAttribute('stroke', canvas().garage);
                 tick.setAttribute('stroke-width', 0.8);
                 group.appendChild(tick);
             }
@@ -4323,8 +4403,8 @@ const FloorPlanEditor = (() => {
             windowRect.setAttribute('y', -wallThickness / 2);
             windowRect.setAttribute('width', length);
             windowRect.setAttribute('height', wallThickness);
-            windowRect.setAttribute('fill', '#87CEEB');
-            windowRect.setAttribute('stroke', '#4A90A4');
+            windowRect.setAttribute('fill', canvas().window);
+            windowRect.setAttribute('stroke', canvas().windowFrame);
             windowRect.setAttribute('stroke-width', '2');
             group.appendChild(windowRect);
             
@@ -4334,7 +4414,7 @@ const FloorPlanEditor = (() => {
             centerLine.setAttribute('y1', -wallThickness / 2);
             centerLine.setAttribute('x2', 0);
             centerLine.setAttribute('y2', wallThickness / 2);
-            centerLine.setAttribute('stroke', '#4A90A4');
+            centerLine.setAttribute('stroke', canvas().windowFrame);
             centerLine.setAttribute('stroke-width', '2');
             group.appendChild(centerLine);
         }
@@ -4444,7 +4524,7 @@ const FloorPlanEditor = (() => {
             doorPanel.setAttribute('y1', 0);
             doorPanel.setAttribute('x2', hingeX);
             doorPanel.setAttribute('y2', -swingRadius);
-            doorPanel.setAttribute('stroke', '#8B4513');
+            doorPanel.setAttribute('stroke', canvas().door);
             doorPanel.setAttribute('stroke-width', '2');
             
             // Flip arc + panel to opposite side of wall (local Y)
@@ -4483,7 +4563,7 @@ const FloorPlanEditor = (() => {
             frame.setAttribute('width', opening.width);
             frame.setAttribute('height', wallThickness);
             frame.setAttribute('fill', 'white');
-            frame.setAttribute('stroke', '#333');
+            frame.setAttribute('stroke', canvas().ink);
             frame.setAttribute('stroke-width', 1);
             group.appendChild(frame);
 
@@ -4497,7 +4577,7 @@ const FloorPlanEditor = (() => {
                 tick.setAttribute('y1', -wallThickness / 2);
                 tick.setAttribute('x2', x);
                 tick.setAttribute('y2', wallThickness / 2);
-                tick.setAttribute('stroke', '#666');
+                tick.setAttribute('stroke', canvas().inkMuted);
                 tick.setAttribute('stroke-width', 0.6);
                 group.appendChild(tick);
             }
@@ -4815,7 +4895,7 @@ const FloorPlanEditor = (() => {
             rect.setAttribute('width', w);
             rect.setAttribute('height', h);
             rect.setAttribute('fill', 'none');
-            rect.setAttribute('stroke', '#333');
+            rect.setAttribute('stroke', canvas().ink);
             rect.setAttribute('stroke-width', '1');
             rect.setAttribute('rx', 2);
             els.push(rect);
@@ -4841,7 +4921,7 @@ const FloorPlanEditor = (() => {
         outline.setAttribute('width', w);
         outline.setAttribute('height', h);
         outline.setAttribute('fill', 'white');
-        outline.setAttribute('stroke', '#333');
+        outline.setAttribute('stroke', canvas().ink);
         outline.setAttribute('stroke-width', 1);
         els.push(outline);
 
@@ -4863,7 +4943,7 @@ const FloorPlanEditor = (() => {
                 line.setAttribute('x2', w);
                 line.setAttribute('y2', i * step);
             }
-            line.setAttribute('stroke', '#666');
+            line.setAttribute('stroke', canvas().inkMuted);
             line.setAttribute('stroke-width', 0.6);
             els.push(line);
         }
@@ -4886,7 +4966,7 @@ const FloorPlanEditor = (() => {
             d = `M ${cx} ${y0} L ${cx} ${y1} M ${cx - arrowHead * 0.6} ${y1 + arrowHead} L ${cx} ${y1} L ${cx + arrowHead * 0.6} ${y1 + arrowHead}`;
         }
         arrow.setAttribute('d', d);
-        arrow.setAttribute('stroke', '#333');
+        arrow.setAttribute('stroke', canvas().ink);
         arrow.setAttribute('stroke-width', 1);
         arrow.setAttribute('fill', 'none');
         arrow.setAttribute('stroke-linecap', 'round');
@@ -4899,7 +4979,7 @@ const FloorPlanEditor = (() => {
         const fontSize = Math.max(6, Math.min(shortLen * 0.28, 14));
         label.setAttribute('font-size', fontSize);
         label.setAttribute('font-family', 'sans-serif');
-        label.setAttribute('fill', '#333');
+        label.setAttribute('fill', canvas().ink);
         label.setAttribute('text-anchor', 'middle');
         label.setAttribute('dominant-baseline', 'middle');
         if (longAlongX) {
@@ -5184,7 +5264,7 @@ const FloorPlanEditor = (() => {
         line.setAttribute('y1', 0);
         line.setAttribute('x2', item.width / 2);
         line.setAttribute('y2', -20);
-        line.setAttribute('stroke', '#6366f1');
+        line.setAttribute('stroke', canvas().selectionAlt);
         line.setAttribute('stroke-width', '2');
         handle.appendChild(line);
         
@@ -5193,8 +5273,8 @@ const FloorPlanEditor = (() => {
         circle.setAttribute('cx', item.width / 2);
         circle.setAttribute('cy', -25);
         circle.setAttribute('r', 8);
-        circle.setAttribute('fill', '#6366f1');
-        circle.setAttribute('stroke', '#fff');
+        circle.setAttribute('fill', canvas().selectionAlt);
+        circle.setAttribute('stroke', canvas().paper);
         circle.setAttribute('stroke-width', '2');
         circle.setAttribute('cursor', 'grab');
         handle.appendChild(circle);
@@ -5203,7 +5283,7 @@ const FloorPlanEditor = (() => {
         const icon = document.createElementNS('http://www.w3.org/2000/svg', 'path');
         icon.setAttribute('d', 'M' + (item.width / 2 - 4) + ',-27 A 4 4 0 1 1 ' + (item.width / 2 + 4) + ',-27');
         icon.setAttribute('fill', 'none');
-        icon.setAttribute('stroke', '#fff');
+        icon.setAttribute('stroke', canvas().paper);
         icon.setAttribute('stroke-width', '1.5');
         icon.setAttribute('stroke-linecap', 'round');
         handle.appendChild(icon);
@@ -5427,7 +5507,7 @@ const FloorPlanEditor = (() => {
         circle.setAttribute('cy', rotHandleY);
         circle.setAttribute('r', 8);
         circle.setAttribute('fill', 'var(--primary-color, #4f46e5)');
-        circle.setAttribute('stroke', '#fff');
+        circle.setAttribute('stroke', canvas().paper);
         circle.setAttribute('stroke-width', 1.5 / zoom);
         rotGroup.appendChild(circle);
         floorPlanGroup.appendChild(rotGroup);
@@ -6462,7 +6542,7 @@ const FloorPlanEditor = (() => {
         canvas.width = w;
         canvas.height = h;
         const ctx = canvas.getContext('2d');
-        ctx.fillStyle = '#ffffff';
+        ctx.fillStyle = canvas().paper;
         ctx.fillRect(0, 0, w, h);
         ctx.drawImage(img, 0, 0, w, h);
         return { dataUrl: canvas.toDataURL('image/png'), width: w, height: h };
@@ -7724,9 +7804,9 @@ const FloorPlanEditor = (() => {
         canvas.width = maxSize;
         canvas.height = Math.round(maxSize * 0.75);
         const ctx = canvas.getContext('2d');
-        ctx.fillStyle = '#e5e7eb';
+        ctx.fillStyle = canvas().rulerLine;
         ctx.fillRect(0, 0, canvas.width, canvas.height);
-        ctx.fillStyle = '#9ca3af';
+        ctx.fillStyle = canvas().inkFaint;
         ctx.font = '12px sans-serif';
         ctx.textAlign = 'center';
         ctx.textBaseline = 'middle';
@@ -7781,7 +7861,7 @@ const FloorPlanEditor = (() => {
         // Apply inline styles to wall lines
         svgElement.querySelectorAll('.wall-line').forEach(el => {
             if (!el.getAttribute('stroke')) {
-                el.setAttribute('stroke', '#333');
+                el.setAttribute('stroke', canvas().ink);
             }
             el.setAttribute('stroke-linecap', 'round');
         });
@@ -7791,7 +7871,7 @@ const FloorPlanEditor = (() => {
             el.setAttribute('fill', 'white');
         });
         svgElement.querySelectorAll('.door-element .door-swing, .door-swing').forEach(el => {
-            el.setAttribute('stroke', '#8B4513');
+            el.setAttribute('stroke', canvas().door);
             el.setAttribute('stroke-width', '1.5');
             el.setAttribute('fill', 'none');
             el.setAttribute('stroke-dasharray', '4,2');
@@ -7799,31 +7879,31 @@ const FloorPlanEditor = (() => {
         
         // Apply inline styles to window elements
         svgElement.querySelectorAll('.window-element .window-frame, .window-frame').forEach(el => {
-            el.setAttribute('fill', '#87CEEB');
-            el.setAttribute('stroke', '#4A90A4');
+            el.setAttribute('fill', canvas().window);
+            el.setAttribute('stroke', canvas().windowFrame);
             el.setAttribute('stroke-width', '2');
         });
         svgElement.querySelectorAll('.window-element .window-mullion, .window-mullion').forEach(el => {
-            el.setAttribute('stroke', '#4A90A4');
+            el.setAttribute('stroke', canvas().windowFrame);
             el.setAttribute('stroke-width', '2');
         });
         
         // Apply inline styles to furniture elements
         svgElement.querySelectorAll('.furniture-element rect').forEach(el => {
             if (!el.getAttribute('stroke')) {
-                el.setAttribute('stroke', '#666');
+                el.setAttribute('stroke', canvas().inkMuted);
                 el.setAttribute('stroke-width', '1');
             }
         });
         svgElement.querySelectorAll('.furniture-element circle').forEach(el => {
             if (!el.getAttribute('stroke')) {
-                el.setAttribute('stroke', '#666');
+                el.setAttribute('stroke', canvas().inkMuted);
                 el.setAttribute('stroke-width', '1');
             }
         });
         svgElement.querySelectorAll('.furniture-element ellipse').forEach(el => {
             if (!el.getAttribute('stroke')) {
-                el.setAttribute('stroke', '#666');
+                el.setAttribute('stroke', canvas().inkMuted);
                 el.setAttribute('stroke-width', '1');
             }
         });
@@ -7832,26 +7912,26 @@ const FloorPlanEditor = (() => {
         svgElement.querySelectorAll('.dimension-text').forEach(el => {
             el.setAttribute('font-family', 'Arial, sans-serif');
             el.setAttribute('font-size', '33');
-            el.setAttribute('fill', '#666');
+            el.setAttribute('fill', canvas().inkMuted);
         });
         
         svgElement.querySelectorAll('.room-name-label').forEach(el => {
             el.setAttribute('font-family', 'Arial, sans-serif');
             el.setAttribute('font-size', '14');
-            el.setAttribute('fill', '#334155');
+            el.setAttribute('fill', canvas().rulerText);
         });
 
         svgElement.querySelectorAll('.room-area-label').forEach(el => {
             el.setAttribute('font-family', 'Arial, sans-serif');
             el.setAttribute('font-size', '14');
-            el.setAttribute('fill', '#64748b');
+            el.setAttribute('fill', canvas().inkMuted);
         });
 
         // Apply inline styles to room labels
         svgElement.querySelectorAll('.room-label').forEach(el => {
             el.setAttribute('font-family', 'Arial, sans-serif');
             el.setAttribute('font-size', '14');
-            el.setAttribute('fill', '#666');
+            el.setAttribute('fill', canvas().inkMuted);
         });
         
         // Apply styles to freeform openings
@@ -9063,10 +9143,11 @@ const FloorPlanEditor = (() => {
         const ox = bounds.minX - pad;
         const oy = bounds.minY - pad;
 
-        let svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${w}" height="${h}" viewBox="${ox} ${oy} ${bw} ${bh}" style="background:#fff;border-radius:6px">`;
+        const c = canvas();
+        let svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${w}" height="${h}" viewBox="${ox} ${oy} ${bw} ${bh}" style="background:${c.paper};border-radius:6px">`;
 
         for (const wall of walls) {
-            svg += `<line x1="${wall.start.x}" y1="${wall.start.y}" x2="${wall.end.x}" y2="${wall.end.y}" stroke="#333" stroke-width="${wallThickness}" stroke-linecap="round"/>`;
+            svg += `<line x1="${wall.start.x}" y1="${wall.start.y}" x2="${wall.end.x}" y2="${wall.end.y}" stroke="${c.ink}" stroke-width="${wallThickness}" stroke-linecap="round"/>`;
             for (const o of (wall.openings || [])) {
                 const cx = wall.start.x + o.position * (wall.end.x - wall.start.x);
                 const cy = wall.start.y + o.position * (wall.end.y - wall.start.y);
@@ -9076,11 +9157,11 @@ const FloorPlanEditor = (() => {
                 const ux = dx / len, uy = dy / len;
                 const hw = o.width / 2;
                 if (o.type === 'door') {
-                    svg += `<line x1="${cx - ux * hw}" y1="${cy - uy * hw}" x2="${cx + ux * hw}" y2="${cy + uy * hw}" stroke="#fff" stroke-width="${wallThickness + 2}"/>`;
-                    svg += `<line x1="${cx - ux * hw}" y1="${cy - uy * hw}" x2="${cx + ux * hw}" y2="${cy + uy * hw}" stroke="#7c3aed" stroke-width="2" stroke-dasharray="4"/>`;
+                    svg += `<line x1="${cx - ux * hw}" y1="${cy - uy * hw}" x2="${cx + ux * hw}" y2="${cy + uy * hw}" stroke="${c.paper}" stroke-width="${wallThickness + 2}"/>`;
+                    svg += `<line x1="${cx - ux * hw}" y1="${cy - uy * hw}" x2="${cx + ux * hw}" y2="${cy + uy * hw}" stroke="${c.selectionAlt}" stroke-width="2" stroke-dasharray="4"/>`;
                 } else if (o.type === 'window') {
-                    svg += `<line x1="${cx - ux * hw}" y1="${cy - uy * hw}" x2="${cx + ux * hw}" y2="${cy + uy * hw}" stroke="#fff" stroke-width="${wallThickness + 2}"/>`;
-                    svg += `<line x1="${cx - ux * hw}" y1="${cy - uy * hw}" x2="${cx + ux * hw}" y2="${cy + uy * hw}" stroke="#38bdf8" stroke-width="3"/>`;
+                    svg += `<line x1="${cx - ux * hw}" y1="${cy - uy * hw}" x2="${cx + ux * hw}" y2="${cy + uy * hw}" stroke="${c.paper}" stroke-width="${wallThickness + 2}"/>`;
+                    svg += `<line x1="${cx - ux * hw}" y1="${cy - uy * hw}" x2="${cx + ux * hw}" y2="${cy + uy * hw}" stroke="${c.window}" stroke-width="3"/>`;
                 }
             }
         }
@@ -9091,11 +9172,11 @@ const FloorPlanEditor = (() => {
             const rot = item.rotation || 0;
             svg += `<g transform="translate(${cx},${cy}) rotate(${rot})">`;
             svg += `<g transform="translate(${-rw/2},${-rh/2})">`;
-            svg += `<rect x="0" y="0" width="${rw}" height="${rh}" rx="2" fill="#e0e7ff" stroke="#6366f1" stroke-width="1"/>`;
+            svg += `<rect x="0" y="0" width="${rw}" height="${rh}" rx="2" fill="${c.selectionSoft}" stroke="${c.selectionAlt}" stroke-width="1"/>`;
             const fontSize = Math.min(rw * 0.3, rh * 0.4, 10);
             if (fontSize > 4) {
                 const label = (item.name || item.typeId || '').split(' ').map(w => w[0] || '').join('').toUpperCase().slice(0, 3);
-                svg += `<text x="${rw / 2}" y="${rh / 2}" text-anchor="middle" dominant-baseline="central" font-size="${fontSize}" fill="#4338ca" font-family="sans-serif" font-weight="600">${label}</text>`;
+                svg += `<text x="${rw / 2}" y="${rh / 2}" text-anchor="middle" dominant-baseline="central" font-size="${fontSize}" fill="${c.selection}" font-family="sans-serif" font-weight="600">${label}</text>`;
             }
             svg += `</g></g>`;
         }
@@ -9162,7 +9243,7 @@ const FloorPlanEditor = (() => {
         panel.classList.add('feng-shui-panel-wide');
 
         const body = panel.querySelector('.feng-shui-body');
-        const scoreColor = result.overallScore >= 7 ? '#22c55e' : result.overallScore >= 4 ? '#f59e0b' : '#ef4444';
+        const scoreColor = result.overallScore >= 7 ? canvas().snapOk : result.overallScore >= 4 ? canvas().snapWarn : canvas().snapError;
 
         const currentItems = furniture.map(f => ({ id: f.id, typeId: f.typeId, name: f.name, width: f.width, height: f.height, x: f.x, y: f.y, rotation: f.rotation }));
         const currentThumb = renderLayoutThumbnail(currentItems, 280);
@@ -9202,7 +9283,7 @@ const FloorPlanEditor = (() => {
                 altThumb = renderLayoutThumbnail(altItems, 280);
             }
         }
-        const altScoreColor = altScore != null && altScore >= 7 ? '#22c55e' : altScore != null && altScore >= 4 ? '#f59e0b' : '#ef4444';
+        const altScoreColor = altScore != null && altScore >= 7 ? canvas().snapOk : altScore != null && altScore >= 4 ? canvas().snapWarn : canvas().snapError;
 
         let html = `
             <div class="feng-shui-score">
@@ -9237,7 +9318,7 @@ const FloorPlanEditor = (() => {
         if (result.suggestions && result.suggestions.length > 0) {
             html += `<div class="feng-shui-suggestions"><div class="fs-suggestions-title">Recommendations</div>`;
             result.suggestions.forEach((suggestion) => {
-                const priorityColor = suggestion.priority === 'high' ? '#ef4444' : suggestion.priority === 'medium' ? '#f59e0b' : '#22c55e';
+                const priorityColor = suggestion.priority === 'high' ? canvas().snapError : suggestion.priority === 'medium' ? canvas().snapWarn : canvas().snapOk;
                 html += `
                     <div class="feng-shui-suggestion">
                         <div class="suggestion-header">
@@ -9367,14 +9448,10 @@ const FloorPlanEditor = (() => {
         toast.className = 'feng-shui-toast';
         toast.innerHTML = `
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>
-            <span>${msg}</span>
+            <span class="toast-text">${msg}</span>
         `;
         container.appendChild(toast);
-        setTimeout(() => toast.classList.add('show'), 10);
-        setTimeout(() => {
-            toast.classList.remove('show');
-            setTimeout(() => toast.remove(), 300);
-        }, 4000);
+        presentToast(toast, { text: msg });
     }
     
     function getState() {

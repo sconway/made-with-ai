@@ -14,6 +14,8 @@ import {
 import { initSheets } from './sheets.js';
 import { initWaitState, waitStateMarkup } from './waitState.js';
 import { initCompare, enhanceCompare } from './compare.js';
+import { presentToast } from './toast.js';
+import { MaskEditor, compositeMaskedResult, compositeRegionEdit, buildRegionMarkup, buildRegionLookup } from './maskEditor.js';
 
 // Same-origin API routes (Vite dev proxies /api to the backend; production serves both).
 const PROXY_SERVER_URL = '';
@@ -57,6 +59,562 @@ const backToOptionsBtn = document.getElementById('back-to-options-btn');
 const regenerateBtn = document.getElementById('regenerate-btn');
 const saveDesignBtn = document.getElementById('save-design-btn');
 const refinementInput = document.getElementById('refinement-input');
+
+// ===== REGION EDITING =====
+// "Paint, then choose": brush over one thing in the photo, then pick what to
+// do with it from a small menu beside the strokes — Remove it, or Change it…
+// with a short instruction. Typed edits in the composer / refine box are for
+// the whole image; a region only ever comes from this menu, so the two can't
+// be confused.
+//
+// Quick Edit's photo is paintable the whole time the panel is open. A result
+// needs "Edit one thing" first: dragging on it moves the compare divider.
+// One editor is live at a time; it belongs to the image it was painted on and
+// is torn down if that image is replaced.
+let maskEditor = null;
+let maskScope = null; // 'configure' | 'results'
+let regionMenu = null;
+
+const MASK_TARGETS = {
+    configure: () => {
+        const container = document.querySelector('.configure-photo .image-preview-wrapper');
+        return { container, img: container?.querySelector('#room-preview') };
+    },
+    results: () => {
+        const container = designCarousel?.querySelector('.design-card .image-reveal-container');
+        return { container, img: container?.querySelector('.generated-image') };
+    },
+};
+
+// Brush sizes in on-screen px (the editor scales strokes to the image).
+const BRUSH_SIZES = { s: 24, m: 48, l: 96 };
+let brushSizeKey = 'm';
+
+/**
+ * The live editor for a scope, but only while its image is still the one it
+ * was painted on. Anything stale is torn down here, so no caller can act on a
+ * mask that no longer matches the pixels.
+ */
+function activeMask(scope) {
+    if (!maskEditor || maskScope !== scope) return null;
+    if (!maskEditor.isValid()) { destroyMaskEditor(); return null; }
+    return maskEditor;
+}
+
+function resultsRegionEls() {
+    return {
+        button: document.querySelector('.results-header .region-select-btn'),
+        hint: document.querySelector('.results-header-hint'),
+    };
+}
+
+/**
+ * "Edit one thing" reads "Done" while painting is on, and the header's
+ * subtitle (which normally explains the compare divider) says how to paint.
+ */
+function setResultsRegionUi(on) {
+    const { button, hint } = resultsRegionEls();
+    if (button) {
+        button.setAttribute('aria-pressed', String(on));
+        const label = button.querySelector('span');
+        if (label) label.textContent = on ? 'Done' : 'Edit one thing';
+    }
+    if (hint) {
+        hint.dataset.defaultText ||= hint.textContent;
+        hint.textContent = on ? hint.dataset.regionHint : hint.dataset.defaultText;
+    }
+}
+
+/** Tear the live editor down, with its menu. */
+function destroyMaskEditor() {
+    const scope = maskScope;
+    if (maskEditor) maskEditor.destroy();
+    maskEditor = null;
+    maskScope = null;
+    resetRegionMenu();
+    document.querySelectorAll('.masking').forEach((el) => el.classList.remove('masking'));
+    if (scope === 'results') setResultsRegionUi(false);
+}
+
+/** Make a scope's image paintable. False when there's no image to paint on. */
+function startRegionEditor(scope) {
+    destroyMaskEditor();
+    const { container, img } = MASK_TARGETS[scope]();
+    if (!container || !img || !img.getAttribute('src')) return false;
+    // .masking shows the whole photo instead of a cropped thumbnail and moves
+    // overlays out of the way. Set it before the editor measures.
+    container.classList.add('masking');
+    maskEditor = new MaskEditor(container, img);
+    maskScope = scope;
+    maskEditor.setMode('change');
+    maskEditor.setBrushSize(BRUSH_SIZES[brushSizeKey]);
+    maskEditor.onChange = updateRegionMenu;
+    maskEditor.onStrokeStart = hideRegionMenu;
+    maskEditor.onLayout = positionRegionMenu;
+    maskEditor.onSourceChanged = () => {
+        destroyMaskEditor();
+        // Quick Edit's photo stays paintable when it's swapped for another.
+        if (scope === 'configure' && isQuickEditMode()) {
+            setTimeout(() => { if (isQuickEditMode() && !maskEditor) startRegionEditor('configure'); }, 0);
+        }
+    };
+    return true;
+}
+
+/** "Edit one thing" on a result: on, or back to the compare view. */
+function toggleResultsRegion() {
+    if (maskScope === 'results') { destroyMaskEditor(); return; }
+    if (!startRegionEditor('results')) {
+        showToastMessage('Generate a design first, then pick something to edit.', 'info');
+        return;
+    }
+    setResultsRegionUi(true);
+}
+
+function buildRegionMenu() {
+    const el = document.createElement('div');
+    el.className = 'region-menu hidden';
+    el.setAttribute('role', 'group');
+    el.setAttribute('aria-label', 'Edit what you painted');
+    el.innerHTML = `
+        <div class="region-menu-actions">
+            <button type="button" class="region-menu-btn is-primary" data-act="remove">
+                <i data-feather="trash-2"></i><span>Remove it</span>
+            </button>
+            <button type="button" class="region-menu-btn" data-act="change" aria-expanded="false">
+                <i data-feather="edit-2"></i><span>Change it…</span>
+            </button>
+        </div>
+        <form class="region-menu-change hidden">
+            <input type="text" class="region-menu-input" placeholder="Make it green velvet" aria-label="How should it change?" maxlength="300" autocomplete="off">
+            <button type="submit" class="region-menu-apply">Apply</button>
+        </form>
+        <div class="region-menu-tools">
+            <div class="region-menu-sizes" role="radiogroup" aria-label="Brush size">
+                ${Object.keys(BRUSH_SIZES).map((k) => `
+                    <button type="button" class="region-menu-size" role="radio" data-size="${k}"
+                        aria-checked="${k === brushSizeKey}"
+                        aria-label="${{ s: 'Small', m: 'Medium', l: 'Large' }[k]} brush"
+                        title="${{ s: 'Small', m: 'Medium', l: 'Large' }[k]} brush"><span class="region-menu-dot"></span></button>`).join('')}
+            </div>
+            <div class="region-menu-edits">
+                <button type="button" class="region-menu-tool" data-act="undo" aria-label="Undo last stroke" title="Undo">
+                    <i data-feather="corner-up-left"></i>
+                </button>
+                <button type="button" class="region-menu-tool" data-act="clear" aria-label="Clear selection" title="Clear">
+                    <i data-feather="x"></i>
+                </button>
+            </div>
+        </div>`;
+    document.body.appendChild(el);
+
+    const form = el.querySelector('.region-menu-change');
+    const input = el.querySelector('.region-menu-input');
+    const changeBtn = el.querySelector('[data-act="change"]');
+    el.querySelector('[data-act="remove"]').addEventListener('click', runRegionRemove);
+    changeBtn.addEventListener('click', () => {
+        const open = form.classList.toggle('hidden') === false;
+        changeBtn.setAttribute('aria-expanded', String(open));
+        positionRegionMenu();
+        if (open) input.focus();
+    });
+    form.addEventListener('submit', (e) => {
+        e.preventDefault();
+        runRegionChange(input.value);
+    });
+    input.addEventListener('keydown', (e) => {
+        if (e.key !== 'Escape') return;
+        form.classList.add('hidden');
+        changeBtn.setAttribute('aria-expanded', 'false');
+        changeBtn.focus();
+        positionRegionMenu();
+    });
+    el.querySelector('[data-act="undo"]').addEventListener('click', () => maskEditor?.undo());
+    el.querySelector('[data-act="clear"]').addEventListener('click', () => maskEditor?.clear());
+    el.querySelectorAll('.region-menu-size').forEach((btn) => {
+        btn.addEventListener('click', () => {
+            brushSizeKey = btn.dataset.size;
+            maskEditor?.setBrushSize(BRUSH_SIZES[brushSizeKey]);
+            el.querySelectorAll('.region-menu-size').forEach((b) => {
+                b.setAttribute('aria-checked', String(b === btn));
+            });
+        });
+    });
+    feather.replace();
+    return el;
+}
+
+/** Show the menu while something is painted; hide it otherwise. */
+function updateRegionMenu() {
+    if (!maskEditor || !maskEditor.hasMask()) { hideRegionMenu(); return; }
+    regionMenu ||= buildRegionMenu();
+    const busy = isDesignGenerationInProgress();
+    regionMenu.querySelectorAll('[data-act="remove"], .region-menu-apply').forEach((b) => { b.disabled = busy; });
+    regionMenu.classList.remove('hidden');
+    positionRegionMenu();
+}
+
+function hideRegionMenu() {
+    regionMenu?.classList.add('hidden');
+}
+
+/** Hide the menu and forget a half-typed change. */
+function resetRegionMenu() {
+    if (!regionMenu) return;
+    hideRegionMenu();
+    regionMenu.querySelector('.region-menu-change')?.classList.add('hidden');
+    regionMenu.querySelector('[data-act="change"]')?.setAttribute('aria-expanded', 'false');
+    const input = regionMenu.querySelector('.region-menu-input');
+    if (input) input.value = '';
+}
+
+/**
+ * Level with the strokes, and off the image where there's room, so it never
+ * covers what you're painting: right of the image, else left of it, else
+ * inside it beside the strokes. Document coordinates, so it scrolls with the
+ * page. With no room for any of those (phones), it becomes a bottom sheet —
+ * placed by CSS, always in reach — that stands in for the composer.
+ */
+function positionRegionMenu() {
+    if (!regionMenu || regionMenu.classList.contains('hidden') || !maskEditor) return;
+    const photo = maskEditor.canvas.getBoundingClientRect();
+    const box = maskEditor.selectionRect();
+    if (!box || !photo.width) { hideRegionMenu(); return; }
+    const clamp = (v, lo, hi) => Math.min(Math.max(v, lo), Math.max(lo, hi));
+    const gap = 12;
+    const edge = 8;
+    const vw = document.documentElement.clientWidth;
+
+    regionMenu.classList.remove('is-docked');
+    const m = regionMenu.getBoundingClientRect();
+    const candidates = window.innerWidth < 640 ? [] : [
+        photo.right + gap,                 // right of the image
+        photo.left - gap - m.width,        // left of the image
+        box.right + gap,                   // inside, right of the strokes
+        box.left - gap - m.width,          // inside, left of the strokes
+    ];
+    const fits = (x, i) => (i < 2
+        ? x >= edge && x + m.width <= vw - edge
+        : x >= photo.left + edge && x + m.width <= photo.right - edge);
+    const at = candidates.findIndex(fits);
+
+    if (at === -1) {
+        regionMenu.classList.add('is-docked');
+        regionMenu.style.left = '';
+        regionMenu.style.top = '';
+        return;
+    }
+    const left = candidates[at];
+    const top = clamp(box.top + box.height / 2 - m.height / 2, photo.top, photo.bottom - m.height);
+    regionMenu.style.left = `${Math.round(left + window.scrollX)}px`;
+    regionMenu.style.top = `${Math.round(top + window.scrollY)}px`;
+}
+
+function runRegionRemove() {
+    if (!activeMask(maskScope)?.hasMask()) return;
+    generateDesigns({ regionRemove: { scope: maskScope } });
+}
+
+function runRegionChange(text) {
+    const scope = maskScope;
+    const editor = activeMask(scope);
+    const ask = String(text || '').trim();
+    if (!editor?.hasMask()) return;
+    const input = regionMenu?.querySelector('.region-menu-input');
+    if (!ask) { input?.focus(); return; }
+    const kind = regionInstructionKind(ask);
+    // "Remove this" typed into Change it… is a Remove it.
+    if (kind === 'erase') { runRegionRemove(); return; }
+    const usePremium = scope === 'configure'
+        ? !!quickEditPremiumToggle?.checked
+        : getEffectiveDefaultModelPref() === 'premium';
+    generateDesigns({
+        quickEdit: {
+            prompt: ask,
+            label: usePremium ? 'Quick edit (premium)' : 'Quick edit',
+            description: ask,
+        },
+        imageSource: scope === 'configure' ? currentUploadedImage : editor.sourceSrc,
+        usePremium,
+        regionScope: scope,
+        regionMode: kind,
+    });
+}
+
+function initMaskControls() {
+    resultsRegionEls().button?.addEventListener('click', toggleResultsRegion);
+    window.addEventListener('resize', positionRegionMenu);
+
+    // On a touch screen one finger paints, so scrolling takes two (see
+    // MaskEditor). Say so where the brush is explained.
+    if (window.matchMedia('(pointer: coarse)').matches) {
+        const touchHint = 'Brush over anything to remove or change it. Scroll with two fingers.';
+        const quickHint = document.querySelector('.quick-edit-region-hint span');
+        if (quickHint) quickHint.textContent = touchHint;
+        const { hint } = resultsRegionEls();
+        if (hint) hint.dataset.regionHint = touchHint;
+    }
+}
+
+/**
+ * Region plumbing shared by every path that runs a model for a design — the
+ * first generation and each recovery path (retry, free backup, premium
+ * upgrade). Without it, a failed region edit "recovers" into a whole-image
+ * edit: the one thing the user said not to do.
+ *
+ * design.region = { mode, stroke, composite, eraseMask, source } is set when
+ * the run starts. mode is 'change' | 'keep' | 'remove'.
+ *
+ * Returns { input, edit }. `input` is the clean photo, for the staging model,
+ * which can't be told about a region. `edit` is what the instruction models
+ * (Nano Banana, gpt-image) get: { image, prompt(instruction) }, or null.
+ */
+async function regionModelInput(design, instruction = '') {
+    const r = design?.region;
+    if (!r) return { input: design.sourceImage, edit: null };
+    // The model always gets the FULL photo: with the target marked it can
+    // find it, and it can see the whole object. (A crop around the brush
+    // strokes cut a half-painted sofa in two.)
+    // "Keep this, change the rest": name what to protect so the model leaves
+    // it alone; the composite then restores the painted area exactly.
+    if (r.mode === 'keep') {
+        const target = await identifyRegionTarget(r);
+        if (target) {
+            return { input: r.source, edit: { image: r.source, prompt: (text) => regionKeepPrompt(text, target) } };
+        }
+        const marked = await buildRegionMarkup(r.source, r.stroke).catch(() => null);
+        return { input: r.source, edit: marked ? { image: marked, prompt: regionKeepMarkerPrompt } : null };
+    }
+    if (r.mode !== 'change') return { input: r.source, edit: null };
+
+    // A removal on the marked photo failed on both tiers: the models removed
+    // the marker and kept the object. Told what to remove by name, on the
+    // clean photo, they do it — so name it first. The composite still keeps
+    // only changes touching the strokes.
+    if (REMOVAL.test(trimInstruction(instruction))) {
+        const target = await identifyRegionTarget(r);
+        if (target) {
+            return {
+                input: r.source,
+                edit: { image: r.source, prompt: (text) => regionRemovalPrompt(text, target) },
+            };
+        }
+    }
+
+    let marked = null;
+    try {
+        marked = await buildRegionMarkup(r.source, r.stroke);
+    } catch (err) {
+        console.warn('[mask] could not mark the target on the photo:', err);
+    }
+    return { input: r.source, edit: marked ? { image: marked, prompt: regionPrompt } : null };
+}
+
+/**
+ * Ask a vision model what the strokes are on ("the grey sofa under the
+ * window"). Cached on the region, so a retry or premium upgrade doesn't ask
+ * again. Null on any failure — the caller falls back to the marker.
+ */
+function identifyRegionTarget(region) {
+    if (!region.targetLookup) {
+        region.targetLookup = (async () => {
+            try {
+                const lookup = await buildRegionLookup(region.source, region.stroke);
+                if (!lookup) return null;
+                const controller = new AbortController();
+                const timer = setTimeout(() => controller.abort(), 20000);
+                try {
+                    const resp = await fetch(IDENTIFY_REGION_URL, {
+                        method: 'POST',
+                        credentials: 'include',
+                        headers: {
+                            'Content-Type': 'application/json',
+                            ...(currentSession ? { 'Authorization': `Bearer ${currentSession.access_token}` } : {}),
+                        },
+                        body: JSON.stringify({ markedImage: lookup.marked, cropImage: lookup.crop }),
+                        signal: controller.signal,
+                    });
+                    if (!resp.ok) return null;
+                    const { target } = await resp.json();
+                    console.log('[mask] selection identified as:', target);
+                    return typeof target === 'string' && target ? target : null;
+                } finally {
+                    clearTimeout(timer);
+                }
+            } catch (err) {
+                console.warn('[mask] could not identify the selection:', err);
+                return null;
+            }
+        })();
+        // Don't cache a failure: the next attempt may succeed.
+        region.targetLookup.then((t) => { if (!t) region.targetLookup = null; });
+    }
+    return region.targetLookup;
+}
+
+/**
+ * "Keep this and remove everything else" on the free model removes the small
+ * things but tends to leave wall art, TVs and larger furniture; premium
+ * empties the room. Say so once the result is on screen, with a one-tap
+ * premium run of the same edit (same area, same instruction).
+ */
+function suggestPremiumForEmptyRoom(design) {
+    if (!currentUser) return; // a signed-out visitor can't run premium yet
+    if (design?.region?.mode !== 'keep' || design.modelUsed !== 'nano-banana') return;
+    if (!REMOVAL.test(trimInstruction(design.nanoPrompt || design.prompt))) return;
+    showToastMessage(
+        'For a fully empty room, try Premium. Standard can leave wall art and large furniture behind.',
+        'info',
+        { actionLabel: 'Try Premium', onAction: () => regenerateWithPremiumModel(generatedDesigns.indexOf(design)) },
+    );
+}
+
+async function applyRegion(design, imageUrl) {
+    const r = design?.region;
+    if (!r || !imageUrl) return imageUrl;
+    if (r.mode === 'keep') return compositeMaskedResult(r.source, imageUrl, r.composite);
+    if (r.mode === 'remove') {
+        // The eraser returns a downscaled copy of the whole photo. Keep what it
+        // erased (the object, plus the shadow it cast just past the strokes)
+        // and restore everything else at full resolution.
+        const { url, strokeChanged } = await compositeRegionEdit(r.source, imageUrl, r.stroke);
+        if (strokeChanged < 0.15) {
+            showToastMessage('That area barely changed. Try painting over all of the item, including its edges.', 'info');
+        }
+        return url;
+    }
+    const { url, strokeChanged, markerLeft } = await compositeRegionEdit(r.source, imageUrl, r.stroke);
+    if (markerLeft > 0.1) {
+        // The model returned the marked photo instead of editing it.
+        console.warn(`[mask] ${Math.round(markerLeft * 100)}% of the marked area still shows the marker`);
+        showToastMessage('The model left the highlight in place. Try again, or describe the item — e.g. "remove the floor lamp".', 'info');
+    } else if (strokeChanged < 0.15) {
+        // Say so, rather than presenting an unchanged room as a result.
+        showToastMessage('The marked area barely changed. Try naming the item — e.g. "remove the floor lamp".', 'info');
+    }
+    return url;
+}
+
+const trimInstruction = (text) => String(text || '').trim().replace(/[.!\s]+$/, '');
+
+const REMOVAL = /\b(remove|delete|erase|get rid of|take (?:out|away)|clear (?:out|away))\b/i;
+
+// What "this" can be called in an instruction about the painted area.
+const DEIXIS = String.raw`(?:this|these|that|those|it|them|the (?:selected|marked|highlighted|painted) (?:area|item|thing|part)s?)`;
+
+// The instruction is about the REST of the photo, and the painted thing is
+// what to protect: "keep this and remove everything else", "restyle
+// everything except this", "don't touch it, paint the walls". These used to
+// be read as removing (or changing) the painted thing — "remove" was the only
+// word that mattered.
+const INVERSE = new RegExp([
+    String.raw`\b(?:everything|anything|all)\s+(?:else|but|except|apart|other)\b`,
+    String.raw`\b(?:the\s+)?rest of (?:the )?(?:room|photo|picture|image|space)\b`,
+    String.raw`\b(?:change|edit|remove|clear|empty|restyle|redo|paint)\s+the rest\b`,
+    String.raw`\b(?:except|but not|other than|apart from|besides|aside from|excluding|save for)\s+(?:for\s+)?${DEIXIS}`,
+    // "keep this" as its own clause — not "keep it green", which changes it.
+    String.raw`\b(?:keep|leave|preserve|protect|save|retain)\s+(?:only\s+|just\s+)?${DEIXIS}(?=\s*(?:$|[,.;]|and\b|but\b|as (?:it )?is\b|the same\s*(?:$|[,.;]|and\b)|unchanged\b|untouched\b|intact\b|alone\b|exactly\b|where\b|in place\b))`,
+    String.raw`\b(?:only|just)\s+keep\b`,
+    String.raw`\b(?:don'?t|do not|never|without)\s+(?:change|changing|touch|touching|edit|editing|alter|altering|move|moving|remove|removing)\s+${DEIXIS}`,
+    String.raw`\b(?:around|surrounding)\s+${DEIXIS}`,
+].join('|'), 'i');
+
+// Nothing but "remove this": the eraser does that better than any
+// instruction model. "Remove this and add a lamp" is not one.
+const PURE_REMOVAL = new RegExp(String.raw`^(?:please\s+)?(?:(?:remove|delete|erase|get rid of|take (?:out|away)|clear (?:out|away))(?:\s+${DEIXIS})?|(?:take|get|clear)\s+${DEIXIS}\s+(?:out|away))(?:\s+(?:from|out of) (?:the )?(?:room|photo|picture|image))?$`, 'i');
+
+/**
+ * What a "Change it…" instruction wants done with the painted area:
+ * 'keep'  — protect it, apply the instruction to everything else;
+ * 'erase' — just remove it (the eraser model);
+ * 'change' — apply the instruction to it.
+ */
+function regionInstructionKind(text) {
+    const ask = trimInstruction(text);
+    if (INVERSE.test(ask)) return 'keep';
+    if (PURE_REMOVAL.test(ask)) return 'erase';
+    return 'change';
+}
+
+/**
+ * What to do with the target, spelled out. "remove this" on its own failed on
+ * the real model even with the target highlighted: "this" still had to be
+ * linked to the highlight, and nothing said a removal means the legs and
+ * shadow too, or what goes in the gap.
+ */
+function regionIntent(instruction, target) {
+    const ask = trimInstruction(instruction);
+    const deixis = `Words like "this", "these", "it" or "here" refer to ${target}.`;
+    if (REMOVAL.test(ask)) {
+        return `Instruction: ${ask}. ${deixis} Remove ${target} entirely — every part of it, `
+            + 'including legs, base, cords and the shadow it casts — and fill the space naturally '
+            + 'with whatever would be behind it (floor, rug, wall or furniture).';
+    }
+    return `Instruction: ${ask}. ${deixis} Apply it to the whole of ${target}, including any parts `
+        + 'the highlight does not cover. If the instruction adds something, place it in the highlighted area.';
+}
+
+const REGION_FRAME = 'Do not change anything else. Keep the same framing, camera angle and composition, '
+    + 'and keep the lighting and perspective consistent with the rest of the room.';
+
+/**
+ * Wrap an instruction for a model editing the marked photo (every tier).
+ * The instruction alone ("remove this") points at nothing the model can see,
+ * and the marker itself must not survive into the result.
+ */
+function regionPrompt(instruction) {
+    return 'This is a photo of a room. One object or area has been marked on it with a magenta '
+        + 'highlight — a translucent magenta tint with a solid magenta outline. That marker is not '
+        + 'part of the room; it was drawn on top of the photo to show which thing the instruction is about. '
+        + `${regionIntent(instruction, 'the highlighted target')} ${REGION_FRAME} `
+        + 'Remove the marker completely: the result must contain no magenta tint or outline anywhere, '
+        + 'and the target must show its real colours wherever it is not being changed.';
+}
+
+/**
+ * A removal on the CLEAN photo, with the target named by identifyRegionTarget.
+ * Keeps the user's words so anything else they asked for still happens.
+ */
+function regionRemovalPrompt(instruction, target) {
+    const ask = trimInstruction(instruction);
+    return `Remove ${target} from this photo of a room. `
+        + `The user's instruction was: "${ask}". Words like "this", "these", "it" or "here" refer to ${target}. `
+        + `Remove every part of ${target}, including legs, base, cords and the shadow it casts, `
+        + 'and fill the space naturally with whatever would be behind it (floor, rug, wall or furniture). '
+        + REGION_FRAME;
+}
+
+/**
+ * The part of a "keep this, change the rest" prompt that's the same with or
+ * without a name for the target. "Remove everything else" has to be told
+ * what "everything" means, or the walls and floor go too.
+ */
+function regionKeepBody(ask, target) {
+    return `Keep ${target} exactly as it is: the same position, size, shape, colours and texture. `
+        + `Apply this instruction to the rest of the photo only: "${ask}". `
+        + `Words like "this", "these", "it" or "here" refer to ${target}, so "everything else" and "the rest" mean everything except ${target}. `
+        + (REMOVAL.test(ask)
+            ? 'Removing everything else means taking out every other object: all furniture, storage units, '
+                + 'lamps, rugs, tables, plants, wall art, mirrors, TVs and other electronics, and decor. Keep only '
+                + 'the building itself — walls, floor, ceiling, windows, doors and built-in cabinetry. Fill the space '
+                + 'they leave naturally, so it looks like an empty room. '
+            : '')
+        + 'Keep the same framing, camera angle and composition, and keep the lighting and perspective consistent.';
+}
+
+/** "Keep this, change the rest" on the clean photo, with the target named. */
+function regionKeepPrompt(instruction, target) {
+    return `This is a photo of a room. ${regionKeepBody(trimInstruction(instruction), target)}`;
+}
+
+/** The same, when the target couldn't be named: it's marked on the photo instead. */
+function regionKeepMarkerPrompt(instruction) {
+    return 'This is a photo of a room. One object or area has been marked on it with a magenta '
+        + 'highlight — a translucent magenta tint with a solid magenta outline. That marker is not part '
+        + 'of the room; it shows what to keep. '
+        + `${regionKeepBody(trimInstruction(instruction), 'the highlighted target')} `
+        + 'Remove the marker completely: the result must contain no magenta tint or outline anywhere.';
+}
 const itemsSelectionError = document.getElementById('items-selection-error');
 const wizardFengShuiBtn = document.getElementById('wizard-feng-shui-btn');
 const resultsFengShuiBtn = document.getElementById('results-feng-shui-btn');
@@ -69,26 +627,11 @@ const fengShuiApplyBtn = document.getElementById('feng-shui-apply-btn');
 const fengShuiContinueWizardBtn = document.getElementById('feng-shui-continue-wizard-btn');
 const fengShuiApplyPremiumToggle = document.getElementById('feng-shui-apply-premium-toggle');
 const wizardQuickEditBtn = document.getElementById('wizard-quick-edit-btn');
-const quickEditModal = document.getElementById('quick-edit-modal');
+const quickEditPanel = document.getElementById('quick-edit-panel');
 const quickEditInput = document.getElementById('quick-edit-input');
 const quickEditApplyBtn = document.getElementById('quick-edit-apply');
-const quickEditClearBtn = document.getElementById('quick-edit-clear');
-const quickEditCloseBtn = document.getElementById('quick-edit-close');
+const quickEditBackBtn = document.getElementById('quick-edit-back');
 const quickEditPremiumToggle = document.getElementById('quick-edit-premium-toggle');
-
-// Refinement suggestion chips: append (or set) the chip text into the textarea.
-document.querySelectorAll('.refinement-chip').forEach((chip) => {
-    chip.addEventListener('click', () => {
-        if (!refinementInput) return;
-        const phrase = chip.getAttribute('data-chip') || chip.textContent.trim();
-        const current = refinementInput.value.trim();
-        refinementInput.value = current
-            ? `${current.replace(/[.\s]+$/, '')}. ${phrase}.`
-            : `${phrase}.`;
-        refinementInput.focus();
-        refinementInput.setSelectionRange(refinementInput.value.length, refinementInput.value.length);
-    });
-});
 
 // (The per-step Next/Back buttons are gone — the 4-pane wizard is now a single
 // configure view with one sticky primary action.)
@@ -385,6 +928,7 @@ const REPLICATE_API_URL = `${PROXY_SERVER_URL}/replicate/predictions`;
 const REPLICATE_POLL_URL = `${PROXY_SERVER_URL}/replicate/poll`;
 const OPENAI_IMAGE_EDIT_URL = `${PROXY_SERVER_URL}/openai/image-edit`;
 const FENG_SHUI_API_URL = `${PROXY_SERVER_URL}/api/feng-shui`;
+const IDENTIFY_REGION_URL = `${PROXY_SERVER_URL}/api/identify-region`;
 const REPLICATE_MODEL_VERSION = 'stability-ai/stable-diffusion-3.5-large'; // Example version, check replicate for latest/best
 
 function setHeaderActionsEnabled(enabled) {
@@ -473,11 +1017,17 @@ async function initializeApp() {
                 await fetchSavedLayout();
                 await fetchUserTokens();
                 await fetchUserSubscription();
+            } else if (appConfig.anonGenerationsEnabled) {
+                // Signed out: find out whether this device still has its
+                // pre-signup generation. Also issues the device cookie, so the
+                // id is already stable by the time they press Generate.
+                await refreshAnonStatus();
             }
             supabase.auth.onAuthStateChange(async (_event, session) => {
                 currentUser = session?.user ?? null;
                 currentSession = session ?? null;
                 if (session) {
+                    anonGenerationsRemaining = 0;
                     await fetchSavedLayout();
                     await fetchUserTokens();
                     await fetchUserSubscription();
@@ -488,6 +1038,7 @@ async function initializeApp() {
                     userTokens = 0;
                     userHasSubscription = false;
                     window.__decoraitHasSubscription = false;
+                    if (appConfig?.anonGenerationsEnabled) await refreshAnonStatus();
                 }
                 updateAuthUI();
             });
@@ -678,10 +1229,35 @@ function resumePendingGatedAction() {
     setTimeout(() => { try { action(); } catch (err) { console.error(err); } }, 150);
 }
 
+// How many pre-signup generations this device has left, per the server.
+// Refreshed from /api/anon-status at init and after each anonymous run; the
+// server is authoritative, this is only for deciding whether to show the gate.
+let anonGenerationsRemaining = 0;
+
+/** Ask the server how many pre-signup generations this device has left. */
+async function refreshAnonStatus() {
+    if (currentUser) { anonGenerationsRemaining = 0; return; }
+    try {
+        const res = await fetch(`${PROXY_SERVER_URL}/api/anon-status`, { credentials: 'same-origin' });
+        if (!res.ok) { anonGenerationsRemaining = 0; return; }
+        const data = await res.json();
+        anonGenerationsRemaining = data.enabled ? (data.remaining || 0) : 0;
+    } catch {
+        // Offline or server down — fall back to the normal sign-up gate.
+        anonGenerationsRemaining = 0;
+    }
+}
+
+/** True when this run can proceed without an account. */
+const canGenerateAnonymously = () => !currentUser && anonGenerationsRemaining > 0;
+
 // Lightweight gate for free-model runs: just verify the user is signed in.
 // Free generations don't touch the monthly limit so we don't check tokens.
 function ensureLoggedIn() {
     if (!currentUser || !currentSession) {
+        // A first-time visitor gets one generation before we ask for anything:
+        // the product has to prove itself before it can ask for an account.
+        if (canGenerateAnonymously()) return true;
         // Someone hitting this gate has almost always never had an account —
         // showing them a Sign In form for an account they don't have was the
         // single worst moment in the funnel.
@@ -1028,20 +1604,35 @@ window.__decoraitGetAccessToken = () => currentSession?.access_token || null;
 
 /** Lightweight toast notification (no external dependency) */
 let _activeToast = null;
-function showToastMessage(message, type = 'info') {
+/**
+ * @param {{ actionLabel?: string, onAction?: () => void }} [action]
+ *   An optional button ("Try Premium") that dismisses the toast and runs onAction.
+ */
+function showToastMessage(message, type = 'info', { actionLabel, onAction } = {}) {
     if (_activeToast) _activeToast.remove();
     const toast = document.createElement('div');
     toast.className = `toast toast-${type}`;
-    toast.textContent = message;
+    const text = document.createElement('span');
+    text.className = 'toast-text';
+    text.textContent = message;
+    toast.appendChild(text);
+    let actionBtn = null;
+    if (actionLabel && onAction) {
+        actionBtn = document.createElement('button');
+        actionBtn.type = 'button';
+        actionBtn.className = 'toast-action';
+        actionBtn.textContent = actionLabel;
+        toast.appendChild(actionBtn);
+    }
     document.body.appendChild(toast);
     _activeToast = toast;
-    requestAnimationFrame(() => toast.classList.add('show'));
-    if (type !== 'loading') {
-        setTimeout(() => {
-            toast.classList.remove('show');
-            setTimeout(() => { if (toast.parentNode) toast.remove(); if (_activeToast === toast) _activeToast = null; }, 300);
-        }, 4000);
-    }
+    const dismiss = presentToast(toast, {
+        text: message,
+        // A loading toast stays until it's replaced or dismissed.
+        ...(type === 'loading' ? { duration: null } : {}),
+        onRemove: () => { if (_activeToast === toast) _activeToast = null; },
+    });
+    actionBtn?.addEventListener('click', () => { dismiss(); onAction(); });
 }
 
 // ── End token helpers ──────────────────────────────────────────────────────────
@@ -1241,14 +1832,14 @@ function showLayoutSaveToast(message, isError = false) {
     const toast = document.createElement('div');
     toast.id = 'layout-save-toast';
     toast.className = 'layout-save-toast' + (isError ? ' error' : '');
-    toast.textContent = message;
+    const text = document.createElement('span');
+    text.className = 'toast-text';
+    text.textContent = message;
+    toast.appendChild(text);
     const screen = document.getElementById('layout-editor-screen');
-    if (screen) screen.appendChild(toast);
-    setTimeout(() => toast.classList.add('show'), 10);
-    setTimeout(() => {
-        toast.classList.remove('show');
-        setTimeout(() => toast.remove(), 300);
-    }, 3000);
+    if (!screen) return;
+    screen.appendChild(toast);
+    presentToast(toast, { text: message });
 }
 
 async function fetchLayouts(bustCache = false) {
@@ -1427,6 +2018,7 @@ const DESIGN_MODEL_LABELS = {
     'proplabs-staging': 'PropLabs Virtual Staging',
     img2img: 'SD 3.5 Large',
     'nano-banana': 'Nano Banana',
+    'bria-eraser': 'Bria Eraser',
 };
 
 const DESIGN_ROOM_TYPE_LABELS = {
@@ -2247,7 +2839,33 @@ function resolveConfirmDialog(result) {
 window.showConfirmDialog = showConfirmDialog;
 window.__decoraitRequireEmailConfirmed = requireEmailConfirmedForFeature;
 
+/**
+ * Register the app-shell service worker — production only.
+ *
+ * In dev it would cache Vite's module graph and serve yesterday's code back at
+ * you, so dev instead *unregisters* anything already installed. That matters
+ * for anyone who ran a production build on localhost once: the worker would
+ * otherwise outlive it and quietly shadow the dev server.
+ */
+function initServiceWorker() {
+    if (!('serviceWorker' in navigator)) return;
+    if (!import.meta.env.PROD) {
+        navigator.serviceWorker.getRegistrations()
+            .then((regs) => regs.forEach((r) => r.unregister()))
+            .catch(() => {});
+        return;
+    }
+    window.addEventListener('load', () => {
+        navigator.serviceWorker.register('/sw.js').catch((err) => {
+            // Never fatal — the app works fine without it.
+            console.warn('[sw] registration failed:', err);
+        });
+    });
+}
+
 document.addEventListener('DOMContentLoaded', async () => {
+    initServiceWorker();
+    initMaskControls();
     setupProtectedHeaderActions();
     initFeedbackWidget();
     await initializeApp();
@@ -2285,11 +2903,24 @@ document.addEventListener('DOMContentLoaded', async () => {
     if (wizardQuickEditBtn) {
         wizardQuickEditBtn.addEventListener('click', () => {
             if (!currentUploadedImage) return;
-            openQuickEdit();
+            if (isQuickEditMode()) exitQuickEdit();
+            else enterQuickEdit();
         });
     }
-    if (quickEditCloseBtn) quickEditCloseBtn.addEventListener('click', closeQuickEdit);
-    if (quickEditClearBtn) quickEditClearBtn.addEventListener('click', clearQuickEditInput);
+    if (quickEditBackBtn) quickEditBackBtn.addEventListener('click', exitQuickEdit);
+    // Locked users can't flip the premium switch (it's disabled), so a tap on
+    // the chip opens the way to unlock it instead.
+    quickEditPremiumToggle?.closest('label')?.addEventListener('click', (e) => {
+        if (!quickEditPremiumToggle.disabled) return;
+        e.preventDefault();
+        if (!currentUser) showAuthModal('login');
+        else if (userHasSubscription) showSubscriptionLimitMessage();
+        else showBuyTokensModal();
+    });
+    const shortcutHint = document.querySelector('.quick-edit-shortcut');
+    if (shortcutHint && !/Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent)) {
+        shortcutHint.textContent = ' Ctrl + Enter to apply.';
+    }
     if (quickEditApplyBtn) quickEditApplyBtn.addEventListener('click', applyQuickEdit);
     if (quickEditPremiumToggle) {
         quickEditPremiumToggle.addEventListener('change', () => {
@@ -2308,11 +2939,6 @@ document.addEventListener('DOMContentLoaded', async () => {
                 e.preventDefault();
                 if (!quickEditApplyBtn?.disabled) applyQuickEdit();
             }
-        });
-    }
-    if (quickEditModal) {
-        quickEditModal.addEventListener('click', (e) => {
-            if (e.target === quickEditModal) closeQuickEdit();
         });
     }
     if (roomFengShuiCloseBtn) roomFengShuiCloseBtn.addEventListener('click', hideRoomFengShuiModal);
@@ -2504,7 +3130,10 @@ document.addEventListener('DOMContentLoaded', async () => {
     });
 
     // Back out of configure to the upload view.
-    document.getElementById('configure-back-btn')?.addEventListener('click', goBackToUpload);
+    document.getElementById('configure-back-btn')?.addEventListener('click', () => {
+        if (isQuickEditMode()) exitQuickEdit();
+        else goBackToUpload();
+    });
 
     // Drag-and-drop file upload
     if (uploadContainer) {
@@ -2943,6 +3572,8 @@ function resetRoomTypeSelection() {
 }
 
 function goBackToUpload() {
+    // The next photo starts on the redesign options.
+    exitQuickEdit();
     hideWizard();
     resetImageUpload();
 }
@@ -3861,6 +4492,44 @@ function mapPromptToProplabsStyle(prompt) {
     return 'Default (AI decides)';
 }
 
+const PROPLABS_STYLE_FALLBACK = 'Default (AI decides)';
+
+// Does proplabs/virtual-staging's `furniture_style` enum have a faithful slot
+// for this style? Its vocabulary doesn't line up with ours: Bohemian and Art
+// Deco have no equivalent at all, Japandi collapses onto "Scandinavian", and
+// Minimalist lands on "Modern" because its prompt text contains the word.
+// Sending those through the enum silently generates a *different* style than
+// the one the user tapped, so they route to the prompt-capable model instead.
+function proplabsCanExpressStyle(styleObj) {
+    if (!styleObj) return true; // no style picked → nothing to lose
+    const mapped = mapPromptToProplabsStyle(styleObj.promptText);
+    if (mapped === PROPLABS_STYLE_FALLBACK) return false;
+    // The enum name must actually contain the style we showed the user —
+    // "Mid-Century" → "Mid-Century Modern" is faithful, "Japandi" →
+    // "Scandinavian" is not.
+    const ours = styleObj.name.toLowerCase().replace(/[^a-z]/g, '');
+    const theirs = mapped.toLowerCase().replace(/[^a-z]/g, '');
+    return theirs.includes(ours);
+}
+
+/**
+ * Decide whether a free (non-premium) run can use proplabs/virtual-staging.
+ *
+ * proplabs has no free-form prompt — its schema is a `room` enum and a
+ * `furniture_style` enum (see the inputData branch in
+ * generateImageWithControlNet). Everything else the user told us is dropped on
+ * the floor: selected items have no field at all, refinement text has nowhere
+ * to go, and several styles have no faithful enum value.
+ *
+ * Returns the reason to route elsewhere, or null to keep proplabs.
+ */
+function freeRouteAwayFromProplabs({ styleObj, itemCount, refinementText }) {
+    if (refinementText) return 'refinement';
+    if (itemCount > 0) return 'items';
+    if (!proplabsCanExpressStyle(styleObj)) return 'style';
+    return null;
+}
+
 const DEFAULT_MODEL_FAILED_USER_MESSAGE =
     "Our default image model couldn't process this image. Would you like to try our free backup model? " +
     'It uses a different AI engine and may handle this image. This won\'t count against your limits.';
@@ -3974,6 +4643,16 @@ async function generateImageWithControlNet(imageBase64, prompt, negativePrompt, 
                 throw err;
             }
 
+            // The device's pre-signup generation is gone (already spent, or the
+            // cookie was cleared). Terminal — retrying another model would just
+            // be refused too, so propagate and let the caller ask for signup.
+            if (response.status === 401) {
+                const data = await response.json().catch(() => ({}));
+                const err = new Error(data.error || 'Create a free account to keep designing.');
+                if (data.anonExhausted) err.code = 'ANON_EXHAUSTED';
+                throw err;
+            }
+
             if (!response.ok) {
                 const errorData = await response.json().catch(() => ({}));
                 const error = `Model ${model.name} failed: ${errorData.detail || response.status}`;
@@ -3992,7 +4671,9 @@ async function generateImageWithControlNet(imageBase64, prompt, negativePrompt, 
 
             // Poll for completion
             console.log(`Polling for results from ${model.name}...`);
-            const saveContext = {
+            // No saveContext on a region run: the server would store this raw
+            // crop, not the composited image the user actually sees.
+            const saveContext = options.skipSave ? null : {
                 prompt,
                 model: model.type,
                 sourceType: options.sourceType || 'room-design',
@@ -4134,19 +4815,39 @@ async function generateImageWithReplicate(imageBase64, prompt) {
 async function generateDesigns(options = {}) {
     const fengShuiApply = options.fengShuiResult && options.imageSource;
     const quickEditApply = !!(options.quickEdit && options.imageSource);
-    const specialApply = fengShuiApply || quickEditApply;
+    // "Remove it": the painted area goes to the eraser model.
+    // Regenerate with no new text after a region edit (Remove it or Change
+    // it…) is another take of that edit on the same area — its mask went
+    // with the old card, but the design kept the region.
+    const priorRegionDesign = generatedDesigns?.[0];
+    const repeatRegion = !options.regionRemove && !fengShuiApply && !quickEditApply
+        && resultsSection && !resultsSection.classList.contains('hidden')
+        && priorRegionDesign && !priorRegionDesign.loading && priorRegionDesign.region
+        && !refinementInput?.value?.trim()
+        ? priorRegionDesign.region
+        : null;
+    const repeatErase = repeatRegion?.mode === 'remove' ? repeatRegion : null;
+    const regionRemoveApply = !!options.regionRemove || !!repeatErase;
+    const specialApply = fengShuiApply || quickEditApply || regionRemoveApply;
 
-    if (!requireEmailConfirmedForFeature('design generation')) return;
+    // Signed in but unconfirmed → ask them to confirm. Signed OUT must fall
+    // through to the gates below, which choose between the pre-signup run and
+    // the sign-up form; this check used to bounce every signed-out visitor to
+    // a Sign In form first, so the pre-signup run could never happen.
+    if (currentUser && !requireEmailConfirmedForFeature('design generation')) return;
     if (!currentUploadedImage && !specialApply) {
         showAlertDialog('Please upload an image first');
         return;
     }
 
-    const usePremium = fengShuiApply
-        ? !!options.usePremium
-        : quickEditApply
+    // An erase is one model on every tier, so it never spends a premium token.
+    const usePremium = regionRemoveApply
+        ? false
+        : fengShuiApply
             ? !!options.usePremium
-            : getEffectiveDefaultModelPref() === 'premium';
+            : quickEditApply
+                ? !!options.usePremium
+                : getEffectiveDefaultModelPref() === 'premium';
 
     // Only premium generations consume tokens. Free runs are unlimited for
     // signed-in users — we gate on auth so anonymous traffic can't abuse it.
@@ -4160,9 +4861,50 @@ async function generateDesigns(options = {}) {
     }
     setPendingGatedAction(null);
 
+    // Captured before the request: if the gate let us through without an
+    // account, this run is spending the device's one pre-signup generation.
+    const wasAnonymousRun = !currentUser;
 
     // Check if we're regenerating (already on results screen)
     const isCurrentlyOnResults = resultsSection && !resultsSection.classList.contains('hidden');
+
+    // Region edit. A region comes only from the region menu (Remove it /
+    // Change it…), which names its scope: the uploaded photo (Quick Edit) or
+    // the result. Typed edits in the composer or refine box are for the whole
+    // image, even with something painted. Snapshot now: rendering the loading
+    // card replaces a result image and tears its editor down.
+    const regionEditor = fengShuiApply || repeatRegion
+        ? null
+        : options.regionRemove
+            ? activeMask(options.regionRemove.scope)
+            : options.regionScope
+                ? activeMask(options.regionScope)
+                : null;
+    const strokeMask = regionEditor ? regionEditor.toStrokeMaskDataUrl() : null;
+    const region = repeatRegion || (strokeMask ? {
+        mode: options.regionRemove ? 'remove' : (options.regionMode === 'keep' ? 'keep' : 'change'),
+        // What the user painted — the anchor for "which change to keep".
+        stroke: strokeMask,
+        // "Keep this": the feathered inverse used to restore the kept area.
+        composite: !options.regionRemove && options.regionMode === 'keep'
+            ? regionEditor.toCompositeMaskDataUrl('keep')
+            : null,
+        // "Remove this": what the eraser model gets (white = erase).
+        eraseMask: options.regionRemove ? regionEditor.toEraseMaskDataUrl() : null,
+        // The image the mask was painted on is the one to edit — not
+        // whatever history entry happens to be selected.
+        source: regionEditor.sourceSrc,
+    } : null);
+    if ((regionRemoveApply || options.regionScope) && !region) {
+        showToastMessage('Brush over the item you want to edit first.', 'info');
+        return;
+    }
+    // The region is captured, so Quick Edit's photo can be clean for next
+    // time. (A result's editor goes with its card below.)
+    if (regionEditor && maskScope === 'configure') {
+        regionEditor.clear();
+        resetRegionMenu();
+    }
 
     let basePrompt;
     let style;
@@ -4175,8 +4917,22 @@ async function generateDesigns(options = {}) {
     // for targeted edits ("make the walls blue") where proplabs — which has no
     // free-form prompt — would ignore the instruction and just re-stage furniture.
     let nanoEditPrompt = null;
+    // Why we left proplabs: 'quick-edit' | 'refinement' | 'items' | 'style' |
+    // 'feng-shui'. Drives the saved design's sourceType and the console trace;
+    // null means the run stayed on the default staging model.
+    let nanoRouteReason = null;
 
-    if (fengShuiApply) {
+    if (regionRemoveApply) {
+        basePrompt = '';
+        style = 'Removed item';
+        description = 'Removing what you painted…';
+        // Not sent to any model (the eraser takes no prompt); it labels the
+        // design in history and My Designs.
+        fullPrompt = 'Remove the selected item';
+        negativePrompt = '';
+        prompts = { shouldGenerate: true };
+        nanoRouteReason = 'erase';
+    } else if (fengShuiApply) {
         ensureRoomTypeFromWizard();
         basePrompt = aiPrompts[currentRoomType] || aiPrompts.furnished;
         style = 'Feng shui layout';
@@ -4190,10 +4946,13 @@ async function generateDesigns(options = {}) {
         basePrompt = '';
         style = options.quickEdit.label || 'Quick edit';
         description = options.quickEdit.description || 'Applying your quick edit…';
+        // A region run is wrapped per model at the call (guide image or mask).
+        // The design keeps the instruction itself, so nothing accumulates.
         fullPrompt = options.quickEdit.prompt;
         negativePrompt = '';
         prompts = { shouldGenerate: true };
         nanoEditPrompt = fullPrompt; // free path → Nano Banana
+        nanoRouteReason = 'quick-edit';
     } else {
         // Try to determine the room type if not already set
         if (!currentRoomType) {
@@ -4236,21 +4995,51 @@ async function generateDesigns(options = {}) {
         }
 
         if (isResultsRegenerate) {
-            const baseForRefinement = priorDesign.prompt || prompts.positivePrompt;
-            fullPrompt = buildRefinementPrompt(baseForRefinement, refinementText);
             negativePrompt = priorDesign.negativePrompt || prompts.negativePrompt;
-            // Refining an existing result with a typed instruction is an *edit*,
-            // not a re-stage. Route the non-premium path through Nano Banana with
-            // just the instruction (guardrailed) so it honors the user's words.
-            // No text → leave nanoEditPrompt null so "regenerate for a fresh
-            // variation" keeps the legacy proplabs staging behavior.
             if (refinementText) {
-                nanoEditPrompt = buildQuickEditPrompt(refinementText)?.prompt || null;
+                // A refine edits the CURRENT image, which already carries every
+                // earlier edit — so the model gets this instruction and nothing
+                // else. This used to append it to the previous design's prompt
+                // ("… Apply these refinements: …"), and that combined prompt
+                // became the next base, so each pass re-sent every old
+                // instruction and the prompt grew without limit.
+                fullPrompt = refinementText;
+                nanoEditPrompt = fullPrompt;
+                nanoRouteReason = 'refinement';
+            } else if (priorDesign.route === 'refinement' || priorDesign.route === 'quick-edit') {
+                // Regenerate with no new text after an instruction edit: another
+                // take of that same instruction, on the same model — not a
+                // re-stage by a model that can't read it.
+                fullPrompt = priorDesign.prompt;
+                nanoEditPrompt = fullPrompt;
+                nanoRouteReason = priorDesign.route;
+            } else {
+                // Regenerate with no new text after a redesign: the same prompt
+                // again. Re-check the route so a plain "Regenerate" doesn't
+                // downgrade to the enum model when items or style need more.
+                fullPrompt = priorDesign.prompt || prompts.positivePrompt;
+                nanoRouteReason = freeRouteAwayFromProplabs({
+                    styleObj,
+                    itemCount: selectedRoomItems.size,
+                    refinementText: '',
+                });
+                if (nanoRouteReason) nanoEditPrompt = fullPrompt;
             }
         } else {
             fullPrompt = refinementText
                 ? buildRefinementPrompt(prompts.positivePrompt, refinementText)
                 : prompts.positivePrompt;
+            // First run from the configure screen. proplabs/virtual-staging
+            // drops selected items entirely and mistranslates four of our ten
+            // styles, so route to the prompt-capable model whenever there is
+            // anything for it to lose. A bare restyle with a cleanly-mapping
+            // style stays on proplabs, which is purpose-built for staging.
+            nanoRouteReason = freeRouteAwayFromProplabs({
+                styleObj,
+                itemCount: selectedRoomItems.size,
+                refinementText,
+            });
+            if (nanoRouteReason) nanoEditPrompt = fullPrompt;
             negativePrompt = prompts.negativePrompt;
         }
     }
@@ -4287,6 +5076,9 @@ async function generateDesigns(options = {}) {
         errorMessage: ''
     };
 
+    // A result's mask goes with the card that's about to be replaced. One on
+    // the uploaded photo stays, so Back → regenerate keeps the region.
+    if (maskScope === 'results') destroyMaskEditor();
     generatedDesigns = [initialDesign];
     displayDesigns(generatedDesigns);
     updateResultsFengShuiButtonState();
@@ -4303,23 +5095,46 @@ async function generateDesigns(options = {}) {
     // When regenerating from the results screen, chain off whichever history
     // entry the user has selected (defaults to the most recent generation).
     // On the first run, the strip is empty and we use the original upload.
-    const sourceImage = specialApply
-        ? options.imageSource
-        : (isCurrentlyOnResults ? getBaseImageForNextGeneration() : currentUploadedImage);
+    const sourceImage = region
+        ? region.source
+        : specialApply
+            ? options.imageSource
+            : (isCurrentlyOnResults ? getBaseImageForNextGeneration() : currentUploadedImage);
 
     // Stash inputs on the design up front so the premium fallback handler
     // can reuse them even if the default chain throws before we'd normally
-    // attach them on success.
+    // attach them on success. That includes the region, so a recovery run
+    // stays a region edit, and the free prompt, so it uses the same model.
     initialDesign.sourceImage = sourceImage;
+    initialDesign.region = region;
+    initialDesign.nanoPrompt = nanoEditPrompt;
+    initialDesign.route = nanoRouteReason;
 
     initialDesign.negativePrompt = negativePrompt;
 
+    // What the model gets: the photo, with the target marked on it (or, for a
+    // removal, named in the prompt) when a region is painted — the
+    // instruction models only; see regionModelInput.
+    const { input: modelInputImage, edit: regionEdit } =
+        await regionModelInput(initialDesign, nanoEditPrompt || fullPrompt);
+
     // Generate the image
     try {
-        console.log('Starting image generation with prompt:', fullPrompt);
+        // Log what the model will actually receive. The free instruction path
+        // sends nanoEditPrompt, not fullPrompt — logging the wrong one made a
+        // prompt look like it contained text that was never sent.
+        const sentPrompt = usePremium
+            ? (regionEdit ? regionEdit.prompt(fullPrompt) : fullPrompt)
+            : (nanoEditPrompt ? (regionEdit ? regionEdit.prompt(nanoEditPrompt) : nanoEditPrompt) : fullPrompt);
+        console.log('Starting image generation with prompt:', sentPrompt);
         console.log('Negative prompt:', negativePrompt);
         console.log('Source image:', fengShuiApply ? 'feng shui apply' : quickEditApply ? 'quick edit' : (isCurrentlyOnResults && lastGeneratedImageUrl ? 'last generated' : 'original upload'));
         console.log('Model preference:', usePremium ? 'premium' : 'free');
+        if (!usePremium) {
+            console.log('Free model route:', nanoRouteReason
+                ? `nano-banana (${nanoRouteReason} — proplabs would drop it)`
+                : 'proplabs staging (nothing to lose)');
+        }
 
         let imageUrl = '';
         let usedFallback = false;
@@ -4327,13 +5142,26 @@ async function generateDesigns(options = {}) {
         let savedDesignId = null;
         const designSourceType = fengShuiApply
             ? 'feng-shui'
-            : (nanoEditPrompt ? 'quick-edit' : 'room-design');
+            // Only genuine instruction edits are stored as 'quick-edit'. A full
+            // wizard run is still a room design even when it routes to Nano
+            // Banana for fidelity, so My Designs keeps labelling it correctly.
+            : (['quick-edit', 'refinement', 'erase'].includes(nanoRouteReason)
+                ? 'quick-edit'
+                : 'room-design');
 
-        if (usePremium) {
+        if (nanoRouteReason === 'erase') {
+            // Mask-based eraser on every tier — no prompt to misread.
+            imageUrl = await generateEraseWithBria(region);
+            modelUsed = 'bria-eraser';
+        } else if (usePremium) {
             // Premium path — counts against quota. Endpoint reserves a slot.
-            const premiumResult = await callPremiumImageEdit(sourceImage, fullPrompt, {
+            const premiumResult = await callPremiumImageEdit(regionEdit?.image || modelInputImage, fullPrompt, {
                 sourceType: designSourceType,
-                metadata: { style, roomType: currentRoomType },
+                metadata: { style, roomType: currentRoomType, masked: !!region },
+                // A masked run is composited client-side, so the server's
+                // copy would be the wrong image. Save from the client after.
+                skipSave: !!region,
+                regionPrompt: regionEdit?.prompt,
             });
             imageUrl = premiumResult.imageUrl;
             savedDesignId = premiumResult.savedDesignId;
@@ -4343,14 +5171,18 @@ async function generateDesigns(options = {}) {
             // preserves the rest of the room while applying the typed edit.
             // Used for Quick Edit and for refining a generated result with text.
             // Free to the user; never counts against quota.
-            const nanoResult = await generateQuickEditWithNanoBanana(sourceImage, nanoEditPrompt);
+            const nanoResult = await generateQuickEditWithNanoBanana(regionEdit?.image || modelInputImage, nanoEditPrompt, {
+                skipSave: !!region,
+                regionPrompt: regionEdit?.prompt,
+            });
             imageUrl = nanoResult.imageUrl;
             savedDesignId = nanoResult.savedDesignId;
             modelUsed = 'nano-banana';
         } else {
-            const imageUrls = await generateImageWithControlNet(sourceImage, fullPrompt, negativePrompt, {
+            const imageUrls = await generateImageWithControlNet(modelInputImage, fullPrompt, negativePrompt, {
                 sourceType: designSourceType,
                 saveMetadata: { style, roomType: currentRoomType },
+                skipSave: !!region,
             });
             if (Array.isArray(imageUrls)) {
                 imageUrl = imageUrls[0];
@@ -4361,6 +5193,10 @@ async function generateDesigns(options = {}) {
                 imageUrl = imageUrls;
             }
         }
+
+        // Enforce the region boundary on the way back. Must happen before the
+        // image is displayed or saved so both show the same thing.
+        imageUrl = await applyRegion(initialDesign, imageUrl);
 
         initialDesign.imageUrl = imageUrl;
         initialDesign.loading = false;
@@ -4391,9 +5227,40 @@ async function generateDesigns(options = {}) {
             await useTokenAfterSuccess();
         }
 
+        // The instruction is now baked into the image. Leaving it in the box
+        // means the next Regenerate applies it a second time on top of itself.
+        if (nanoRouteReason === 'refinement' && imageUrl && refinementInput) {
+            refinementInput.value = '';
+        }
+
+        if (imageUrl) suggestPremiumForEmptyRoom(initialDesign);
+
+        // That was the pre-signup run. The result stays on screen — it's the
+        // whole point — but it isn't saved and there isn't another one, so say
+        // so once, here, rather than ambushing them at the next Generate.
+        if (wasAnonymousRun && imageUrl) {
+            anonGenerationsRemaining = 0;
+            showToastMessage('Create a free account to save this design and keep going.', 'info');
+        }
+
     } catch (error) {
         console.error(`Error in image generation for design (${style}):`, error);
         // Token is NOT deducted on failure
+
+        // The pre-signup generation is spent. Terminal, and the next step is
+        // an account — not a retry button.
+        if (error.code === 'ANON_EXHAUSTED') {
+            anonGenerationsRemaining = 0;
+            initialDesign.imageUrl = '';
+            initialDesign.loading = false;
+            initialDesign.isFallback = false;
+            initialDesign.needsRetry = false;
+            initialDesign.errorMessage = 'Create a free account to keep designing.';
+            updateDesignCard(initialDesign, 0);
+            setPendingGatedAction(() => generateDesigns(options));
+            showAuthModal('signup');
+            return;
+        }
 
         // Quota errors are terminal — no fallback offer makes sense.
         if (error.code === 'QUOTA_EXCEEDED') {
@@ -4575,6 +5442,28 @@ async function retryImageGeneration() {
 
     // Retry the generation
     try {
+        // An erase retries as an erase: same photo, same mask, same model.
+        if (design.route === 'erase' && design.region?.eraseMask) {
+            const erased = await applyRegion(design, await generateEraseWithBria(design.region));
+            design.imageUrl = erased;
+            design.loading = false;
+            design.needsRetry = false;
+            design.isFallback = false;
+            design.modelUsed = 'bria-eraser';
+            design.sourceImage = design.region.source;
+            if (erased) {
+                lastGeneratedImageUrl = erased;
+                await onGenerationSuccess(erased, {
+                    prompt: design.prompt,
+                    model: 'bria-eraser',
+                    sourceType: 'quick-edit',
+                    metadata: { roomType: currentRoomType },
+                });
+            }
+            updateDesignCard(design, 0);
+            return;
+        }
+
         // Generate new prompts for retry
         const basePrompt = aiPrompts[currentRoomType];
         const styleObj = selectedDesignStyle ? interiorDesignStyles.find(s => s.id === selectedDesignStyle) : null;
@@ -4594,14 +5483,20 @@ async function retryImageGeneration() {
             return;
         }
 
-        const retryPrompt = buildRefinementPrompt(
-            design.prompt || prompts.positivePrompt,
-            retryRefinementText
-        );
+        // Retry the run that failed: the text in the refine box if there is
+        // some (usually the same instruction that just failed), otherwise the
+        // failed run's own prompt — never the two glued together, which sent
+        // the same instruction twice.
+        const retryPrompt = retryRefinementText
+            ? retryRefinementText
+            : (design.prompt || prompts.positivePrompt);
+        const retryIsInstructionEdit = !!retryRefinementText
+            || design.route === 'refinement' || design.route === 'quick-edit';
 
         // Chain off the user-selected history entry (defaults to the latest
         // generation, falls back to the original upload).
-        const retrySourceImage = getBaseImageForNextGeneration();
+        // A region edit retries on the image its mask was painted on.
+        const retrySourceImage = design.region ? design.region.source : getBaseImageForNextGeneration();
 
         let imageUrl;
         let usedFallback = false;
@@ -4609,22 +5504,42 @@ async function retryImageGeneration() {
         let savedDesignId = null;
 
         // A typed refinement is an instruction edit → use Nano Banana so the
-        // text is honored (proplabs has no free-form prompt). No text → keep the
-        // legacy proplabs staging for a fresh variation.
+        // text is honored (proplabs has no free-form prompt). With no text we
+        // still check whether the original request carries item picks or a
+        // style the enum can't express, so a retry doesn't quietly produce a
+        // worse result than the run it is replacing.
+        const retryRouteReason = retryRefinementText
+            ? 'refinement'
+            : freeRouteAwayFromProplabs({
+                styleObj,
+                itemCount: selectedRoomItems.size,
+                refinementText: '',
+            });
+        // Retry on the model the failed run used. A typed instruction, a
+        // region edit or an earlier instruction edit is free text that only
+        // Nano Banana can follow; a staging run re-checks its route.
         const retryNanoPrompt = retryRefinementText
-            ? (buildQuickEditPrompt(retryRefinementText)?.prompt || null)
-            : null;
+            ? retryPrompt
+            : (design.nanoPrompt || (retryRouteReason ? retryPrompt : null));
+
+        // Retry a region edit as a region edit, not as a whole-room one.
+        const { input: retryInput, edit: retryEdit } =
+            await regionModelInput({ ...design, sourceImage: retrySourceImage }, retryNanoPrompt || '');
 
         if (retryNanoPrompt) {
-            const nanoResult = await generateQuickEditWithNanoBanana(retrySourceImage, retryNanoPrompt);
+            const nanoResult = await generateQuickEditWithNanoBanana(retryEdit?.image || retryInput, retryNanoPrompt, {
+                skipSave: !!design.region,
+                regionPrompt: retryEdit?.prompt,
+            });
             imageUrl = nanoResult.imageUrl;
             savedDesignId = nanoResult.savedDesignId;
             modelUsed = 'nano-banana';
         } else {
             let imageUrls = await generateImageWithControlNet(
-                retrySourceImage,
+                retryInput,
                 retryPrompt,
-                design.negativePrompt || prompts.negativePrompt
+                design.negativePrompt || prompts.negativePrompt,
+                { skipSave: !!design.region }
             );
             if (Array.isArray(imageUrls)) {
                 imageUrl = imageUrls[0];
@@ -4638,6 +5553,8 @@ async function retryImageGeneration() {
             }
         }
 
+        imageUrl = await applyRegion(design, imageUrl);
+
         design.imageUrl = imageUrl;
         design.loading = false;
         design.needsRetry = false;
@@ -4645,6 +5562,8 @@ async function retryImageGeneration() {
         design.modelUsed = modelUsed;
         design.sourceImage = retrySourceImage;
         design.prompt = retryPrompt;
+        design.nanoPrompt = retryNanoPrompt;
+        if (retryRefinementText) design.route = 'refinement';
         design.negativePrompt = prompts.negativePrompt;
 
         // Remember this image for subsequent regenerations
@@ -4653,12 +5572,13 @@ async function retryImageGeneration() {
             await onGenerationSuccess(imageUrl, {
                 prompt: retryPrompt,
                 model: modelUsed,
-                sourceType: retryNanoPrompt ? 'quick-edit' : 'room-design',
+                sourceType: retryIsInstructionEdit ? 'quick-edit' : 'room-design',
                 metadata: { roomType: currentRoomType },
                 savedDesignId,
             });
         }
 
+        if (imageUrl) suggestPremiumForEmptyRoom(design);
         console.log('Retry successful');
 
         // Retry runs the free chain — never counts against the quota.
@@ -4900,7 +5820,13 @@ async function callPremiumImageEdit(sourceImage, prompt, saveOptions = {}) {
     const outputSize = await pickGptImageSize(imageInput);
     const sourceType = saveOptions.sourceType || 'room-design';
     const skipPromptFraming = sourceType === 'quick-edit' || sourceType === 'feng-shui';
-    const apiPrompt = skipPromptFraming
+    const skipSave = !!saveOptions.skipSave;
+    // A "change this" region run brings its own prompt wrapper (explaining
+    // the marker, or naming the target to remove), which also asks for the
+    // same framing so the composite lines up.
+    const apiPrompt = saveOptions.regionPrompt
+        ? saveOptions.regionPrompt(prompt)
+        : skipPromptFraming
         ? prompt
         : `${prompt} Keep the exact same camera framing, field of view, zoom level, and composition as the input image — do not crop, zoom in, or recompose. The output must show the entire original scene with no parts of the room cut off.`;
 
@@ -4918,6 +5844,7 @@ async function callPremiumImageEdit(sourceImage, prompt, saveOptions = {}) {
             },
             body: JSON.stringify({
                 imageBase64: imageInput,
+                ...(skipSave ? { skipSave: true } : {}),
                 prompt: apiPrompt,
                 savePrompt: prompt,
                 size: outputSize,
@@ -5048,11 +5975,13 @@ async function runFallbackOnDesign(designIndex, design, modelType = 'img2img') {
     updateResultsFengShuiButtonState();
 
     try {
+        // A failed region edit falls back as a region edit.
+        const { input } = await regionModelInput(design);
         const imageUrls = await generateImageWithControlNet(
-            design.sourceImage,
+            input,
             design.prompt,
             design.negativePrompt || '',
-            { modelType, forceFallback: true }
+            { modelType, forceFallback: true, skipSave: !!design.region }
         );
 
         let imageUrl = '';
@@ -5065,6 +5994,7 @@ async function runFallbackOnDesign(designIndex, design, modelType = 'img2img') {
         } else if (typeof imageUrls === 'string') {
             imageUrl = imageUrls;
         }
+        imageUrl = await applyRegion(design, imageUrl);
 
         design.imageUrl = imageUrl;
         design.loading = false;
@@ -5161,16 +6091,21 @@ async function regenerateWithPremiumModel(designIndex) {
     updateResultsFengShuiButtonState();
 
     try {
-        const premiumResult = await callPremiumImageEdit(design.sourceImage, design.prompt, {
+        // Upgrading a region edit keeps it a region edit.
+        const { input, edit } = await regionModelInput(design, design.prompt);
+        const premiumResult = await callPremiumImageEdit(edit?.image || input, design.prompt, {
             sourceType: 'room-design',
+            skipSave: !!design.region,
+            regionPrompt: edit?.prompt,
         });
-        design.imageUrl = premiumResult.imageUrl;
+        const finalUrl = await applyRegion(design, premiumResult.imageUrl);
+        design.imageUrl = finalUrl;
         design.loading = false;
         design.modelUsed = 'openai';
 
-        if (premiumResult.imageUrl) {
-            lastGeneratedImageUrl = premiumResult.imageUrl;
-            await onGenerationSuccess(premiumResult.imageUrl, {
+        if (finalUrl) {
+            lastGeneratedImageUrl = finalUrl;
+            await onGenerationSuccess(finalUrl, {
                 prompt: design.prompt,
                 model: 'openai',
                 sourceType: 'room-design',
@@ -5406,16 +6341,15 @@ function setupRevealCheckbox(card, index) {
     const generatedImage = card?.querySelector('.generated-image');
     if (!revealContainer || !generatedImage) return;
 
-    // Both images must be stacked and fill the frame — the divider clips the
-    // generated layer over the original rather than toggling opacity.
+    // Both images are stacked to fill the frame so the divider can clip the
+    // generated layer over the original. The stylesheet does the stacking
+    // (.image-reveal-container .original-image / .generated-image). Don't set
+    // position or size inline here: inline styles beat the "Edit a region"
+    // rules that put the image back in flow, so the box collapsed to zero
+    // height and the image vanished.
     const originalImage = card.querySelector('.original-image');
     [originalImage, generatedImage].forEach((img, i) => {
         if (!img) return;
-        img.style.position = 'absolute';
-        img.style.top = '0';
-        img.style.left = '0';
-        img.style.width = '100%';
-        img.style.height = '100%';
         img.style.display = 'block';
         img.style.opacity = 1;
         img.style.zIndex = i === 0 ? 2 : 3;
@@ -5499,6 +6433,9 @@ function updateResultsFengShuiButtonState() {
         regenerateBtn.disabled = generating;
         regenerateBtn.title = generating ? 'Wait for image generation to finish' : '';
     }
+
+    // So do the region menu's Remove and Apply.
+    if (maskEditor) updateRegionMenu();
 
     if (!resultsFengShuiBtn) return;
     const target = getFengShuiAnalysisTarget();
@@ -5882,9 +6819,56 @@ function displayRoomFengShuiResults(result, imageDisplaySrc, label, imageSource)
 // a bare "owner/name" slug routes to Replicate's official-model endpoint.
 const NANO_BANANA_MODEL = 'google/nano-banana';
 
+const BRIA_ERASER_MODEL = 'bria/eraser';
+
+/**
+ * "Remove this": erase the painted area with a mask-based object-removal
+ * model, the way phone photo erasers work. It takes the photo and a mask
+ * (white = erase) and no prompt. Returns the raw result URL; the caller
+ * pastes it back through the region (applyRegion). Errors are plain, so a
+ * failure offers Retry rather than the staging-model fallbacks.
+ */
+async function generateEraseWithBria(region) {
+    const image = await toDataUri(region.source);
+    const startResponse = await fetchWithRetry(REPLICATE_API_URL, {
+        method: 'POST',
+        credentials: 'include',
+        headers: {
+            'Content-Type': 'application/json',
+            ...(currentSession ? { 'Authorization': `Bearer ${currentSession.access_token}` } : {}),
+        },
+        body: JSON.stringify({
+            version: BRIA_ERASER_MODEL,
+            input: { image, mask: region.eraseMask },
+        }),
+    }, 3, 3000);
+
+    if (startResponse.status === 401) {
+        const data = await startResponse.json().catch(() => ({}));
+        const err = new Error(data.error || 'Create a free account to keep designing.');
+        if (data.anonExhausted) err.code = 'ANON_EXHAUSTED';
+        throw err;
+    }
+    if (!startResponse.ok) {
+        const data = await startResponse.json().catch(() => ({}));
+        throw new Error(`Remove failed: ${data.error || data.detail || startResponse.status}`);
+    }
+    const prediction = await startResponse.json();
+    if (!prediction.urls?.get) throw new Error('The eraser did not return a polling URL.');
+    // Never saved server-side: the composited image is saved from here.
+    const result = await pollReplicatePrediction(prediction.urls.get, null);
+    const raw = result.imageUrls;
+    const imageUrl = Array.isArray(raw) ? raw[0] : raw;
+    if (!imageUrl) throw new Error('The eraser returned no image.');
+    return imageUrl;
+}
+
 /** Run a free Quick Edit through Nano Banana. Returns the result image URL. */
-async function generateQuickEditWithNanoBanana(sourceImage, prompt) {
+async function generateQuickEditWithNanoBanana(sourceImage, prompt, { skipSave = false, regionPrompt: wrapRegion = null } = {}) {
     const imageInput = await toDataUri(sourceImage);
+    // A region run wraps the instruction so the model can find the target
+    // (see regionModelInput).
+    const sentPrompt = wrapRegion ? wrapRegion(prompt) : prompt;
     const startResponse = await fetchWithRetry(REPLICATE_API_URL, {
         method: 'POST',
         headers: {
@@ -5894,7 +6878,7 @@ async function generateQuickEditWithNanoBanana(sourceImage, prompt) {
         body: JSON.stringify({
             version: NANO_BANANA_MODEL,
             input: {
-                prompt,
+                prompt: sentPrompt,
                 image_input: [imageInput],
                 output_format: 'png',
             },
@@ -5908,6 +6892,12 @@ async function generateQuickEditWithNanoBanana(sourceImage, prompt) {
         err.quota = data;
         throw err;
     }
+    if (startResponse.status === 401) {
+        const data = await startResponse.json().catch(() => ({}));
+        const err = new Error(data.error || 'Create a free account to keep designing.');
+        if (data.anonExhausted) err.code = 'ANON_EXHAUSTED';
+        throw err;
+    }
     if (!startResponse.ok) {
         const data = await startResponse.json().catch(() => ({}));
         throw new Error(`Quick edit failed: ${data.error || data.detail || startResponse.status}`);
@@ -5916,7 +6906,8 @@ async function generateQuickEditWithNanoBanana(sourceImage, prompt) {
     if (!prediction.urls || !prediction.urls.get) {
         throw new Error('Quick edit model did not return a polling URL.');
     }
-    const saveContext = {
+    // Region runs save the composited image from the client instead.
+    const saveContext = skipSave ? null : {
         prompt,
         model: 'nano-banana',
         sourceType: 'quick-edit',
@@ -5935,11 +6926,19 @@ function buildQuickEditPrompt(text) {
     return { prompt: edit, label: edit };
 }
 
-/** Enable/disable Apply based on whether there's any text. */
+/** Enable/disable Apply based on whether there's any text, and grow the box to fit. */
 function updateQuickEditApplyState() {
     if (quickEditApplyBtn) {
         quickEditApplyBtn.disabled = !(quickEditInput?.value || '').trim();
     }
+    if (quickEditInput) {
+        quickEditInput.style.height = 'auto';
+        if (quickEditInput.value) {
+            quickEditInput.style.height = `${Math.min(quickEditInput.scrollHeight + 2, 160)}px`;
+        }
+    }
+    // A taller composer leaves less room for the photo.
+    fitQuickEdit();
 }
 
 function clearQuickEditInput() {
@@ -5947,19 +6946,84 @@ function clearQuickEditInput() {
     updateQuickEditApplyState();
 }
 
-function openQuickEdit() {
-    if (!requireEmailConfirmedForFeature('quick edit')) return;
+/** Is the configure view in Quick Edit mode? */
+function isQuickEditMode() {
+    return !!wizardContainer?.classList.contains('is-quick-edit');
+}
+
+/**
+ * Quick Edit is a focused mode of the configure view, not a modal: a targeted
+ * change has nothing to do with style, furniture or approach, so those
+ * sections go away and an edit panel takes their place. The photo stays put,
+ * which is what lets the region tools paint straight onto it.
+ */
+function enterQuickEdit() {
+    // Signed-out visitors go through: Apply runs the same gates as Generate,
+    // which decide between the pre-signup run and the sign-up form.
+    if (currentUser && !requireEmailConfirmedForFeature('quick edit')) return;
     clearQuickEditInput();
     // Default to the free model every time — premium is an explicit opt-in.
     // syncDefaultModelToggles manages row visibility and the upsell message.
     if (quickEditPremiumToggle) quickEditPremiumToggle.checked = false;
-    if (quickEditModal) quickEditModal.classList.add('show');
-    // Focus the box so the user can start typing right away.
-    requestAnimationFrame(() => quickEditInput?.focus());
+    wizardContainer?.classList.add('is-quick-edit');
+    quickEditPanel?.classList.remove('hidden');
+    wizardQuickEditBtn?.setAttribute('aria-pressed', 'true');
+    feather.replace();
+    // The photo is paintable for as long as Quick Edit is open: brushing on
+    // it is how you pick one thing to change.
+    if (maskScope !== 'configure') startRegionEditor('configure');
+    // The layout changes completely, so start from the top with the photo in
+    // view, sized to fit the window.
+    window.scrollTo({ top: 0 });
+    fitQuickEdit();
+    // Only autofocus with a real keyboard; on phones it would pop the
+    // on-screen keyboard over the photo.
+    if (window.matchMedia('(min-width: 900px) and (pointer: fine)').matches) {
+        requestAnimationFrame(() => quickEditInput?.focus());
+    }
 }
 
-function closeQuickEdit() {
-    if (quickEditModal) quickEditModal.classList.remove('show');
+/**
+ * Quick Edit is exactly one window tall, so the page never scrolls (see the
+ * .is-quick-edit styles). CSS can't know two of the sizes involved, so they
+ * are measured: where the view starts (the header differs by screen) and the
+ * docked composer's height (it grows as you type). Then the photo is capped
+ * to the height its column ends up with.
+ */
+let quickEditFitObserver = null;
+function fitQuickEdit() {
+    if (!wizardContainer || !isQuickEditMode()) return;
+    const composer = document.querySelector('.quick-edit-composer');
+    const top = wizardContainer.getBoundingClientRect().top + window.scrollY;
+    wizardContainer.style.setProperty('--qe-top', `${Math.round(top)}px`);
+    wizardContainer.style.setProperty('--qe-composer-h', `${Math.ceil(composer?.getBoundingClientRect().height || 0)}px`);
+
+    // The photo column is sized by the layout alone (flex: 1 1 0), so reading
+    // it here doesn't depend on the photo it's about to cap.
+    const column = wizardContainer.querySelector('.configure-photo');
+    const hint = column?.querySelector('.quick-edit-region-hint');
+    if (!column) return;
+    const hintSpace = hint
+        ? hint.getBoundingClientRect().height + (parseFloat(getComputedStyle(hint).marginTop) || 0)
+        : 0;
+    const photoMax = Math.max(160, Math.floor(column.clientHeight - hintSpace));
+    wizardContainer.style.setProperty('--qe-photo-max', `${photoMax}px`);
+
+    if (!quickEditFitObserver && typeof ResizeObserver === 'function') {
+        quickEditFitObserver = new ResizeObserver(() => fitQuickEdit());
+        if (composer) quickEditFitObserver.observe(composer);
+        quickEditFitObserver.observe(column);
+        window.addEventListener('resize', fitQuickEdit);
+    }
+}
+
+/** Back to the full redesign options. Idempotent. */
+function exitQuickEdit() {
+    // A region painted for an edit must not ride along on a redesign.
+    if (maskScope === 'configure') destroyMaskEditor();
+    wizardContainer?.classList.remove('is-quick-edit');
+    quickEditPanel?.classList.add('hidden');
+    wizardQuickEditBtn?.setAttribute('aria-pressed', 'false');
 }
 
 /** Apply the typed quick edit through the shared generation pipeline. */
@@ -5971,7 +7035,6 @@ async function applyQuickEdit() {
     const built = buildQuickEditPrompt(quickEditInput?.value);
     if (!built) return;
     const usePremium = !!quickEditPremiumToggle?.checked;
-    closeQuickEdit();
     // Default: free Nano Banana (cheap instruction-edit model, no token).
     // Premium opt-in: gpt-image-2 (higher fidelity, counts as one generation).
     // generateDesigns handles token gating and the buy/limit modal.
