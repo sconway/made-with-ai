@@ -32,10 +32,18 @@ html {
      swipe-to-go-back gesture (most visible inside the layout editor where
      wheel events over the toolbar/sidebar aren't otherwise intercepted). */
   overscroll-behavior-x: contain;
+  /* No page zoom on touch screens. A stray pinch or double-tap zoomed the app
+     in and left it there, and scrolling the zoomed page kept the browser's
+     bars popping in and out. Scrolling still works. Gestures the app handles
+     itself (painting, the 3D view's pinch) are unaffected: they set their own
+     touch-action and read pointer events. Pairs with the viewport tag in
+     index.html and blockPageZoom() for iPhone Safari. */
+  touch-action: pan-x pan-y;
 }
 
 body {
   overscroll-behavior-x: contain;
+  touch-action: pan-x pan-y;
   max-width: 100%;
   font-family: var(--font-sans);
   font-size: var(--text-base);
@@ -1582,10 +1590,6 @@ main:has(#wizard-container.is-quick-edit:not(.hidden)) { padding-bottom: 0; }
   display: flex;
   justify-content: flex-end;
   padding: var(--space-4);
-}
-
-.refinement-footer .primary-btn {
-  min-width: 180px;
 }
 
 .results-actions {
@@ -3377,10 +3381,14 @@ main:has(#wizard-container.is-quick-edit:not(.hidden)) { padding-bottom: 0; }
 }
 
 /* Image Reveal Styles */
+/* The box takes the photo's own shape: the original sits in normal flow and
+   sets the height, and the result is layered over it at the same size. It
+   used to be a fixed 240px strip that "Edit one thing" then grew to the whole
+   photo, so the image jumped in size whenever painting was switched on. Now
+   both modes show the whole photo in the same box. */
 .image-reveal-container {
   position: relative;
   width: 100%;
-  height: 240px;
   overflow: hidden;
   border-radius: var(--border-radius);
   background: var(--color-bg-tertiary);
@@ -3391,11 +3399,11 @@ main:has(#wizard-container.is-quick-edit:not(.hidden)) { padding-bottom: 0; }
 }
 
 .image-reveal-container .original-image {
-  position: absolute;
-  top: 0;
-  left: 0;
+  position: relative;
+  display: block;
   width: 100%;
-  height: 100%;
+  height: auto;
+  max-height: min(70vh, 640px);
   object-fit: cover;
   border-radius: var(--border-radius);
   z-index: 2;
@@ -7678,162 +7686,6 @@ body.layout-editor-active:has(.modal.show) .layout-editor-screen .layout-sidebar
 .toast-success { border-left: 4px solid var(--success-500); }
 .toast-error   { border-left: 4px solid var(--error-500); }
 
-/* ── Generate 3D room modal ───────────────────────────────────────────── */
-.room3d-modal-content {
-  max-width: 920px;
-}
-
-.room3d-body {
-  display: grid;
-  grid-template-columns: 260px 1fr;
-  gap: 1.5rem;
-}
-
-@media (max-width: 760px) {
-  .room3d-body {
-    grid-template-columns: 1fr;
-  }
-}
-
-.room3d-controls {
-  display: flex;
-  flex-direction: column;
-  gap: 1rem;
-}
-
-.room3d-field {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
-
-.room3d-field > span {
-  font-size: 0.8125rem;
-  font-weight: 600;
-  color: var(--color-text-secondary);
-}
-
-.room3d-room-select,
-#room3d-room-select {
-  padding: 8px 10px;
-  border: 1px solid rgba(176, 167, 151, 0.55);
-  border-radius: 8px;
-  background: var(--color-bg-primary);
-  font-size: 0.875rem;
-}
-
-.room3d-presets {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 8px;
-}
-
-.room3d-preset {
-  padding: 8px 10px;
-  border: 1px solid rgba(176, 167, 151, 0.55);
-  border-radius: 8px;
-  background: var(--color-bg-primary);
-  font-size: 0.8125rem;
-  font-weight: 500;
-  color: var(--color-text-secondary);
-  cursor: pointer;
-  transition: border-color 0.15s, background 0.15s, color 0.15s;
-}
-
-.room3d-preset:hover {
-  border-color: var(--primary-color);
-}
-
-.room3d-preset--active {
-  border-color: var(--primary-color);
-  background: var(--primary-color);
-  color: var(--color-text-inverse);
-}
-
-.room3d-hint {
-  font-size: 0.75rem;
-  color: var(--color-text-tertiary);
-  line-height: 1.5;
-  margin: 0;
-}
-
-.room3d-preview {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 1rem;
-}
-
-@media (max-width: 560px) {
-  .room3d-preview {
-    grid-template-columns: 1fr;
-  }
-}
-
-.room3d-pane {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
-
-.room3d-pane-label {
-  font-size: 0.75rem;
-  font-weight: 600;
-  color: var(--color-text-tertiary);
-  text-transform: uppercase;
-  letter-spacing: 0.4px;
-}
-
-.room3d-guide-img,
-.room3d-result {
-  aspect-ratio: 1 / 1;
-  width: 100%;
-  border-radius: 10px;
-  border: 1px solid rgba(176, 167, 151, 0.4);
-  background: var(--color-bg-tertiary);
-  object-fit: cover;
-}
-
-.room3d-result {
-  position: relative;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  overflow: hidden;
-}
-
-.room3d-result-img {
-  position: absolute;
-  inset: 0;
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
-}
-
-.room3d-result-placeholder {
-  padding: 1rem;
-  text-align: center;
-  font-size: 0.8125rem;
-  color: var(--color-text-tertiary);
-}
-
-.room3d-spinner {
-  position: absolute;
-  inset: 0;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 12px;
-  background: rgba(253, 252, 250, 0.82);
-  font-size: 0.8125rem;
-  color: var(--color-text-secondary);
-}
-
-.room3d-footer {
-  display: flex;
-  justify-content: flex-end;
-  gap: 10px;
-}
 .toast-info    { border-left: 4px solid var(--indigo-500); }
 
 /* Every toast can be closed, and lays its text out left-aligned beside the
@@ -8922,10 +8774,10 @@ body.woodworking-active .feedback-fab {
    The editor lays its canvas exactly over the <img> (inline left/top/size),
    so it only exists while painting.
 
-   While .masking is on, both views show the WHOLE photo (contain) instead of
-   their cropped thumbnail: you can't choose a region of an image you can only
-   see a strip of. The editor maps strokes through object-fit itself, so this
-   is for the user, not for correctness. */
+   Both photos are shown whole, so you can choose any part of them: the result
+   card always is (its box takes the photo's shape), and Quick Edit's photo is
+   uncapped while .masking is on. The editor maps strokes through object-fit
+   itself, so this is for the user, not for correctness. */
 
 .mask-canvas {
   position: absolute;
@@ -8936,27 +8788,10 @@ body.woodworking-active .feedback-fab {
   display: block;
 }
 
-/* Result card: the whole generated image, no compare split. The mask is
-   painted on the generated image, so half of it showing the original would
-   mean painting over pixels you aren't editing. */
-/* The box takes the image's own shape: the image sits in normal flow at its
-   natural proportions, capped in height, and the box wraps it. A fixed box
-   height left wide images letterboxed in 300px+ of empty space. */
-.image-reveal-container.masking {
-  height: auto;
-  background: var(--color-bg-canvas);
-}
-.image-reveal-container.masking .generated-image {
-  position: relative;
-  display: block;
-  width: auto;
-  max-width: 100%;
-  height: auto;
-  max-height: min(70vh, 640px);
-  margin-inline: auto;
-  object-fit: contain;
-  clip-path: none;
-}
+/* Result card while painting: the whole result, no compare split — half of
+   it showing the original would mean painting over pixels you aren't
+   editing. Same box, same size as the compare view; only the layers change. */
+.image-reveal-container.masking .generated-image { clip-path: none; }
 .image-reveal-container.masking .original-image,
 .image-reveal-container.masking .compare-handle,
 .image-reveal-container.masking .compare-label { visibility: hidden; }
@@ -9137,3 +8972,943 @@ body.woodworking-active .feedback-fab {
    that share the bottom of the screen. */
 body:has(.region-menu.is-docked:not(.hidden)) .quick-edit-composer,
 body:has(.region-menu.is-docked:not(.hidden)) .feedback-fab { visibility: hidden; }
+
+/* ── Phones: the results view is a full-screen editor ──────────────────────
+   On a phone the results page used to be ~1.8 screens tall: history above the
+   title, the image starting half way down as a cropped strip, and the refine
+   box and Back/Save a scroll or two below. Like Quick Edit, it's now exactly
+   one window tall and doesn't scroll:
+
+     Back · Your design · Save
+     (brush hint, only while "Edit one thing" is on)
+     the image, filling what's left — whole, not cropped
+     history thumbnails · Edit one thing · Feng Shui
+     the refine box, as a composer
+
+   The page's own blocks are placed in a grid; display: contents flattens the
+   header and the Back/Save row into it, so no control is duplicated.
+   fitResultsEditor() measures where the view starts (--re-top). */
+@media (max-width: 767px) {
+  main:has(> #results-section:not(.hidden)) { padding-bottom: 0; }
+  body:has(#results-section:not(.hidden)) .feedback-fab { display: none; }
+
+  /* One column; the top bar and the tools row each hold two things that
+     share the row (title over Back/Save, history beside the tools). */
+  #results-section {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: auto minmax(0, 1fr) auto auto;
+    grid-template-areas: "bar" "image" "tools" "composer";
+    box-sizing: border-box;
+    height: calc(100dvh - var(--re-top, 72px));
+    margin-top: 0;
+    padding-bottom: max(var(--space-2), var(--safe-bottom, 0px));
+  }
+
+  #results-section .results-header,
+  #results-section .results-header-text { display: contents; }
+
+  /* Top bar: Back and Save at the ends, the title centred over them. */
+  #results-section .results-actions {
+    grid-area: bar;
+    display: flex;
+    flex-direction: row;
+    justify-content: space-between;
+    align-items: center;
+    margin: 0;
+    padding: 0;
+    flex-wrap: nowrap;
+    /* The older phone rule pinned this row to the bottom of the page with a
+       divider above it; as the top bar it needs neither. */
+    position: static;
+    border-top: 0;
+    background: none;
+  }
+  #results-section .results-actions > .secondary-btn,
+  #results-section .results-actions > .primary-btn { width: auto; flex: none; }
+  /* Left-aligned beside an icon-only Back, so it clears Save. */
+  #results-section .results-header h2 {
+    grid-area: bar;
+    align-self: center;
+    justify-self: start;
+    position: relative;
+    z-index: 1;
+    margin: 0 0 0 calc(40px + var(--space-3));
+    font-size: var(--text-lg);
+    white-space: nowrap;
+    pointer-events: none;
+  }
+  #back-to-options-btn,
+  #save-design-btn {
+    min-height: 40px;
+    padding: 0 var(--space-3);
+    font-size: var(--text-sm);
+  }
+  #results-section #back-to-options-btn { width: 40px; padding: 0; }
+  #results-section #back-to-options-btn span { display: none; }
+
+  /* The subtitle explains the compare divider; here it's only shown while
+     painting, as a label over the top of the image — not a row of its own,
+     which shrank the image every time painting was switched on. Touches go
+     through it to the canvas. */
+  #results-section .results-header-hint {
+    grid-area: image;
+    align-self: start;
+    justify-self: center;
+    position: relative;
+    z-index: 7;                 /* above the paint canvas (6) */
+    display: none;
+    max-width: calc(100% - 2 * var(--space-4));
+    margin: calc(var(--space-2) + var(--space-3)) 0 0;   /* the image's own top margin, plus a gap */
+    padding: var(--space-1) var(--space-3);
+    border-radius: var(--radius-pill);
+    background: color-mix(in srgb, var(--color-text-primary) 80%, transparent);
+    color: var(--color-text-inverse);
+    font-size: var(--text-xs);
+    text-align: center;
+    pointer-events: none;
+  }
+  #results-section.is-region-editing .results-header-hint { display: block; }
+
+  /* The image takes every pixel that's left and shows the whole photo. */
+  #results-section .results-display { grid-area: image; min-height: 0; margin-top: var(--space-2); }
+  #results-section .design-carousel { height: 100%; padding: 0; overflow: hidden; }
+  #results-section .design-card { height: 100%; min-height: 0; margin: 0; }
+  #results-section .design-image-container { flex: 1 1 0; min-height: 0; }
+  #results-section .image-reveal-container { height: 100%; }
+  #results-section .image-reveal-container .design-image { object-fit: contain; }
+  #results-section .image-reveal-container .original-image {
+    position: absolute;
+    inset: 0;
+    height: 100%;
+    max-height: none;
+  }
+  #results-section .design-info { display: none; }
+  /* The wait state fills the image's space too (it was sized for the strip). */
+  #results-section .image-loader { inset: 0; height: auto; min-height: 0; }
+
+  /* History and tools share one row under the image: history on the left,
+     scrolling sideways if there are many versions; tools on the right. */
+  #results-section .design-history {
+    grid-area: tools;
+    justify-self: start;
+    align-self: center;
+    max-width: calc(100% - 13rem);
+    margin: var(--space-2) 0 0;
+  }
+  #results-section .design-history-label { display: none; }
+  #results-section .design-history-strip { padding: 2px; gap: var(--space-1); }
+  #results-section .design-history-thumb { width: 40px; }
+  #results-section .design-history-thumb img { height: 32px; }
+  #results-section .design-history-thumb-label { display: none; }
+  #results-section .results-header-actions {
+    grid-area: tools;
+    justify-self: end;
+    align-self: center;
+    width: auto;
+    flex-wrap: nowrap;
+    gap: var(--space-1);
+    margin-top: var(--space-2);
+  }
+  #results-section .results-header-actions > .secondary-btn {
+    flex: none;
+    width: auto;
+    min-height: 40px;
+    padding: 0 var(--space-3);
+    font-size: var(--text-sm);
+  }
+  #results-section .feng-shui-action-btn { width: 40px; padding: 0; }
+  #results-section .feng-shui-action-btn span { display: none; }
+
+  /* The refine box, as a composer: text on top, Premium and Regenerate below. */
+  #results-section .refinement-area {
+    grid-area: composer;
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--space-2);
+    margin: var(--space-2) 0 0;
+    padding: var(--space-3);
+    box-shadow: var(--shadow-sm);
+  }
+  #results-section .refinement-header { display: none; }
+  #results-section .refinement-textarea {
+    flex: 1 1 100%;
+    width: 100%;
+    height: 4.25rem;   /* two lines of 16px text */
+    min-height: 0;
+    margin: 0;
+    padding: var(--space-2) var(--space-3);
+    resize: none;
+    font-size: max(16px, 1rem);   /* ≥16px: stops iOS zooming on focus */
+    scrollbar-width: none;        /* still scrolls once there's more text */
+  }
+  #results-section .refinement-textarea::-webkit-scrollbar { display: none; }
+  #results-section .refinement-area .model-pref-row { flex: 1; min-width: 0; margin: 0; }
+  #results-section .refinement-area .model-pref-toggle {
+    align-items: center;
+    gap: var(--space-2);
+    padding: 0;
+    background: none;
+    border: 0;
+  }
+  #results-section .refinement-area .model-pref-track { margin-top: 0; }
+  /* "Use premium model" wrapped to three lines here; it reads "Premium",
+     like Quick Edit's switch. (The full text stays for screen readers.) */
+  #results-section .refinement-area .model-pref-label { font-size: 0; }
+  #results-section .refinement-area .model-pref-label::after {
+    content: 'Premium';
+    font-size: var(--text-sm);
+  }
+  /* No room for the explanation or the sign-in note; a locked switch opens
+     sign-in or the token options when tapped instead. */
+  #results-section .refinement-area .model-pref-hint,
+  #results-section .refinement-area .model-pref-upsell { display: none; }
+  #results-section .refinement-footer { padding: 0; }
+  #results-section #regenerate-btn { min-height: 40px; padding: 0 var(--space-4); }
+
+  /* The region bottom sheet stands in for the composer while it's up. */
+  body:has(.region-menu.is-docked:not(.hidden)) #results-section .refinement-area { visibility: hidden; }
+}
+
+/* ── iPads: the results view is a full-window editor with a side panel ─────
+   On an iPad the results page fell between the phone editor and the desktop
+   page: in landscape the result was a 400px card (≈18% of the screen) that
+   started below the fold; in portrait it was big but cut off, with Refine and
+   Save a screen further down. Like iPad photo apps, it's now one window tall
+   with the image as the main area and the controls in a panel —
+
+     landscape: image | panel on the right (Back · Save, subtitle, history,
+                Edit one thing, Feng Shui, refine box)
+     portrait:  image on top, panel below (history and tools, refine box)
+
+   The subtitle stays in place and only swaps its text while painting, so the
+   image never changes size. Same blocks as the phone layout, re-placed in a
+   grid; fitResultsEditor() measures where the view starts (--re-top).
+   Applies to iPad widths, plus larger touch screens (iPad Pro landscape). */
+@media (min-width: 768px) and (max-width: 1180px),
+       (min-width: 768px) and (max-width: 1376px) and (pointer: coarse) {
+  main:has(> #results-section:not(.hidden)) { padding-bottom: 0; }
+  body:has(#results-section:not(.hidden)) .feedback-fab { display: none; }
+
+  #results-section {
+    display: grid;
+    box-sizing: border-box;
+    height: calc(100dvh - var(--re-top, 118px));
+    margin-top: 0;
+    padding-bottom: max(var(--space-4), var(--safe-bottom, 0px));
+    gap: var(--space-3) var(--space-5);
+  }
+  #results-section .results-header,
+  #results-section .results-header-text { display: contents; }
+
+  /* Back · title · Save */
+  #results-section .results-actions {
+    grid-area: bar;
+    display: flex;
+    flex-direction: row;
+    justify-content: space-between;
+    align-items: center;
+    flex-wrap: nowrap;
+    margin: 0;
+    padding: 0;
+    position: static;
+    border-top: 0;
+    background: none;
+  }
+  #results-section .results-actions > .secondary-btn,
+  #results-section .results-actions > .primary-btn { width: auto; flex: none; }
+  #results-section #back-to-options-btn { width: 40px; min-height: 40px; padding: 0; }
+  #results-section #back-to-options-btn span { display: none; }
+  #results-section #save-design-btn { min-height: 40px; padding: 0 var(--space-4); }
+  #results-section .results-header h2 {
+    grid-area: bar;
+    align-self: center;
+    justify-self: start;
+    position: relative;
+    z-index: 1;
+    margin: 0 0 0 calc(40px + var(--space-3));
+    font-size: var(--text-xl);
+    white-space: nowrap;
+    pointer-events: none;
+  }
+  #results-section .results-header-hint { grid-area: hint; margin: 0; }
+  /* A bigger header, when the photo leaves room for one (fitResultsPhoto:
+     .re-roomy in portrait, .re-header-top in landscape). */
+  #results-section:is(.re-roomy, .re-header-top) #back-to-options-btn { width: 44px; min-height: 44px; }
+  #results-section:is(.re-roomy, .re-header-top) #save-design-btn { min-height: 44px; padding: 0 var(--space-5); }
+  #results-section:is(.re-roomy, .re-header-top) .results-header h2 { margin-left: calc(44px + var(--space-4)); font-size: var(--text-2xl); }
+  #results-section:is(.re-roomy, .re-header-top) .results-header-hint { font-size: var(--text-base); }
+
+  /* The image fills its area and shows the whole photo. */
+  #results-section .results-display { grid-area: image; min-height: 0; min-width: 0; }
+  #results-section .design-carousel { display: block; height: 100%; padding: 0; overflow: hidden; }
+  #results-section .design-card { width: 100%; height: 100%; min-height: 0; margin: 0; flex: none; }
+  #results-section .design-image-container { flex: 1 1 0; min-height: 0; }
+  #results-section .image-reveal-container { height: 100%; }
+  #results-section .image-reveal-container .design-image { object-fit: contain; }
+  #results-section .image-reveal-container .original-image {
+    position: absolute;
+    inset: 0;
+    height: 100%;
+    max-height: none;
+  }
+  #results-section .design-info { display: none; }
+  #results-section .image-loader { inset: 0; height: auto; min-height: 0; }
+
+  #results-section .design-history { grid-area: history; min-width: 0; margin: 0; }
+  #results-section .results-header-actions { grid-area: tools; flex-wrap: nowrap; margin: 0; }
+
+  /* The refine box: label, a roomier text box, then Premium and Regenerate.
+     The premium explanation and sign-in note don't fit; a locked switch opens
+     sign-in or the token options when tapped. */
+  #results-section .refinement-area { grid-area: composer; margin: 0; box-shadow: var(--shadow-sm); }
+  #results-section .refinement-header { padding: var(--space-3) var(--space-4) var(--space-2); }
+  #results-section .refinement-hint { display: none; }
+  #results-section .refinement-textarea {
+    resize: none;
+    min-height: 0;
+    font-size: max(16px, 1rem);   /* ≥16px: stops iOS zooming on focus */
+  }
+  #results-section .refinement-area .model-pref-row {
+    display: flex;
+    align-items: center;
+    margin: 0;
+    padding: 0 var(--space-4);
+  }
+  #results-section .refinement-area .model-pref-toggle {
+    align-items: center;
+    gap: var(--space-2);
+    padding: 0;
+    background: none;
+    border: 0;
+  }
+  #results-section .refinement-area .model-pref-track { margin-top: 0; }
+  #results-section .refinement-area .model-pref-hint,
+  #results-section .refinement-area .model-pref-upsell { display: none; }
+  #results-section .refinement-footer { padding: var(--space-3) var(--space-4) var(--space-4); }
+
+  body:has(.region-menu.is-docked:not(.hidden)) #results-section .refinement-area { visibility: hidden; }
+
+  /* Landscape: the panel sits to the right of the image. */
+  @media (orientation: landscape) {
+    /* The image runs the full height beside the panel; the panel is as wide
+       as the photo leaves room for (fitResultsPhoto sets --re-panel-w) and
+       its refine box takes whatever height the rest doesn't. When the photo
+       is too wide to fill that height, the header moves across the top
+       instead (.re-header-top): it gets bigger, and the height it takes was
+       only bands above and below the photo. */
+    #results-section {
+      --re-fit: landscape;
+      grid-template-columns: minmax(0, 1fr) var(--re-panel-w, 320px);
+      grid-template-rows: auto auto auto auto minmax(0, 1fr);
+      grid-template-areas:
+        "image bar"
+        "image hint"
+        "image history"
+        "image tools"
+        "image composer";
+    }
+    #results-section.re-header-top {
+      grid-template-areas:
+        "bar   bar"
+        "hint  hint"
+        "image history"
+        "image tools"
+        "image composer";
+    }
+    /* In the panel, the subtitle stays small enough not to crowd it. */
+    #results-section:not(.re-header-top) .results-header-hint { font-size: var(--text-sm); }
+    #results-section .refinement-area { display: flex; flex-direction: column; min-height: 0; }
+    /* History as a grid of labelled thumbnails, scrolling if there are many. */
+    #results-section .design-history-strip {
+      flex-wrap: wrap;
+      max-height: 11.5rem;
+      overflow-x: hidden;
+      overflow-y: auto;
+    }
+    #results-section .design-history-thumb { width: calc((100% - 2 * var(--space-2)) / 3); }
+    #results-section .results-header-actions { flex-direction: column; align-items: stretch; gap: var(--space-2); }
+    #results-section .results-header-actions > .secondary-btn { width: 100%; }
+    #results-section .refinement-textarea { flex: 1 1 auto; height: auto; min-height: 6rem; }
+    #results-section .refinement-footer { display: flex; }
+    #results-section #regenerate-btn { flex: 1; }
+  }
+
+  /* Portrait: the panel sits below the image. */
+  @media (orientation: portrait) {
+    /* When the photo is shorter than its slot, fitResultsPhoto sizes the image
+       row to the photo (--re-image-row), enlarges the header (.re-roomy) and
+       lets the refine box take the height that was bands above and below it
+       (--re-composer-row). A photo that already fills the height keeps the
+       compact header and refine box, so it stays as large as it can be. */
+    #results-section {
+      --re-fit: portrait;
+      grid-template-columns: minmax(0, 1fr) auto;
+      grid-template-rows: auto auto var(--re-image-row, minmax(0, 1fr)) auto var(--re-composer-row, auto);
+      grid-template-areas:
+        "bar     bar"
+        "hint    hint"
+        "image   image"
+        "history tools"
+        "composer composer";
+    }
+    #results-section .design-history { align-self: center; }
+    #results-section .design-history-label { display: none; }
+    #results-section .design-history-strip { padding: 2px; }
+    #results-section .design-history-thumb { width: 64px; }
+    #results-section .design-history-thumb img { height: 44px; }
+    #results-section .design-history-thumb-label { display: none; }
+    #results-section .results-header-actions { align-self: center; gap: var(--space-2); }
+    #results-section .results-header-actions > .secondary-btn { width: auto; flex: none; }
+    /* Composer: text box on the left, Premium and Regenerate on the right. */
+    #results-section .refinement-area {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      grid-template-rows: minmax(0, 1fr) auto;
+      grid-template-areas: "text premium" "text button";
+      align-items: center;
+      gap: var(--space-2) var(--space-3);
+      padding: var(--space-3);
+    }
+    #results-section .refinement-header { display: none; }
+    #results-section .refinement-textarea { grid-area: text; width: 100%; height: 5.5rem; min-height: 0; margin: 0; }
+    /* With spare room, the text box fills the taller refine box. */
+    #results-section.re-roomy .refinement-textarea { height: 100%; min-height: 5.5rem; }
+    #results-section .refinement-area .model-pref-row { align-self: start; }
+    #results-section .refinement-area .model-pref-row { grid-area: premium; padding: 0; }
+    #results-section .refinement-footer { grid-area: button; padding: 0; }
+  }
+}
+
+/* Floor plan import (DXF / PDF) in progress */
+#layout-canvas-wrapper.plan-importing {
+  cursor: progress;
+}
+#layout-canvas-wrapper.plan-importing svg {
+  opacity: 0.6;
+  transition: opacity 150ms ease;
+}
+
+/* ── Floor plan import: review imported layers ───────────────────────── */
+.plan-review-modal { align-items: center; }
+.plan-review-content {
+  width: min(100%, 1180px);
+  max-width: 1180px;
+  height: min(860px, calc(100dvh - 2rem));
+  max-height: none;
+}
+.plan-review-subtitle {
+  margin: 2px 0 0;
+  font-size: 0.8125rem;
+  color: var(--color-text-secondary);
+}
+.plan-review-body {
+  display: grid;
+  grid-template-columns: 380px 1fr;
+  gap: 1rem;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+.plan-review-side {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  overflow-y: auto;
+  min-height: 0;
+  padding-right: 4px;
+}
+.plan-review-section-title {
+  margin: 0.75rem 0 0;
+  font-size: 0.75rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--color-text-secondary);
+}
+.plan-review-status {
+  display: flex;
+  gap: 0.5rem;
+  align-items: flex-start;
+  padding: 0.625rem 0.75rem;
+  border-radius: 0.625rem;
+  font-size: 0.8125rem;
+  line-height: 1.4;
+  background: var(--color-bg-secondary);
+  color: var(--color-text-primary);
+}
+.plan-review-status.is-ai { background: var(--color-accent-primary-subtle); }
+.plan-review-status.is-warn { background: #fff4e5; color: #7a4a00; }
+.plan-review-spinner {
+  flex: none;
+  width: 14px;
+  height: 14px;
+  margin-top: 2px;
+  border-radius: 50%;
+  border: 2px solid var(--color-border-primary);
+  border-top-color: var(--color-accent-primary);
+  animation: plan-review-spin 0.8s linear infinite;
+}
+@keyframes plan-review-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .plan-review-spinner { animation-duration: 2.4s; } }
+.plan-review-layers, .plan-review-rooms, .plan-review-legend {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.plan-review-layer {
+  display: grid;
+  /* eye · swatch · name · ✨ · category — every child is pinned to its column so a hidden ✨
+     can't shift the picker into its place */
+  grid-template-columns: 28px 10px minmax(0, 1fr) 16px 140px;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.375rem 0.25rem;
+  border-radius: 0.5rem;
+}
+.plan-review-layer:hover, .plan-review-layer:focus-within { background: var(--color-bg-secondary); }
+.plan-review-layer > .plan-review-eye { grid-column: 1; }
+.plan-review-layer > .plan-review-swatch { grid-column: 2; }
+.plan-review-layer > .plan-review-name { grid-column: 3; }
+.plan-review-layer > .plan-review-ai { grid-column: 4; text-align: center; }
+.plan-review-layer > .plan-review-select { grid-column: 5; width: 100%; }
+.plan-review-layer > .plan-review-ai[hidden] { display: block; visibility: hidden; }
+.plan-review-layer.is-hidden .plan-review-name { opacity: 0.45; }
+.plan-review-eye {
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--color-text-secondary);
+  cursor: pointer;
+}
+.plan-review-eye:hover { background: var(--color-border-subtle); }
+.plan-review-eye .eye-off, .plan-review-eye[aria-pressed="false"] .eye-on { display: none; }
+.plan-review-eye[aria-pressed="false"] .eye-off { display: block; }
+.plan-review-swatch { width: 10px; height: 10px; border-radius: 3px; }
+.plan-review-name { display: flex; flex-direction: column; min-width: 0; }
+.plan-review-label {
+  font-size: 0.8125rem;
+  font-weight: 500;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.plan-review-meta { font-size: 0.75rem; color: var(--color-text-secondary); }
+.plan-review-ai { font-size: 0.8125rem; }
+.plan-review-select, .plan-review-room-name {
+  min-width: 0;
+  height: 30px;
+  padding: 0 0.5rem;
+  border: 1px solid var(--color-border-primary);
+  border-radius: 6px;
+  background: var(--color-bg-primary);
+  font: inherit;
+  font-size: 0.8125rem;
+  color: var(--color-text-primary);
+}
+.plan-review-size {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.8125rem;
+  color: var(--color-text-secondary);
+}
+.plan-review-size label { display: flex; align-items: center; gap: 0.375rem; }
+.plan-review-size input {
+  width: 5.5rem;
+  height: 30px;
+  padding: 0 0.5rem;
+  border: 1px solid var(--color-border-primary);
+  border-radius: 6px;
+  background: var(--color-bg-primary);
+  font: inherit;
+  font-size: 0.8125rem;
+  font-variant-numeric: tabular-nums;
+  color: var(--color-text-primary);
+}
+.plan-review-size-note { margin: 0; }
+.plan-review-size-note.is-warn { color: #7a4a00; }
+.plan-review-room {
+  display: grid;
+  grid-template-columns: 20px 1fr;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.25rem;
+}
+.plan-review-empty { font-size: 0.8125rem; color: var(--color-text-secondary); padding: 0.25rem; }
+.plan-review-option {
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+  margin-top: 0.75rem;
+  font-size: 0.8125rem;
+}
+.plan-review-preview {
+  position: relative;
+  min-height: 0;
+  border: 1px solid var(--color-border-subtle);
+  border-radius: 0.75rem;
+  background: #fff;
+  overflow: hidden;
+}
+.plan-review-svg { width: 100%; height: 100%; display: block; }
+.plan-review-svg path { fill: none; stroke-width: 1; stroke-linecap: round; }
+.plan-review-svg text { fill: #6b7280; text-anchor: middle; dominant-baseline: middle; font-family: sans-serif; }
+.plan-review-svg text.is-room { fill: #7c3aed; font-weight: 600; }
+.plan-review-svg .pr-cat-wall > path { stroke: #2f2b27; stroke-width: 1.6; }
+.plan-review-svg .pr-cat-door > path { stroke: #1f9d55; stroke-width: 1.4; }
+.plan-review-svg .pr-cat-window > path { stroke: #2f6fe0; stroke-width: 1.4; }
+.plan-review-svg .pr-cat-furniture > path { stroke: #d97706; }
+.plan-review-svg .pr-cat-stairs > path { stroke: #7c3aed; }
+.plan-review-svg .pr-cat-detail > path { stroke: #8b8f97; }
+.plan-review-svg .pr-cat-annotation > path { stroke: #b9bdc4; }
+/* Pointing at a layer row spotlights that layer: the rest fades back, and the layer keeps
+   its category colors (recoloring it would read as a category of its own). */
+.plan-review-svg > g { transition: opacity 120ms ease-out; }
+.plan-review-svg.has-hot > g:not(.is-hot) { opacity: 0.12; }
+.plan-review-svg .is-hot path { stroke-width: 2; }
+@media (prefers-reduced-motion: reduce) { .plan-review-svg > g { transition: none; } }
+.plan-review-svg [data-obj] { cursor: pointer; }
+.plan-review-svg .pr-hit { fill: transparent; stroke: none; }
+.plan-review-svg [data-obj]:hover .pr-hit { fill: rgba(79, 70, 229, 0.08); }
+.plan-review-svg [data-obj]:hover > path { stroke-width: 2.2; }
+.plan-review-svg .is-noise > path { stroke: #c4c8cf; stroke-dasharray: 3 3; }
+.plan-review-legend {
+  position: absolute;
+  left: 0.75rem;
+  bottom: 0.75rem;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.375rem 0.75rem;
+  padding: 0.375rem 0.625rem;
+  border-radius: 0.5rem;
+  background: rgba(255, 255, 255, 0.92);
+  font-size: 0.75rem;
+  color: var(--color-text-secondary);
+}
+.plan-review-legend li { display: flex; align-items: center; gap: 0.375rem; }
+.plan-review-legend span { width: 10px; height: 10px; border-radius: 3px; }
+@media (max-width: 860px) {
+  .plan-review-content { height: calc(100dvh - 1rem); }
+  .plan-review-body { grid-template-columns: 1fr; grid-template-rows: 45% 1fr; }
+  .plan-review-preview { order: -1; }
+  .plan-review-layer { grid-template-columns: 28px 10px minmax(0, 1fr) 16px 120px; }
+  /* phones: legend under the preview instead of over it, buttons side by side */
+  .plan-review-preview { display: flex; flex-direction: column; }
+  .plan-review-svg { flex: 1; min-height: 0; }
+  .plan-review-legend { position: static; padding: 0.375rem 0.625rem 0.5rem; background: transparent; }
+  .plan-review-modal .modal-footer { flex-direction: row; }
+  .plan-review-modal .modal-footer .primary-btn,
+  .plan-review-modal .modal-footer .secondary-btn { flex: 1; width: auto; }
+}
+
+.plan-review-popover {
+  position: absolute;
+  z-index: 2;
+  width: 210px;
+  padding: 0.5rem 0.625rem;
+  border: 1px solid var(--color-border-primary);
+  border-radius: 0.5rem;
+  background: var(--color-bg-primary);
+  box-shadow: 0 8px 24px rgba(32, 30, 26, 0.18);
+}
+.plan-review-popover label { display: flex; flex-direction: column; gap: 0.375rem; }
+.plan-review-popover-title { font-size: 0.75rem; color: var(--color-text-secondary); }
+.plan-review-popover select {
+  height: 30px;
+  border: 1px solid var(--color-border-primary);
+  border-radius: 6px;
+  background: var(--color-bg-primary);
+  font: inherit;
+  font-size: 0.8125rem;
+}
+.plan-review-hint { margin: 0.375rem 0 0; font-size: 0.75rem; color: var(--color-text-secondary); }
+
+/* ── Render a room (3D) ───────────────────────────────────────────────── */
+.rr-modal { align-items: center; }
+.rr-dialog {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  width: min(1180px, 100%);
+  height: min(780px, calc(100dvh - 2rem));
+  background: var(--color-bg-primary);
+  border: 1px solid var(--warm-200);
+  border-radius: 16px;
+  box-shadow: 0 24px 60px rgba(32, 30, 26, 0.24);
+  overflow: hidden;
+  color: var(--color-text-primary);
+}
+.rr-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 1.25rem 1.5rem 1rem;
+}
+.rr-title {
+  margin: 0;
+  font-family: 'Instrument Serif', Georgia, serif;
+  font-weight: 400;
+  font-size: 2rem;
+  line-height: 1.05;
+  letter-spacing: -0.01em;
+}
+.rr-sub { margin: 0.375rem 0 0; font-size: 0.875rem; color: var(--color-text-secondary); }
+.rr-close {
+  display: grid;
+  place-items: center;
+  width: 36px;
+  height: 36px;
+  border: 0;
+  border-radius: 10px;
+  background: transparent;
+  color: var(--warm-600);
+  cursor: pointer;
+}
+.rr-close:hover { background: var(--warm-150); color: var(--color-text-primary); }
+
+.rr-body {
+  display: grid;
+  grid-template-columns: 340px minmax(0, 1fr);
+  min-height: 0;
+}
+.rr-side {
+  overflow-y: auto;
+  padding: 0 1.25rem 1.5rem 1.5rem;
+}
+.rr-plan-wrap {
+  height: 220px;
+  border: 1px solid var(--warm-200);
+  border-radius: 12px;
+  background: var(--warm-100);
+  padding: 8px;
+}
+.rr-plan { width: 100%; height: 100%; display: block; }
+.rr-room polygon { fill: var(--color-bg-primary); transition: fill 120ms ease; }
+.rr-room { cursor: pointer; outline: none; }
+.rr-room:hover polygon { fill: var(--warm-150); }
+.rr-room.is-on polygon { fill: var(--indigo-50); }
+.rr-room:focus-visible polygon { stroke: var(--indigo-600); stroke-width: 2px; stroke-dasharray: 4 3; vector-effect: non-scaling-stroke; }
+.rr-room text {
+  fill: var(--warm-600);
+  font-family: Inter, system-ui, sans-serif;
+  font-weight: 500;
+  text-anchor: middle;
+  dominant-baseline: middle;
+  pointer-events: none;
+}
+.rr-room.is-on text { fill: var(--indigo-800); font-weight: 600; }
+.rr-wall { fill: none; stroke: var(--warm-800); stroke-linecap: square; }
+.rr-glass { fill: none; stroke: var(--warm-400); }
+.rr-camera { pointer-events: none; }
+.rr-cone { fill: var(--indigo-600); fill-opacity: 0.14; stroke: var(--indigo-600); stroke-opacity: 0.5; stroke-width: 1px; vector-effect: non-scaling-stroke; }
+.rr-cam { fill: var(--indigo-600); stroke: #fff; stroke-width: 2px; vector-effect: non-scaling-stroke; }
+.rr-cam-alt { fill: #fff; stroke: var(--indigo-600); stroke-width: 1.5px; vector-effect: non-scaling-stroke; pointer-events: all; cursor: pointer; }
+.rr-cam-alt:hover { fill: var(--indigo-100); }
+
+.rr-room-meta { margin: 1rem 0 1.25rem; }
+.rr-room-name {
+  margin: 0;
+  font-family: 'Instrument Serif', Georgia, serif;
+  font-weight: 400;
+  font-size: 1.625rem;
+  line-height: 1.1;
+}
+.rr-room-facts { margin: 0.25rem 0 0; font-size: 0.8125rem; color: var(--color-text-secondary); }
+
+.rr-group { border: 0; margin: 0 0 1.25rem; padding: 0; min-width: 0; }
+.rr-h { padding: 0; margin-bottom: 0.5rem; font-size: 0.8125rem; font-weight: 600; color: var(--color-text-primary); }
+.rr-option, .rr-style {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 0.625rem;
+  cursor: pointer;
+}
+.rr-option input, .rr-style input { position: absolute; opacity: 0; pointer-events: none; }
+.rr-option {
+  padding: 0.5rem 0.625rem;
+  border-radius: 8px;
+  font-size: 0.875rem;
+}
+.rr-option::before {
+  content: '';
+  flex: none;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  border: 1.5px solid var(--warm-400);
+  background: var(--color-bg-primary);
+}
+.rr-option:hover { background: var(--warm-100); }
+.rr-option.is-on { background: var(--indigo-50); color: var(--indigo-800); }
+.rr-option.is-on::before { border: 4px solid var(--indigo-600); }
+.rr-styles { display: grid; gap: 6px; }
+.rr-style {
+  padding: 0.625rem 0.75rem;
+  border: 1px solid var(--warm-200);
+  border-radius: 10px;
+  background: var(--color-bg-primary);
+}
+.rr-style:hover { border-color: var(--warm-300); }
+.rr-style.is-on { border-color: var(--indigo-600); box-shadow: inset 0 0 0 1px var(--indigo-600); }
+.rr-swatches { display: flex; flex: none; }
+.rr-swatches i {
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  border: 2px solid var(--color-bg-primary);
+  box-shadow: 0 0 0 1px var(--warm-200);
+}
+.rr-swatches i + i { margin-left: -7px; }
+.rr-style-text { display: flex; flex-direction: column; min-width: 0; }
+.rr-style-name { font-size: 0.875rem; font-weight: 500; }
+.rr-style-desc { font-size: 0.75rem; color: var(--color-text-secondary); }
+.rr-option:has(input:focus-visible), .rr-style:has(input:focus-visible) { outline: 2px solid var(--indigo-600); outline-offset: 2px; }
+.rr-option:has(input:disabled), .rr-style:has(input:disabled) { cursor: default; opacity: 0.6; }
+.rr-empty { margin: 0; font-size: 0.8125rem; color: var(--color-text-secondary); }
+
+.rr-main {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  padding: 0 1.5rem 1rem 0.25rem;
+}
+.rr-stage {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  border-radius: 12px;
+  background: var(--warm-800);
+  overflow: hidden;
+}
+.rr-image {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  display: block;
+  transition: opacity 300ms ease, filter 300ms ease;
+}
+.rr-modal.is-busy .rr-image { opacity: 0.5; filter: saturate(0.4); }
+.rr-stage-tabs {
+  position: absolute;
+  top: 12px;
+  left: 12px;
+  display: flex;
+  padding: 3px;
+  border-radius: 9px;
+  background: rgba(20, 18, 15, 0.6);
+  backdrop-filter: blur(6px);
+}
+.rr-stage-tabs[hidden] { display: none; }
+.rr-stage-tabs button {
+  border: 0;
+  border-radius: 6px;
+  padding: 0.3rem 0.7rem;
+  background: transparent;
+  color: rgba(255, 255, 255, 0.78);
+  font: 500 0.8125rem/1.2 Inter, system-ui, sans-serif;
+  cursor: pointer;
+}
+.rr-stage-tabs button[aria-selected="true"] { background: var(--color-bg-primary); color: var(--warm-900); }
+.rr-working {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  padding: 0 1rem 1rem;
+  color: #fff;
+}
+.rr-working-bar { height: 2px; background: rgba(255, 255, 255, 0.18); overflow: hidden; border-radius: 2px; }
+.rr-working-bar span {
+  display: block;
+  width: 35%;
+  height: 100%;
+  background: var(--indigo-300);
+  animation: rr-progress 1.6s ease-in-out infinite;
+}
+@keyframes rr-progress { from { transform: translateX(-100%); } to { transform: translateX(290%); } }
+@media (prefers-reduced-motion: reduce) {
+  .rr-working-bar span { animation: rr-pulse 2s ease-in-out infinite; width: 100%; transform: none; }
+  @keyframes rr-pulse { 50% { opacity: 0.35; } }
+}
+.rr-working-text { margin: 0.5rem 0 0; font-size: 0.8125rem; }
+.rr-stage-error {
+  position: absolute;
+  left: 12px;
+  right: 12px;
+  bottom: 12px;
+  margin: 0;
+  padding: 0.625rem 0.75rem;
+  border-radius: 8px;
+  background: var(--color-bg-primary);
+  color: var(--error-700, #b42318);
+  font-size: 0.8125rem;
+}
+.rr-caption {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding-top: 0.75rem;
+}
+.rr-caption-view { margin: 0; font-size: 0.875rem; color: var(--color-text-secondary); }
+.rr-history { display: flex; gap: 6px; margin: 0; padding: 0; list-style: none; overflow-x: auto; max-width: 60%; }
+.rr-history button {
+  display: block;
+  padding: 0;
+  border: 2px solid transparent;
+  border-radius: 7px;
+  background: none;
+  cursor: pointer;
+}
+.rr-history button.is-on { border-color: var(--indigo-600); }
+.rr-history img { display: block; width: 60px; height: 40px; object-fit: cover; border-radius: 5px; }
+
+.rr-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 0.875rem 1.5rem;
+  border-top: 1px solid var(--warm-200);
+}
+.rr-note { margin: 0; font-size: 0.8125rem; color: var(--warm-600); }
+.rr-actions { display: flex; gap: 0.5rem; }
+.rr-btn {
+  height: 40px;
+  padding: 0 1.125rem;
+  border-radius: 10px;
+  font: 600 0.875rem/1 Inter, system-ui, sans-serif;
+  cursor: pointer;
+}
+.rr-btn--quiet { border: 1px solid var(--warm-300); background: var(--color-bg-primary); color: var(--color-text-primary); }
+.rr-btn--quiet:hover:not(:disabled) { background: var(--warm-100); }
+.rr-btn--primary { border: 1px solid var(--indigo-600); background: var(--indigo-600); color: #fff; min-width: 140px; }
+.rr-btn--primary:hover:not(:disabled) { background: var(--indigo-700); border-color: var(--indigo-700); }
+.rr-btn:disabled { opacity: 0.45; cursor: default; }
+.rr-btn:focus-visible, .rr-close:focus-visible, .rr-stage-tabs button:focus-visible, .rr-history button:focus-visible {
+  outline: 2px solid var(--indigo-600);
+  outline-offset: 2px;
+}
+
+@media (max-width: 860px) {
+  .rr-modal { padding: 0; }
+  .rr-dialog { height: 100dvh; width: 100%; border-radius: 0; border: 0; }
+  .rr-body { grid-template-columns: 1fr; grid-auto-rows: auto; align-content: start; overflow-y: auto; }
+  .rr-side { overflow: visible; padding: 0 1rem; }
+  .rr-main { padding: 0 1rem 1rem; order: -1; min-height: auto; }
+  .rr-stage { flex: none; aspect-ratio: 3 / 2; height: auto; }
+  .rr-plan-wrap { height: 180px; }
+  .rr-history { max-width: 50%; }
+  .rr-footer { padding: 0.75rem 1rem; }
+  .rr-note { display: none; }
+  .rr-actions { width: 100%; }
+  .rr-actions .rr-btn { flex: 1; }
+}

@@ -123,6 +123,8 @@ function setResultsRegionUi(on) {
         hint.dataset.defaultText ||= hint.textContent;
         hint.textContent = on ? hint.dataset.regionHint : hint.dataset.defaultText;
     }
+    // On phones the hint has its own row, shown only while painting.
+    resultsSection?.classList.toggle('is-region-editing', on);
 }
 
 /** Tear the live editor down, with its menu. */
@@ -341,19 +343,99 @@ function runRegionChange(text) {
     });
 }
 
+/**
+ * On phones the results view is exactly one window tall (see the
+ * #results-section phone styles). It starts below the header and main's top
+ * padding, which differ by screen, so that offset is measured.
+ */
+function fitResultsEditor() {
+    const main = document.querySelector('main');
+    if (!main) return;
+    const top = main.getBoundingClientRect().top + window.scrollY
+        + (parseFloat(getComputedStyle(main).paddingTop) || 0);
+    document.documentElement.style.setProperty('--re-top', `${Math.round(top)}px`);
+}
+
+/**
+ * iPad results layout: fit the image's space to the photo, so it isn't framed
+ * by empty bands, and hand the room to the header and refine box. The CSS
+ * says which case applies through --re-fit (unset everywhere else):
+ *   portrait  — if the photo is shorter than its slot, size the image row to
+ *               the photo, enlarge the header (.re-roomy) and let the refine
+ *               box take the rest;
+ *   landscape — if the photo is too wide to fill the height beside the
+ *               panel, move the header across the top (.re-header-top);
+ *               then make the panel as wide as the photo leaves room for,
+ *               so it isn't flanked by side bands either.
+ */
+function fitResultsPhoto() {
+    const section = resultsSection;
+    if (!section || section.classList.contains('hidden')) return;
+    for (const v of ['--re-image-row', '--re-composer-row', '--re-panel-w']) section.style.removeProperty(v);
+    section.classList.remove('re-header-top', 're-roomy');
+    const mode = getComputedStyle(section).getPropertyValue('--re-fit').trim();
+    if (!mode) return;
+    const card = section.querySelector('.design-card');
+    const generated = card?.querySelector('.generated-image');
+    const photo = generated?.naturalWidth ? generated : card?.querySelector('.original-image');
+    if (!photo?.naturalWidth) return; // refits when it loads
+    const ratio = photo.naturalWidth / photo.naturalHeight;
+    const display = section.querySelector('.results-display');
+    let slot = display?.getBoundingClientRect();
+    if (!slot?.width || !slot.height) return;
+
+    if (mode === 'portrait') {
+        const photoHeight = Math.floor(slot.width / ratio);
+        if (photoHeight < slot.height - 8) {
+            // Spare height: a bigger header, if the photo still fits with it.
+            section.classList.add('re-roomy');
+            slot = display.getBoundingClientRect();
+            if (photoHeight > slot.height) {
+                section.classList.remove('re-roomy');
+                return;
+            }
+            section.style.setProperty('--re-image-row', `${photoHeight}px`);
+            section.style.setProperty('--re-composer-row', 'minmax(auto, 1fr)');
+        }
+    } else if (mode === 'landscape') {
+        // Too wide to fill the height beside the panel: the header goes across
+        // the top, taking height that would only have been bands.
+        if (slot.width / ratio < slot.height - 8) {
+            section.classList.add('re-header-top');
+            slot = display.getBoundingClientRect();
+        }
+        const gap = parseFloat(getComputedStyle(section).columnGap) || 0;
+        const photoWidth = slot.height * ratio;
+        const panel = Math.round(Math.min(440, Math.max(320, section.clientWidth - gap - photoWidth)));
+        section.style.setProperty('--re-panel-w', `${panel}px`);
+    }
+}
+
 function initMaskControls() {
     resultsRegionEls().button?.addEventListener('click', toggleResultsRegion);
     window.addEventListener('resize', positionRegionMenu);
-
-    // On a touch screen one finger paints, so scrolling takes two (see
-    // MaskEditor). Say so where the brush is explained.
-    if (window.matchMedia('(pointer: coarse)').matches) {
-        const touchHint = 'Brush over anything to remove or change it. Scroll with two fingers.';
-        const quickHint = document.querySelector('.quick-edit-region-hint span');
-        if (quickHint) quickHint.textContent = touchHint;
-        const { hint } = resultsRegionEls();
-        if (hint) hint.dataset.regionHint = touchHint;
+    // Measured when the view is shown: main's padding differs on the upload
+    // landing page, so a measurement taken there is off.
+    if (resultsSection) {
+        // Only on show/hide: fitResultsPhoto changes this element's classes
+        // itself, and reacting to those would loop.
+        let wasHidden = resultsSection.classList.contains('hidden');
+        new MutationObserver(() => {
+            const hidden = resultsSection.classList.contains('hidden');
+            if (hidden === wasHidden) return;
+            wasHidden = hidden;
+            if (hidden) return;
+            fitResultsEditor();
+            fitResultsPhoto();
+        }).observe(resultsSection, { attributes: true, attributeFilter: ['class'] });
+        // A new result or history version can have a different shape.
+        designCarousel?.addEventListener('load', (e) => {
+            if (e.target instanceof HTMLImageElement) fitResultsPhoto();
+        }, true);
     }
+    window.addEventListener('resize', fitResultsEditor);
+    window.addEventListener('resize', fitResultsPhoto);
+
 }
 
 /**
@@ -2850,9 +2932,21 @@ window.__decoraitRequireEmailConfirmed = requireEmailConfirmedForFeature;
 function initServiceWorker() {
     if (!('serviceWorker' in navigator)) return;
     if (!import.meta.env.PROD) {
-        navigator.serviceWorker.getRegistrations()
-            .then((regs) => regs.forEach((r) => r.unregister()))
-            .catch(() => {});
+        // Unregistering alone isn't enough: the page stays controlled until every tab closes,
+        // and the worker's caches survive, so modules keep coming from yesterday's cache.
+        // Drop the caches too, and reload once if a worker still controls this page.
+        (async () => {
+            try {
+                const regs = await navigator.serviceWorker.getRegistrations();
+                await Promise.all(regs.map((r) => r.unregister()));
+                const keys = await caches.keys();
+                await Promise.all(keys.filter((k) => k.startsWith('decorait-')).map((k) => caches.delete(k)));
+                if (navigator.serviceWorker.controller && !sessionStorage.getItem('decorait-sw-dev-reload')) {
+                    sessionStorage.setItem('decorait-sw-dev-reload', '1');
+                    location.reload();
+                }
+            } catch { /* private mode, storage blocked: nothing to clean */ }
+        })();
         return;
     }
     window.addEventListener('load', () => {
@@ -2909,7 +3003,15 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
     if (quickEditBackBtn) quickEditBackBtn.addEventListener('click', exitQuickEdit);
     // Locked users can't flip the premium switch (it's disabled), so a tap on
-    // the chip opens the way to unlock it instead.
+    // the chip opens the way to unlock it instead. The results switch does the
+    // same: on phones there's no room for the sign-in note beside it.
+    defaultModelToggleResults?.closest('label')?.addEventListener('click', (e) => {
+        if (!defaultModelToggleResults.disabled) return;
+        e.preventDefault();
+        if (!currentUser) showAuthModal('login');
+        else if (userHasSubscription) showSubscriptionLimitMessage();
+        else showBuyTokensModal();
+    });
     quickEditPremiumToggle?.closest('label')?.addEventListener('click', (e) => {
         if (!quickEditPremiumToggle.disabled) return;
         e.preventDefault();
@@ -3172,8 +3274,20 @@ document.addEventListener('DOMContentLoaded', async () => {
 });
 
 // Functions
+/**
+ * iPhone Safari ignores user-scalable=no in the viewport tag (Apple's
+ * accessibility choice), so its pinch gesture is cancelled here. Only Safari
+ * fires gesture* events, so this does nothing anywhere else.
+ */
+function blockPageZoom() {
+    for (const type of ['gesturestart', 'gesturechange', 'gestureend']) {
+        document.addEventListener(type, (e) => e.preventDefault(), { passive: false });
+    }
+}
+
 function initializeAppUI() {
     feather.replace();
+    blockPageZoom();
     initSheets();
     initWaitState();
     initCompare();
@@ -4727,10 +4841,19 @@ async function generateImageWithControlNet(imageBase64, prompt, negativePrompt, 
 // producing a fully photorealistic result. Counts against the monthly quota.
 window.__decoraitGenerateRoomRender = async function (guideBase64, opts = {}) {
     const stylePrompt = (opts && opts.stylePrompt) ? opts.stylePrompt.trim() : '';
-    const prompt = `This image is a plain 3D blockout of a room: a wooden floor, blank walls and ceiling, and colored boxes that mark where furniture goes. Turn it into a photorealistic interior photograph of the same room. Keep the room's shape and the position, footprint and orientation of every furniture block — replace each colored box with a realistic, well-designed piece of furniture of the matching type standing in that exact spot. Style: ${stylePrompt || 'tasteful contemporary interior'}. Add realistic materials, textures, soft natural daylight and subtle shadows. Ultra photorealistic, interior design magazine photography, high detail, no text or labels.`;
+    const roomBrief = (opts && opts.roomBrief) ? opts.roomBrief.trim() : '';
+    const prompt = [
+        'This image is a plain 3D blockout of one room in a home, seen at eye level: a wood-colored floor, blank walls and ceiling, openings for doors and windows, and colored boxes that mark where furniture goes.',
+        'Turn it into a photorealistic interior photograph of the same room from the same camera position.',
+        roomBrief ? `The room: ${roomBrief}` : '',
+        "Keep the room's shape, every wall, door and window opening, and the position, footprint and orientation of every furniture block — replace each colored box with a realistic, well-designed piece of the matching type standing in that exact spot.",
+        'Bright panes in the walls are windows with natural daylight. Doorways can show glimpses of the neighboring rooms; keep them consistent with the same home but quieter than the main room.',
+        `Style: ${stylePrompt || 'tasteful contemporary interior'}.`,
+        'Realistic materials and textures, soft natural daylight, subtle shadows. Architectural interior photography, high detail, no people, no text or labels.'
+    ].filter(Boolean).join(' ');
     const result = await callPremiumImageEdit(guideBase64, prompt, {
         sourceType: 'room3d',
-        metadata: { stylePrompt: stylePrompt || null },
+        metadata: { stylePrompt: stylePrompt || null, roomName: (opts && opts.roomName) || null },
     });
     return result.imageUrl;
 };

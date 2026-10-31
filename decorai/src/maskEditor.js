@@ -170,22 +170,42 @@ export class MaskEditor {
             return { x: (e.clientX - r.left - k.left) / k.width, y: (e.clientY - r.top - k.top) / k.height };
         };
 
-        // Touch: one finger paints, two fingers scroll the page — the way
-        // phone photo editors work. The canvas has to claim every touch
-        // (touch-action: none) or the browser would scroll instead of paint,
-        // and on a phone it covers most of the screen, so without this the
-        // page couldn't be scrolled at all while editing.
+        // ── Touch: drawing and scrolling with one finger ─────────────────────
+        // The canvas has to claim every touch (touch-action: none) or the
+        // browser would scroll instead of paint — and on a phone it covers most
+        // of the screen. So the canvas decides, from how a one-finger gesture
+        // starts, which the user meant:
+        //   - a fast swipe that's mostly up or down, on a page that can
+        //     actually scroll → scroll, with momentum like the browser's own.
+        //     "Fast" is the first 12px in under 24ms (~500px/s): a scrolling
+        //     flick starts well above that, ordinary drawing well below;
+        //   - anything else (press and drag, slower or sideways movement, a
+        //     tap) → draw, starting immediately.
+        // The stroke is drawn from the first touch so drawing never lags; if
+        // the gesture turns out to be a scroll, that stroke is taken back.
+        // Two fingers always scroll, too.
         const touches = new Map(); // pointerId → { x, y } in client px
-        let panning = false;
+        let panning = false;       // two-finger scroll
         let lastMid = null;
+        let pending = null;        // one finger, intent not decided yet
+        let flick = null;          // one-finger scroll in progress
+        let momentum = 0;          // rAF id of the scroll's glide after release
+        const SLOP_PX = 12;        // movement before a gesture is judged
+        const FLICK_MS = 24;       // a scroll gets past the slop this fast…
+        const VERTICAL = 1.5;      // …and moves at least this much more up/down than sideways
         // A second finger this soon after the first means the first never
         // meant to paint; later than this, its stroke is kept.
         const TWO_FINGER_GRACE_MS = 250;
+
         const midpoint = () => {
             let x = 0;
             let y = 0;
             for (const p of touches.values()) { x += p.x; y += p.y; }
             return { x: x / touches.size, y: y / touches.size };
+        };
+        const pageCanScroll = () => {
+            const root = document.scrollingElement || document.documentElement;
+            return root.scrollHeight > window.innerHeight + 1;
         };
         const capture = (id) => {
             try { this.canvas.setPointerCapture?.(id); } catch { /* pointer already gone */ }
@@ -195,6 +215,39 @@ export class MaskEditor {
                 if (this.canvas.hasPointerCapture?.(id)) this.canvas.releasePointerCapture(id);
             } catch { /* pointer already gone */ }
         };
+        // Like a native scroll, a glide stops as soon as anything is touched
+        // (or the page is scrolled another way).
+        const stopMomentum = () => {
+            cancelAnimationFrame(momentum);
+            momentum = 0;
+            document.removeEventListener('pointerdown', stopMomentum, true);
+            document.removeEventListener('wheel', stopMomentum, true);
+        };
+        const takeBackStroke = () => {
+            if (!this._current) return;
+            this.strokes.splice(this.strokes.indexOf(this._current), 1);
+            this._current = null;
+            this._redraw();
+            this.onChange?.();
+        };
+        // The glide after a flick: carry on at the release speed, slowing the
+        // way a native scroll does.
+        const glide = (velocity) => {
+            let v = velocity; // px per ms, positive = scroll down
+            let last = performance.now();
+            const step = (now) => {
+                const dt = Math.min(32, now - last);
+                last = now;
+                window.scrollBy(0, v * dt);
+                v *= Math.pow(0.95, dt / 16);
+                if (Math.abs(v) > 0.02) momentum = requestAnimationFrame(step);
+                else stopMomentum();
+            };
+            if (Math.abs(v) <= 0.1) return;
+            document.addEventListener('pointerdown', stopMomentum, true);
+            document.addEventListener('wheel', stopMomentum, true);
+            momentum = requestAnimationFrame(step);
+        };
 
         this.canvas.addEventListener('pointerdown', (e) => {
             if (!this._content) return;
@@ -203,22 +256,30 @@ export class MaskEditor {
             e.stopPropagation();
             capture(e.pointerId);
             if (e.pointerType === 'touch') {
+                stopMomentum();
+                // The first finger of a new gesture: anything still tracked is
+                // stale (a lift the browser never reported). Starting clean
+                // stops one lost event from leaving the canvas stuck.
+                if (e.isPrimary || !touches.size) {
+                    touches.clear();
+                    panning = false;
+                    flick = null;
+                    pending = null;
+                }
                 touches.set(e.pointerId, { x: e.clientX, y: e.clientY });
                 if (touches.size >= 2) {
                     if (this._current) {
-                        if (performance.now() - this._current.startedAt < TWO_FINGER_GRACE_MS) {
-                            this.strokes.splice(this.strokes.indexOf(this._current), 1);
-                            this._redraw();
-                        }
-                        this._current = null;
-                        this.onChange?.();
+                        if (performance.now() - this._current.startedAt < TWO_FINGER_GRACE_MS) takeBackStroke();
+                        else { this._current = null; this.onChange?.(); }
                     }
+                    pending = null;
+                    flick = null;
                     panning = true;
                     lastMid = midpoint();
                     return;
                 }
-                // A finger put back down mid-scroll keeps scrolling.
-                if (panning) return;
+                if (panning) return; // a finger put back down mid-scroll keeps scrolling
+                pending = { id: e.pointerId, x0: e.clientX, y0: e.clientY, t0: performance.now() };
             }
             this._current = {
                 erase: this.erasing,
@@ -230,6 +291,7 @@ export class MaskEditor {
             this._redraw();
             this.onStrokeStart?.();
         });
+
         this.canvas.addEventListener('pointermove', (e) => {
             if (e.pointerType === 'touch' && touches.has(e.pointerId)) {
                 touches.set(e.pointerId, { x: e.clientX, y: e.clientY });
@@ -240,22 +302,60 @@ export class MaskEditor {
                     lastMid = mid;
                     return;
                 }
+                if (flick && e.pointerId === flick.id) {
+                    e.preventDefault();
+                    const now = performance.now();
+                    const dy = flick.y - e.clientY;
+                    window.scrollBy(0, dy);
+                    const dt = Math.max(1, now - flick.t);
+                    flick.v = 0.8 * (dy / dt) + 0.2 * flick.v; // smoothed, px/ms
+                    flick.y = e.clientY;
+                    flick.t = now;
+                    return;
+                }
+                if (pending && e.pointerId === pending.id) {
+                    const dx = e.clientX - pending.x0;
+                    const dy = e.clientY - pending.y0;
+                    if (Math.hypot(dx, dy) >= SLOP_PX) {
+                        const quick = performance.now() - pending.t0 < FLICK_MS;
+                        const vertical = Math.abs(dy) > VERTICAL * Math.abs(dx);
+                        if (quick && vertical && pageCanScroll()) {
+                            takeBackStroke();
+                            window.scrollBy(0, -dy);
+                            flick = { id: e.pointerId, y: e.clientY, t: performance.now(), v: 0 };
+                            pending = null;
+                            e.preventDefault();
+                            return;
+                        }
+                        pending = null; // it's a stroke
+                    }
+                }
             }
             if (!this._current) return;
             e.preventDefault();
             this._current.points.push(toImage(e));
             this._redraw();
         });
+
         const end = (e) => {
             release(e.pointerId);
             if (e.pointerType === 'touch') {
-                touches.delete(e.pointerId);
+                const tracked = touches.delete(e.pointerId);
+                if (pending?.id === e.pointerId) pending = null;
+                if (flick && flick.id === e.pointerId) {
+                    // Released mid-swipe: glide on, unless the finger had stopped.
+                    const v = performance.now() - flick.t < 80 ? flick.v : 0;
+                    flick = null;
+                    glide(v);
+                    return;
+                }
                 if (panning) {
                     // Lifting one finger carries on with the other; lifting both ends it.
                     if (touches.size) lastMid = midpoint();
                     else panning = false;
                     return;
                 }
+                if (!tracked) return; // already handled (e.g. pointerup, then lostpointercapture)
             }
             if (!this._current) return;
             this._current = null;
@@ -263,6 +363,8 @@ export class MaskEditor {
         };
         this.canvas.addEventListener('pointerup', end);
         this.canvas.addEventListener('pointercancel', end);
+        // Some browsers drop the capture without a pointerup; treat it as one.
+        this.canvas.addEventListener('lostpointercapture', end);
     }
 
     /**

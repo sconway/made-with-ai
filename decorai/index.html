@@ -3,7 +3,7 @@
 
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
     <title>DecorAIt - AI-Powered Interior Design</title>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -377,7 +377,7 @@
                             <i data-feather="edit-3"></i>
                             <span>Edit one thing</span>
                         </button>
-                        <button type="button" id="results-feng-shui-btn" class="secondary-btn feng-shui-action-btn" disabled>
+                        <button type="button" id="results-feng-shui-btn" class="secondary-btn feng-shui-action-btn" aria-label="Feng Shui Analysis" disabled>
                             <i data-feather="compass"></i>
                             <span>Feng Shui Analysis</span>
                         </button>
@@ -425,7 +425,7 @@
                     </div>
                 </div>
                 <div class="results-actions">
-                    <button id="back-to-options-btn" class="secondary-btn">
+                    <button id="back-to-options-btn" class="secondary-btn" aria-label="Back">
                         <i data-feather="arrow-left"></i>
                         <span>Back</span>
                     </button>
@@ -634,7 +634,7 @@
                             <button type="button" id="export-png-btn" data-tooltip="Export as PNG image" aria-label="Export the current view as a PNG image">Export as PNG</button>
                             <button type="button" id="export-svg-btn" data-tooltip="Export as SVG" aria-label="Export the floor plan as SVG">Export as SVG</button>
                             <button type="button" id="export-layout-file-btn" data-tooltip="Save layout file" aria-label="Download layout as a .decorait-layout.json file">Save layout as file</button>
-                            <button type="button" id="generate-3d-room-btn" data-tooltip="Generate a photoreal 3D room from this floor plan" aria-label="Generate a photorealistic 3D room view from the floor plan">Generate 3D room</button>
+                            <button type="button" id="generate-3d-room-btn" data-tooltip="Photoreal render of one room, built from the whole floor plan" aria-label="Render a room: a photoreal view of one room built from the floor plan">Render a room</button>
                         </div>
                     </div>
                 </div>
@@ -762,11 +762,11 @@
                             <i data-feather="folder"></i>
                             <span>My layouts</span>
                         </button>
-                        <button type="button" id="import-floor-plan-btn" class="my-layouts-toggle" aria-label="Import a floor plan from an image (PNG, JPG, or SVG)">
+                        <button type="button" id="import-floor-plan-btn" class="my-layouts-toggle" aria-label="Import a floor plan: DXF or PDF converts to an editable layout; PNG, JPG, or SVG adds a reference image">
                             <i data-feather="upload"></i>
                             <span>Import</span>
                         </button>
-                        <input type="file" id="import-floor-plan-input" accept="image/png,image/jpeg,image/webp,image/svg+xml,.png,.jpg,.jpeg,.webp,.svg" hidden>
+                        <input type="file" id="import-floor-plan-input" accept=".dxf,.dwg,.pdf,application/pdf,image/png,image/jpeg,image/webp,image/svg+xml,.png,.jpg,.jpeg,.webp,.svg" hidden>
                     </div>
                     <div class="canvas-status-start">
                         <div class="canvas-zoom-controls">
@@ -1221,54 +1221,6 @@
         </div>
     </div>
 
-    <div class="modal hidden" id="room3d-modal">
-        <div class="modal-content room3d-modal-content">
-            <div class="modal-header">
-                <h2>Generate 3D room</h2>
-                <button id="room3d-close-btn" class="close-modal-btn" type="button" aria-label="Close">
-                    <i data-feather="x"></i>
-                </button>
-            </div>
-            <div class="modal-body room3d-body">
-                <div class="room3d-controls">
-                    <label class="room3d-field hidden" id="room3d-room-field">
-                        <span>Room</span>
-                        <select id="room3d-room-select"></select>
-                    </label>
-                    <div class="room3d-field">
-                        <span>Style</span>
-                        <div class="room3d-presets" id="room3d-presets"></div>
-                    </div>
-                    <button id="room3d-generate-btn" class="primary-btn" type="button">
-                        <i data-feather="image"></i>
-                        <span>Generate</span>
-                    </button>
-                    <p class="room3d-hint">A 3D blockout of your room guides the render. Pick a style, then generate a photoreal eye-level view. This uses the premium model and can take up to a minute.</p>
-                </div>
-                <div class="room3d-preview">
-                    <div class="room3d-pane">
-                        <span class="room3d-pane-label">Structure guide</span>
-                        <img id="room3d-guide-img" class="room3d-guide-img" alt="3D structure guide of the room" />
-                    </div>
-                    <div class="room3d-pane">
-                        <span class="room3d-pane-label">Generated room</span>
-                        <div class="room3d-result" id="room3d-result">
-                            <div class="room3d-result-placeholder" id="room3d-result-placeholder">Your photoreal room will appear here.</div>
-                            <img id="room3d-result-img" class="room3d-result-img hidden" alt="Generated photoreal 3D room" />
-                            <div class="room3d-spinner hidden" id="room3d-spinner">
-                                <span class="my-layouts-spinner" aria-hidden="true"></span>
-                                <p>Rendering your room…</p>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-            </div>
-            <div class="modal-footer room3d-footer">
-                <button id="room3d-download-btn" class="secondary-btn" type="button" disabled>Download</button>
-                <button id="room3d-regenerate-btn" class="secondary-btn" type="button" disabled>Regenerate</button>
-            </div>
-        </div>
-    </div>
 
     <!-- No mobile tab bar: the floor plan and woodworking editors are desktop
          tools, so giving them permanent thumb-level navigation on a phone

@@ -8,6 +8,7 @@ import dotenv from 'dotenv';
 import Stripe from 'stripe';
 import nodemailer from 'nodemailer';
 import { createClient } from '@supabase/supabase-js';
+import { classifyPlan, Anthropic as PlanAnthropic } from './planClassifier.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -1938,6 +1939,29 @@ Skip decorations: hatching, dimension lines, north arrows, title blocks, page bo
   } catch (err) {
     console.error('Floor plan import error:', err);
     res.status(500).json({ error: 'Server error during floor plan import' });
+  }
+});
+
+// Floor plan importer: a vision model labels the layer groups of a DXF/PDF drawing
+// (walls, doors, windows, furniture, …) and picks out room names. Geometry stays client-side.
+app.post('/api/classify-plan', genIpLimiter, genUserLimiter, async (req, res) => {
+  try {
+    const user = await getAuthUser(req, res, { requireConfirmed: true });
+    if (!user) return;
+    const result = await classifyPlan(req.body);
+    console.log(`[classify-plan] ${result.provider}/${result.model} ${result.groups.length} groups, ${result.room_labels.length} rooms, ${result.ms}ms, tokens in/out ${result.usage?.input_tokens}/${result.usage?.output_tokens}`);
+    res.json(result);
+  } catch (err) {
+    if (err instanceof PlanAnthropic.RateLimitError) {
+      return res.status(429).json({ error: 'The AI service is busy. Try again in a minute.' });
+    }
+    if (err instanceof PlanAnthropic.APIError) {
+      console.error('[classify-plan] Anthropic API error:', err.status, err.message);
+      return res.status(502).json({ error: 'AI layer review failed.' });
+    }
+    if (err?.status) return res.status(err.status).json({ error: err.message });
+    console.error('[classify-plan] error:', err);
+    res.status(500).json({ error: 'AI layer review failed.' });
   }
 });
 

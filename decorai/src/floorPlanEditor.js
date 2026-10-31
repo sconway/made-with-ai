@@ -1,5 +1,4 @@
 import feather from 'feather-icons';
-import * as THREE from 'three';
 import { presentToast } from './toast.js';
 
 // ==========================================
@@ -60,6 +59,8 @@ const FloorPlanEditor = (() => {
     let scale = 50; // pixels per foot (must match gridSize)
     let unit = 'ft';
     let wallThickness = 8;
+    /** Imported plans carry a real thickness per wall; hand-drawn walls use the global setting. */
+    const thicknessOf = (wall) => (wall && wall.thickness > 0 ? wall.thickness : wallThickness);
     let showGrid = true;
     let snapToGrid = true;
     let showDimensions = true;
@@ -312,7 +313,6 @@ const FloorPlanEditor = (() => {
         document.getElementById('export-svg-btn')?.addEventListener('click', () => exportAs('svg'));
         document.getElementById('export-layout-file-btn')?.addEventListener('click', () => { document.getElementById('export-menu')?.classList.remove('show'); downloadLayoutFile(); });
         document.getElementById('generate-3d-room-btn')?.addEventListener('click', () => { document.getElementById('export-menu')?.classList.remove('show'); openRoom3DModal(); });
-        initRoom3DModal();
 
         // Close export menu when clicking outside
         document.addEventListener('click', (e) => {
@@ -376,8 +376,10 @@ const FloorPlanEditor = (() => {
             importBtn.addEventListener('click', () => importInput.click());
             importInput.addEventListener('change', () => {
                 const file = importInput.files && importInput.files[0];
-                if (file) addImageAsReference(file);
                 importInput.value = '';
+                if (!file) return;
+                if (isPlanFile(file)) importPlanFromFile(file);
+                else addImageAsReference(file);
             });
         }
 
@@ -1841,13 +1843,17 @@ const FloorPlanEditor = (() => {
             loadLayoutFromFile(file);
             return;
         }
+        if (isPlanFile(file)) {
+            importPlanFromFile(file);
+            return;
+        }
         if (isSVGFile(file)) {
             addImageAsReference(file);
             return;
         }
         if (!file.type.startsWith('image/')) {
             if (window.showAlertDialog) {
-                window.showAlertDialog('Drop an image (PNG, JPG), an SVG floor plan, or a DecorAIt layout file.');
+                window.showAlertDialog('Drop a floor plan (DXF, PDF, PNG, JPG, or SVG) or a DecorAIt layout file.');
             }
             return;
         }
@@ -1858,7 +1864,151 @@ const FloorPlanEditor = (() => {
     function escapeHtml(str) {
         return String(str).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
     }
-    
+
+    // ── CAD / PDF import ─────────────────────────────────────────────────
+    let planImportBusy = false;
+
+    function isPlanFile(file) {
+        return /\.(dxf|dwg|pdf)$/i.test(file?.name || '') || file?.type === 'application/pdf';
+    }
+
+    /**
+     * Import a DXF or vector PDF: split it into layers, let the user review them (a vision
+     * model labels them in the background), then rebuild walls/doors/windows/rooms and keep
+     * the rest of the drawing exactly as drawn underneath. The whole import is one undo step.
+     */
+    async function importPlanFromFile(file) {
+        if (planImportBusy) return;
+        const hasContent = walls.length || furniture.length || labels.length || freeformOpenings.length || referenceImages.length;
+        if (hasContent && window.showConfirmDialog) {
+            const proceed = await window.showConfirmDialog(
+                'Replace the current layout with the imported floor plan? You can undo this.',
+                'Import floor plan',
+                'Replace',
+                'Cancel'
+            );
+            if (!proceed) return;
+        }
+
+        planImportBusy = true;
+        const canvasWrapper = document.getElementById('layout-canvas-wrapper');
+        canvasWrapper?.classList.add('plan-importing');
+        let pipeline, analysis;
+        try {
+            pipeline = await import('./planImport/index.js');
+            analysis = await pipeline.analyzePlanFile(file);
+        } catch (err) {
+            console.error('Floor plan import failed:', err);
+            window.showAlertDialog?.(err?.message || 'Could not read this file.', 'Import failed');
+            planImportBusy = false;
+            canvasWrapper?.classList.remove('plan-importing');
+            return;
+        }
+        canvasWrapper?.classList.remove('plan-importing');
+
+        try {
+            // AI review runs while the user looks at the layers
+            const aiAbort = new AbortController();
+            const token = typeof window.__decoraitGetAccessToken === 'function' ? window.__decoraitGetAccessToken() : null;
+            const aiPromise = pipeline.classifyWithAI(analysis, { accessToken: token, signal: aiAbort.signal });
+            aiPromise.catch((err) => console.warn('AI layer review unavailable:', err?.message || err));
+
+            const { openPlanReview } = await import('./planImport/reviewModal.js');
+            const decision = await openPlanReview(analysis, aiPromise);
+            aiAbort.abort();
+            if (!decision) return;
+
+            const result = await pipeline.buildFromReview(analysis, { pxPerFoot: scale, convertFurniture: decision.convertFurniture });
+            applyImportedPlan(result, analysis);
+        } catch (err) {
+            console.error('Floor plan import failed:', err);
+            window.showAlertDialog?.(err?.message || 'Could not build the layout from this file.', 'Import failed');
+        } finally {
+            planImportBusy = false;
+        }
+    }
+
+    function applyImportedPlan({ state, report, underlay }, analysis) {
+        addToHistory(); // the whole import is a single undo step
+        const original = underlay ? [{
+            id: 'ref-image-import-' + Date.now(),
+            dataUrl: underlay.dataUrl,
+            x: underlay.x,
+            y: underlay.y,
+            width: underlay.width,
+            height: underlay.height,
+            originalWidth: underlay.width,
+            originalHeight: underlay.height,
+            opacity: 1,
+            name: `Original drawing (${analysis.fileName || 'import'})`
+        }] : [];
+        restoreState({
+            corners: state.corners,
+            walls: state.walls,
+            furniture: state.furniture,
+            labels: [],
+            freeformOpenings: [],
+            referenceImages: original,
+            importedElementsHTML: [],
+            roomNames: {}
+        });
+
+        // Room names: a name that sits inside an enclosed room names that room; the rest stay as labels
+        const faces = findEnclosedRoomFaces();
+        const looseLabels = [];
+        for (const l of state.labels) {
+            const face = faces.find(f => pointInPolygonPx(l.x, l.y, f.points));
+            const key = face && getRoomFaceKey(face);
+            if (key && !roomNames[key]) roomNames[key] = l.text;
+            else looseLabels.push(l);
+        }
+        labels = looseLabels;
+        redrawAll();
+        fitToContent();
+
+        const named = Object.keys(roomNames).length;
+        const parts = [
+            `${report.walls} walls`,
+            report.doors ? `${report.doors} doors` : null,
+            report.windows ? `${report.windows} windows` : null,
+            named ? `${named} named rooms` : null,
+            report.furniture ? `${report.furniture} furniture` : null
+        ].filter(Boolean);
+        const size = report.widthFt ? ` · ${report.widthFt} × ${report.heightFt} ft` : '';
+        const warnings = [...(analysis.warnings || []), ...(report.warnings || [])];
+        const note = warnings.length ? ` ${[...new Set(warnings)].join(' ')}` : '';
+        showFengShuiMessage(escapeHtml(`Imported ${parts.join(', ')}${size}. The original drawing is kept underneath.${note}`));
+    }
+
+    /** Zoom and pan so everything on the canvas is in view. */
+    function fitToContent() {
+        const wrapper = document.getElementById('layout-canvas-wrapper');
+        if (!wrapper || (!corners.length && !referenceImages.length)) { setInitialZoom(); return; }
+        // Canvas not laid out yet (editor hidden or still opening): a zero size would make zoom 0
+        if (!wrapper.clientWidth || !wrapper.clientHeight) {
+            if (!fitToContent.retried) {
+                fitToContent.retried = true;
+                requestAnimationFrame(() => { fitToContent(); fitToContent.retried = false; });
+            }
+            return;
+        }
+        let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+        const addPt = (x, y) => { minX = Math.min(minX, x); minY = Math.min(minY, y); maxX = Math.max(maxX, x); maxY = Math.max(maxY, y); };
+        corners.forEach(c => addPt(c.x, c.y));
+        furniture.forEach(f => { addPt(f.x, f.y); addPt(f.x + f.width, f.y + f.height); });
+        referenceImages.forEach(r => { addPt(r.x, r.y); addPt(r.x + r.width, r.y + r.height); });
+        const w = Math.max(maxX - minX, scale), h = Math.max(maxY - minY, scale);
+        const limits = getZoomLimits();
+        zoom = Math.max(limits.min, Math.min(limits.max, Math.min(wrapper.clientWidth / w, wrapper.clientHeight / h) * 0.85));
+        panOffset = {
+            x: (wrapper.clientWidth - w * zoom) / 2 - minX * zoom,
+            y: (wrapper.clientHeight - h * zoom) / 2 - minY * zoom
+        };
+        const zoomLevelEl = document.getElementById('zoom-level');
+        if (zoomLevelEl) zoomLevelEl.textContent = Math.round(zoom * 100) + '%';
+        applyTransform();
+    }
+
     function addImageAsReference(file) {
         const reader = new FileReader();
         reader.onload = (e) => {
@@ -2806,7 +2956,8 @@ const FloorPlanEditor = (() => {
             id: 'wall-' + Date.now() + '-' + Math.random().toString(36).substr(2, 9),
             start: newCorner,
             end: originalEnd,
-            openings: []
+            openings: [],
+            ...(wall.thickness ? { thickness: wall.thickness } : {})
         };
         
         walls.push(newWall);
@@ -3391,7 +3542,7 @@ const FloorPlanEditor = (() => {
             el.setAttribute('x2', wall.end.x);
             el.setAttribute('y2', wall.end.y);
         }
-        el.setAttribute('stroke-width', wallThickness);
+        el.setAttribute('stroke-width', thicknessOf(wall));
         el.classList.add('wall-line');
         el.dataset.wallId = wall.id;
         wallsLayer.appendChild(el);
@@ -4468,6 +4619,7 @@ const FloorPlanEditor = (() => {
     }
     
     function renderOpening(wall, opening) {
+        const wallThickness = thicknessOf(wall);
         const wallLength = Math.sqrt((wall.end.x - wall.start.x) ** 2 + (wall.end.y - wall.start.y) ** 2);
         const dx = (wall.end.x - wall.start.x) / wallLength;
         const dy = (wall.end.y - wall.start.y) / wallLength;
@@ -5766,6 +5918,7 @@ const FloorPlanEditor = (() => {
     
     /** Axis-aligned bounds of a wall opening's hit rect (matches renderOpening hit area). */
     function getWallOpeningMarqueeBounds(wall, opening) {
+        const wallThickness = thicknessOf(wall);
         const wallLength = Math.sqrt((wall.end.x - wall.start.x) ** 2 + (wall.end.y - wall.start.y) ** 2);
         if (wallLength < 1e-6) return null;
         const ux = (wall.end.x - wall.start.x) / wallLength;
@@ -6766,7 +6919,8 @@ const FloorPlanEditor = (() => {
                 startId: w.start.id,
                 endId: w.end.id,
                 openings: w.openings,
-                control: w.control || null
+                control: w.control || null,
+                ...(w.thickness ? { thickness: w.thickness } : {})
             })))),
             furniture: JSON.parse(JSON.stringify(furniture)),
             labels: JSON.parse(JSON.stringify(labels)),
@@ -6815,6 +6969,7 @@ const FloorPlanEditor = (() => {
                     openings: w.openings || [],
                     control: w.control ? { x: w.control.x, y: w.control.y } : undefined
                 };
+                if (w.thickness > 0) wall.thickness = w.thickness;
                 walls.push(wall);
                 startCorner.walls.push(wall);
                 endCorner.walls.push(wall);
@@ -7002,7 +7157,12 @@ const FloorPlanEditor = (() => {
 
         if (unique.length > 1) {
             unique.sort((a, b) => b.areaPx - a.areaPx);
-            return unique.slice(1);
+            // The orientation check above usually removes the outer boundary already. Only drop the
+            // largest face when it really is the outline of everything (its area ≈ all the rooms
+            // together); otherwise it's the biggest room and must stay.
+            const rest = unique.slice(1).reduce((sum, f) => sum + f.areaPx, 0);
+            if (unique[0].areaPx >= rest * 0.98 && rest > 0 && unique[0].areaPx <= rest * 1.02) return unique.slice(1);
+            return unique;
         }
         return unique;
     }
@@ -7021,47 +7181,7 @@ const FloorPlanEditor = (() => {
         return `room-${Math.round(cx)}-${Math.round(cy)}`;
     }
 
-    // ── Generate 3D room ──────────────────────────────────────────────────
-    const ROOM3D_PRESETS = [
-        { id: 'modern', label: 'Modern', prompt: 'modern contemporary interior design, clean lines, neutral palette, designer furniture' },
-        { id: 'scandinavian', label: 'Scandinavian', prompt: 'scandinavian interior, light wood floors, white walls, cozy minimal styling, soft daylight' },
-        { id: 'cozy', label: 'Cozy', prompt: 'cozy warm interior, soft textiles, layered rugs, warm ambient lighting, inviting' },
-        { id: 'minimalist', label: 'Minimalist', prompt: 'minimalist interior, uncluttered, muted tones, refined simple furniture' },
-        { id: 'industrial', label: 'Industrial', prompt: 'industrial loft interior, exposed brick, concrete, black metal accents, leather' },
-        { id: 'luxury', label: 'Luxury', prompt: 'luxury interior, elegant furnishings, rich materials, marble and brass, sophisticated' }
-    ];
-
-    let room3dFaces = [];
-    let room3dSelectedFaceIndex = 0;
-    let room3dStyle = 'modern';
-    let room3dGuideDataUrl = null;
-    let room3dResultUrl = null;
-    let room3dInited = false;
-    let room3dBusy = false;
-
-    function furnitureGuideColor(typeId) {
-        const beds = ['queen-bed', 'king-bed', 'twin-bed'];
-        const seating = ['sofa', 'armchair', 'dining-chair', 'office-chair'];
-        const wood = ['coffee-table', 'dining-table', 'desk', 'counter', 'buffet', 'nightstand', 'tv-stand'];
-        const storage = ['wardrobe', 'dresser', 'bookshelf', 'fridge', 'filing-cabinet', 'dishwasher'];
-        const fixtures = ['toilet', 'bathtub', 'shower', 'sink-bath', 'sink-kitchen', 'stove'];
-        if (beds.includes(typeId)) return 0xd8cdbf;
-        if (seating.includes(typeId)) return 0x8a94a6;
-        if (wood.includes(typeId)) return 0x9c7a55;
-        if (storage.includes(typeId)) return 0x6f7480;
-        if (fixtures.includes(typeId)) return 0xe8eaed;
-        if (typeId === 'floor-plant') return 0x5f7d52;
-        return 0xa7adb8;
-    }
-
-    function furnitureHeightFt(typeId) {
-        const tall = { wardrobe: 6, fridge: 5.5, bookshelf: 6, 'tv-stand': 1.8, dresser: 3, 'filing-cabinet': 4 };
-        const low = { 'coffee-table': 1.4, 'floor-mat': 0.1, 'floor-plant': 4, rug: 0.1, toilet: 2.5, bathtub: 1.8, shower: 6.5, 'queen-bed': 2, 'king-bed': 2, 'twin-bed': 2, nightstand: 2, sofa: 2.6, armchair: 2.6, 'dining-table': 2.5, 'dining-chair': 3, desk: 2.5, 'office-chair': 3, counter: 3, stove: 3, 'sink-kitchen': 3, dishwasher: 3, buffet: 3, 'sink-bath': 2.5, stairs: 4 };
-        if (tall[typeId] != null) return tall[typeId];
-        if (low[typeId] != null) return low[typeId];
-        return 2.5;
-    }
-
+    // ── Render a room (3D) ────────────────────────────────────────────────
     function pointInPolygonPx(x, y, pts) {
         let inside = false;
         for (let i = 0, j = pts.length - 1; i < pts.length; j = i++) {
@@ -7072,303 +7192,59 @@ const FloorPlanEditor = (() => {
         return inside;
     }
 
-    // Build an offscreen 3D blockout of a room and return it as a PNG data URL.
-    // This perspective "guide" gives the image model correct vanishing points
-    // and furniture placement to turn into a photoreal interior.
-    function renderRoomGuide(face) {
-        const H = 8; // ceiling height in feet
-        const ftPts = face.points.map(p => ({ x: p.x / scale, z: p.y / scale }));
-        const n = ftPts.length;
-        if (n < 3) return null;
-
-        const centroid = ftPts.reduce((a, p) => ({ x: a.x + p.x / n, z: a.z + p.z / n }), { x: 0, z: 0 });
-
-        const scene = new THREE.Scene();
-        scene.background = new THREE.Color(0xeef0f4);
-
-        const disposables = [];
-
-        // Floor — built in shape space (x, z), rotated down onto the XZ plane.
-        const floorShape = new THREE.Shape();
-        floorShape.moveTo(ftPts[0].x, ftPts[0].z);
-        for (let i = 1; i < n; i++) floorShape.lineTo(ftPts[i].x, ftPts[i].z);
-        floorShape.closePath();
-        const floorGeo = new THREE.ShapeGeometry(floorShape);
-        floorGeo.rotateX(-Math.PI / 2); // shape y → world -z, lies at y=0
-        const floorMat = new THREE.MeshStandardMaterial({ color: 0xb89576, roughness: 0.9, side: THREE.DoubleSide });
-        scene.add(new THREE.Mesh(floorGeo, floorMat));
-        disposables.push(floorGeo, floorMat);
-
-        // Ceiling — same polygon at the top so the render reads as an enclosed
-        // interior (otherwise the open top becomes a blown-out sky in the result).
-        const ceilGeo = new THREE.ShapeGeometry(floorShape);
-        ceilGeo.rotateX(-Math.PI / 2);
-        ceilGeo.translate(0, H, 0);
-        const ceilMat = new THREE.MeshStandardMaterial({ color: 0xf5f3ef, roughness: 1, side: THREE.DoubleSide });
-        scene.add(new THREE.Mesh(ceilGeo, ceilMat));
-        disposables.push(ceilGeo, ceilMat);
-
-        // Walls — one box per polygon edge, extruded to the ceiling.
-        const wallMat = new THREE.MeshStandardMaterial({ color: 0xece7dd, roughness: 1, side: THREE.DoubleSide });
-        disposables.push(wallMat);
-        for (let i = 0; i < n; i++) {
-            const A = ftPts[i], B = ftPts[(i + 1) % n];
-            const ax = A.x, az = -A.z, bx = B.x, bz = -B.z;
-            const dx = bx - ax, dz = bz - az;
-            const len = Math.hypot(dx, dz);
-            if (len < 0.01) continue;
-            const wallGeo = new THREE.BoxGeometry(len, H, 0.4);
-            disposables.push(wallGeo);
-            const wall = new THREE.Mesh(wallGeo, wallMat);
-            wall.position.set((ax + bx) / 2, H / 2, (az + bz) / 2);
-            wall.rotation.y = Math.atan2(-dz, dx);
-            scene.add(wall);
+    /** The whole floor in feet for the render dialog: rooms, walls with openings, furniture. */
+    function buildRenderPlan(inferRoomName) {
+        const ft = (v) => v / scale;
+        const faces = findEnclosedRoomFaces();
+        const plan = {
+            rooms: faces.map(face => {
+                const key = getRoomFaceKey(face);
+                return { id: key, key, name: roomNames[key] || '', points: face.points.map(p => ({ x: ft(p.x), y: ft(p.y) })) };
+            }),
+            walls: walls.map(w => ({
+                a: { x: ft(w.start.x), y: ft(w.start.y) },
+                b: { x: ft(w.end.x), y: ft(w.end.y) },
+                thickness: ft(thicknessOf(w)),
+                openings: (w.openings || []).map(o => ({ type: o.type, position: o.position, width: ft(o.width) }))
+            })),
+            furniture: furniture.map(f => ({
+                typeId: f.typeId,
+                cx: ft(f.x + f.width / 2), cy: ft(f.y + f.height / 2),
+                w: ft(f.width), h: ft(f.height), rotation: f.rotation || 0
+            }))
+        };
+        // Free labels sitting in an unnamed room name it; otherwise guess from what's in it
+        for (const room of plan.rooms) {
+            if (room.name) continue;
+            const label = labels.find(l => pointInPolygonPx(ft(l.x), ft(l.y), room.points));
+            room.name = label ? label.text : inferRoomName(plan, room);
         }
-
-        // Furniture — boxes coloured by category for items whose center lies
-        // inside the room, giving the model recognizable masses to render.
-        for (const item of furniture) {
-            const cxPx = item.x + item.width / 2;
-            const cyPx = item.y + item.height / 2;
-            if (!pointInPolygonPx(cxPx, cyPx, face.points)) continue;
-            const w = item.width / scale;
-            const d = item.height / scale;
-            const h = furnitureHeightFt(item.typeId);
-            const geo = new THREE.BoxGeometry(Math.max(w, 0.2), h, Math.max(d, 0.2));
-            const mat = new THREE.MeshStandardMaterial({ color: furnitureGuideColor(item.typeId), roughness: 0.8 });
-            disposables.push(geo, mat);
-            const mesh = new THREE.Mesh(geo, mat);
-            mesh.position.set(cxPx / scale, h / 2, -cyPx / scale);
-            mesh.rotation.y = -(item.rotation || 0) * Math.PI / 180;
-            scene.add(mesh);
-        }
-
-        scene.add(new THREE.HemisphereLight(0xffffff, 0x9aa0aa, 0.9));
-        const lamp = new THREE.PointLight(0xfff2e0, 1.5, 0, 1.3);
-        lamp.position.set(centroid.x, H - 1, -centroid.z);
-        scene.add(lamp);
-        const fill = new THREE.DirectionalLight(0xe6ecf5, 0.45);
-        fill.position.set(centroid.x + 6, H * 0.7, -centroid.z + 8);
-        scene.add(fill);
-
-        // Camera at eye level, anchored at the room corner farthest from the
-        // centroid (widest view), nudged just inside the wall, aimed across.
-        let anchor = ftPts[0], best = -Infinity;
-        for (const p of ftPts) {
-            const dd = Math.hypot(p.x - centroid.x, p.z - centroid.z);
-            if (dd > best) { best = dd; anchor = p; }
-        }
-        const camPlan = { x: anchor.x + (centroid.x - anchor.x) * 0.14, z: anchor.z + (centroid.z - anchor.z) * 0.14 };
-        const eye = 5.4;
-        const camera = new THREE.PerspectiveCamera(68, 1, 0.1, 250);
-        camera.position.set(camPlan.x, eye, -camPlan.z);
-        camera.lookAt(centroid.x, eye * 0.62, -centroid.z);
-
-        const size = 768;
-        const renderer = new THREE.WebGLRenderer({ antialias: true, preserveDrawingBuffer: true });
-        renderer.setSize(size, size);
-        renderer.setPixelRatio(1);
-        renderer.render(scene, camera);
-
-        // The plan uses screen coordinates (X right, Y DOWN). Mapping plan-Y to
-        // world-Z with the fixed camera up-vector renders the room as a
-        // horizontal mirror of the top-down layout (e.g. an object to the right
-        // of the bed in the plan ends up on the left). Flip the output
-        // horizontally so the guide — and the AI image generated from it — reads
-        // left/right exactly like the layout the user drew.
-        const flip = document.createElement('canvas');
-        flip.width = size;
-        flip.height = size;
-        const fctx = flip.getContext('2d');
-        fctx.translate(size, 0);
-        fctx.scale(-1, 1);
-        fctx.drawImage(renderer.domElement, 0, 0);
-        const dataUrl = flip.toDataURL('image/png');
-
-        disposables.forEach(d => d.dispose && d.dispose());
-        renderer.dispose();
-        renderer.forceContextLoss && renderer.forceContextLoss();
-
-        return dataUrl;
+        return plan;
     }
 
-    function initRoom3DModal() {
-        if (room3dInited) return;
-        room3dInited = true;
-
-        const presetWrap = document.getElementById('room3d-presets');
-        if (presetWrap) {
-            presetWrap.innerHTML = '';
-            ROOM3D_PRESETS.forEach(p => {
-                const btn = document.createElement('button');
-                btn.type = 'button';
-                btn.className = 'room3d-preset' + (p.id === room3dStyle ? ' room3d-preset--active' : '');
-                btn.textContent = p.label;
-                btn.dataset.styleId = p.id;
-                btn.addEventListener('click', () => selectRoom3DStyle(p.id));
-                presetWrap.appendChild(btn);
-            });
-        }
-
-        document.getElementById('room3d-close-btn')?.addEventListener('click', closeRoom3DModal);
-        document.getElementById('room3d-modal')?.addEventListener('click', (e) => {
-            if (e.target?.id === 'room3d-modal') closeRoom3DModal();
-        });
-        document.getElementById('room3d-room-select')?.addEventListener('change', (e) => {
-            selectRoom3DFace(parseInt(e.target.value, 10) || 0);
-        });
-        document.getElementById('room3d-generate-btn')?.addEventListener('click', generateRoom3D);
-        document.getElementById('room3d-regenerate-btn')?.addEventListener('click', generateRoom3D);
-        document.getElementById('room3d-download-btn')?.addEventListener('click', downloadRoom3D);
-    }
-
-    function openRoom3DModal() {
-        initRoom3DModal();
+    async function openRoom3DModal() {
         const faces = findEnclosedRoomFaces();
         if (!faces.length) {
-            showLayoutFileMessage('Draw an enclosed room first to generate a 3D view.');
+            showLayoutFileMessage('Draw an enclosed room first to render it in 3D.');
             return;
         }
-        room3dFaces = faces.slice().sort((a, b) => b.areaPx - a.areaPx);
-        room3dSelectedFaceIndex = 0;
-
-        const select = document.getElementById('room3d-room-select');
-        const field = document.getElementById('room3d-room-field');
-        if (select) {
-            select.innerHTML = '';
-            room3dFaces.forEach((face, i) => {
-                const opt = document.createElement('option');
-                opt.value = String(i);
-                const name = roomNames[getRoomFaceKey(face)];
-                opt.textContent = `${name || `Room ${i + 1}`} (${formatRoomArea(face.areaPx)})`;
-                select.appendChild(opt);
-            });
-            select.value = '0';
-        }
-        if (field) field.classList.toggle('hidden', room3dFaces.length <= 1);
-
-        resetRoom3DResult();
-        renderRoom3DGuide();
-
-        const modal = document.getElementById('room3d-modal');
-        if (modal) {
-            modal.classList.remove('hidden');
-            modal.classList.add('show');
-        }
-        if (typeof feather !== 'undefined') feather.replace();
-    }
-
-    function closeRoom3DModal() {
-        const modal = document.getElementById('room3d-modal');
-        if (modal) {
-            modal.classList.remove('show');
-            modal.classList.add('hidden');
-        }
-    }
-
-    function selectRoom3DStyle(id) {
-        room3dStyle = id;
-        document.querySelectorAll('#room3d-presets .room3d-preset').forEach(btn => {
-            btn.classList.toggle('room3d-preset--active', btn.dataset.styleId === id);
+        const [{ openRoomRenderDialog }, { inferRoomName }] = await Promise.all([
+            import('./room3d/dialog.js'),
+            import('./room3d/scene.js')
+        ]);
+        const plan = buildRenderPlan(inferRoomName);
+        // start with the biggest room
+        plan.rooms.sort((a, b) => {
+            const area = (r) => Math.abs(r.points.reduce((s, p, i) => { const q = r.points[(i + 1) % r.points.length]; return s + p.x * q.y - q.x * p.y; }, 0));
+            return area(b) - area(a);
         });
-    }
-
-    function selectRoom3DFace(index) {
-        room3dSelectedFaceIndex = index;
-        resetRoom3DResult();
-        renderRoom3DGuide();
-    }
-
-    function renderRoom3DGuide() {
-        const face = room3dFaces[room3dSelectedFaceIndex];
-        if (!face) return;
-        let dataUrl = null;
-        try {
-            dataUrl = renderRoomGuide(face);
-        } catch (err) {
-            console.error('Room guide render failed:', err);
-        }
-        room3dGuideDataUrl = dataUrl;
-        const img = document.getElementById('room3d-guide-img');
-        if (img && dataUrl) img.src = dataUrl;
-    }
-
-    function resetRoom3DResult() {
-        room3dResultUrl = null;
-        document.getElementById('room3d-result-img')?.classList.add('hidden');
-        const placeholder = document.getElementById('room3d-result-placeholder');
-        if (placeholder) {
-            placeholder.classList.remove('hidden');
-            placeholder.textContent = 'Your photoreal room will appear here.';
-        }
-        document.getElementById('room3d-spinner')?.classList.add('hidden');
-        const dl = document.getElementById('room3d-download-btn');
-        const re = document.getElementById('room3d-regenerate-btn');
-        if (dl) dl.disabled = true;
-        if (re) re.disabled = true;
-    }
-
-    async function generateRoom3D() {
-        if (room3dBusy || !room3dGuideDataUrl) return;
-        if (typeof window.__decoraitGenerateRoomRender !== 'function') {
-            showLayoutFileMessage('Image generation is unavailable right now.');
-            return;
-        }
-        room3dBusy = true;
-        const genBtn = document.getElementById('room3d-generate-btn');
-        const spinner = document.getElementById('room3d-spinner');
-        const placeholder = document.getElementById('room3d-result-placeholder');
-        const resultImg = document.getElementById('room3d-result-img');
-        if (genBtn) genBtn.disabled = true;
-        placeholder?.classList.add('hidden');
-        resultImg?.classList.add('hidden');
-        spinner?.classList.remove('hidden');
-
-        try {
-            const preset = ROOM3D_PRESETS.find(p => p.id === room3dStyle) || ROOM3D_PRESETS[0];
-            const url = await window.__decoraitGenerateRoomRender(room3dGuideDataUrl, { stylePrompt: preset.prompt });
-            if (!url) throw new Error('No image returned.');
-            room3dResultUrl = url;
-            if (resultImg) {
-                resultImg.src = url;
-                resultImg.classList.remove('hidden');
-            }
-            const dl = document.getElementById('room3d-download-btn');
-            const re = document.getElementById('room3d-regenerate-btn');
-            if (dl) dl.disabled = false;
-            if (re) re.disabled = false;
-        } catch (err) {
-            console.error('3D room generation failed:', err);
-            if (err && err.code === 'QUOTA_EXCEEDED' && typeof window.__decoraitShowSubscribeModal === 'function') {
-                closeRoom3DModal();
-                window.__decoraitShowSubscribeModal();
-            } else if (placeholder) {
-                placeholder.classList.remove('hidden');
-                placeholder.textContent = (err && err.message) ? err.message : 'Could not generate the room. Try again.';
-            }
-        } finally {
-            spinner?.classList.add('hidden');
-            if (genBtn) genBtn.disabled = false;
-            room3dBusy = false;
-        }
-    }
-
-    async function downloadRoom3D() {
-        if (!room3dResultUrl) return;
-        try {
-            const res = await fetch(room3dResultUrl);
-            const blob = await res.blob();
-            const url = URL.createObjectURL(blob);
-            const a = document.createElement('a');
-            a.href = url;
-            a.download = '3d-room.png';
-            document.body.appendChild(a);
-            a.click();
-            a.remove();
-            setTimeout(() => URL.revokeObjectURL(url), 1000);
-        } catch {
-            window.open(room3dResultUrl, '_blank');
-        }
+        openRoomRenderDialog(plan, {
+            generate: async (guide, opts) => {
+                if (typeof window.__decoraitGenerateRoomRender !== 'function') throw new Error('Image generation is unavailable right now.');
+                return window.__decoraitGenerateRoomRender(guide, opts);
+            },
+            onQuota: () => window.__decoraitShowSubscribeModal?.()
+        });
     }
 
     function handleCanvasDoubleClick(e) {
@@ -9147,6 +9023,7 @@ const FloorPlanEditor = (() => {
         let svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${w}" height="${h}" viewBox="${ox} ${oy} ${bw} ${bh}" style="background:${c.paper};border-radius:6px">`;
 
         for (const wall of walls) {
+            const wallThickness = thicknessOf(wall);
             svg += `<line x1="${wall.start.x}" y1="${wall.start.y}" x2="${wall.end.x}" y2="${wall.end.y}" stroke="${c.ink}" stroke-width="${wallThickness}" stroke-linecap="round"/>`;
             for (const o of (wall.openings || [])) {
                 const cx = wall.start.x + o.position * (wall.end.x - wall.start.x);

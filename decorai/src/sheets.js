@@ -90,11 +90,12 @@ function onOpen(modal) {
   };
   modal.addEventListener('keydown', modal._sheetKeyHandler);
 
-  // Move focus into the sheet, preferring the first meaningful control over
-  // the close button so keyboard users don't land on "dismiss".
+  // Move focus into the sheet: a control marked data-initial-focus, else the first
+  // meaningful control over the close button so keyboard users don't land on "dismiss".
   requestAnimationFrame(() => {
     const items = [...modal.querySelectorAll(FOCUSABLE)].filter(el => el.offsetParent !== null);
-    const preferred = items.find(el => !el.matches('.close-modal-btn, [data-sheet-close]')) || items[0];
+    const preferred = items.find(el => el.matches('[data-initial-focus]'))
+      || items.find(el => !el.matches('.close-modal-btn, [data-sheet-close]')) || items[0];
     preferred?.focus({ preventScroll: true });
   });
 
