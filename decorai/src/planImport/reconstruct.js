@@ -413,6 +413,7 @@ export function reconstructLayout(prims, options = {}) {
             approx: !!s.approx,
             width: (s.width || 0) * k,
             filled: !!s.filled,
+            hatch: !!s.hatch,
             blockExtent: s.blockExtent != null ? s.blockExtent * k : null,
             free: [[f.a, f.b]],
             claimed: 0
@@ -430,17 +431,28 @@ export function reconstructLayout(prims, options = {}) {
     const inserts = (prims.inserts || []).map(b => ({ ...b, cx: b.cx * k, cy: b.cy * k, w: b.w * k, h: b.h * k }));
 
     // ---- pick wall candidates ----
-    const wallLayerLen = segs.filter(s => s.role === 'wall').reduce((t, s) => t + s.len, 0);
+    const wallLayerLen = segs.filter(s => s.role === 'wall' && !s.hatch).reduce((t, s) => t + s.len, 0);
     const usingWallLayers = wallLayerLen >= 20;
     const inSmallBlock = (s) => s.blockExtent != null && s.blockExtent < 10 && s.role !== 'wall';
-    let cand = segs.filter(s => !s.approx && (usingWallLayers
+    let cand = segs.filter(s => !s.approx && !s.hatch && (usingWallLayers
         ? s.role === 'wall'
         : (s.role === 'none' || s.role === 'other' || s.role === 'wall') && !inSmallBlock(s)));
 
+    // Walls filled with hatching: the lines the hatch ends on are the wall faces. That's
+    // stronger evidence than anything else here, so these walls are handled like filled ones.
+    let usingFills = false;
+    const hatch = segs.filter(s => s.hatch && (s.role === 'wall' || s.role === 'none'));
+    if (hatch.length >= 40) {
+        const edges = hatchEdges(hatch, cand.filter(s => !s.filled));
+        if (edges.length >= 8 && edges.reduce((t, s) => t + s.len, 0) >= 40) {
+            cand = edges;
+            usingFills = true;
+        }
+    }
+
     // Many PDFs (and some DXFs) draw walls as solid fills while furniture is outlined only.
     // Filled shapes contribute their outline only (fills split into triangles share inner edges).
-    let usingFills = false;
-    const filledCand = cand.filter(s => s.filled);
+    const filledCand = usingFills ? [] : cand.filter(s => s.filled);
     if (filledCand.length) {
         const fillBoundary = boundaryEdges(filledCand);
         const fillLen = fillBoundary.reduce((t, s) => t + s.len, 0);
@@ -473,7 +485,7 @@ export function reconstructLayout(prims, options = {}) {
     // Fill mode: some wall runs may be drawn as outlines only. Accept outline pairs that match
     // the filled walls' thickness and connect to them (furniture outlines do neither).
     if (usingFills && peaks.length) {
-        const strokes = segs.filter(s => !s.filled && s.len >= 0.25 && !inSmallBlock(s)
+        const strokes = segs.filter(s => !s.filled && !s.hatch && s.len >= 0.25 && !inSmallBlock(s)
             && (o.explicitRoles ? s.role === 'wall' : s.role === 'none' || s.role === 'other' || s.role === 'wall'));
         const extra = pairIntoPieces(strokes, o, peaks).pieces;
         const base = [...pieces];
@@ -485,12 +497,13 @@ export function reconstructLayout(prims, options = {}) {
             const duplicate = base.some(b => angleDiff(b.theta, pc.theta) < 2 * DEG
                 && Math.abs(dot(b.n, pc.mid) - b.off) < b.t / 2
                 && Math.min(b.b, Math.max(dot(b.u, pc.p1), dot(b.u, pc.p2))) - Math.max(b.a, Math.min(dot(b.u, pc.p1), dot(b.u, pc.p2))) > 0.5 * pc.len);
-            if (duplicate) continue;
+            if (duplicate) { unclaim(pc); continue; }
             // A missing wall run links two existing walls end-on: the walls it meets run in another
             // direction. Window outlines (ending against the same wall line) and fixtures sitting
             // alongside a wall don't qualify; those gaps become doors/windows later.
             const near = (p) => base.some(b => b.len >= 3 && angleDiff(b.theta, pc.theta) > 25 * DEG && distToPiece(p, b) <= b.t / 2 + pc.t / 2 + 0.3);
             if (near(pc.p1) && near(pc.p2)) pieces.push(pc);
+            else unclaim(pc); // its lines aren't wall faces after all (window glass, furniture)
         }
     }
 
@@ -549,7 +562,7 @@ export function reconstructLayout(prims, options = {}) {
     const gapArcs = arcs.filter(a => !doorFill.used.has(a));
 
     // ---- merge collinear pieces into walls; gaps become doors/windows ----
-    const evidenceSegs = segs.filter(s => s.role !== 'ignore' && s.role !== 'stairs' && s.role !== 'leaf');
+    const evidenceSegs = segs.filter(s => !s.hatch && s.role !== 'ignore' && s.role !== 'stairs' && s.role !== 'leaf');
     // lines a review didn't mark as anything specific (furniture, doors) can still be window glass
     const glassRole = (s) => s.role === 'wall' || s.role === 'window' || s.role === 'other' || s.role === 'none';
     const wallishSegs = evidenceSegs.filter(glassRole);
@@ -869,6 +882,38 @@ function boundaryEdges(filled) {
     return filled.filter(s => count.get(k(s)) === 1);
 }
 
+/**
+ * Lines that hatching ends on (a wall's faces and jambs). Hatch lines are clipped exactly to
+ * the outline they fill, so each end of a hatch line sits on one of these.
+ */
+function hatchEdges(hatch, strokes) {
+    const CELL = 1, TOL = 0.04;
+    const grid = new Map();
+    for (const s of strokes) {
+        if (s.len < 0.2) continue;
+        const x0 = Math.floor(Math.min(s.p1.x, s.p2.x) / CELL), x1 = Math.floor(Math.max(s.p1.x, s.p2.x) / CELL);
+        const y0 = Math.floor(Math.min(s.p1.y, s.p2.y) / CELL), y1 = Math.floor(Math.max(s.p1.y, s.p2.y) / CELL);
+        if ((x1 - x0 + 1) * (y1 - y0 + 1) > 4000) continue; // a long diagonal: not a wall face
+        for (let x = x0; x <= x1; x++) for (let y = y0; y <= y1; y++) {
+            const key = `${x},${y}`;
+            if (!grid.has(key)) grid.set(key, []);
+            grid.get(key).push(s);
+        }
+    }
+    const hits = new Map();
+    for (const h of hatch) {
+        for (const p of [h.p1, h.p2]) {
+            for (const s of grid.get(`${Math.floor(p.x / CELL)},${Math.floor(p.y / CELL)}`) || []) {
+                // along the line, not at its ends: hatch filling a corner also touches the next line's tip
+                const t = dot(sub(p, s.p1), s.u) * Math.sign(dot(sub(s.p2, s.p1), s.u));
+                if (t < 0.06 || t > s.len - 0.06) continue;
+                if (distPointSeg(p, s.p1, s.p2) <= TOL) hits.set(s, (hits.get(s) || 0) + 1);
+            }
+        }
+    }
+    return [...hits].filter(([, n]) => n >= 3).map(([s]) => s);
+}
+
 function emptyResult(scale, warnings) {
     return {
         state: { corners: [], walls: [], labels: [], furniture: [] },
@@ -939,7 +984,9 @@ function pairIntoPieces(cand, o, forcePeaks = null) {
             const centerOff = s.off + p.side * p.d / 2;
             const P = add(mul(s.u, a), mul(s.n, centerOff));
             const Q = add(mul(s.u, b), mul(s.n, centerOff));
-            out.push(makePiece(P, Q, p.d));
+            const piece = makePiece(P, Q, p.d);
+            piece.claims = [[s, b - a], [t, b - a]];
+            out.push(piece);
             s.free = subtractInterval(s.free, a, b);
             s.claimed += b - a;
             const A = dot(t.u, add(mul(s.u, a), mul(s.n, s.off))), B = dot(t.u, add(mul(s.u, b), mul(s.n, s.off)));
@@ -949,6 +996,11 @@ function pairIntoPieces(cand, o, forcePeaks = null) {
     }
 
     return { pieces: out, peaks };
+}
+
+/** Undo the claim a rejected piece made on its two lines. */
+function unclaim(pc) {
+    for (const [s, amount] of pc.claims || []) s.claimed -= amount;
 }
 
 function thicknessPeaks(pairs, o) {

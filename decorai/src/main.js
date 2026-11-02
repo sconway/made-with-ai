@@ -4844,7 +4844,8 @@ window.__decoraitGenerateRoomRender = async function (guideBase64, opts = {}) {
     const roomBrief = (opts && opts.roomBrief) ? opts.roomBrief.trim() : '';
     const prompt = [
         'This image is a plain 3D blockout of one room in a home, seen at eye level: a wood-colored floor, blank walls and ceiling, openings for doors and windows, and colored boxes that mark where furniture goes.',
-        'Turn it into a photorealistic interior photograph of the same room from the same camera position.',
+        'Turn it into a photorealistic interior photograph of the same room from the same camera position, with the same wide-angle lens and framing.',
+        'Keep everything that is in the blockout in the frame: do not crop, zoom in or move the camera closer.',
         roomBrief ? `The room: ${roomBrief}` : '',
         "Keep the room's shape, every wall, door and window opening, and the position, footprint and orientation of every furniture block — replace each colored box with a realistic, well-designed piece of the matching type standing in that exact spot.",
         'Bright panes in the walls are windows with natural daylight. Doorways can show glimpses of the neighboring rooms; keep them consistent with the same home but quieter than the main room.',

@@ -73,6 +73,39 @@ function apartment({ stairs = false, extraFurniture = false } = {}) {
     return { L, A, T, bed: { x: 21, y: 4.5, w: 5, h: 6.67 } };
 }
 
+/** Fills every wall with 45° hatching (thin lines every `gap` ft), as many CAD exports do. */
+function addHatching(plan, gap = 0.08) {
+    const walls = [
+        [-E, -E, 5, E], [10, -E, 30 + E, E],                       // top (window 5–10)
+        [-E, 20 - E, 6, 20 + E], [9, 20 - E, 30 + E, 20 + E],     // bottom (door 6–9)
+        [-E, -E, E, 20 + E],                                      // left
+        [30 - E, -E, 30 + E, 3], [30 - E, 8, 30 + E, 20 + E],     // right (window 3–8)
+        [18 - I, E, 18 + I, 4], [18 - I, 6.75, 18 + I, 20 - E],   // interior x = 18
+        [18 + I, 12 - I, 22, 12 + I], [24.5, 12 - I, 30 - E, 12 + I] // interior y = 12
+    ];
+    const step = gap * Math.SQRT2;
+    for (const [x0, y0, x1, y1] of walls) {
+        // lines x = y + c, clipped to the wall's rectangle
+        for (let c = x0 - y1 + step / 2; c < x1 - y0; c += step) {
+            const lo = Math.max(y0, x0 - c), hi = Math.min(y1, x1 - c);
+            if (hi - lo > 0.01) plan.L.push({ x1: lo + c, y1: lo, x2: hi + c, y2: hi, layer: 'A-WALL-PATT' });
+        }
+    }
+}
+
+/** Filled star-shaped plants in a planter along the top (filled shapes that aren't walls). */
+function addPlants(plan) {
+    plan.fills = [];
+    for (let i = 0; i < 7; i++) {
+        const cx = 2 + i * 4, cy = -2.2, pts = [];
+        for (let j = 0; j < 16; j++) {
+            const r = j % 2 ? 0.35 : 0.8, a = (j / 16) * 2 * Math.PI;
+            pts.push([cx + r * Math.cos(a), cy + r * Math.sin(a)]);
+        }
+        plan.fills.push(pts);
+    }
+}
+
 function addDimensions(plan) {
     const dim = (x1, y1, x2, y2, text) => {
         plan.L.push({ x1, y1, x2, y2, layer: 'A-ANNO-DIMS' });
@@ -134,6 +167,9 @@ function writePdf(plan, file, { mono = false, scaleNote = true, offset = [100, 8
         const p1 = { x: p0.x + t0.x * kk, y: p0.y + t0.y * kk }, p2 = { x: p3.x - t3.x * kk, y: p3.y - t3.y * kk };
         c.push(`${mono ? 0.5 : 0.4} w ${X(p0.x)} ${Y(p0.y)} m ${X(p1.x)} ${Y(p1.y)} ${X(p2.x)} ${Y(p2.y)} ${X(p3.x)} ${Y(p3.y)} c S`);
     }
+    for (const pts of plan.fills || []) {
+        c.push(`0 0.4 0 rg ${pts.map(([x, y], i) => `${X(x)} ${Y(y)} ${i ? 'l' : 'm'}`).join(' ')} h f 0 0 0 rg`);
+    }
     if (plan.bed) { const f = plan.bed; c.push(`${mono ? 0.5 : 0.4} w ${X(f.x)} ${Y(f.y + f.h)} ${(f.w * S).toFixed(3)} ${(f.h * S).toFixed(3)} re S`); }
     for (const t of plan.T) {
         const size = t.h * S, wEst = t.text.length * size * 0.55;
@@ -164,5 +200,6 @@ function writePdf(plan, file, { mono = false, scaleNote = true, offset = [100, 8
 { const p = apartment(); addDimensions(p); rotate(p, 30); writePdf(p, '04-rotated-30-degrees.pdf', { offset: [160, 140] }); writeDxf(p, '04-rotated-30-degrees.dxf'); }
 { const p = apartment(); writePdf(p, '05-no-dimensions-no-scale.pdf', { scaleNote: false }); }
 { const p = apartment(); writeDxf(p, '06-dxf-without-units.dxf', { units: 0 }); }
+{ const p = apartment({ extraFurniture: true }); addDimensions(p); addHatching(p); addPlants(p); writePdf(p, '07-hatched-walls.pdf', { mono: true }); }
 
 console.log(`Wrote synthetic plans to ${path.relative(process.cwd(), outDir) || outDir}`);

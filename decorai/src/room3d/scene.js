@@ -7,7 +7,11 @@ import * as THREE from 'three';
 const CEILING_FT = 8.5;
 const DOOR_HEAD_FT = 6.8;
 const SILL_FT = 2.8, WINDOW_HEAD_FT = 7.0;
-const EYE_FT = 5.1;
+// Camera: level at about chest height, like real-estate photos (no tilt, so walls stay upright),
+// with a wide lens so the shot takes in as much of the room as possible
+const EYE_FT = 4.75;
+const MIN_FOV = 75, MAX_FOV = 100; // horizontal, degrees (100° is about a 15 mm lens)
+const CLEAR_FT = 0.6;              // gap between the camera and the wall face behind it
 export const GUIDE_W = 1152, GUIDE_H = 768; // 3:2, renders come back landscape
 
 const FURNITURE_LABELS = {
@@ -130,25 +134,41 @@ function polygonArea(pts) {
 
 const compass = (dx, dy) => `${dy < 0 ? 'north' : 'south'}-${dx < 0 ? 'west' : 'east'}`; // plan up = north
 
-/** Camera positions worth offering for a room: from each doorway, then from the corners. */
+/**
+ * Camera positions worth offering for a room: from each doorway, then from the corners.
+ * Each stands as far back as it can (in the doorway, or tucked into the corner) and gets the
+ * aim and lens width that take in the most of the room.
+ * @returns [{ id, kind, pos, look, fov, label }] fov = horizontal degrees
+ */
 export function viewpointsFor(plan, room) {
-    const c = centroid(room.points);
     const facts = describeRoom(plan, room);
     const views = [];
+    // from `from`, step along `dir` until the camera isn't standing in furniture (up to 3 ft more)
+    const clearSpot = (from, dir, back) => {
+        for (let d = back; d <= back + 3; d += 0.25) {
+            const pos = { x: from.x + dir.x * d, y: from.y + dir.y * d };
+            if (!pointInPolygon(pos.x, pos.y, room.points)) return null;
+            if (!insideFurniture(plan, pos)) return pos;
+        }
+        return null;
+    };
     for (const d of facts.doors) {
         if (views.length >= 3) break; // leave room for corner views
         const n = { x: -d.u.y, y: d.u.x };
         const inward = pointInPolygon(d.center.x + n.x * 1.5, d.center.y + n.y * 1.5, room.points) ? 1 : -1;
-        const pos = { x: d.center.x + n.x * inward * 1.0, y: d.center.y + n.y * inward * 1.0 };
-        if (!pointInPolygon(pos.x, pos.y, room.points)) continue;
+        const fwd = { x: n.x * inward, y: n.y * inward };
+        // in the doorway itself: the jambs stay out of the wide shot
+        const pos = clearSpot(d.center, fwd, 0.05);
+        if (!pos) continue;
         // the two leaves of a double door are one doorway
         if (views.some(v => Math.hypot(v.pos.x - pos.x, v.pos.y - pos.y) < 4)) continue;
         const label = d.beyond?.name ? `From the ${d.beyond.name} doorway`
             : d.beyond ? 'From the doorway' : 'From the entrance';
         if (views.some(v => v.label === label)) continue;
-        views.push({ id: `door-${views.length}`, kind: 'door', pos, look: c, label });
+        views.push({ id: `door-${views.length}`, kind: 'door', pos, ...frameView(room, pos, fwd), label });
     }
     // convex corners, widest first
+    const c = centroid(room.points);
     const corners = [];
     const n = room.points.length;
     const sign = Math.sign(signedArea(room.points));
@@ -156,15 +176,70 @@ export function viewpointsFor(plan, room) {
         const p = room.points[i], prev = room.points[(i - 1 + n) % n], next = room.points[(i + 1) % n];
         const cross = (p.x - prev.x) * (next.y - p.y) - (p.y - prev.y) * (next.x - p.x);
         if (Math.sign(cross) !== sign) continue; // reflex corner
-        const dx = c.x - p.x, dy = c.y - p.y, L = Math.hypot(dx, dy) || 1;
-        const pos = { x: p.x + (dx / L) * 1.8, y: p.y + (dy / L) * 1.8 };
-        if (!pointInPolygon(pos.x, pos.y, room.points)) continue;
-        corners.push({ id: `corner-${i}`, kind: 'corner', pos, look: c, dist: L, label: `From the ${compass(p.x - c.x, p.y - c.y)} corner` });
+        const unit = (q) => { const L = Math.hypot(q.x - p.x, q.y - p.y) || 1; return { x: (q.x - p.x) / L, y: (q.y - p.y) / L }; };
+        const e1 = unit(prev), e2 = unit(next);
+        const bl = Math.hypot(e1.x + e2.x, e1.y + e2.y);
+        if (bl < 1e-3) continue;
+        const bis = { x: (e1.x + e2.x) / bl, y: (e1.y + e2.y) / bl };
+        // back into the corner: just clear of both wall faces
+        const sinHalf = Math.abs(e1.x * bis.y - e1.y * bis.x) || 1;
+        const back = Math.min((wallHalfThickness(plan, p) + CLEAR_FT) / sinHalf, 4);
+        const pos = clearSpot(p, bis, back);
+        if (!pos) continue;
+        corners.push({ id: `corner-${i}`, kind: 'corner', pos, ...frameView(room, pos, bis), dist: Math.hypot(c.x - p.x, c.y - p.y), label: `From the ${compass(p.x - c.x, p.y - c.y)} corner` });
     }
     corners.sort((a, b) => b.dist - a.dist);
     const seen = new Set(views.map(v => v.label));
     for (const v of corners) { if (!seen.has(v.label)) { seen.add(v.label); views.push(v); } }
     return views.slice(0, 6);
+}
+
+/**
+ * Aim and lens for a camera at `pos` facing roughly `fwd`: wide enough to take in the room's
+ * walls (up to MAX_FOV), centered on them. The walls right beside the camera don't count.
+ */
+function frameView(room, pos, fwd) {
+    const base = Math.atan2(fwd.y, fwd.x);
+    const limit = (85 * Math.PI) / 180;
+    let lo = Infinity, hi = -Infinity;
+    const pts = room.points;
+    for (let i = 0; i < pts.length; i++) {
+        const a = pts[i], b = pts[(i + 1) % pts.length];
+        const steps = Math.max(1, Math.ceil(Math.hypot(b.x - a.x, b.y - a.y) / 0.5));
+        for (let k = 0; k <= steps; k++) {
+            const x = a.x + ((b.x - a.x) * k) / steps, y = a.y + ((b.y - a.y) * k) / steps;
+            if (Math.hypot(x - pos.x, y - pos.y) < 4) continue;
+            let ang = Math.atan2(y - pos.y, x - pos.x) - base;
+            ang = Math.atan2(Math.sin(ang), Math.cos(ang));
+            if (Math.abs(ang) > limit) continue;
+            lo = Math.min(lo, ang); hi = Math.max(hi, ang);
+        }
+    }
+    const deg = (r) => (r * 180) / Math.PI;
+    if (!isFinite(lo)) return { look: { x: pos.x + fwd.x * 10, y: pos.y + fwd.y * 10 }, fov: MAX_FOV };
+    const fov = Math.min(MAX_FOV, Math.max(MIN_FOV, deg(hi - lo) + 6));
+    const aim = base + (lo + hi) / 2;
+    return { look: { x: pos.x + Math.cos(aim) * 10, y: pos.y + Math.sin(aim) * 10 }, fov: Math.round(fov) };
+}
+
+/** Half the thickness of the wall nearest a point (feet). */
+function wallHalfThickness(plan, p) {
+    let best = Infinity, half = 0.25;
+    for (const w of plan.walls) {
+        const d = distToSegment(p, w.a, w.b);
+        if (d < best) { best = d; half = (w.thickness || 0.5) / 2; }
+    }
+    return half;
+}
+
+/** Whether a camera here would stand in furniture (a wardrobe or a plant in the corner). Rugs don't count. */
+function insideFurniture(plan, p) {
+    return plan.furniture.some(f => {
+        if (f.typeId === 'floor-mat') return false;
+        const r = ((f.rotation || 0) * Math.PI) / 180, dx = p.x - f.cx, dy = p.y - f.cy;
+        const lx = dx * Math.cos(r) + dy * Math.sin(r), ly = -dx * Math.sin(r) + dy * Math.cos(r);
+        return Math.abs(lx) <= f.w / 2 + 0.3 && Math.abs(ly) <= f.h / 2 + 0.3;
+    });
 }
 
 function signedArea(pts) {
@@ -281,9 +356,12 @@ export function renderGuide(plan, room, view) {
     lamp.position.set(c.x, CEILING_FT - 1, -c.y);
     scene.add(lamp);
 
-    const camera = new THREE.PerspectiveCamera(62, GUIDE_W / GUIDE_H, 0.1, 400);
+    // three.js takes the vertical angle; views carry the horizontal one
+    const hfov = ((view.fov || 84) * Math.PI) / 180;
+    const vfov = (2 * Math.atan(Math.tan(hfov / 2) / (GUIDE_W / GUIDE_H)) * 180) / Math.PI;
+    const camera = new THREE.PerspectiveCamera(vfov, GUIDE_W / GUIDE_H, 0.05, 400);
     camera.position.set(view.pos.x, EYE_FT, -view.pos.y);
-    camera.lookAt(view.look.x, EYE_FT * 0.78, -view.look.y);
+    camera.lookAt(view.look.x, EYE_FT, -view.look.y); // level
 
     const renderer = new THREE.WebGLRenderer({ antialias: true, preserveDrawingBuffer: true });
     renderer.setSize(GUIDE_W, GUIDE_H);

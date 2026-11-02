@@ -20,6 +20,7 @@ const { detectStairs } = await load('src/planImport/stairs.js');
 const { buildGroups } = await load('src/planImport/groups.js');
 const { splitIntoObjects } = await load('src/planImport/objects.js');
 const { buildFromReview } = await load('src/planImport/index.js');
+const { findHatching } = await load('src/planImport/hatch.js');
 const pdfjs = await load('node_modules/pdfjs-dist/legacy/build/pdf.mjs');
 
 const files = ['synthetic', 'real'].flatMap(dir => {
@@ -34,8 +35,10 @@ for (const file of files) {
         const prims = file.endsWith('.dxf')
             ? parseDxfText(fs.readFileSync(file, 'utf8'))
             : await pdfToPrimitives(pdfjs, new Uint8Array(fs.readFileSync(file)));
-        // same first steps as analyzePlanFile: stairs first, then walls
-        const stairs = detectStairs(prims, estimateScale(prims).feetPerUnit);
+        // same first steps as analyzePlanFile: hatching, stairs, then walls
+        const rough = estimateScale(prims).feetPerUnit;
+        for (const i of findHatching(prims, rough)) prims.segments[i].hatch = true;
+        const stairs = detectStairs(prims, rough);
         const stairSeg = new Set(stairs.flatMap(s => s.segments));
         const { report } = reconstructLayout({ ...prims, segments: prims.segments.map((s, i) => (stairSeg.has(i) ? { ...s, role: 'stairs' } : s)) });
         // the review path, as analyzePlanFile + buildFromReview run it in the app

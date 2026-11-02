@@ -21,6 +21,7 @@ Each one is the same 30 × 20 ft apartment (living room, bedroom, bath; 6″ out
 | `04-rotated-30-degrees.pdf` / `.dxf` | A plan that isn't square to the page. | Size reads about 36 × 32 ft because the plan's bounding box is rotated. |
 | `05-no-dimensions-no-scale.pdf` | No dimension labels and no scale note. Scale has to come from door sizes. | Same counts; the size may be a little off. |
 | `06-dxf-without-units.dxf` | A DXF that doesn't declare its units. | Same counts, still 30 × 20 ft. |
+| `07-hatched-walls.pdf` | One line style throughout, walls filled with thin 45° hatching, and filled plant shapes in a planter. The hatching must not turn into walls, and the filled plants must not be read as filled walls. | Furniture kept as drawn; imports in well under a second. |
 
 To recreate them: `node test-fixtures/floor-plans/generate.mjs`
 
@@ -36,6 +37,6 @@ These come from public GitHub projects with no stated license, so they're kept o
 
 ## Checking after code changes
 
-`node test-fixtures/floor-plans/check.mjs` (Node 22+) runs every file through the importer **without** the AI review and prints the counts two ways: the plain pass, and the layer review accepted as suggested (the `rv` columns, which is what you get when the AI review is unavailable). The synthetic plans should all show 10 walls, 3 doors and 2 windows both ways; the real files should match the table above, give or take what the AI review adds.
+`node test-fixtures/floor-plans/check.mjs` (Node 22+) runs every file through the importer **without** the AI review and prints the counts two ways: the plain pass, and the layer review accepted as suggested (the `rv` columns, which is what you get when the AI review is unavailable). The synthetic plans should all show 10 walls, 3 doors and 2 windows both ways (`02`, `03`: plus 1 staircase); the real files should match the table above, give or take what the AI review adds.
 
 To check a plan of your own too, pass its path: `node test-fixtures/floor-plans/check.mjs ~/Downloads/plan.pdf`.

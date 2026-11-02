@@ -94,7 +94,7 @@ export function renderPlanImages(prims, groups, { maxSheets = 3 } = {}) {
     const tf = fitter(b, TILE, TILE, 14);
     drawSet(bctx, prims, tf, ALL(prims), { color: '#cfcfcf', width: 0.6, text: false });
 
-    const geomGroups = groups.filter(g => g.kind !== 'text');
+    const geomGroups = groups.filter(g => g.kind !== 'text' && g.kind !== 'hatch'); // hatching is settled without the model
     const perSheet = COLS * ROWS;
     const sheets = [];
     for (let start = 0; start < geomGroups.length && sheets.length < maxSheets; start += perSheet) {

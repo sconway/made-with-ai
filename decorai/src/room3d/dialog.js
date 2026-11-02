@@ -144,7 +144,7 @@ export function openRoomRenderDialog(plan, { generate, onQuota, initialRoomId } 
         // camera: marker + view cone; other positions in this room as small hollow dots
         let cam = '';
         if (state.view) {
-            const v = state.view, ang = Math.atan2(v.look.y - v.pos.y, v.look.x - v.pos.x), half = 0.72;
+            const v = state.view, ang = Math.atan2(v.look.y - v.pos.y, v.look.x - v.pos.x), half = ((v.fov || 84) * Math.PI) / 360;
             const reach = Math.min(Math.max(span / 5, 6), 14);
             const p1 = { x: v.pos.x + Math.cos(ang - half) * reach, y: v.pos.y + Math.sin(ang - half) * reach };
             const p2 = { x: v.pos.x + Math.cos(ang + half) * reach, y: v.pos.y + Math.sin(ang + half) * reach };

@@ -46,9 +46,12 @@ export async function analyzePlanFile(file) {
         const [pdfjs, { pdfToPrimitives }] = await Promise.all([loadPdfjs(), import('./pdf.js')]);
         prims = await pdfToPrimitives(pdfjs, new Uint8Array(await file.arrayBuffer()));
     }
-    const [{ reconstructLayout, estimateScale, classifyLayer }, { buildGroups }, { detectStairs }, { splitIntoObjects }] = await Promise.all([import('./reconstruct.js'), import('./groups.js'), import('./stairs.js'), import('./objects.js')]);
+    const [{ reconstructLayout, estimateScale, classifyLayer }, { buildGroups }, { detectStairs }, { splitIntoObjects }, { findHatching }] = await Promise.all([import('./reconstruct.js'), import('./groups.js'), import('./stairs.js'), import('./objects.js'), import('./hatch.js')]);
+    const roughScale = estimateScale(prims).feetPerUnit;
+    // Hatching (the fill inside walls) is set aside: it outlines the walls, it isn't walls itself
+    for (const i of findHatching(prims, roughScale)) prims.segments[i].hatch = true;
     // Staircases first: their evenly spaced treads look like a run of walls otherwise
-    const stairs = detectStairs(prims, estimateScale(prims).feetPerUnit);
+    const stairs = detectStairs(prims, roughScale);
     const stairSeg = new Set(stairs.flatMap(st => st.segments));
     const withStairs = { ...prims, segments: prims.segments.map((s, i) => (stairSeg.has(i) ? { ...s, role: 'stairs' } : s)) };
     // A heuristic pass gives the scale and tells us which lines look like walls
@@ -131,7 +134,8 @@ export async function classifyWithAI(analysis, { accessToken, signal } = {}) {
         if (!g) continue;
         g.aiCategory = r.category;
         g.aiConfidence = r.confidence;
-        g.furnitureType = r.furniture_type && r.furniture_type !== 'none' ? r.furniture_type : null;
+        g.aiFurnitureType = r.furniture_type && r.furniture_type !== 'none' ? r.furniture_type : null;
+        if (!g.userType) g.furnitureType = g.aiFurnitureType;
         if (g.userSet) continue; // never overwrite a choice the user already made
         g.category = r.category;
         g.visible = !HIDDEN_BY_DEFAULT.has(r.category);
@@ -141,7 +145,8 @@ export async function classifyWithAI(analysis, { accessToken, signal } = {}) {
         const o = objById.get(r.id);
         if (!o) continue;
         o.aiCategory = r.category;
-        o.furnitureType = r.furniture_type && r.furniture_type !== 'none' ? r.furniture_type : null;
+        o.aiFurnitureType = r.furniture_type && r.furniture_type !== 'none' ? r.furniture_type : null;
+        if (!o.userType) o.furnitureType = o.aiFurnitureType;
         if (o.userSet) continue;
         o.category = r.category;
     }
@@ -159,9 +164,10 @@ export async function classifyWithAI(analysis, { accessToken, signal } = {}) {
 /**
  * Step 3: build the editor layout from the reviewed groups.
  * @param options.convertFurniture  replace furniture blocks that match the catalog with editable items
+ * @param options.countsOnly        skip the underlay (for the review's live counts)
  * @returns {{ state, report, underlay }} underlay = { dataUrl, x, y, width, height } in editor px, or null
  */
-export async function buildFromReview(analysis, { pxPerFoot = 50, convertFurniture = true } = {}) {
+export async function buildFromReview(analysis, { pxPerFoot = 50, convertFurniture = true, countsOnly = false } = {}) {
     const [{ reconstructLayout, matchFurniture }, { categoryToRole }] = await Promise.all([import('./reconstruct.js'), import('./groups.js')]);
     const { prims, groups } = analysis;
 
@@ -201,7 +207,8 @@ export async function buildFromReview(analysis, { pxPerFoot = 50, convertFurnitu
     const convertedGroups = new Set();
     for (const g of groups) {
         if (g.kind !== 'block') continue;
-        const isFurniture = g.visible && g.category === 'furniture' && convertFurniture;
+        // 'none': picked "keep as drawn lines" in the review
+        const isFurniture = g.visible && g.category === 'furniture' && convertFurniture && g.furnitureType !== 'none';
         const type = isFurniture ? (g.furnitureType || undefined) : null;
         furnitureTypes[g.name] = type;
         if (isFurniture && (g.furnitureType || matchFurniture(g.name))) convertedGroups.add(g);
@@ -214,15 +221,20 @@ export async function buildFromReview(analysis, { pxPerFoot = 50, convertFurnitu
         explicitRoles: anyCat('door') || anyCat('window'),
         furnitureTypes
     });
+    // Furniture drawn as plain lines (PDFs, loose CAD lines) → editor furniture items
+    const drawn = convertFurniture ? await furnitureFromDrawing(analysis, result, pxPerFoot) : { items: [], seg: new Set(), arc: new Set(), curve: new Set() };
+    result.state.furniture.push(...drawn.items);
+    result.report.furniture += drawn.items.length;
+    if (countsOnly) return result; // the review's live counts don't need the drawing
     const k = analysis.scale.feetPerUnit;
     const off = result.report.offsetFt || { x: 0, y: 0 };
     // Kept drawing: visible layers, minus converted furniture/stairs and anything labeled as noise
     const stairsConverted = result.report.stairs > 0;
     const keep = (g, cat) => !!g && g.visible && !convertedGroups.has(g) && cat !== 'annotation' && !(stairsConverted && cat === 'stairs');
     result.underlay = buildUnderlay(prims, {
-        keepSeg: (i) => keep(groupOfSeg[i], catSeg[i]),
-        keepArc: (i) => keep(groupOfArc[i], catArc[i]),
-        keepCurve: (i) => keep(groupOfCurve[i], catCurve[i]),
+        keepSeg: (i) => !drawn.seg.has(i) && keep(groupOfSeg[i], catSeg[i]),
+        keepArc: (i) => !drawn.arc.has(i) && keep(groupOfArc[i], catArc[i]),
+        keepCurve: (i) => !drawn.curve.has(i) && keep(groupOfCurve[i], catCurve[i]),
         keepText: (i) => keep(groupOfText[i], groupOfText[i]?.category),
         roomLabelIdx: new Set(analysis.roomLabels.map(r => r.index)),
         hiddenTexts: analysis.hiddenTexts || defaultHiddenTexts(prims),
@@ -230,6 +242,93 @@ export async function buildFromReview(analysis, { pxPerFoot = 50, convertFurnitu
         corners: result.state.corners
     });
     return result;
+}
+
+/**
+ * Pieces labeled furniture (objects, or whole layers split into pieces) as editor furniture,
+ * each placed where it's drawn. Pieces with no known type stay in the drawing.
+ * @returns { items, seg, arc, curve } the items, and the primitives they replace
+ */
+async function furnitureFromDrawing(analysis, result, pxPerFoot) {
+    const out = { items: [], seg: new Set(), arc: new Set(), curve: new Set() };
+    const { corners, walls } = result.state;
+    const off = result.report.offsetFt;
+    if (!corners.length || !off) return out;
+    const [{ splitIntoPieces }, { guessFurnitureType, placeFurniture, mergeOverlapping, furnitureName }] = await Promise.all([import('./objects.js'), import('./furniture.js')]);
+    const { prims, groups } = analysis;
+    const k = analysis.scale.feetPerUnit, P = pxPerFoot;
+
+    const pieces = [], replaced = [], contributing = new Set();
+    const add = (p, typeId) => pieces.push({ bbox: p.bbox, segments: [...p.segments], arcs: [...p.arcs], curves: [...(p.curves || [])], typeId: typeId || null });
+    for (const g of groups) {
+        if (!g.visible || g.kind === 'block' || g.kind === 'text' || g.kind === 'hatch' || g.kind === 'detected') continue;
+        if (g.objects && g.objects.length) {
+            for (const o of g.objects) {
+                if (o.kind === 'structure' || (o.category || g.category) !== 'furniture') continue;
+                // a type picked for the piece, else one picked for its layer, else the AI's
+                add(o, o.userType ? o.furnitureType : (g.userType && g.furnitureType) || o.furnitureType || (o.category ? null : g.furnitureType));
+                contributing.add(g);
+            }
+        } else if (g.category === 'furniture') {
+            // a furniture layer that wasn't split up: one item per piece
+            // the same split every recount, so keep it (until the scale changes)
+            if (!g.pieceCache || g.pieceCache.k !== k) g.pieceCache = { k, pieces: splitIntoPieces(prims, g, k) };
+            for (const p of g.pieceCache.pieces) add(p, g.furnitureType);
+            contributing.add(g);
+        }
+    }
+    if (!pieces.length) return out;
+
+    const toPx = (b) => ({ minX: (b.minX * k + off.x) * P, minY: (b.minY * k + off.y) * P, maxX: (b.maxX * k + off.x) * P, maxY: (b.maxY * k + off.y) * P });
+    const cornerById = new Map(corners.map(c => [c.id, c]));
+    const wallLines = walls.map(w => {
+        const a = cornerById.get(w.startId), b = cornerById.get(w.endId);
+        return a && b ? { x1: a.x, y1: a.y, x2: b.x, y2: b.y, t: w.thickness || 0 } : null;
+    }).filter(Boolean);
+    const xs = corners.map(c => c.x), ys = corners.map(c => c.y), m = 2 * P;
+    const plan = { minX: Math.min(...xs) - m, minY: Math.min(...ys) - m, maxX: Math.max(...xs) + m, maxY: Math.max(...ys) + m };
+    const stamp = Date.now().toString(36);
+
+    for (const p of mergeOverlapping(pieces)) {
+        const size = Math.max(p.bbox.maxX - p.bbox.minX, p.bbox.maxY - p.bbox.minY) * k;
+        if (size < 0.4 || size > 16) continue;
+        const box = toPx(p.bbox);
+        const cx = (box.minX + box.maxX) / 2, cy = (box.minY + box.maxY) / 2;
+        if (cx < plan.minX || cx > plan.maxX || cy < plan.minY || cy > plan.maxY) continue; // another drawing on the sheet
+        if (p.typeId === 'none') continue; // picked "keep as drawn lines" in the review
+        const typeId = p.typeId || guessFurnitureType(p, prims, k);
+        const at = typeId && placeFurniture(typeId, box, wallLines, P);
+        if (!at) continue; // stays as drawn
+        const r2 = (v) => Math.round(v * 100) / 100;
+        out.items.push({
+            id: `furniture-imp-${stamp}-d${out.items.length.toString(36)}`,
+            typeId,
+            name: furnitureName(typeId),
+            x: r2(at.x), y: r2(at.y), width: r2(at.width), height: r2(at.height),
+            rotation: at.rotation
+        });
+        p.segments.forEach(i => out.seg.add(i));
+        p.arcs.forEach(i => out.arc.add(i));
+        p.curves.forEach(i => out.curve.add(i));
+        replaced.push(p.bbox);
+    }
+    // specks too small to be pieces of their own (dots, glyph bits) go with the item they're on
+    if (replaced.length) {
+        const inside = (x, y) => replaced.some(b => x >= b.minX && x <= b.maxX && y >= b.minY && y <= b.maxY);
+        const small = 0.4 / k;
+        // a pattern inside the furniture (a rug's border) can look like wall hatching
+        for (const g of groups) if (g.kind === 'hatch') contributing.add(g);
+        for (const g of contributing) {
+            const skip = new Set((g.objects || []).filter(o => o.kind === 'structure').flatMap(o => o.segments));
+            for (const i of g.segments) {
+                const s = prims.segments[i];
+                if (!skip.has(i) && Math.hypot(s.x2 - s.x1, s.y2 - s.y1) < small && inside(s.x1, s.y1) && inside(s.x2, s.y2)) out.seg.add(i);
+            }
+            for (const i of g.arcs) { const a = prims.arcs[i]; if (a.r < small && inside(a.cx, a.cy)) out.arc.add(i); }
+            for (const i of g.curves || []) { const c = prims.curves[i]; if (Math.hypot(c.x3 - c.x0, c.y3 - c.y0) < small && inside(c.x0, c.y0) && inside(c.x3, c.y3)) out.curve.add(i); }
+        }
+    }
+    return out;
 }
 
 /**

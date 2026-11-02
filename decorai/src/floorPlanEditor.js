@@ -274,7 +274,8 @@ const FloorPlanEditor = (() => {
         canvasWrapper.addEventListener('dragover', handleImageDragOver);
         canvasWrapper.addEventListener('dragleave', handleImageDragLeave);
         canvasWrapper.addEventListener('drop', handleImageDrop);
-        
+        watchEmptyCanvas();
+
         // Back button (warn if unsaved changes)
         document.getElementById('layout-editor-back-btn')?.addEventListener('click', handleBackFromEditor);
         
@@ -1773,6 +1774,23 @@ const FloorPlanEditor = (() => {
         handleMouseUp(e);
     }
     
+    /**
+     * Show the "drag or import a plan" hint only while the canvas is empty.
+     * Watching the drawing layers (not the state arrays) catches every path that
+     * adds or clears content: drawing, import, undo, load, clear.
+     */
+    function watchEmptyCanvas() {
+        const hint = document.getElementById('layout-empty-hint');
+        if (!hint) return;
+        const layers = [imageLayer, wallsLayer, roomsLayer, furnitureLayer, labelsLayer, cornersLayer].filter(Boolean);
+        const update = () => {
+            hint.hidden = layers.some(layer => layer.childElementCount > 0);
+        };
+        const observer = new MutationObserver(update);
+        layers.forEach(layer => observer.observe(layer, { childList: true }));
+        update();
+    }
+
     // Image drag and drop handling
     // Check if the drag event is from an external file (not internal furniture)
     function isExternalFileDrag(e) {

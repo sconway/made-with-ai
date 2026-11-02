@@ -62,7 +62,8 @@ export function buildGroups(prims, feetPerUnit, source, wallSegments = [], stair
     (prims.segments || []).forEach((s, i) => {
         const { key, init } = stairSeg.has(i)
             ? { key: 'detected:stairs', init: () => ({ kind: 'detected', name: `Stairs (detected) ×${stairs.length}`, stairs }) }
-            : geomKey(s);
+            : s.hatch ? { key: 'hatch', init: () => ({ kind: 'hatch', name: 'Wall fill (hatching)' }) }
+                : geomKey(s);
         const g = get(key, init);
         g.segments.push(i);
         const L = segLen(s) * k;
@@ -125,6 +126,7 @@ function guessCategory(g, source) {
         return /dim/i.test(g.layer || '') ? 'annotation' : 'text';
     }
     if (g.kind === 'detected') return 'stairs';
+    if (g.kind === 'hatch') return 'wall'; // the walls' outlines are found from where it ends
     const usedAsWalls = g.lengthFt > 0 && g.wallLengthFt / g.lengthFt > 0.3;
     if (g.kind === 'block') {
         const n = `${g.name} ${g.layer || ''}`;
@@ -165,7 +167,7 @@ export function categoryToRole(category) {
 
 /** Compact description of each group for the vision model. */
 export function describeGroupsForModel(groups) {
-    return groups.map(g => ({
+    return groups.filter(g => g.kind !== 'hatch').map(g => ({
         id: g.id,
         name: g.name,
         kind: g.kind,
