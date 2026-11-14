@@ -47,6 +47,17 @@ function parseEnvInt(name, defaultValue) {
   return Number.isNaN(n) ? defaultValue : n;
 }
 
+// One-tap sign-in buttons to show (comma-separated: google, apple). Empty by
+// default: a provider listed here but not configured in Supabase would give
+// every visitor who taps it an error page, so turning one on is deliberate.
+const SUPPORTED_OAUTH_PROVIDERS = new Set(['google', 'apple']);
+const AUTH_OAUTH_PROVIDERS = [...new Set(
+  (process.env.AUTH_OAUTH_PROVIDERS || '')
+    .split(',')
+    .map((s) => s.trim().toLowerCase())
+    .filter((s) => SUPPORTED_OAUTH_PROVIDERS.has(s)),
+)];
+
 // ── Outbound request deadlines ─────────────────────────────────────────────
 // Every call to a provider (Replicate, OpenAI, Anthropic, image hosts) goes
 // through this wrapper so none can hang. Without a deadline a stalled provider
@@ -654,6 +665,105 @@ async function reserveFreeDailyGeneration(userId) {
   };
 }
 
+// ── Generation events: what each model served, failed, and took ────────────
+// One row per image generation, written when it starts and completed when its
+// outcome is known, so spend and failure rates can be read per model per day
+// (see the generation_daily_stats view in sql/generation_events.sql).
+//
+// Strictly best-effort: a failed write must never fail or slow a generation,
+// so nothing here is awaited by a request and every error is swallowed. Until
+// the SQL has been run the events still go to the log as `[gen] {...}` lines.
+//
+// MODEL_COST_USD is an optional JSON map of model → estimated dollars per run,
+// e.g. {"google/nano-banana":0.04,"openai/gpt-image-2":0.17}. Prices change and
+// differ by account, so none are assumed here; without it cost columns are null.
+let MODEL_COST_USD = {};
+try {
+  MODEL_COST_USD = process.env.MODEL_COST_USD ? JSON.parse(process.env.MODEL_COST_USD) : {};
+} catch {
+  console.warn('[gen] MODEL_COST_USD is not valid JSON — cost estimates disabled');
+}
+let generationEventsTableMissingWarned = false;
+
+/** "owner/name:hash" → "owner/name": group by model, not by pinned version. */
+const modelLabel = (ref) => String(ref || 'unknown').split(':')[0].slice(0, 120);
+
+function generationEventsWriteFailed(error) {
+  if (generationEventsTableMissingWarned) return;
+  generationEventsTableMissingWarned = true;
+  console.warn(
+    '[gen] Could not write to generation_events — events are only being logged. ' +
+      'Run sql/generation_events.sql in Supabase.',
+    error?.message || error,
+  );
+}
+
+/** A generation was accepted by the provider. `predictionId` links the outcome. */
+function recordGenerationStarted({ provider, model, predictionId = null, userId = null }) {
+  const label = modelLabel(model);
+  const cost = Number.isFinite(MODEL_COST_USD[label]) ? MODEL_COST_USD[label] : null;
+  console.log('[gen]', JSON.stringify({ event: 'started', provider, model: label, predictionId, signedIn: !!userId }));
+  if (!supabase) return;
+  supabase
+    .from('generation_events')
+    .insert({
+      provider,
+      model: label,
+      prediction_id: predictionId,
+      user_id: userId,
+      outcome: 'started',
+      est_cost_usd: cost,
+    })
+    .then(({ error }) => { if (error) generationEventsWriteFailed(error); })
+    .catch(generationEventsWriteFailed);
+}
+
+/**
+ * A started generation reached a terminal state. Only a row still marked
+ * 'started' is updated, so the repeated polls that see the same terminal
+ * status record it once.
+ */
+function recordGenerationOutcome({ predictionId, outcome, durationMs = null, error = null }) {
+  if (!predictionId) return;
+  console.log('[gen]', JSON.stringify({ event: outcome, predictionId, durationMs }));
+  if (!supabase) return;
+  supabase
+    .from('generation_events')
+    .update({
+      outcome,
+      duration_ms: Number.isFinite(durationMs) ? Math.round(durationMs) : null,
+      error: error ? String(error).slice(0, 300) : null,
+      completed_at: new Date().toISOString(),
+    })
+    .eq('prediction_id', predictionId)
+    .eq('outcome', 'started')
+    .then(({ error: e }) => { if (e) generationEventsWriteFailed(e); })
+    .catch(generationEventsWriteFailed);
+}
+
+/** A generation that starts and finishes inside one request (OpenAI). */
+function recordGenerationComplete({ provider, model, userId = null, outcome, durationMs, error = null }) {
+  const label = modelLabel(model);
+  // A run the provider rejected or that timed out is not billed as an image.
+  const cost = outcome === 'succeeded' && Number.isFinite(MODEL_COST_USD[label]) ? MODEL_COST_USD[label] : null;
+  console.log('[gen]', JSON.stringify({ event: outcome, provider, model: label, durationMs }));
+  if (!supabase) return;
+  supabase
+    .from('generation_events')
+    .insert({
+      provider,
+      model: label,
+      user_id: userId,
+      outcome,
+      duration_ms: Number.isFinite(durationMs) ? Math.round(durationMs) : null,
+      error: error ? String(error).slice(0, 300) : null,
+      est_cost_usd: cost,
+      completed_at: new Date().toISOString(),
+    })
+    .then(({ error: e }) => { if (e) generationEventsWriteFailed(e); })
+    .catch(generationEventsWriteFailed);
+}
+
 // ── Rate limiting (in-memory, single-instance) ─────────────────────────────
 // Fixed-window counters keyed per-IP and/or per-account. Bounds how much a
 // single client can spend on the paid AI providers. NOTE: state is per-process —
@@ -830,7 +940,24 @@ app.post('/webhook/stripe', express.raw({ type: 'application/json' }), async (re
   res.json({ received: true });
 });
 
-app.use(express.json({ limit: '50mb' }));
+// Request bodies carry base64 images. The browser now downscales every room
+// photo before sending it (src/roomPhoto.js), so the old 50 MB allowance only
+// served to let one request hold that much memory. 20 MB still covers the
+// largest legitimate payload (a full-size generated PNG plus a mask, or a
+// floor-plan layout with an embedded reference image).
+const JSON_BODY_LIMIT = process.env.JSON_BODY_LIMIT?.trim() || '20mb';
+app.use(express.json({ limit: JSON_BODY_LIMIT }));
+// Answer an oversized or malformed body in the JSON shape the client reads,
+// rather than Express's default HTML error page.
+app.use((err, req, res, next) => {
+  if (err?.type === 'entity.too.large') {
+    return res.status(413).json({ error: 'That upload is too large. Try a smaller image.' });
+  }
+  if (err?.type === 'entity.parse.failed') {
+    return res.status(400).json({ error: 'Malformed request.' });
+  }
+  return next(err);
+});
 
 // Apply the general IP rate limiter to everything below (the Stripe webhook is
 // registered above this line, so its delivery is never throttled).
@@ -1227,6 +1354,12 @@ app.post('/replicate/predictions', genIpLimiter, genUserLimiter, async (req, res
     const data = await response.json();
     // From here the prediction exists and is billable — the slot stays spent.
     freeSlot = null;
+    recordGenerationStarted({
+      provider: 'replicate',
+      model: requestedVersion,
+      predictionId: data?.id || null,
+      userId: user?.id || null,
+    });
     console.log('Replicate API response:', data);
     // Bind the prediction to the anonymous device so /replicate/poll will
     // serve it back to this visitor and nobody else.
@@ -1246,6 +1379,21 @@ app.post('/replicate/predictions', genIpLimiter, genUserLimiter, async (req, res
 app.post('/openai/image-edit', genIpLimiter, genUserLimiter, async (req, res) => {
   const slot = await reserveGenerationSlot(req, res);
   if (!slot.ok) return;
+  // Set once the request has actually gone to OpenAI — only then is there a
+  // generation to record.
+  let sentAt = 0;
+  const recordOpenAi = (outcome, error = null) => {
+    if (!sentAt) return;
+    recordGenerationComplete({
+      provider: 'openai',
+      model: 'openai/gpt-image-2',
+      userId: slot.userId || null,
+      outcome,
+      durationMs: Date.now() - sentAt,
+      error,
+    });
+    sentAt = 0;
+  };
 
   try {
     const apiKey = process.env.OPENAI_API_KEY;
@@ -1278,6 +1426,7 @@ app.post('/openai/image-edit', genIpLimiter, genUserLimiter, async (req, res) =>
 
     console.log(`OpenAI image-edit: prompt="${prompt.slice(0, 80)}..." size=${size || '1024x1024'}`);
 
+    sentAt = Date.now();
     const response = await fetch('https://api.openai.com/v1/images/edits', {
       method: 'POST',
       timeoutMs: PROVIDER_LONG_TIMEOUT_MS,
@@ -1288,6 +1437,7 @@ app.post('/openai/image-edit', genIpLimiter, genUserLimiter, async (req, res) =>
     if (!response.ok) {
       const errorData = await response.json().catch(() => ({}));
       console.error('OpenAI image-edit error:', { status: response.status, error: errorData });
+      recordOpenAi('failed', errorData.error?.message || `HTTP ${response.status}`);
       await slot.refund();
       return res.status(response.status).json({
         error: `OpenAI image edit error (${response.status}): ${errorData.error?.message || 'Unknown error'}`
@@ -1298,9 +1448,11 @@ app.post('/openai/image-edit', genIpLimiter, genUserLimiter, async (req, res) =>
     const b64Out = data?.data?.[0]?.b64_json;
     if (!b64Out) {
       console.error('OpenAI image-edit: no b64_json in response', data);
+      recordOpenAi('failed', 'no image in response');
       await slot.refund();
       return res.status(500).json({ error: 'OpenAI returned no image data' });
     }
+    recordOpenAi('succeeded');
     await incrementLifetimeGenerations(slot.userId);
 
     const outBuf = Buffer.from(b64Out, 'base64');
@@ -1322,6 +1474,7 @@ app.post('/openai/image-edit', genIpLimiter, genUserLimiter, async (req, res) =>
     });
   } catch (error) {
     console.error('Error in /openai/image-edit:', error);
+    recordOpenAi(isTimeoutError(error) ? 'timeout' : 'failed', error?.message);
     await slot.refund();
     if (isTimeoutError(error)) return res.status(504).json({ error: PROVIDER_TIMEOUT_MESSAGE });
     res.status(500).json({ error: 'Failed to generate image edit' });
@@ -1392,6 +1545,19 @@ app.post('/replicate/poll', async (req, res) => {
 
     const data = await response.json();
     console.log('Replicate API polling response:', data);
+
+    if (data.status === 'succeeded' || data.status === 'failed' || data.status === 'canceled') {
+      // Replicate reports model run time in seconds; fall back to wall time.
+      const wallMs = data.completed_at && data.created_at
+        ? new Date(data.completed_at) - new Date(data.created_at)
+        : null;
+      recordGenerationOutcome({
+        predictionId: data.id || predictionIdFromPollUrl(predictionUrl),
+        outcome: data.status,
+        durationMs: Number.isFinite(data.metrics?.predict_time) ? data.metrics.predict_time * 1000 : wallMs,
+        error: data.status === 'failed' ? data.error : null,
+      });
+    }
 
     let savedDesignId = null;
     // Anonymous results aren't persisted — there's no account to own them.
@@ -2114,6 +2280,9 @@ app.get('/api/config', (req, res) => {
     // Public GA4 Measurement ID (e.g. G-XXXXXXXXXX). Empty disables analytics.
     gaMeasurementId: process.env.GA_MEASUREMENT_ID?.trim() || '',
     anonGenerationsEnabled: anonymousGenerationsEnabled(),
+    // One-tap sign-in providers to offer. Each must also be enabled in
+    // Supabase (Authentication → Providers) with this site as a redirect URL.
+    oauthProviders: AUTH_OAUTH_PROVIDERS,
   });
 });
 

@@ -148,6 +148,32 @@ The client loads Supabase credentials from `/api/config`. Set these in `.env` lo
 
 If either `SUPABASE_URL` or `SUPABASE_ANON_KEY` is missing, sign-in is disabled and the login form shows a configuration error.
 
+### Google and Apple sign-in (optional)
+
+The sign-in sheet can offer "Continue with Google" and "Continue with Apple".
+Both are off until switched on, because a button for a provider Supabase
+doesn't know about sends every visitor who taps it to an error page:
+
+1. In Supabase → **Authentication → Providers**, enable the provider and add
+   its client ID/secret.
+2. In **Authentication → URL Configuration**, add the site's URL to the
+   redirect allow-list.
+3. Set `AUTH_OAUTH_PROVIDERS=google,apple` (either or both) and redeploy.
+
+## Seeing what generations cost
+
+Run `sql/generation_events.sql` once. Every generation is then recorded with
+its model, outcome and duration, and this shows runs, failures and failure rate
+per model per day:
+
+```sql
+select * from generation_daily_stats where day >= current_date - 7;
+```
+
+Set `MODEL_COST_USD` (a JSON map of model → dollars per run, from your provider
+invoices) to fill in the cost column. Without the SQL the app behaves the same
+and the events only appear in the server log as `[gen] {...}` lines.
+
 ## Security & abuse prevention
 
 Before opening the app to the public, complete this checklist:

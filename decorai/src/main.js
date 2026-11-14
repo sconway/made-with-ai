@@ -1,7 +1,5 @@
 import feather from 'feather-icons';
 import { createClient } from '@supabase/supabase-js';
-import FloorPlanEditor from './floorPlanEditor.js';
-import WoodworkingEditor from './woodworking/editor.js';
 import './woodworking/styles.css';
 import {
     start as startRouter,
@@ -1120,6 +1118,7 @@ async function initializeApp() {
         appConfig = await response.json();
 
         initGoogleAnalytics(appConfig.gaMeasurementId);
+        initOAuthButtons(appConfig.oauthProviders);
 
         // Populate purchase UI from config
         renderTokenPacks(appConfig.tokenPacks);
@@ -1138,6 +1137,7 @@ async function initializeApp() {
             if (session) {
                 currentUser = session.user;
                 currentSession = session;
+                noteOAuthReturn();
                 await fetchSavedLayout();
                 await fetchUserTokens();
                 await fetchUserSubscription();
@@ -1851,6 +1851,7 @@ async function fetchSavedLayout() {
 async function handleSaveLayout() {
     if (!currentUser?.email_confirmed_at || !currentSession?.access_token) return;
     const name = getLayoutNameDisplay();
+    await loadFloorPlanEditor();
     const state = FloorPlanEditor.getState();
     const headers = {
         'Content-Type': 'application/json',
@@ -2087,6 +2088,7 @@ async function loadLayoutById(id) {
         });
         if (!res.ok) throw new Error('Failed to load layout');
         const data = await res.json();
+        await loadFloorPlanEditor();
         FloorPlanEditor.loadState(data.state);
         currentLayoutId = id;
         if (typeof window.__decoraitCurrentLayoutId !== 'undefined') window.__decoraitCurrentLayoutId = id;
@@ -2621,6 +2623,85 @@ function setLoginSubmitLoading(loading) {
         btn.removeAttribute('aria-busy');
         btn.textContent = btn.dataset.defaultLabel || 'Sign In';
     }
+}
+
+// ── One-tap sign-in (Google / Apple) ─────────────────────────────────────────
+
+/** Set just before leaving for the provider, read on the way back. */
+const OAUTH_PENDING_KEY = 'decorait-oauth-pending';
+
+/** Show a button for each provider the server says is configured. */
+function initOAuthButtons(providers) {
+    const wrap = document.getElementById('oauth-buttons');
+    if (!wrap) return;
+    const enabled = new Set(Array.isArray(providers) ? providers : []);
+    let any = false;
+    wrap.querySelectorAll('[data-oauth-provider]').forEach((btn) => {
+        const on = enabled.has(btn.dataset.oauthProvider);
+        btn.hidden = !on;
+        any = any || on;
+        if (on && !btn.dataset.bound) {
+            btn.dataset.bound = '1';
+            btn.addEventListener('click', () => handleOAuthSignIn(btn.dataset.oauthProvider, btn));
+        }
+    });
+    wrap.classList.toggle('hidden', !any);
+}
+
+// Pressing Back on the provider's page can restore this page from the
+// back/forward cache with the tapped button still disabled.
+window.addEventListener('pageshow', (e) => {
+    if (!e.persisted) return;
+    document.querySelectorAll('#oauth-buttons [data-oauth-provider]').forEach((btn) => { btn.disabled = false; });
+});
+
+/**
+ * Hand off to the provider. The browser leaves the app and comes back signed
+ * in; the photo and any results are put back by restoreRedesignSession(), so
+ * the round-trip costs the visitor nothing they had made.
+ */
+async function handleOAuthSignIn(provider, btn) {
+    const errorEl = document.getElementById('oauth-error');
+    errorEl?.classList.add('hidden');
+    if (!supabase) {
+        if (errorEl) {
+            errorEl.textContent = authInitError || 'Sign-in is unavailable right now. Please refresh and try again.';
+            errorEl.classList.remove('hidden');
+        }
+        return;
+    }
+    btn.disabled = true;
+    track('oauth_started', { method: provider, has_result: designHistory.some(h => !h.isOriginal) });
+    try {
+        sessionStorage.setItem(OAUTH_PENDING_KEY, provider);
+    } catch (_) { /* private mode: only the analytics event is lost */ }
+    try {
+        // Make sure the latest result is on disk before the page unloads.
+        await sessionPersistChain;
+        const { error } = await supabase.auth.signInWithOAuth({
+            provider,
+            // Come back to the view they left, minus the ?auth= overlay param.
+            options: { redirectTo: window.location.origin + window.location.pathname },
+        });
+        if (error) throw error;
+    } catch (err) {
+        try { sessionStorage.removeItem(OAUTH_PENDING_KEY); } catch (_) { /* ignore */ }
+        btn.disabled = false;
+        if (errorEl) {
+            errorEl.textContent = err?.message || 'Could not start sign-in. Please try again.';
+            errorEl.classList.remove('hidden');
+        }
+    }
+}
+
+/** Back from a provider with a session: record it once. */
+function noteOAuthReturn() {
+    let provider = null;
+    try {
+        provider = sessionStorage.getItem(OAUTH_PENDING_KEY);
+        if (provider) sessionStorage.removeItem(OAUTH_PENDING_KEY);
+    } catch (_) { /* ignore */ }
+    if (provider) track('login', { method: provider });
 }
 
 async function handleLogin(e) {
@@ -3374,20 +3455,81 @@ function updateWorkspaceUI() {
     });
 }
 
+// ── Editors load on demand ───────────────────────────────────────────────────
+// The floor plan and woodworking editors (and three.js with them) were imported
+// up front, so every visitor to the redesign flow downloaded and parsed well
+// over half the bundle for tools most never open. They are separate chunks now,
+// fetched the first time one is opened. Each module binds its own handlers to
+// its header button when it initialises; until then the handlers in initShell
+// do the opening.
+
+/** The editor modules, null until loaded. */
+let FloorPlanEditor = null;
+let WoodworkingEditor = null;
+const editorLoads = { plan: null, build: null };
+
+function loadEditor(kind) {
+    if (!editorLoads[kind]) {
+        const pending = kind === 'plan'
+            ? import('./floorPlanEditor.js').then((m) => (FloorPlanEditor = m.default))
+            : import('./woodworking/editor.js').then((m) => (WoodworkingEditor = m.default));
+        // A failed download (offline, or a deploy replaced the chunk) must be
+        // retryable rather than cached as a permanent failure.
+        editorLoads[kind] = pending.catch((err) => {
+            editorLoads[kind] = null;
+            throw err;
+        });
+    }
+    return editorLoads[kind];
+}
+const loadFloorPlanEditor = () => loadEditor('plan');
+
+/** Load an editor if needed, open it, and bring the URL and shell in line. */
+async function openEditor(kind) {
+    const btn = document.getElementById(kind === 'plan' ? 'layout-editor-btn' : 'woodworking-editor-btn');
+    btn?.setAttribute('aria-busy', 'true');
+    try {
+        const editor = await loadEditor(kind);
+        editor.show?.();
+        const screen = document.getElementById(kind === 'plan' ? 'layout-editor-screen' : 'woodworking-editor-screen');
+        // show() declines for an unconfirmed account — only claim the URL if it opened.
+        if (screen && !screen.classList.contains('hidden')) syncUrl(kind);
+    } catch (err) {
+        console.error(`Could not load the ${kind} editor:`, err);
+        showToastMessage("That tool didn't load. Check your connection and try again.", 'error');
+    } finally {
+        btn?.removeAttribute('aria-busy');
+        updateWorkspaceUI();
+    }
+}
+
+/** Header-button click: open via the module's own handler once it exists. */
+function onEditorButtonClick(kind) {
+    const loaded = kind === 'plan' ? FloorPlanEditor : WoodworkingEditor;
+    if (loaded) {
+        // The editor bound show() to this button itself; just record the URL
+        // afterwards so the DOM stays the source of truth and nothing double-fires.
+        setTimeout(() => { syncUrl(kind); updateWorkspaceUI(); }, 0);
+    } else {
+        openEditor(kind);
+    }
+}
+
 function initShell() {
     // Redesign is home.
     document.getElementById('workspace-redesign-btn')?.addEventListener('click', () => {
         goToRedesign();
     });
 
-    // The editors bind their own show() to these buttons; we only record the URL
-    // afterwards so the DOM stays the source of truth and nothing double-fires.
-    document.getElementById('layout-editor-btn')?.addEventListener('click', () => {
-        setTimeout(() => { syncUrl('plan'); updateWorkspaceUI(); }, 0);
-    });
-    document.getElementById('woodworking-editor-btn')?.addEventListener('click', () => {
-        setTimeout(() => { syncUrl('build'); updateWorkspaceUI(); }, 0);
-    });
+    for (const [id, kind] of [['layout-editor-btn', 'plan'], ['woodworking-editor-btn', 'build']]) {
+        const btn = document.getElementById(id);
+        if (!btn) continue;
+        btn.addEventListener('click', () => onEditorButtonClick(kind));
+        // Start the download when the intent shows, so the click feels instant.
+        const warm = () => { loadEditor(kind).catch(() => {}); };
+        btn.addEventListener('pointerenter', warm, { once: true });
+        btn.addEventListener('focus', warm, { once: true });
+    }
 
     // Returning from an editor via its own back button must update the URL too.
     document.getElementById('layout-editor-back-btn')?.addEventListener('click', () => {
@@ -3429,11 +3571,11 @@ function applyRoute(route) {
 
     switch (route.name) {
         case 'plan':
-            if (!planOpen) FloorPlanEditor.show?.();
+            if (!planOpen) openEditor('plan');
             break;
 
         case 'build':
-            if (!buildOpen) WoodworkingEditor.show?.();
+            if (!buildOpen) openEditor('build');
             break;
 
         case 'upgrade':

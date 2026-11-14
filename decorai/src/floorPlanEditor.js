@@ -9373,9 +9373,13 @@ const FloorPlanEditor = (() => {
     };
 })();
 
-// Initialize floor plan editor when DOM is ready
-document.addEventListener('DOMContentLoaded', () => {
+// Initialize when the DOM is ready. This module is loaded on demand (see
+// loadEditor in main.js), usually long after DOMContentLoaded has fired, so the
+// already-loaded case must initialise immediately.
+if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', () => FloorPlanEditor.init());
+} else {
     FloorPlanEditor.init();
-});
+}
 
 export default FloorPlanEditor;
