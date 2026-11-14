@@ -16,6 +16,16 @@ import { initWaitState, waitStateMarkup } from './waitState.js';
 import { initCompare, enhanceCompare } from './compare.js';
 import { presentToast } from './toast.js';
 import { MaskEditor, compositeMaskedResult, compositeRegionEdit, buildRegionMarkup, buildRegionLookup } from './maskEditor.js';
+import { normalizeRoomPhoto, looksLikeImageFile } from './roomPhoto.js';
+import { track, flushAnalytics } from './analytics.js';
+import {
+    saveRedesignSession,
+    loadRedesignSession,
+    clearRedesignSession,
+    toDurableImage,
+    imageStillLoads,
+    MAX_STORED_VERSIONS,
+} from './sessionStore.js';
 
 // Same-origin API routes (Vite dev proxies /api to the backend; production serves both).
 const PROXY_SERVER_URL = '';
@@ -824,6 +834,37 @@ let generatedDesigns = [];
 // as the source for the next regenerate.
 //   { id, imageUrl, label, isOriginal }
 let designHistory = [];
+/** When the in-flight generation began — for generation_succeeded's duration. */
+let generationStartedAt = 0;
+
+/**
+ * What to tell the user when the server answers 429.
+ * Only the monthly premium cap reports a `limit`. Every other 429 — the daily
+ * free-design cap, a burst rate limit — carries its own explanation, and
+ * calling those a "monthly limit" told users something untrue.
+ */
+function quotaErrorMessage(error) {
+    const body = error?.quota;
+    if (body && body.limit == null && typeof body.error === 'string' && body.error) {
+        return body.error;
+    }
+    const limit = body?.limit ?? subscriptionUsage.limit ?? 50;
+    return `You've reached your monthly limit of ${limit} image generations. ` +
+        `Your quota will reset at the start of next month.`;
+}
+
+/** Mark the start of a generation attempt for the funnel. */
+function trackGenerationStarted(kind, tier) {
+    generationStartedAt = Date.now();
+    track('generation_started', { kind, tier, signed_in: !!currentUser });
+}
+
+/** Record a failed generation. `error.code` is a short app code, never user text. */
+function trackGenerationFailed(kind, error) {
+    generationStartedAt = 0;
+    track('generation_failed', { kind, reason: error?.code || 'ERROR', signed_in: !!currentUser });
+}
+
 let selectedHistoryId = null; // explicit user pick; null = use the latest entry
 let selectedRoomItems = new Set(); // Track selected room items
 let furnishedOption = null; // Track furnished room option - no default selection
@@ -1057,6 +1098,7 @@ function initGoogleAnalytics(measurementId) {
     };
     window.gtag('js', new Date());
     window.gtag('config', id);
+    flushAnalytics();
 
     const script = document.createElement('script');
     script.async = true;
@@ -1530,6 +1572,7 @@ async function handleCheckout(pack, cardEl) {
     try {
         cards.forEach((c) => { c.disabled = true; });
         if (cardEl) cardEl.classList.add('token-pack--loading');
+        track('begin_checkout', { item: `token-pack-${pack}` });
         const res = await fetch(`${PROXY_SERVER_URL}/api/checkout`, {
             method: 'POST',
             headers: {
@@ -1590,6 +1633,7 @@ async function verifyCheckoutAndCredit(sessionId) {
                 userTokens = data.credits;
                 updateTokensDisplay();
                 if (userHasSubscription) updateSubscriptionUsageDisplay();
+                if (data.tokensAdded) track('purchase', { item: 'token-pack', tokens: data.tokensAdded });
                 showToastMessage(`Payment successful! ${data.tokensAdded} token(s) added.`, 'success');
                 return;
             }
@@ -1655,6 +1699,7 @@ async function handleSubscribeCheckout() {
             subscribeBtn.disabled = true;
             subscribeBtn.innerHTML = '<span>Processing...</span>';
         }
+        track('begin_checkout', { item: 'subscription' });
         const res = await fetch(`${PROXY_SERVER_URL}/api/subscribe`, {
             method: 'POST',
             headers: {
@@ -2139,7 +2184,20 @@ async function autoSaveGeneratedDesign(imageUrl, {
 }
 
 async function onGenerationSuccess(imageUrl, saveMeta = {}) {
-    pushDesignHistory(imageUrl);
+    track('generation_succeeded', {
+        model: saveMeta.model,
+        source_type: saveMeta.sourceType || 'room-design',
+        signed_in: !!currentUser,
+        version: designHistory.filter(h => !h.isOriginal).length + 1,
+        duration_ms: generationStartedAt ? Date.now() - generationStartedAt : undefined,
+    });
+    generationStartedAt = 0;
+    pushDesignHistory(imageUrl, {
+        prompt: saveMeta.prompt || '',
+        model: saveMeta.model || null,
+        sourceType: saveMeta.sourceType || 'room-design',
+        metadata: saveMeta.metadata && typeof saveMeta.metadata === 'object' ? saveMeta.metadata : {},
+    });
     await autoSaveGeneratedDesign(imageUrl, saveMeta);
     // A new saved design may be the user's first — re-check so the
     // "use a saved design" option appears without needing a reload.
@@ -2478,6 +2536,12 @@ function setupAuthFormEnterToSubmit(form) {
 
 function showAuthModal(mode = 'login') {
     if (!authModal) return;
+    track('signup_prompt_shown', {
+        mode: mode === 'signup' ? 'signup' : 'signin',
+        // Had they already seen a result? Separates "asked too early" from
+        // "asked after the product proved itself".
+        has_result: designHistory.some(h => !h.isOriginal),
+    });
     authModal.classList.add('show');
     // Auth is an overlay, not a route — the URL records it without navigating,
     // so the view (and the user's in-progress work) survives underneath.
@@ -2584,6 +2648,7 @@ async function handleLogin(e) {
     try {
         const { error } = await supabase.auth.signInWithPassword({ email, password });
         if (error) throw error;
+        track('login', { method: 'email' });
         hideAuthModal();
         // Replay whatever the gate interrupted, so signing in costs a form and
         // not the work they'd already done.
@@ -2695,6 +2760,7 @@ async function handleSignup(e) {
             return;
         }
         if (error) throw error;
+        track('sign_up', { method: 'email', has_result: designHistory.some(h => !h.isOriginal) });
         if (data?.user && !data?.session) {
             showSignupSuccess(email);
         } else {
@@ -2856,6 +2922,9 @@ function showSignupSuccess(email) {
 async function handleLogout() {
     if (supabase) await supabase.auth.signOut();
     if (userDropdown) userDropdown.classList.add('hidden');
+    // Signing out on a shared device shouldn't leave the room photo behind
+    // for whoever opens the app next.
+    clearRedesignSession();
 }
 
 // Event Listeners
@@ -3250,21 +3319,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             e.preventDefault();
             uploadContainer.classList.remove('drag-over');
             if (e.dataTransfer.files.length) {
-                const file = e.dataTransfer.files[0];
-                if (isValidImage(file)) {
-                    const reader = new FileReader();
-                    reader.onload = async function (event) {
-                        clearFengShuiCache();
-                        currentUploadedImage = event.target.result;
-                        if (roomPreview) roomPreview.src = currentUploadedImage;
-                        isRoomActuallyEmpty = await detectEmptyRoom(currentUploadedImage);
-                        applyDetectedRoomType();
-                        showWizard();
-                    };
-                    reader.readAsDataURL(file);
-                } else {
-                    showAlertDialog('Please upload a valid image file (JPEG, PNG, etc.)');
-                }
+                loadRoomPhotoFile(e.dataTransfer.files[0], 'drop');
             }
         });
     }
@@ -3294,6 +3349,7 @@ function initializeAppUI() {
     initShell();
     startRouter(applyRoute);
     openAuthFromUrl();
+    restoreRedesignSession();
 }
 
 // ── App shell: workspace switcher + mobile tab bar ───────────────────────────
@@ -3746,6 +3802,7 @@ async function useSavedDesignAsSource(design) {
         resultsSection?.classList.add('hidden');
         document.getElementById('upload-section')?.classList.remove('hidden');
         showWizard();
+        persistRedesignSession();
     } catch (err) {
         console.error('Could not use saved design as source:', err);
         showAlertDialog('Could not load that design. Please try again.');
@@ -3842,26 +3899,47 @@ function invalidateUseSavedAvailability() {
 
 async function handleImageUpload(e) {
     const file = e.target.files[0];
-    if (file && isValidImage(file)) {
-        const reader = new FileReader();
-        reader.onload = async function (event) {
-            clearFengShuiCache();
-            currentUploadedImage = event.target.result;
-            if (roomPreview) roomPreview.src = currentUploadedImage;
-            isRoomActuallyEmpty = await detectEmptyRoom(currentUploadedImage);
-            console.log(`Uploaded room is ${isRoomActuallyEmpty ? 'empty' : 'furnished'}`);
-            applyDetectedRoomType();
-            showWizard();
-        };
-        reader.readAsDataURL(file);
-    } else if (file) {
-        showAlertDialog('Please upload a valid image file (JPEG, PNG, etc.)');
-    }
+    // Clear the input so picking the same file again still fires `change`.
+    e.target.value = '';
+    if (file) await loadRoomPhotoFile(file, 'upload');
 }
 
-function isValidImage(file) {
-    const validTypes = ['image/jpeg', 'image/png', 'image/jpg', 'image/webp'];
-    return validTypes.includes(file.type);
+/**
+ * Take a picked or dropped file as the room photo. The photo is downscaled
+ * before anything else touches it (see src/roomPhoto.js) — the original phone
+ * image is never held, sent, or stored.
+ * @param {File} file
+ * @param {'upload'|'drop'} source How the photo arrived, for analytics.
+ */
+async function loadRoomPhotoFile(file, source) {
+    if (!looksLikeImageFile(file)) {
+        showAlertDialog('Please upload a photo (JPEG, PNG, WebP or HEIC).');
+        return;
+    }
+    let photo;
+    try {
+        photo = await normalizeRoomPhoto(file);
+    } catch (err) {
+        console.warn('Could not open the selected photo:', err);
+        showAlertDialog(
+            "We couldn't open that photo in this browser. Try a JPEG or PNG — if it came from an iPhone, sharing it as \"Most Compatible\" converts it.",
+            'Photo not supported'
+        );
+        return;
+    }
+    await acceptRoomPhoto(photo, source);
+}
+
+/** Make an already-normalised photo the current room and open the configure view. */
+async function acceptRoomPhoto(photo, source) {
+    clearFengShuiCache();
+    currentUploadedImage = photo;
+    if (roomPreview) roomPreview.src = currentUploadedImage;
+    isRoomActuallyEmpty = await detectEmptyRoom(currentUploadedImage);
+    track('photo_added', { source, room_empty: isRoomActuallyEmpty });
+    applyDetectedRoomType();
+    showWizard();
+    persistRedesignSession();
 }
 
 function openCamera() {
@@ -3903,15 +3981,7 @@ function openCamera() {
                     const ctx = canvas.getContext('2d');
                     ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
 
-                    clearFengShuiCache();
-                    currentUploadedImage = canvas.toDataURL('image/jpeg');
-                    if (roomPreview) roomPreview.src = currentUploadedImage;
-
-                    // Detect if the room is empty
-                    isRoomActuallyEmpty = await detectEmptyRoom(currentUploadedImage);
-                    console.log(`Captured room is ${isRoomActuallyEmpty ? 'empty' : 'furnished'}`);
-                    applyDetectedRoomType();
-                    showWizard();
+                    await acceptRoomPhoto(await normalizeRoomPhoto(canvas), 'camera');
 
                     // Stop the camera stream
                     stream.getTracks().forEach(track => track.stop());
@@ -3942,6 +4012,7 @@ function openFileSelector() {
 }
 
 function resetImageUpload() {
+    clearRedesignSession();
     currentUploadedImage = null;
     lastGeneratedImageUrl = null;
     isRoomActuallyEmpty = true;
@@ -4988,6 +5059,10 @@ async function generateDesigns(options = {}) {
     // Captured before the request: if the gate let us through without an
     // account, this run is spending the device's one pre-signup generation.
     const wasAnonymousRun = !currentUser;
+    trackGenerationStarted(
+        regionRemoveApply ? 'erase' : fengShuiApply ? 'feng-shui' : quickEditApply ? 'quick-edit' : 'redesign',
+        usePremium ? 'premium' : 'free',
+    );
 
     // Check if we're regenerating (already on results screen)
     const isCurrentlyOnResults = resultsSection && !resultsSection.classList.contains('hidden');
@@ -5369,6 +5444,7 @@ async function generateDesigns(options = {}) {
 
     } catch (error) {
         console.error(`Error in image generation for design (${style}):`, error);
+        trackGenerationFailed('redesign', error);
         // Token is NOT deducted on failure
 
         // The pre-signup generation is spent. Terminal, and the next step is
@@ -5388,14 +5464,11 @@ async function generateDesigns(options = {}) {
 
         // Quota errors are terminal — no fallback offer makes sense.
         if (error.code === 'QUOTA_EXCEEDED') {
-            const limit = error.quota?.limit ?? subscriptionUsage.limit ?? 50;
             initialDesign.imageUrl = '';
             initialDesign.loading = false;
             initialDesign.isFallback = false;
             initialDesign.needsRetry = true;
-            initialDesign.errorMessage =
-                `You've reached your monthly limit of ${limit} image generations. ` +
-                `Your quota will reset at the start of next month.`;
+            initialDesign.errorMessage = quotaErrorMessage(error);
             if (userHasSubscription) await fetchSubscriptionUsage();
             syncDefaultModelToggles();
             updateDesignCard(initialDesign, 0);
@@ -5519,6 +5592,7 @@ async function retryImageGeneration() {
 
     // Retry runs the free default chain — only an auth check is needed.
     if (!ensureLoggedIn()) return;
+    trackGenerationStarted('retry', 'free');
 
     // Get the current design data
     const design = generatedDesigns[0];
@@ -5709,6 +5783,7 @@ async function retryImageGeneration() {
 
     } catch (error) {
         console.error('Retry failed:', error);
+        trackGenerationFailed('retry', error);
         // Token is NOT deducted on failed retry
         design.imageUrl = '';
         design.loading = false;
@@ -6170,6 +6245,7 @@ async function regenerateWithPremiumModel(designIndex) {
 
     // Check token availability up front — the premium run consumes a slot.
     if (!hasTokensAvailable()) return;
+    trackGenerationStarted('premium-upgrade', 'premium');
 
     const card = designCarousel.querySelector(`[data-design-id="${design.id}"]`);
     if (card) {
@@ -6241,11 +6317,11 @@ async function regenerateWithPremiumModel(designIndex) {
         await useTokenAfterSuccess();
     } catch (error) {
         console.error('Premium-model regeneration failed:', error);
+        trackGenerationFailed('premium-upgrade', error);
         design.loading = false;
         design.needsRetry = true;
         if (error.code === 'QUOTA_EXCEEDED') {
-            const limit = error.quota?.limit ?? subscriptionUsage.limit ?? 50;
-            design.errorMessage = `You've reached your monthly limit of ${limit} image generations. Your quota will reset at the start of next month.`;
+            design.errorMessage = quotaErrorMessage(error);
         } else {
             design.errorMessage = error.message || 'Premium model regeneration failed. Please try again.';
         }
@@ -6347,8 +6423,12 @@ function seedDesignHistoryWithOriginal() {
     });
 }
 
-/** Push a successful generation onto the history and select it as latest. */
-function pushDesignHistory(imageUrl) {
+/**
+ * Push a successful generation onto the history and select it as latest.
+ * `meta` ({ prompt, model, sourceType, metadata }) travels with the entry so a
+ * restored session can rebuild the result card.
+ */
+function pushDesignHistory(imageUrl, meta = null) {
     if (!imageUrl) return;
     // Skip if the same URL is already the most recent entry (e.g. re-render).
     const last = designHistory[designHistory.length - 1];
@@ -6363,10 +6443,101 @@ function pushDesignHistory(imageUrl) {
         imageUrl,
         label: `v${generationCount}`,
         isOriginal: false,
+        meta,
     };
     designHistory.push(entry);
     selectedHistoryId = entry.id;
     renderDesignHistory();
+    persistRedesignSession();
+}
+
+// ── Redesign session persistence (see src/sessionStore.js) ───────────────────
+
+/** Provider URL → data URL, so each generated image is fetched for storage once. */
+const durableImageCache = new Map();
+/** Saves run one at a time, each snapshotting state when it starts. */
+let sessionPersistChain = Promise.resolve();
+/** True while a stored session is being put back, so that doesn't re-save it. */
+let restoringSession = false;
+
+/**
+ * Save the current photo and its generated versions to this device. Called
+ * whenever either changes. Fire-and-forget: never blocks or fails the UI.
+ */
+function persistRedesignSession() {
+    if (restoringSession) return;
+    sessionPersistChain = sessionPersistChain.then(async () => {
+        const original = currentUploadedImage;
+        if (!original) return;
+        const isRoomEmpty = isRoomActuallyEmpty;
+        const entries = designHistory.filter(h => !h.isOriginal).slice(-MAX_STORED_VERSIONS);
+        const versions = [];
+        for (const entry of entries) {
+            let durable = durableImageCache.get(entry.imageUrl);
+            if (!durable) {
+                durable = await toDurableImage(entry.imageUrl);
+                durableImageCache.set(entry.imageUrl, durable);
+            }
+            versions.push({ imageUrl: durable, meta: entry.meta || null });
+        }
+        // Fetching images takes time — if the user started over or picked a
+        // different photo meanwhile, this snapshot is no longer the session.
+        if (currentUploadedImage !== original) return;
+        await saveRedesignSession({ original, isRoomEmpty, versions });
+    }).catch(err => console.warn('[session] persist failed:', err));
+}
+
+/**
+ * On load, put back the photo and versions from the last visit on this device.
+ * This is what carries a visitor's first design across the signup email
+ * round-trip, a Stripe checkout return, or a plain refresh.
+ */
+async function restoreRedesignSession() {
+    // Only when the page opened on the redesign flow — a deep link to the
+    // floor plan, library or upgrade page should open that, not a result.
+    if (!['home', 'design', 'result'].includes(currentRoute().name)) return;
+    const saved = await loadRedesignSession();
+    // The visitor may have added a photo while the store was being read.
+    if (!saved || currentUploadedImage) return;
+
+    const checks = await Promise.all((saved.versions || []).map(v => imageStillLoads(v?.imageUrl)));
+    const versions = (saved.versions || []).filter((_, i) => checks[i]);
+    if (currentUploadedImage) return;
+
+    restoringSession = true;
+    try {
+        currentUploadedImage = saved.original;
+        if (roomPreview) roomPreview.src = saved.original;
+        isRoomActuallyEmpty = !!saved.isRoomEmpty;
+        applyDetectedRoomType();
+
+        track('session_restored', { versions: versions.length });
+        if (!versions.length) {
+            showWizard();
+            return;
+        }
+
+        const latest = versions[versions.length - 1];
+        await loadSavedDesignIntoResults({
+            imageUrl: latest.imageUrl,
+            prompt: latest.meta?.prompt || '',
+            model: latest.meta?.model || null,
+            sourceType: latest.meta?.sourceType || 'room-design',
+            metadata: latest.meta?.metadata || {},
+        });
+        // loadSavedDesignIntoResults seeds the strip with one entry; put back
+        // every stored version so earlier ones can still be picked.
+        resetDesignHistory();
+        seedDesignHistoryWithOriginal();
+        for (const v of versions) {
+            durableImageCache.set(v.imageUrl, v.imageUrl);
+            pushDesignHistory(v.imageUrl, v.meta || null);
+        }
+    } catch (err) {
+        console.warn('[session] restore failed:', err);
+    } finally {
+        restoringSession = false;
+    }
 }
 
 /** Returns the user-selected history entry, or the latest if none picked. */

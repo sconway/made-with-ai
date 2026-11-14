@@ -88,3 +88,14 @@ services:
         value: "40"
       - key: RATE_LIMIT_GEN_WINDOW_MS
         value: "600000"
+      # Daily cap on free generations per account (0 disables). Run
+      # sql/free_generation_daily_cap.sql in Supabase so the count is durable.
+      - key: FREE_DAILY_GENERATION_LIMIT
+        value: "30"
+      - key: FREE_DAILY_GENERATION_LIMIT_SUBSCRIBER
+        value: "100"
+      # Pre-signup generation: a first-time visitor gets ANON_FREE_GENERATIONS
+      # designs before creating an account. OFF unless ANON_DEVICE_SECRET is set
+      # (openssl rand -hex 32) and sql/anonymous_generations.sql has been run.
+      - key: ANON_DEVICE_SECRET
+        sync: false

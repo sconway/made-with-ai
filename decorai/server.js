@@ -1,5 +1,5 @@
 import express from 'express';
-import fetch from 'node-fetch';
+import nodeFetch from 'node-fetch';
 import cors from 'cors';
 import path from 'path';
 import { fileURLToPath } from 'url';
@@ -46,6 +46,27 @@ function parseEnvInt(name, defaultValue) {
   const n = parseInt(raw, 10);
   return Number.isNaN(n) ? defaultValue : n;
 }
+
+// ── Outbound request deadlines ─────────────────────────────────────────────
+// Every call to a provider (Replicate, OpenAI, Anthropic, image hosts) goes
+// through this wrapper so none can hang. Without a deadline a stalled provider
+// holds the client's request — and a socket — open until the platform kills
+// it, and enough of those at once takes the whole instance down.
+//
+// Pass `timeoutMs` for calls that legitimately run long (image generation).
+// A caller that supplies its own `signal` keeps full control.
+const PROVIDER_TIMEOUT_MS = parseEnvInt('PROVIDER_TIMEOUT_MS', 30_000);
+const PROVIDER_LONG_TIMEOUT_MS = parseEnvInt('PROVIDER_LONG_TIMEOUT_MS', 180_000);
+
+function fetch(url, options = {}) {
+  const { timeoutMs = PROVIDER_TIMEOUT_MS, ...rest } = options;
+  if (rest.signal) return nodeFetch(url, rest);
+  return nodeFetch(url, { ...rest, signal: AbortSignal.timeout(timeoutMs) });
+}
+
+/** True when an outbound call was cut off by its deadline. */
+const isTimeoutError = (err) => err?.name === 'AbortError' || err?.name === 'TimeoutError';
+const PROVIDER_TIMEOUT_MESSAGE = 'The AI service took too long to respond. Please try again.';
 
 const FREE_TOKENS = parseEnvInt('FREE_TOKENS', 2);
 const TOKENS_PER_PURCHASE = parseEnvInt('TOKENS_PER_PURCHASE', 5);
@@ -544,6 +565,95 @@ async function reserveGenerationSlot(req, res) {
   };
 }
 
+// ── Daily cap on free generations ──────────────────────────────────────────
+// The free models don't touch the token/monthly quota, but every prediction
+// costs the owner money. The rate limiters below only bound bursts (40 per 10
+// minutes is still 5,760 a day), so this is what bounds spend per account.
+//
+// Counts predictions started through /replicate/predictions by a signed-in
+// account, per UTC day. Subscribers get a higher ceiling. 0 disables the cap.
+//
+// Backed by sql/free_generation_daily_cap.sql. Until that has been run — or if
+// the database call fails — an in-process counter enforces the same limit, so
+// the cap is never silently off; it is just per-instance and resets on deploy.
+const FREE_DAILY_GENERATION_LIMIT = parseEnvInt('FREE_DAILY_GENERATION_LIMIT', 30);
+const FREE_DAILY_GENERATION_LIMIT_SUBSCRIBER = Math.max(
+  FREE_DAILY_GENERATION_LIMIT,
+  parseEnvInt('FREE_DAILY_GENERATION_LIMIT_SUBSCRIBER', 100),
+);
+const utcDay = () => new Date().toISOString().slice(0, 10);
+const freeDailyLocal = new Map(); // userId -> { day, count } (fallback store)
+let freeDailyFallbackWarned = false;
+
+function reserveFreeDailyLocal(userId, day, limit) {
+  let entry = freeDailyLocal.get(userId);
+  if (!entry || entry.day !== day) {
+    // New day: drop yesterday's entries so the map can't grow without bound.
+    if (freeDailyLocal.size > 5000) {
+      for (const [k, v] of freeDailyLocal) if (v.day !== day) freeDailyLocal.delete(k);
+    }
+    entry = { day, count: 0 };
+    freeDailyLocal.set(userId, entry);
+  }
+  if (entry.count >= limit) return -1;
+  entry.count += 1;
+  return entry.count;
+}
+
+/** Atomic check-and-increment. Returns the new count, or -1 when at the cap. */
+async function reserveFreeDailyAt(userId, day, limit) {
+  if (supabase) {
+    const { data, error } = await supabase.rpc('reserve_free_generation', {
+      p_user_id: userId,
+      p_day: day,
+      p_limit: limit,
+    });
+    if (!error && typeof data === 'number') return { count: data, store: 'db' };
+    if (!freeDailyFallbackWarned) {
+      freeDailyFallbackWarned = true;
+      console.warn(
+        '[free-cap] reserve_free_generation RPC unavailable — using the in-process counter. ' +
+          'Run sql/free_generation_daily_cap.sql in Supabase.',
+        error?.message || error,
+      );
+    }
+  }
+  return { count: reserveFreeDailyLocal(userId, day, limit), store: 'local' };
+}
+
+/**
+ * Reserve one free generation for today.
+ * Returns { ok: true, refund() } or { ok: false, limit }.
+ */
+async function reserveFreeDailyGeneration(userId) {
+  if (FREE_DAILY_GENERATION_LIMIT <= 0) return { ok: true, refund: async () => {} };
+  const day = utcDay();
+  let limit = FREE_DAILY_GENERATION_LIMIT;
+  let r = await reserveFreeDailyAt(userId, day, limit);
+  // Only pay for the subscription lookup once the base cap is actually hit.
+  if (r.count === -1 && FREE_DAILY_GENERATION_LIMIT_SUBSCRIBER > limit && supabase) {
+    const sub = await getActiveSubscription(userId).catch(() => null);
+    if (sub) {
+      limit = FREE_DAILY_GENERATION_LIMIT_SUBSCRIBER;
+      r = await reserveFreeDailyAt(userId, day, limit);
+    }
+  }
+  if (r.count === -1) return { ok: false, limit };
+  return {
+    ok: true,
+    // Give the slot back when the provider never started the prediction.
+    refund: async () => {
+      if (r.store === 'db') {
+        const { error } = await supabase.rpc('refund_free_generation', { p_user_id: userId, p_day: day });
+        if (error) console.error('[free-cap] refund_free_generation RPC error:', error);
+      } else {
+        const entry = freeDailyLocal.get(userId);
+        if (entry && entry.day === day) entry.count = Math.max(0, entry.count - 1);
+      }
+    },
+  };
+}
+
 // ── Rate limiting (in-memory, single-instance) ─────────────────────────────
 // Fixed-window counters keyed per-IP and/or per-account. Bounds how much a
 // single client can spend on the paid AI providers. NOTE: state is per-process —
@@ -1009,6 +1119,9 @@ app.post('/replicate/predictions', genIpLimiter, genUserLimiter, async (req, res
   // anonymous device helpers). Either way the rate limiters above apply.
   let user = null;
   let anonDeviceId = null;
+  // Today's free-generation slot for a signed-in caller; refunded if the
+  // provider never starts the prediction.
+  let freeSlot = null;
 
   try {
     const apiKey = process.env.REPLICATE_API_KEY;
@@ -1048,6 +1161,19 @@ app.post('/replicate/predictions', genIpLimiter, genUserLimiter, async (req, res
         });
       }
       console.log(`[anon] Granted a pre-signup generation to device ${anonDeviceId.slice(0, 8)}…`);
+    } else {
+      freeSlot = await reserveFreeDailyGeneration(user.id);
+      if (!freeSlot.ok) {
+        // No `limit` field on purpose: the client reads that as the monthly
+        // premium cap. `code` tells it this is the daily free one.
+        return res.status(429).json({
+          error:
+            `You've used today's ${freeSlot.limit} free designs. They reset at midnight UTC — ` +
+            'premium generations still work in the meantime.',
+          code: 'DAILY_FREE_LIMIT',
+          dailyLimit: freeSlot.limit,
+        });
+      }
     }
 
     // Some models (e.g. proplabs/virtual-staging) require the Replicate API
@@ -1092,12 +1218,15 @@ app.post('/replicate/predictions', genIpLimiter, genUserLimiter, async (req, res
         statusText: response.statusText,
         error: errorData
       });
+      if (freeSlot?.ok) await freeSlot.refund();
       return res.status(response.status).json({
         error: `Replicate API error (${response.status}): ${errorData.detail || 'Unknown error'}`
       });
     }
 
     const data = await response.json();
+    // From here the prediction exists and is billable — the slot stays spent.
+    freeSlot = null;
     console.log('Replicate API response:', data);
     // Bind the prediction to the anonymous device so /replicate/poll will
     // serve it back to this visitor and nobody else.
@@ -1107,6 +1236,8 @@ app.post('/replicate/predictions', genIpLimiter, genUserLimiter, async (req, res
     res.json(data);
   } catch (error) {
     console.error('Error in /replicate/predictions:', error);
+    if (freeSlot?.ok) await freeSlot.refund().catch(() => {});
+    if (isTimeoutError(error)) return res.status(504).json({ error: PROVIDER_TIMEOUT_MESSAGE });
     res.status(500).json({ error: 'Failed to start prediction' });
   }
 });
@@ -1149,6 +1280,7 @@ app.post('/openai/image-edit', genIpLimiter, genUserLimiter, async (req, res) =>
 
     const response = await fetch('https://api.openai.com/v1/images/edits', {
       method: 'POST',
+      timeoutMs: PROVIDER_LONG_TIMEOUT_MS,
       headers: { 'Authorization': `Bearer ${apiKey}` },
       body: form
     });
@@ -1191,6 +1323,7 @@ app.post('/openai/image-edit', genIpLimiter, genUserLimiter, async (req, res) =>
   } catch (error) {
     console.error('Error in /openai/image-edit:', error);
     await slot.refund();
+    if (isTimeoutError(error)) return res.status(504).json({ error: PROVIDER_TIMEOUT_MESSAGE });
     res.status(500).json({ error: 'Failed to generate image edit' });
   }
 });
@@ -1282,6 +1415,7 @@ app.post('/replicate/poll', async (req, res) => {
     res.json({ ...data, savedDesignId });
   } catch (error) {
     console.error('Error in /replicate/poll:', error);
+    if (isTimeoutError(error)) return res.status(504).json({ error: PROVIDER_TIMEOUT_MESSAGE });
     res.status(500).json({ error: 'Failed to poll prediction' });
   }
 });
@@ -1679,6 +1813,7 @@ Return this exact JSON structure:
 
     const response = await fetch('https://api.openai.com/v1/chat/completions', {
       method: 'POST',
+      timeoutMs: 90_000,
       headers: {
         'Authorization': `Bearer ${apiKey}`,
         'Content-Type': 'application/json'
@@ -1766,6 +1901,7 @@ app.post('/api/identify-region', identifyRegionLimiter, async (req, res) => {
 
     const response = await fetch('https://api.openai.com/v1/chat/completions', {
       method: 'POST',
+      timeoutMs: 90_000,
       headers: { 'Authorization': `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
       body: JSON.stringify({
         model: process.env.REGION_IDENTIFY_MODEL || 'gpt-4o',
@@ -1899,6 +2035,7 @@ Skip decorations: hatching, dimension lines, north arrows, title blocks, page bo
 
     const response = await fetch('https://api.anthropic.com/v1/messages', {
       method: 'POST',
+      timeoutMs: 120_000,
       headers: {
         'x-api-key': apiKey,
         'anthropic-version': '2023-06-01',

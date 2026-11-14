@@ -69,12 +69,14 @@ AI floor-plan import.
 
 | Path | Model | Cost to the user |
 | --- | --- | --- |
-| Free, nothing for the enum to lose | `proplabs/virtual-staging` | Unlimited |
-| Free, carries items / a style the enum can't express / refinement text | `google/nano-banana` | Unlimited |
+| Free, nothing for the enum to lose | `proplabs/virtual-staging` | Free, up to the daily cap |
+| Free, carries items / a style the enum can't express / refinement text | `google/nano-banana` | Free, up to the daily cap |
 | Premium toggle | OpenAI `gpt-image-2` | One generation against the monthly cap |
 
-   The free models are rate-limited per IP and per account but don't touch the
-   quota. `freeRouteAwayFromProplabs()` in `src/main.js` decides the route —
+   The free models are rate-limited per IP and per account and capped per
+   account per UTC day (`FREE_DAILY_GENERATION_LIMIT`, default 30; subscribers
+   `FREE_DAILY_GENERATION_LIMIT_SUBSCRIBER`, default 100 — run
+   `sql/free_generation_daily_cap.sql`), but don't touch the quota. `freeRouteAwayFromProplabs()` in `src/main.js` decides the route —
    proplabs takes only a `room` and `furniture_style` enum, so anything it
    would silently drop goes to the prompt-capable model instead.
 4. Compare, refine, regenerate. Subscribers' results are saved to Supabase
