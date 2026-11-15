@@ -76,3 +76,46 @@ export function presentToast(toast, { text, duration, onRemove } = {}) {
     start();
     return dismiss;
 }
+
+/** The toast on screen; a new one replaces it rather than stacking. */
+let activeToast = null;
+
+/**
+ * The app's one toast: bottom centre, above everything, with an optional
+ * follow-up button. The results page, the floor plan editor and the
+ * woodworking editor all use it, so a save looks the same everywhere.
+ *
+ * @param {string} message
+ * @param {'success'|'error'|'info'|'loading'} [type]
+ * @param {{ actionLabel?: string, onAction?: () => void, duration?: number|null }} [opts]
+ *   actionLabel + onAction: a button ("Try again", "Undo") that dismisses the
+ *   toast and runs onAction. A 'loading' toast stays until it's replaced.
+ * @returns {() => void} dismiss
+ */
+export function showToast(message, type = 'info', { actionLabel, onAction, duration } = {}) {
+    if (activeToast) activeToast.remove();
+    const toast = document.createElement('div');
+    toast.className = `toast toast-${type}`;
+    const text = document.createElement('span');
+    text.className = 'toast-text';
+    text.textContent = message;
+    toast.appendChild(text);
+    let actionBtn = null;
+    if (actionLabel && onAction) {
+        actionBtn = document.createElement('button');
+        actionBtn.type = 'button';
+        actionBtn.className = 'toast-action';
+        actionBtn.textContent = actionLabel;
+        toast.appendChild(actionBtn);
+    }
+    document.body.appendChild(toast);
+    activeToast = toast;
+    const dismiss = presentToast(toast, {
+        text: message,
+        ...(type === 'loading' ? { duration: null } : {}),
+        ...(duration !== undefined ? { duration } : {}),
+        onRemove: () => { if (activeToast === toast) activeToast = null; },
+    });
+    actionBtn?.addEventListener('click', () => { dismiss(); onAction(); });
+    return dismiss;
+}

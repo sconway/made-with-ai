@@ -1,5 +1,7 @@
 import feather from 'feather-icons';
-import { presentToast } from './toast.js';
+import { showToast } from './toast.js';
+import { furnitureEmpty, emptyStateElement } from './emptyStates.js';
+import { filterLibraryItems } from './library.js';
 
 // ==========================================
 // FLOOR PLAN EDITOR
@@ -1995,7 +1997,8 @@ const FloorPlanEditor = (() => {
         const size = report.widthFt ? ` · ${report.widthFt} × ${report.heightFt} ft` : '';
         const warnings = [...(analysis.warnings || []), ...(report.warnings || [])];
         const note = warnings.length ? ` ${[...new Set(warnings)].join(' ')}` : '';
-        showFengShuiMessage(escapeHtml(`Imported ${parts.join(', ')}${size}. The original drawing is kept underneath.${note}`));
+        // Plain text now (the shared toast sets textContent), so no escaping.
+        showFengShuiMessage(`Imported ${parts.join(', ')}${size}. The original drawing is kept underneath.${note}`);
     }
 
     /** Zoom and pan so everything on the canvas is in view. */
@@ -4897,11 +4900,20 @@ const FloorPlanEditor = (() => {
         // If no categories selected, show nothing (or could show all)
         const showAll = !categories || categories.length === 0;
         
-        const filteredItems = furnitureLibrary.filter(item => {
-            const matchesCategory = showAll || categories.includes(item.category);
-            const matchesSearch = !searchTerm || item.name.toLowerCase().includes(searchTerm.toLowerCase());
-            return matchesCategory && matchesSearch;
-        });
+        // Every word, any order, accents ignored: "lamp floor" finds "Floor Lamp".
+        const matching = filterLibraryItems(furnitureLibrary, searchTerm, (item) => `${item.name} ${item.category}`);
+        const filteredItems = matching.filter(item => showAll || categories.includes(item.category));
+
+        if (!filteredItems.length) {
+            const labels = Array.from(document.querySelectorAll('.category-btn.active span'))
+                .map(el => el.textContent.trim());
+            grid.appendChild(emptyStateElement(furnitureEmpty({
+                query: searchTerm,
+                categoryLabels: showAll ? [] : labels,
+                matchesElsewhere: matching.length,
+            }), onFurnitureEmptyAction, { compact: true }));
+            return;
+        }
         
         for (const item of filteredItems) {
             const div = document.createElement('div');
@@ -4945,6 +4957,17 @@ const FloorPlanEditor = (() => {
         }
     }
     
+    function onFurnitureEmptyAction(id) {
+        const search = document.getElementById('furniture-search');
+        if (id === 'all-categories') {
+            document.querySelectorAll('.category-btn').forEach(btn => btn.classList.add('active'));
+        } else if (id === 'clear-search' && search) {
+            search.value = '';
+        }
+        updateFurnitureGrid();
+        search?.focus();
+    }
+
     /** Snap furniture to a finer grid than walls (quarter-foot when snap-to-grid is on). */
     function snapFurniturePosition(x, y) {
         if (!snapToGrid) return { x, y };
@@ -9249,7 +9272,7 @@ const FloorPlanEditor = (() => {
                 }
                 redrawFurniture();
                 hasUnsavedChanges = true;
-                showFengShuiMessage('Layout applied');
+                showFengShuiMessage('Layout applied.');
                 panel.remove();
             });
         }
@@ -9335,18 +9358,9 @@ const FloorPlanEditor = (() => {
     }
 
     
+    // Shared toast (src/toast.js), like every other message in the app.
     function showFengShuiMessage(msg) {
-        const container = document.querySelector('.layout-canvas-container');
-        if (!container) return;
-        
-        const toast = document.createElement('div');
-        toast.className = 'feng-shui-toast';
-        toast.innerHTML = `
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>
-            <span class="toast-text">${msg}</span>
-        `;
-        container.appendChild(toast);
-        presentToast(toast, { text: msg });
+        showToast(msg, 'info');
     }
     
     function getState() {

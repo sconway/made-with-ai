@@ -16,6 +16,9 @@
 //     using (auth.uid() = user_id) with check (auth.uid() = user_id);
 
 import * as THREE from 'three';
+import { showToast } from '../toast.js';
+import { placeholderMarkup } from '../placeholders.js';
+import { cutListEmpty, emptyStateElement } from '../emptyStates.js';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { TransformControls } from 'three/examples/jsm/controls/TransformControls.js';
 
@@ -164,6 +167,7 @@ const WoodworkingEditor = (() => {
         openBtn.addEventListener('click', show);
         screenEl.querySelector('[data-action="back"]')?.addEventListener('click', hide);
         renderLibrary();
+        renderCutList(); // the empty state, before any board exists
         screenEl.querySelector('[data-action="delete-board"]')?.addEventListener('click', deleteSelected);
         screenEl.querySelector('[data-action="array"]')?.addEventListener('click', createLinearArray);
         screenEl.querySelector('[data-action="cutopt-open"]')?.addEventListener('click', openCutOpt);
@@ -706,8 +710,7 @@ const WoodworkingEditor = (() => {
         }
         recordHistorySnapshot(); // undoable + marks the project dirty
         applySnapshot({ boards: [], selectedIds: [] });
-        setSaveStatus('Cleared all boards.');
-        setTimeout(() => setSaveStatus(''), 2500);
+        notify('Cleared all boards.', 'info', { actionLabel: 'Undo', onAction: () => undo() });
     }
 
     // Replaces the current selection with `ids` (number, number[], Set, or null/undefined to clear).
@@ -990,7 +993,12 @@ const WoodworkingEditor = (() => {
         const totalEl = screenEl.querySelector('.ww-cutlist-total');
         if (!listEl) return;
         if (boards.length === 0) {
-            listEl.innerHTML = '<tr><td colspan="3" class="ww-empty">No boards yet — click "Add Board" to start.</td></tr>';
+            listEl.innerHTML = '<tr><td colspan="3" class="ww-empty"></td></tr>';
+            listEl.querySelector('.ww-empty').appendChild(emptyStateElement(cutListEmpty(), (id) => {
+                if (id !== 'add-board') return;
+                recordHistorySnapshot();
+                addBoard();
+            }, { compact: true }));
             if (totalEl) totalEl.textContent = '0.00';
             return;
         }
@@ -1081,17 +1089,23 @@ const WoodworkingEditor = (() => {
         } catch { return null; }
     }
 
-    function setSaveStatus(text, isError = false) {
+    // "Saving…" stays beside the Save button while it runs. Results (saved,
+    // failed, exported) go to the shared toast (src/toast.js), so they look
+    // the same here as in the rest of the app.
+    function setSaveStatus(text) {
         const el = screenEl.querySelector('.ww-save-status');
-        if (!el) return;
-        el.textContent = text;
-        el.style.color = isError ? '#b91c1c' : '#6b7280';
+        if (el) el.textContent = text;
+    }
+
+    function notify(text, type = 'success', action = {}) {
+        setSaveStatus('');
+        showToast(text, type, action);
     }
 
     async function handleSave() {
         const token = await getAccessToken();
         if (!token) {
-            setSaveStatus('Sign in to save your project.', true);
+            notify('Sign in to save your project.', 'info', { actionLabel: 'Sign in', onAction: () => window.__decoraitShowAuth?.('login') });
             return;
         }
         setSaveStatus('Saving…');
@@ -1109,18 +1123,17 @@ const WoodworkingEditor = (() => {
             if (!resp.ok) {
                 const err = await resp.json().catch(() => ({}));
                 console.error('[Woodworking] save failed:', resp.status, err);
-                setSaveStatus(`Save failed: ${err.error || resp.status}`, true);
+                notify(`Couldn’t save your project${err.error ? `: ${err.error}` : '.'}`, 'error', { actionLabel: 'Try again', onAction: () => handleSave() });
                 return;
             }
             const data = await resp.json().catch(() => ({}));
             if (data.id) currentProjectId = data.id;
             if (data.name) currentProjectName = data.name;
             markClean();
-            setSaveStatus('Saved.');
-            setTimeout(() => setSaveStatus(''), 2500);
+            notify('Project saved.');
         } catch (err) {
             console.error('[Woodworking] save error:', err);
-            setSaveStatus('Save failed. Check console.', true);
+            notify('Couldn’t save your project. Check your connection and try again.', 'error', { actionLabel: 'Try again', onAction: () => handleSave() });
         }
     }
 
@@ -1183,6 +1196,9 @@ const WoodworkingEditor = (() => {
         screenEl.querySelector('#ww-projects-modal')?.classList.add('hidden');
     }
 
+    /** How many projects the list showed last, so the placeholders match. */
+    let projectsLastCount = 0;
+
     async function refreshProjectsList() {
         const listEl = screenEl.querySelector('#ww-projects-list');
         if (!listEl) return;
@@ -1191,15 +1207,16 @@ const WoodworkingEditor = (() => {
             listEl.innerHTML = '<p class="ww-projects-empty">Sign in to save and load projects.</p>';
             return;
         }
-        listEl.innerHTML = '<p class="ww-projects-empty">Loading…</p>';
+        listEl.innerHTML = placeholderMarkup('project-row', { count: projectsLastCount, label: 'Loading your projects…' });
         try {
             const resp = await fetch('/api/woodworking-projects', { headers: { 'Authorization': `Bearer ${token}` } });
             if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
             const data = await resp.json();
+            projectsLastCount = (data.projects || []).length;
             renderProjectsList(data.projects || []);
         } catch (err) {
             console.error('[Woodworking] list projects failed:', err);
-            listEl.innerHTML = '<p class="ww-projects-empty">Couldn’t load projects. Check console.</p>';
+            listEl.innerHTML = '<p class="ww-projects-empty">Your projects didn’t load. Check your connection and try again.</p>';
         }
     }
 
@@ -1263,7 +1280,7 @@ const WoodworkingEditor = (() => {
     async function loadProject(id) {
         if (!(await confirmDiscardIfDirty())) return;
         const token = await getAccessToken();
-        if (!token) { setSaveStatus('Sign in to load projects.', true); return; }
+        if (!token) { notify('Sign in to open your projects.', 'info'); return; }
         try {
             const resp = await fetch(`/api/woodworking-projects/${id}`, { headers: { 'Authorization': `Bearer ${token}` } });
             if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
@@ -1275,11 +1292,10 @@ const WoodworkingEditor = (() => {
             updateProjectTitleUI();
             markClean();
             closeProjects();
-            setSaveStatus(`Opened “${currentProjectName}”.`);
-            setTimeout(() => setSaveStatus(''), 2500);
+            notify(`Opened “${currentProjectName}”.`);
         } catch (err) {
             console.error('[Woodworking] load project failed:', err);
-            setSaveStatus('Couldn’t open project. Check console.', true);
+            notify('Couldn’t open that project. Check your connection and try again.', 'error', { actionLabel: 'Try again', onAction: () => loadProject(id) });
         }
     }
 
@@ -1301,7 +1317,7 @@ const WoodworkingEditor = (() => {
             : true;
         if (!ok) return;
         const token = await getAccessToken();
-        if (!token) { setSaveStatus('Sign in to manage projects.', true); return; }
+        if (!token) { notify('Sign in to manage your projects.', 'info'); return; }
         try {
             const resp = await fetch(`/api/woodworking-projects/${id}`, {
                 method: 'DELETE',
@@ -1317,7 +1333,7 @@ const WoodworkingEditor = (() => {
             refreshProjectsList();
         } catch (err) {
             console.error('[Woodworking] delete project failed:', err);
-            setSaveStatus('Couldn’t delete project. Check console.', true);
+            notify('Couldn’t delete that project. Try again in a moment.', 'error');
         }
     }
 
@@ -1702,8 +1718,7 @@ const WoodworkingEditor = (() => {
     // Mirrors the grouping shown in the Cut List panel.
     function exportCutListCsv() {
         if (boards.length === 0) {
-            setSaveStatus('Nothing to export — add some boards first.', true);
-            setTimeout(() => setSaveStatus(''), 2500);
+            notify('Nothing to export yet. Add a board first.', 'info');
             return;
         }
         const groups = new Map();
@@ -1729,8 +1744,7 @@ const WoodworkingEditor = (() => {
         rows.push(['', '', '', '', 'Total board feet', totalBoardFeet.toFixed(2)]);
         const csv = rows.map(r => r.map(csvCell).join(',')).join('\r\n');
         downloadFile(csv, `cut-list-${exportTimestamp()}.csv`, 'text/csv;charset=utf-8');
-        setSaveStatus('Cut list exported.');
-        setTimeout(() => setSaveStatus(''), 2500);
+        notify('Cut list downloaded.');
     }
 
     // Exports the current 3D view as a PNG. Renders once synchronously and reads the
@@ -1740,13 +1754,11 @@ const WoodworkingEditor = (() => {
         renderer.render(scene, camera);
         renderer.domElement.toBlob(blob => {
             if (!blob) {
-                setSaveStatus('PNG export failed.', true);
-                setTimeout(() => setSaveStatus(''), 2500);
+                notify('That picture didn’t export. Try again.', 'error', { actionLabel: 'Try again', onAction: () => exportViewPng() });
                 return;
             }
             downloadFile(blob, `woodworking-${exportTimestamp()}.png`, 'image/png');
-            setSaveStatus('View exported.');
-            setTimeout(() => setSaveStatus(''), 2500);
+            notify('Picture downloaded.');
         }, 'image/png');
     }
 

@@ -11,8 +11,8 @@ const RESULT_URL = 'https://replicate.delivery/test/result.png';
 const PREDICTION_URL = 'https://api.replicate.com/v1/predictions/pred_test_1';
 
 /** Install the fake backend. Returns what the app sent, for assertions. */
-async function mockBackend(page, { anonRemaining = 1, shareLinks = true, designs = [], shop = undefined } = {}) {
-  const seen = { predictions: [], polls: 0, unmocked: [], clientErrors: [], shareUploads: [], shares: [], revoked: [], checkouts: [], credits: 0, designs: [...designs], designSaves: [] };
+async function mockBackend(page, { anonRemaining = 1, shareLinks = true, designs = [], shop = undefined, subscribed = false } = {}) {
+  const seen = { predictions: [], polls: 0, unmocked: [], clientErrors: [], shareUploads: [], shares: [], revoked: [], checkouts: [], credits: 0, designs: [...designs], designSaves: [], projectSaves: [], projectSaveStatus: 201 };
   const isApi = (url) => ['/api/', '/replicate/', '/openai/'].some((p) => url.pathname.startsWith(p)) || url.pathname === '/health';
 
   await page.route(isApi, async (route) => {
@@ -52,7 +52,7 @@ async function mockBackend(page, { anonRemaining = 1, shareLinks = true, designs
         seen.credits = 10;
         return json({ credits: 10, tokensAdded: 10 });
       case '/api/subscription':
-        return json({ active: false });
+        return json({ isActive: subscribed });
       case '/api/layout':
         return json({ state: null });
       // The library: a free account keeps 10 designs.
@@ -78,6 +78,12 @@ async function mockBackend(page, { anonRemaining = 1, shareLinks = true, designs
       case '/api/layouts':
         return json({ layouts: [] });
       case '/api/woodworking-projects':
+        if (route.request().method() === 'POST') {
+          seen.projectSaves.push(route.request().postDataJSON());
+          return seen.projectSaveStatus < 300
+            ? json({ id: 'p1', name: 'Untitled project' }, seen.projectSaveStatus)
+            : json({}, seen.projectSaveStatus);
+        }
         return json({ projects: [] });
       case '/api/shares': {
         if (!route.request().headers().authorization) return json({ error: 'Unauthorized' }, 401);
@@ -647,4 +653,87 @@ test('with nothing picked, Shop this look offers pieces that carry the style, wi
   await expect(page.locator('.shop-look-item')).toHaveText(['Rug', 'Wall art', 'Floor lamp', 'Throw pillows', 'Planters']);
   await expect(page.locator('a[data-retailer="amazon"]').first()).toHaveAttribute('href', 'https://www.amazon.com/s?k=minimalist%20area%20rug');
   await expect(page.locator('#shop-look-disclosure')).toBeHidden();
+});
+
+test('the woodworking cut list offers a first board, and a failed save can be tried again from the toast', async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 800 });
+  await signIn(page);
+  const seen = await mockBackend(page);
+  seen.projectSaveStatus = 500;
+  await page.goto('/build');
+
+  const cut = page.locator('#woodworking-editor-screen .ww-cutlist-body');
+  await expect(cut.getByText('No boards yet')).toBeVisible();
+  await cut.getByRole('button', { name: 'Add a board' }).click();
+  await expect(cut.locator('tr')).toHaveCount(1);
+  await expect(cut).toContainText('24 × 6 × 0.75');
+
+  await page.locator('#woodworking-editor-screen [data-action="save"]').click();
+  // The editor's results use the app's one toast, not a line of red text.
+  const failed = page.locator('.toast.toast-error');
+  await expect(failed).toContainText('Couldn’t save your project');
+  seen.projectSaveStatus = 201;
+  await failed.getByRole('button', { name: 'Try again' }).click();
+  await expect(page.locator('.toast.toast-success')).toContainText('Project saved.');
+  await expect(page.locator('.toast')).toHaveCount(1);
+  expect(seen.projectSaves).toHaveLength(2);
+  expect(seen.clientErrors).toEqual([]);
+});
+
+test('a furniture search that finds nothing says where to look instead', async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 800 });
+  await signIn(page);
+  const seen = await mockBackend(page, { subscribed: true });
+  await page.goto('/plan');
+  const panel = page.locator('#furniture-panel');
+  const search = page.locator('#furniture-search');
+  await expect(search).toBeVisible();
+  // Searches only run for a subscriber; wait until the account says so.
+  await page.waitForFunction(() => window.__decoraitHasSubscription === true);
+
+  // Only Living is on, and beds are in Bedroom.
+  await search.fill('bed');
+  await expect(panel.getByText('No “bed” in Living')).toBeVisible();
+  await panel.getByRole('button', { name: 'Search every room' }).click();
+  await expect(panel.locator('.furniture-item').first()).toBeVisible();
+  await expect(panel.locator('.library-empty')).toHaveCount(0);
+
+  await search.fill('zebra');
+  await expect(panel.getByText('Nothing called “zebra”')).toBeVisible();
+  await panel.getByRole('button', { name: 'Clear search' }).click();
+  await expect(search).toHaveValue('');
+  await expect(search).toBeFocused();
+  await expect(panel.locator('.furniture-item').first()).toBeVisible();
+  expect(seen.clientErrors).toEqual([]);
+});
+
+test('use a saved design shows placeholders while it loads, and a failed load can be retried', async ({ page }) => {
+  await signIn(page);
+  await mockBackend(page, { designs: [savedDesign(1, 'Japandi')] });
+  // Hold the picker's request so the placeholders can be seen.
+  let release;
+  const held = new Promise((r) => { release = r; });
+  await page.route(/\/api\/designs\?limit=100/, async (route) => { await held; await route.fallback(); });
+
+  await page.goto('/design');
+  const open = page.locator('#use-saved-btn');
+  await expect(open).toBeVisible();
+  await open.click();
+  const grid = page.locator('#use-saved-grid');
+  // One design last time, so one placeholder: the grid doesn't jump.
+  await expect(grid.locator('.use-saved-card.ph-card')).toHaveCount(1);
+  await expect(grid.getByRole('status')).toHaveText('Loading your designs…');
+  release();
+  await expect(grid.locator('.use-saved-card:not(.ph-card)')).toHaveCount(1);
+  await expect(grid.locator('.ph-card')).toHaveCount(0);
+
+  await page.locator('#use-saved-close').click();
+  await page.unroute(/\/api\/designs\?limit=100/);
+  const fail = (route) => route.fulfill({ status: 500, contentType: 'application/json', body: '{}' });
+  await page.route(/\/api\/designs\?limit=100/, fail);
+  await open.click();
+  await expect(grid.getByText('Your designs didn’t load')).toBeVisible();
+  await page.unroute(/\/api\/designs\?limit=100/, fail);
+  await grid.getByRole('button', { name: 'Try again' }).click();
+  await expect(grid.locator('.use-saved-card:not(.ph-card)')).toHaveCount(1);
 });

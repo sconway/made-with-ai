@@ -13,7 +13,9 @@ import {
 import { initSheets } from './sheets.js';
 import { initWaitState, waitStateMarkup } from './waitState.js';
 import { initCompare, enhanceCompare } from './compare.js';
-import { presentToast } from './toast.js';
+import { showToast } from './toast.js';
+import { placeholderMarkup, watchImage } from './placeholders.js';
+import { useSavedEmpty, emptyStateElement } from './emptyStates.js';
 import { MaskEditor, compositeMaskedResult, compositeRegionEdit, buildRegionMarkup, buildRegionLookup } from './maskEditor.js';
 import { normalizeRoomPhoto, looksLikeImageFile } from './roomPhoto.js';
 import { track, flushAnalytics } from './analytics.js';
@@ -1893,39 +1895,12 @@ async function handleSubscribeCheckout() {
 // Exposed so floorPlanEditor can open the modal
 window.__decoraitShowSubscribeModal = () => openUpgrade('floor-plan');
 window.__decoraitGetAccessToken = () => currentSession?.access_token || null;
+/** For the editors' "Sign in" toast buttons. */
+window.__decoraitShowAuth = (mode = 'login') => showAuthModal(mode);
 
-/** Lightweight toast notification (no external dependency) */
-let _activeToast = null;
-/**
- * @param {{ actionLabel?: string, onAction?: () => void }} [action]
- *   An optional button ("Try Premium") that dismisses the toast and runs onAction.
- */
-function showToastMessage(message, type = 'info', { actionLabel, onAction, duration } = {}) {
-    if (_activeToast) _activeToast.remove();
-    const toast = document.createElement('div');
-    toast.className = `toast toast-${type}`;
-    const text = document.createElement('span');
-    text.className = 'toast-text';
-    text.textContent = message;
-    toast.appendChild(text);
-    let actionBtn = null;
-    if (actionLabel && onAction) {
-        actionBtn = document.createElement('button');
-        actionBtn.type = 'button';
-        actionBtn.className = 'toast-action';
-        actionBtn.textContent = actionLabel;
-        toast.appendChild(actionBtn);
-    }
-    document.body.appendChild(toast);
-    _activeToast = toast;
-    const dismiss = presentToast(toast, {
-        text: message,
-        // A loading toast stays until it's replaced or dismissed.
-        ...(type === 'loading' ? { duration: null } : {}),
-        ...(duration !== undefined ? { duration } : {}),
-        onRemove: () => { if (_activeToast === toast) _activeToast = null; },
-    });
-    actionBtn?.addEventListener('click', () => { dismiss(); onAction(); });
+/** The shared toast (src/toast.js); the editors use the same one. */
+function showToastMessage(message, type, opts) {
+    return showToast(message, type, opts);
 }
 
 // ── End token helpers ──────────────────────────────────────────────────────────
@@ -2086,7 +2061,7 @@ async function handleSaveLayout() {
         if (typeof FloorPlanEditor.markSaved === 'function') FloorPlanEditor.markSaved();
         refreshLayoutsList(true);
     } catch (e) {
-        showLayoutSaveToast(e?.message || 'Failed to save layout', true);
+        showLayoutSaveToast(`Couldn\u2019t save your layout${e?.message && e.message !== 'Failed to save' ? `: ${e.message}` : '.'}`, true, () => handleSaveLayout());
     }
 }
 
@@ -2120,20 +2095,12 @@ window.__decoraitOnLayoutEditorShown = function (opts) {
     setLayoutNameDisplay(opts?.name || DEFAULT_LAYOUT_NAME);
 };
 
-function showLayoutSaveToast(message, isError = false) {
-    const existing = document.getElementById('layout-save-toast');
-    if (existing) existing.remove();
-    const toast = document.createElement('div');
-    toast.id = 'layout-save-toast';
-    toast.className = 'layout-save-toast' + (isError ? ' error' : '');
-    const text = document.createElement('span');
-    text.className = 'toast-text';
-    text.textContent = message;
-    toast.appendChild(text);
-    const screen = document.getElementById('layout-editor-screen');
-    if (!screen) return;
-    screen.appendChild(toast);
-    presentToast(toast, { text: message });
+/**
+ * Floor plan editor messages use the shared toast (src/toast.js), so a save
+ * here looks the same as one anywhere else. A failure can offer "Try again".
+ */
+function showLayoutSaveToast(message, isError = false, retry = null) {
+    showToast(message, isError ? 'error' : 'success', retry ? { actionLabel: 'Try again', onAction: retry } : {});
 }
 
 async function fetchLayouts(bustCache = false) {
@@ -2181,11 +2148,15 @@ function formatLayoutDate(iso) {
     return d.toLocaleDateString([], { month: 'short', day: 'numeric', year: d.getFullYear() !== now.getFullYear() ? 'numeric' : undefined });
 }
 
+/** How many layouts the list showed last, so the placeholders match. */
+let layoutsLastCount = 0;
+
 function refreshLayoutsList(bustCache = false) {
     const listEl = document.getElementById('my-layouts-list');
     if (!listEl) return;
-    listEl.innerHTML = '<p class="my-layouts-loading" role="status" aria-live="polite"><span class="my-layouts-spinner" aria-hidden="true"></span>Loading your layouts…</p>';
+    listEl.innerHTML = placeholderMarkup('layout-row', { count: layoutsLastCount, label: 'Loading your layouts…' });
     fetchLayouts(bustCache).then(layouts => {
+        layoutsLastCount = layouts.length;
         listEl.innerHTML = '';
         if (layouts.length === 0) {
             listEl.innerHTML = '<p class="my-layouts-empty">No saved layouts yet. Use Save to create one.</p>';
@@ -2264,7 +2235,7 @@ async function loadLayoutById(id) {
         panel?.classList.remove('show');
         panel?.classList.add('hidden');
     } catch (e) {
-        showLayoutSaveToast(e?.message || 'Failed to load layout', true);
+        showLayoutSaveToast('Couldn\u2019t open that layout. Check your connection and try again.', true, () => loadLayoutById(id));
     }
 }
 
@@ -2289,7 +2260,7 @@ async function deleteLayoutById(id) {
         showLayoutSaveToast('Layout deleted.');
         return true;
     } catch (e) {
-        showLayoutSaveToast(e?.message || 'Failed to delete layout', true);
+        showLayoutSaveToast('Couldn\u2019t delete that layout. Try again in a moment.', true);
         return false;
     }
 }
@@ -2818,6 +2789,7 @@ function designCard(design) {
     img.alt = '';
     img.loading = 'lazy';
     img.decoding = 'async';
+    watchImage(img);
     img.src = design.imageUrl || '';
     img.onerror = function () { this.remove(); };
     thumb.appendChild(img);
@@ -4104,19 +4076,54 @@ function loadEditor(kind) {
 const loadFloorPlanEditor = () => loadEditor('plan');
 
 /** Load an editor if needed, open it, and bring the URL and shell in line. */
+/**
+ * Stand-in for an editor while its download runs: a toolbar and an empty
+ * canvas, so the click visibly did something. Shown only if the download
+ * takes long enough to notice, so a cached editor opens without a flash.
+ * @returns {() => void} hide
+ */
+function showEditorLoading(kind) {
+    const timer = setTimeout(() => {
+        const el = document.createElement('div');
+        el.className = 'editor-loading';
+        el.id = 'editor-loading';
+        el.innerHTML = `
+            <div class="editor-loading-bar" aria-hidden="true">
+                <span class="ph"></span><span class="ph-line"></span><span class="ph-spacer"></span>
+                <span class="ph"></span><span class="ph"></span><span class="ph ph-button"></span>
+            </div>
+            <div class="editor-loading-canvas">
+                <p class="editor-loading-text" role="status">Opening the ${kind === 'plan' ? 'floor plan' : 'woodworking'} editor…</p>
+            </div>`;
+        document.body.appendChild(el);
+    }, EDITOR_LOADING_DELAY_MS);
+    return () => {
+        clearTimeout(timer);
+        document.getElementById('editor-loading')?.remove();
+    };
+}
+const EDITOR_LOADING_DELAY_MS = 150;
+
 async function openEditor(kind) {
     const btn = document.getElementById(kind === 'plan' ? 'layout-editor-btn' : 'woodworking-editor-btn');
     btn?.setAttribute('aria-busy', 'true');
+    const loaded = kind === 'plan' ? FloorPlanEditor : WoodworkingEditor;
+    const hideLoading = loaded ? () => {} : showEditorLoading(kind);
     try {
         const editor = await loadEditor(kind);
+        hideLoading();
         editor.show?.();
         const screen = document.getElementById(kind === 'plan' ? 'layout-editor-screen' : 'woodworking-editor-screen');
         // show() declines for an unconfirmed account — only claim the URL if it opened.
         if (screen && !screen.classList.contains('hidden')) syncUrl(kind);
     } catch (err) {
         console.error(`Could not load the ${kind} editor:`, err);
-        showToastMessage("That tool didn't load. Check your connection and try again.", 'error');
+        showToastMessage("That tool didn't load. Check your connection and try again.", 'error', {
+            actionLabel: 'Try again',
+            onAction: () => openEditor(kind),
+        });
     } finally {
+        hideLoading();
         btn?.removeAttribute('aria-busy');
         updateWorkspaceUI();
     }
@@ -4593,15 +4600,22 @@ function closeUseSavedPicker() {
     modal.classList.add('hidden');
 }
 
+/** How many designs the picker showed last, so the placeholders match. */
+let useSavedLastCount = 0;
+
 function renderUseSavedGrid() {
     const grid = document.getElementById('use-saved-grid');
     if (!grid) return;
-    grid.innerHTML = '<p class="my-designs-loading" role="status" aria-live="polite"><span class="my-layouts-spinner" aria-hidden="true"></span>Loading your designs…</p>';
+    grid.setAttribute('aria-busy', 'true');
+    grid.innerHTML = placeholderMarkup('tile', { count: useSavedLastCount, label: 'Loading your designs…' });
 
-    fetchSavedDesigns().then(designs => {
+    // The page fetch throws on a failure, so "didn't load" isn't shown as "nothing saved".
+    fetchSavedDesignsPage().then(({ designs }) => {
+        grid.removeAttribute('aria-busy');
+        useSavedLastCount = designs.length;
         grid.innerHTML = '';
         if (!designs.length) {
-            grid.innerHTML = '<p class="my-designs-empty">No saved designs yet. Generate a design and it will appear here.</p>';
+            showUseSavedEmpty(useSavedEmpty({ signedIn: !!currentUser }));
             return;
         }
         designs.forEach(design => {
@@ -4614,6 +4628,7 @@ function renderUseSavedGrid() {
             img.className = 'use-saved-card-img';
             img.alt = '';
             img.loading = 'lazy';
+            watchImage(img);
             img.src = design.imageUrl || '';
             img.onerror = function () { this.style.visibility = 'hidden'; };
 
@@ -4626,8 +4641,21 @@ function renderUseSavedGrid() {
             grid.appendChild(card);
         });
     }).catch(() => {
-        grid.innerHTML = '<p class="my-designs-empty">Couldn’t load your designs. Try again in a moment.</p>';
+        grid.removeAttribute('aria-busy');
+        showUseSavedEmpty(useSavedEmpty({ failed: true }));
     });
+}
+
+function showUseSavedEmpty(state) {
+    const grid = document.getElementById('use-saved-grid');
+    if (!grid) return;
+    grid.innerHTML = '';
+    grid.appendChild(emptyStateElement(state, (id) => {
+        if (id === 'retry') return renderUseSavedGrid();
+        closeUseSavedPicker();
+        if (id === 'signin') showAuthModal('login');
+    }));
+    if (typeof feather !== 'undefined') feather.replace();
 }
 
 /**
@@ -4651,6 +4679,7 @@ async function refreshUseSavedAvailability() {
         try {
             const designs = await fetchSavedDesigns();
             available = designs.length > 0;
+            useSavedLastCount = designs.length;
         } catch {
             available = false;
         }

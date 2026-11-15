@@ -4594,29 +4594,6 @@ body.layout-editor-active:has(.modal.show) .layout-editor-screen .layout-sidebar
   padding: 8px 0;
 }
 
-.my-layouts-loading {
-  margin: 0;
-  font-size: 0.875rem;
-  color: var(--color-text-tertiary);
-  padding: 12px 0;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
-.my-layouts-spinner {
-  width: 14px;
-  height: 14px;
-  border: 2px solid var(--color-border-subtle);
-  border-top-color: var(--color-accent-primary);
-  border-radius: 50%;
-  animation: my-layouts-spin 0.8s linear infinite;
-}
-
-@keyframes my-layouts-spin {
-  to { transform: rotate(360deg); }
-}
-
 .my-layouts-item {
   display: flex;
   flex-direction: column;
@@ -4721,19 +4698,12 @@ body.layout-editor-active:has(.modal.show) .layout-editor-screen .layout-sidebar
   overflow-y: auto;
 }
 
-.my-designs-empty,
-.my-designs-loading {
+.my-designs-empty {
   margin: 0;
   font-size: 0.875rem;
   color: var(--color-text-tertiary);
   padding: 8px 0;
   grid-column: 1 / -1;
-}
-
-.my-designs-loading {
-  display: flex;
-  align-items: center;
-  gap: 8px;
 }
 
 .my-designs-card {
@@ -6045,58 +6015,6 @@ body.layout-editor-active:has(.modal.show) .layout-editor-screen .layout-sidebar
   padding: 16px;
 }
 
-/* Toast */
-.feng-shui-toast {
-  position: absolute;
-  bottom: 60px;
-  left: 50%;
-  transform: translateX(-50%) translateY(20px);
-  background: var(--color-text-primary);
-  color: var(--color-text-inverse);
-  padding: 10px 16px;
-  border-radius: 8px;
-  font-size: 14px;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  z-index: 300;
-  opacity: 0;
-  transition: all 0.3s var(--ease-out);
-  max-width: 400px;
-  box-shadow: 0 4px 12px rgba(32, 30, 26, 0.2);
-}
-
-.feng-shui-toast.show {
-  opacity: 1;
-  transform: translateX(-50%) translateY(0);
-}
-
-.layout-save-toast {
-  position: absolute;
-  bottom: 24px;
-  left: 50%;
-  transform: translateX(-50%) translateY(12px);
-  background: var(--color-text-primary);
-  color: var(--color-text-inverse);
-  padding: 10px 16px;
-  border-radius: 8px;
-  font-size: 14px;
-  z-index: 300;
-  opacity: 0;
-  transition: all 0.3s var(--ease-out);
-  max-width: 360px;
-  box-shadow: 0 4px 12px rgba(32, 30, 26, 0.2);
-}
-
-.layout-save-toast.show {
-  opacity: 1;
-  transform: translateX(-50%) translateY(0);
-}
-
-.layout-save-toast.error {
-  background: var(--error-color);
-}
-
 .feng-shui-panel-wide {
   width: 400px;
 }
@@ -7080,6 +6998,10 @@ body.layout-editor-active:has(.modal.show) .layout-editor-screen .layout-sidebar
   justify-content: center;
   gap: 8px;
   cursor: wait;
+}
+
+@keyframes my-layouts-spin {
+  to { transform: rotate(360deg); }
 }
 
 .auth-submit-spinner {
@@ -11159,4 +11081,149 @@ button.library-card:active {
   .shop-look-backdrop {
     display: none !important;
   }
+}
+
+/* ============================================================
+   Loading placeholders (src/placeholders.js)
+   Shaped like the item they stand in for: each one carries the real
+   item's class plus .ph-card, so the list doesn't jump when it loads.
+   ============================================================ */
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
+}
+
+.ph,
+.ph-line,
+img.img-pending {
+  background: linear-gradient(90deg, var(--surface-sunken) 0%, var(--gray-200) 50%, var(--surface-sunken) 100%);
+  background-size: 200% 100%;
+  animation: library-shimmer 1.4s ease-in-out infinite;
+}
+
+.ph-card {
+  cursor: default;
+  pointer-events: none;
+  /* The real items darken their border on hover; a placeholder never does. */
+  box-shadow: none !important;
+}
+
+.ph-line {
+  display: block;
+  width: 70%;
+  height: 0.625rem;
+  margin: 0.25rem 0;
+  border-radius: 999px;
+}
+
+.ph-line--short {
+  width: 40%;
+}
+
+.ph-button {
+  flex: none;
+  width: 3.5rem;
+  height: 1.875rem;
+  border-radius: 6px;
+}
+
+/* An image still on its way: the shimmer shows through until it lands. */
+img.img-pending {
+  color: transparent;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ph,
+  .ph-line,
+  img.img-pending {
+    animation: none;
+  }
+}
+
+/* The editors are their own downloads (three.js and all). On a slow
+   connection this stands in for the editor's toolbar and canvas, rather
+   than the button doing nothing for a few seconds. */
+.editor-loading {
+  position: fixed;
+  inset: 0;
+  z-index: 1500;
+  display: flex;
+  flex-direction: column;
+  background: var(--color-bg-canvas, var(--color-bg-primary));
+  opacity: 0;
+  animation: editor-loading-in 0.2s var(--ease-out) forwards;
+}
+
+.editor-loading-bar {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  height: 56px;
+  padding: 0 var(--space-4);
+  border-bottom: 1px solid var(--color-border-subtle);
+  background: var(--color-bg-primary);
+}
+
+.editor-loading-bar .ph {
+  width: 2rem;
+  height: 2rem;
+  border-radius: 8px;
+}
+
+.editor-loading-bar .ph-line {
+  width: 9rem;
+  margin: 0;
+}
+
+.editor-loading-bar .ph-spacer {
+  flex: 1;
+}
+
+.editor-loading-canvas {
+  flex: 1;
+  display: grid;
+  place-items: center;
+  margin: var(--space-4);
+  border: 1px dashed var(--color-border-subtle);
+  border-radius: var(--border-radius-lg);
+}
+
+.editor-loading-text {
+  margin: 0;
+  color: var(--color-text-tertiary);
+  font-size: var(--font-size-sm);
+}
+
+@keyframes editor-loading-in {
+  to { opacity: 1; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .editor-loading { animation: none; opacity: 1; }
+}
+
+/* Empty states in tight spots: the furniture panel and the cut list. */
+.library-empty--compact {
+  gap: 0.25rem;
+  padding: 1rem 0.5rem;
+}
+.library-empty--compact .library-empty-title {
+  font-size: var(--font-size-sm, 0.875rem);
+}
+.library-empty--compact .library-empty-text {
+  font-size: 0.8125rem;
+}
+.library-empty--compact .library-empty-actions {
+  margin-top: 0.375rem;
+}
+.furniture-grid > .library-empty,
+.use-saved-grid > .library-empty {
+  grid-column: 1 / -1;
 }

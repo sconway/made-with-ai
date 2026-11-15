@@ -134,16 +134,26 @@ Three forces, resolved in this order:
 
 ## Interactions & States
 
-- [ ] **I1 · Empty states** _(M)_ — Library tabs (×3), cut list, history strip,
+- [x] **I1 · Empty states** _(M)_ — Library tabs (×3), cut list, history strip,
   furniture search with no results, saved plans. Illustration + one line + action
   into the relevant tool. Covers: empty, no-results, signed-out. _New._
+  Done: library tabs in src/library.js; cut list, furniture search (says when
+  the item is in another room) and "Use a saved design" (empty, signed out,
+  failed) in src/emptyStates.js. The history strip is never empty: it always
+  holds the original photo.
 
-- [ ] **I2 · Loading & skeleton system** _(S)_ — Shared skeleton matching final
+- [x] **I2 · Loading & skeleton system** _(S)_ — Shared skeleton matching final
   content dimensions. Covers: initial load, image loading, library fetch, editor
   restore. Replaces the spinner-only approach. _New._
+  Done: src/placeholders.js (saved-design picker, My layouts, Projects; as many
+  as last time), shimmer behind loading images, and a toolbar-and-canvas
+  stand-in while an editor downloads.
 
-- [ ] **I3 · Toast system** _(S)_ — Promote the editor-only toast to a shared
+- [x] **I3 · Toast system** _(S)_ — Promote the editor-only toast to a shared
   component. Covers: success, error, undo affordance. _Modifies._
+  Done: showToast() in src/toast.js is the one toast. The floor plan and
+  woodworking editors use it, with "Try again" on failed saves and opens and
+  "Undo" after clearing all boards.
 
 - [ ] **I4 · Focus & keyboard pass** _(M)_ — Visible focus indicators at 3:1 on
   every interactive element (no bare `outline: none`), logical tab order, focus
