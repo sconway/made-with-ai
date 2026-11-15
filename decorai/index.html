@@ -1108,6 +1108,64 @@
     </div>
 
     <!-- Buy Tokens Modal -->
+    <!-- Share a design: as an image, or as a public link -->
+    <div class="modal hidden" id="share-modal" role="dialog" aria-modal="true" aria-labelledby="share-modal-title">
+        <div class="modal-content share-modal-content">
+            <div class="modal-header">
+                <h2 id="share-modal-title">Share this design</h2>
+                <button id="close-share-modal-btn" class="close-modal-btn" type="button" aria-label="Close">
+                    <i data-feather="x"></i>
+                </button>
+            </div>
+            <div class="modal-body">
+                <!-- Exactly what leaves the app, shown before anything does. -->
+                <div class="share-preview-frame" id="share-preview-frame">
+                    <img id="share-preview" class="share-preview" alt="Your room before and after, as it will be shared">
+                </div>
+
+                <button type="button" id="share-image-btn" class="primary-btn share-action-btn">
+                    <i data-feather="share-2"></i>
+                    <span>Share image</span>
+                </button>
+
+                <div id="share-error" class="auth-error hidden" role="alert"></div>
+
+                <!-- Shown only when the server offers links (/api/config). -->
+                <div id="share-link-section" class="share-link-section hidden">
+                    <div class="auth-divider"><span>or</span></div>
+
+                    <div id="share-link-create">
+                        <button type="button" id="share-create-link-btn" class="secondary-btn share-action-btn">
+                            <i data-feather="link"></i>
+                            <span>Create a link</span>
+                        </button>
+                        <p class="share-note">Anyone with the link can see this before-and-after picture. You can take it down at any time.</p>
+                    </div>
+
+                    <div id="share-link-ready" class="hidden">
+                        <label class="share-link-label" for="share-link-url">Your link</label>
+                        <div class="share-link-row">
+                            <input type="text" id="share-link-url" class="share-link-url" readonly spellcheck="false">
+                            <button type="button" id="share-copy-link-btn" class="secondary-btn">
+                                <i data-feather="copy"></i>
+                                <span>Copy</span>
+                            </button>
+                        </div>
+                        <p class="share-note">
+                            Anyone with this link can see the picture.
+                            <button type="button" id="share-stop-current-btn" class="text-btn share-stop-btn">Stop sharing</button>
+                        </p>
+                    </div>
+
+                    <details id="share-my-links" class="share-my-links hidden">
+                        <summary id="share-my-links-summary">Your shared links</summary>
+                        <ul id="share-my-links-list" class="share-my-links-list"></ul>
+                    </details>
+                </div>
+            </div>
+        </div>
+    </div>
+
     <div class="modal hidden" id="buy-tokens-modal">
         <div class="modal-content buy-tokens-modal-content">
             <div class="modal-header">

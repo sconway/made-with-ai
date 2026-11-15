@@ -160,6 +160,36 @@ doesn't know about sends every visitor who taps it to an error page:
    redirect allow-list.
 3. Set `AUTH_OAUTH_PROVIDERS=google,apple` (either or both) and redeploy.
 
+## Sharing a design
+
+The Share button on a result opens a dialog with two ways out:
+
+- **Share image** builds one before/after picture in the browser and hands it
+  to the device's share sheet (or downloads it). Nothing is uploaded.
+- **Create a link** publishes that picture at `/s/<id>`: a small standalone
+  page with link-preview tags, so it unfurls when pasted into a chat. Needs a
+  signed-in, confirmed account, and can be taken down from the same dialog.
+
+Only the composed picture is stored for a link — never the raw room photo.
+Images live in the private designs bucket and are streamed by the server, so a
+link that has been taken down stops resolving within five minutes everywhere.
+
+Run `sql/shared_designs.sql` once to turn links on; until then only "Share
+image" is offered. `APP_URL` must be the public site address, because links and
+preview images are built from it. Each account can have `MAX_SHARED_LINKS_FREE`
+(default 10) live links, or `MAX_SHARED_LINKS_SUBSCRIBER` (default 50).
+
+## Tests
+
+```bash
+npm test                              # unit tests (Node 18+), no network
+PW_CHANNEL=chrome npm run test:e2e    # browser smoke test, in installed Chrome
+```
+
+The smoke test mocks every API and provider call, so it costs nothing to run.
+Without `PW_CHANNEL` it uses Playwright's own Chromium
+(`npx playwright install chromium` once).
+
 ## Seeing what generations cost
 
 Run `sql/generation_events.sql` once. Every generation is then recorded with

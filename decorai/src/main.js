@@ -17,7 +17,7 @@ import { MaskEditor, compositeMaskedResult, compositeRegionEdit, buildRegionMark
 import { normalizeRoomPhoto, looksLikeImageFile } from './roomPhoto.js';
 import { track, flushAnalytics } from './analytics.js';
 import { initErrorReporting, reportError } from './errorReporting.js';
-import { shareDesign } from './shareImage.js';
+import { initShareDialog, openShareDialog } from './shareDialog.js';
 
 // First thing: errors thrown while the rest of this module sets up are exactly
 // the ones that leave a visitor looking at a dead page.
@@ -3143,6 +3143,20 @@ document.addEventListener('DOMContentLoaded', async () => {
     if (regenerateBtn) regenerateBtn.addEventListener('click', regenerateDesigns);
     if (saveDesignBtn) saveDesignBtn.addEventListener('click', saveCurrentDesign);
     document.getElementById('share-design-btn')?.addEventListener('click', shareCurrentDesign);
+    initShareDialog({
+        apiBase: PROXY_SERVER_URL,
+        host: window.location.host,
+        origin: window.location.origin,
+        getAccessToken: () => currentSession?.access_token || null,
+        linksEnabled: () => !!appConfig?.shareLinksEnabled,
+        requireAccount: (resume) => {
+            setPendingGatedAction(resume);
+            showAuthModal('signup');
+        },
+        track,
+        toast: showToastMessage,
+        reportError,
+    });
     if (wizardFengShuiBtn) {
         wizardFengShuiBtn.addEventListener('click', () => {
             if (!currentUploadedImage) return;
@@ -7589,50 +7603,30 @@ async function startRoomFengShuiAnalysis(imageSource, { label = 'Room' } = {}) {
 }
 
 /**
- * Share the design on screen as one before/after image (src/shareImage.js).
- * Opens the device's share sheet where it accepts images; elsewhere the image
- * is downloaded, so the button always produces something to post.
+ * Open the Share dialog for the design on screen (src/shareDialog.js): send it
+ * as a before/after image, or publish it as a link.
  */
-async function shareCurrentDesign() {
-    const btn = document.getElementById('share-design-btn');
-    if (btn?.disabled) return;
-
+function shareCurrentDesign() {
     // Share what the user is looking at: the version picked in the history
     // strip, or the latest. Picking "Original" there falls back to the latest
     // design — sharing the untouched photo is not what the button is for.
     const picked = getSelectedHistoryEntry();
-    const after = picked && !picked.isOriginal ? picked.imageUrl : lastGeneratedImageUrl;
-    if (!after) {
+    const shown = picked && !picked.isOriginal ? picked.imageUrl : lastGeneratedImageUrl;
+    if (!shown) {
         showToastMessage('Generate a design first, then share it.', 'info');
         return;
     }
+    // Prefer the copy already fetched for the local session store: a data URL
+    // can always be drawn, a provider URL needs CORS approval.
+    const after = durableImageCache.get(shown) || shown;
     // A design opened from the library has no original photo with it.
-    const before = currentUploadedImage && currentUploadedImage !== after ? currentUploadedImage : null;
-
-    track('share_started', { has_before: !!before, signed_in: !!currentUser });
-    if (btn) { btn.disabled = true; btn.setAttribute('aria-busy', 'true'); }
-    try {
-        const outcome = await shareDesign({
-            before,
-            // Prefer the copy already fetched for the local session store: a
-            // data URL can always be drawn, a provider URL needs CORS approval.
-            after: durableImageCache.get(after) || after,
-            host: window.location.host,
-            url: window.location.origin,
-        });
-        if (outcome === 'cancelled') return;
-        // GA4's own event name and parameters for a share.
-        track('share', { method: outcome === 'shared' ? 'share_sheet' : 'download', content_type: before ? 'before_after' : 'design' });
-        if (outcome === 'downloaded') {
-            showToastMessage('Saved a before-and-after image. Post it wherever you like.', 'success');
-        }
-    } catch (err) {
-        console.error('Share failed:', err);
-        reportError(err);
-        showToastMessage("We couldn't build the share image. Try Save Design instead.", 'error');
-    } finally {
-        if (btn) { btn.disabled = false; btn.removeAttribute('aria-busy'); }
-    }
+    const before = currentUploadedImage && currentUploadedImage !== shown ? currentUploadedImage : null;
+    // A passing notice (e.g. the "create a free account" nudge after a first
+    // design) sits above dialogs and, on a phone, right on top of this one's
+    // buttons — taps landed on the notice instead. Opening the dialog
+    // supersedes it.
+    document.querySelectorAll('.toast').forEach((toast) => toast.remove());
+    openShareDialog({ before, after });
 }
 
 function saveCurrentDesign() {

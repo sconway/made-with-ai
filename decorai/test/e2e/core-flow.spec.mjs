@@ -11,8 +11,8 @@ const RESULT_URL = 'https://replicate.delivery/test/result.png';
 const PREDICTION_URL = 'https://api.replicate.com/v1/predictions/pred_test_1';
 
 /** Install the fake backend. Returns what the app sent, for assertions. */
-async function mockBackend(page, { anonRemaining = 1 } = {}) {
-  const seen = { predictions: [], polls: 0, unmocked: [], clientErrors: [] };
+async function mockBackend(page, { anonRemaining = 1, shareLinks = true } = {}) {
+  const seen = { predictions: [], polls: 0, unmocked: [], clientErrors: [], shareUploads: [], shares: [], revoked: [] };
   const isApi = (url) => ['/api/', '/replicate/', '/openai/'].some((p) => url.pathname.startsWith(p)) || url.pathname === '/health';
 
   await page.route(isApi, async (route) => {
@@ -33,7 +33,29 @@ async function mockBackend(page, { anonRemaining = 1 } = {}) {
           gaMeasurementId: '',
           anonGenerationsEnabled: true,
           oauthProviders: ['google'],
+          shareLinksEnabled: shareLinks,
         });
+      // What a signed-in session asks for on load.
+      case '/api/credits':
+        return json({ credits: 0 });
+      case '/api/subscription':
+        return json({ active: false });
+      case '/api/layout':
+        return json({ state: null });
+      case '/api/shares': {
+        if (!route.request().headers().authorization) return json({ error: 'Unauthorized' }, 401);
+        if (route.request().method() === 'POST') {
+          seen.shareUploads.push(route.request().postDataJSON());
+          const share = { id: 'AbCdEfGhJkLm', url: `${url.origin}/s/AbCdEfGhJkLm`, createdAt: new Date().toISOString(), views: 3 };
+          seen.shares.push(share);
+          return json({ id: share.id, url: share.url }, 201);
+        }
+        return json({ limit: 10, shares: seen.shares });
+      }
+      case '/api/shares/AbCdEfGhJkLm':
+        seen.revoked.push(route.request().method());
+        seen.shares.length = 0;
+        return route.fulfill({ status: 204 });
       case '/api/anon-status':
         return json({ enabled: true, remaining: anonRemaining });
       case '/api/client-error':
@@ -166,6 +188,7 @@ async function generateOnce(page) {
 }
 
 test('Share hands the phone share sheet one before/after image', async ({ page }) => {
+  const backendOptions = { shareLinks: false };
   // Stand in for a phone's share sheet and record what it was given.
   await page.addInitScript(() => {
     window.__shared = [];
@@ -176,10 +199,15 @@ test('Share hands the phone share sheet one before/after image', async ({ page }
       window.__shared.push({ name: file.name, type: file.type, bytes: file.size, width: bitmap.width, height: bitmap.height, text: data.text, hasUrlField: 'url' in data });
     };
   });
-  await mockBackend(page);
+  await mockBackend(page, backendOptions);
   await generateOnce(page);
 
   await page.locator('#share-design-btn').click();
+  // The dialog shows the picture before anything is sent.
+  await expect(page.locator('#share-modal')).toHaveClass(/show/);
+  await expect(page.locator('#share-preview')).toHaveAttribute('src', /^blob:/);
+  await expect(page.locator('#share-create-link-btn'), 'links are off for this test').toBeHidden();
+  await page.locator('#share-image-btn').click();
 
   await expect.poll(() => page.evaluate(() => window.__shared.length)).toBe(1);
   const shared = await page.evaluate(() => window.__shared[0]);
@@ -192,7 +220,7 @@ test('Share hands the phone share sheet one before/after image', async ({ page }
   expect(shared.text).toContain('DecorAIt');
   expect(shared.text, 'the link back to the app travels with the image').toContain('http://localhost:');
   expect(shared.hasUrlField, 'no separate url field — some share targets drop the image when there is one').toBe(false);
-  await expect(page.locator('#share-design-btn')).toBeEnabled();
+  await expect(page.locator('#share-modal'), 'the dialog closes once shared').not.toHaveClass(/show/);
 });
 
 test('Share downloads the image where there is no share sheet, and closing the sheet is not an error', async ({ page }) => {
@@ -202,6 +230,7 @@ test('Share downloads the image where there is no share sheet, and closing the s
 
   const download = page.waitForEvent('download');
   await page.locator('#share-design-btn').click();
+  await page.locator('#share-image-btn').click();
   expect((await download).suggestedFilename()).toBe('decorait-before-after.jpg');
   await expect(page.locator('.toast')).toContainText('Saved a before-and-after image');
 
@@ -212,9 +241,96 @@ test('Share downloads the image where there is no share sheet, and closing the s
     navigator.share = () => Promise.reject(new DOMException('Share canceled', 'AbortError'));
   });
   await page.locator('#share-design-btn').click();
-  await expect(page.locator('#share-design-btn')).toBeEnabled();
+  await page.locator('#share-image-btn').click();
+  await expect(page.locator('#share-image-btn')).toBeEnabled();
+  await expect(page.locator('#share-modal'), 'still open: they may want the link instead').toHaveClass(/show/);
   await expect(page.locator('.toast')).toHaveCount(0);
+  await expect(page.locator('#share-error')).toBeHidden();
   expect(seen.clientErrors).toEqual([]);
+});
+
+/** Start the page already signed in, the way a returning user arrives. */
+async function signIn(page) {
+  await page.addInitScript(() => {
+    // The key the Supabase client reads for the project in /api/config.
+    localStorage.setItem('sb-smoke-test-auth-token', JSON.stringify({
+      access_token: 'smoke-test-access-token',
+      refresh_token: 'smoke-test-refresh-token',
+      token_type: 'bearer',
+      expires_in: 3600,
+      expires_at: Math.floor(Date.now() / 1000) + 3600,
+      user: {
+        id: '11111111-1111-1111-1111-111111111111',
+        aud: 'authenticated',
+        role: 'authenticated',
+        email: 'smoke@example.com',
+        email_confirmed_at: '2026-01-01T00:00:00Z',
+        app_metadata: {},
+        user_metadata: {},
+        created_at: '2026-01-01T00:00:00Z',
+      },
+    }));
+  });
+}
+
+test('a signed-in user can publish a link, copy it, and take it down', async ({ page, context }) => {
+  await context.grantPermissions(['clipboard-read', 'clipboard-write']);
+  await signIn(page);
+  const seen = await mockBackend(page);
+  await generateOnce(page);
+
+  await page.locator('#share-design-btn').click();
+  await expect(page.locator('#share-preview')).toHaveAttribute('src', /^blob:/);
+  // Says plainly what creating a link means, before it is created.
+  await expect(page.locator('#share-link-create .share-note')).toContainText('Anyone with the link can see');
+  await page.locator('#share-create-link-btn').click();
+
+  const link = page.locator('#share-link-url');
+  await expect(link).toHaveValue(/\/s\/AbCdEfGhJkLm$/);
+  await expect(page.locator('#share-create-link-btn')).toBeHidden();
+
+  // What was uploaded: the card, and a 1200x630 preview image. Both JPEG.
+  expect(seen.shareUploads.length).toBe(1);
+  const upload = seen.shareUploads[0];
+  expect(Object.keys(upload).sort(), 'nothing but the two composed images is sent').toEqual(['card', 'og']);
+  const dims = await page.evaluate(async ({ card, og }) => {
+    const size = (src) => new Promise((resolve) => { const i = new Image(); i.onload = () => resolve([i.naturalWidth, i.naturalHeight]); i.src = src; });
+    return { card: await size(card), og: await size(og) };
+  }, upload);
+  expect(upload.card).toMatch(/^data:image\/jpeg;base64,/);
+  expect(upload.og).toMatch(/^data:image\/jpeg;base64,/);
+  expect(dims.og).toEqual([1200, 630]);
+  expect(dims.card[0]).toBe(1080);
+
+  await page.locator('#share-copy-link-btn').click();
+  await expect(page.locator('#share-copy-link-btn')).toContainText('Copied');
+  expect(await page.evaluate(() => navigator.clipboard.readText())).toMatch(/\/s\/AbCdEfGhJkLm$/);
+
+  // The link also appears in the account's list, with its views.
+  await page.locator('#share-my-links summary').click();
+  await expect(page.locator('#share-my-links-summary')).toHaveText('Your shared links (1 of 10)');
+  await expect(page.locator('.share-my-link-meta')).toContainText('3 views');
+
+  await page.locator('#share-stop-current-btn').click();
+  await expect(page.locator('#share-create-link-btn'), 'back to "Create a link"').toBeVisible();
+  await expect(page.locator('.toast')).toContainText('Link taken down');
+  await expect(page.locator('#share-my-links')).toBeHidden();
+  expect(seen.revoked).toEqual(['DELETE']);
+  expect(seen.unmocked).toEqual([]);
+  expect(seen.clientErrors).toEqual([]);
+});
+
+test('creating a link without an account asks for one, and publishes nothing', async ({ page }) => {
+  const seen = await mockBackend(page);
+  await generateOnce(page);
+
+  await page.locator('#share-design-btn').click();
+  await page.locator('#share-create-link-btn').click();
+
+  await expect(page.locator('#auth-modal')).toHaveClass(/show/);
+  await expect(page.locator('#signup-form')).toBeVisible();
+  await expect(page.locator('#share-modal')).not.toHaveClass(/show/);
+  expect(seen.shareUploads).toEqual([]);
 });
 
 test('once the free design is used, the next step is a sign-up prompt with one-tap sign-in', async ({ page }) => {

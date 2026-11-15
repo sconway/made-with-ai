@@ -19,6 +19,12 @@ export default defineConfig({
       '/api': {
         target: apiTarget,
         changeOrigin: true
+      },
+      // Shared-design pages and their images (/s/<12-char id>) are rendered by
+      // the server. A regex key, so it can't swallow /src/… module requests.
+      '^/s/[A-Za-z0-9]{12}(/|$)': {
+        target: apiTarget,
+        changeOrigin: true
       }
     }
   },

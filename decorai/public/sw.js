@@ -22,7 +22,9 @@ const ASSET_CACHE = `decorait-assets-${CACHE_VERSION}`;
 const OFFLINE_URL = '/';
 
 // Paths whose responses must never be cached or served from cache.
-const NEVER_CACHE = [/^\/api\//, /^\/replicate\//, /^\/openai\//, /^\/webhook\//, /^\/health$/];
+// /s/ is shared designs: caching one here could keep showing a link its owner
+// has since taken down.
+const NEVER_CACHE = [/^\/api\//, /^\/replicate\//, /^\/openai\//, /^\/webhook\//, /^\/health$/, /^\/s\//];
 const isBypassed = (pathname) => NEVER_CACHE.some((re) => re.test(pathname));
 
 self.addEventListener('install', (event) => {

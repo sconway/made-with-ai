@@ -103,3 +103,9 @@ services:
       # provider in Supabase Auth first, then list it here.
       - key: AUTH_OAUTH_PROVIDERS
         sync: false
+      # Public share links: live links per account (0 = off). Run
+      # sql/shared_designs.sql in Supabase to turn the feature on.
+      - key: MAX_SHARED_LINKS_FREE
+        value: "10"
+      - key: MAX_SHARED_LINKS_SUBSCRIBER
+        value: "50"

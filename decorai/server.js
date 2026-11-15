@@ -11,6 +11,13 @@ import { createClient } from '@supabase/supabase-js';
 import { classifyPlan, Anthropic as PlanAnthropic } from './planClassifier.js';
 import { createRateLimiter } from './lib/rateLimit.js';
 import { sanitizeClientError } from './lib/clientErrors.js';
+import {
+  createShares,
+  isShareId,
+  renderSharePage,
+  renderShareGonePage,
+  SHARE_CACHE_SECONDS,
+} from './lib/shares.js';
 import { createQuota } from './lib/quota.js';
 import { createFreeDailyCap } from './lib/freeDailyCap.js';
 import { createGenerationEvents, parseModelCosts } from './lib/generationEvents.js';
@@ -502,6 +509,45 @@ const {
   costs: parseModelCosts(process.env.MODEL_COST_USD),
 });
 
+// ── Public share links ─────────────────────────────────────────────────────
+// A design shared as a link: /s/<id>. Logic and the page itself are in
+// lib/shares.js; the table is sql/shared_designs.sql.
+const MAX_SHARED_LINKS_FREE = parseEnvInt('MAX_SHARED_LINKS_FREE', 10);
+const MAX_SHARED_LINKS_SUBSCRIBER = Math.max(
+  MAX_SHARED_LINKS_FREE,
+  parseEnvInt('MAX_SHARED_LINKS_SUBSCRIBER', 50),
+);
+const shares = createShares({
+  supabase,
+  bucket: DESIGNS_STORAGE_BUCKET,
+  limits: { free: MAX_SHARED_LINKS_FREE, subscriber: MAX_SHARED_LINKS_SUBSCRIBER },
+  getActiveSubscription,
+});
+
+// Whether to offer "Create a link" at all: only once the table exists. Checked
+// at startup and re-checked (at most once a minute) while it is still missing,
+// so running the SQL turns the feature on without a redeploy.
+let shareLinksReady = false;
+let shareLinksCheckedAt = 0;
+async function refreshShareLinksReady() {
+  if (shareLinksReady || MAX_SHARED_LINKS_FREE <= 0) return shareLinksReady;
+  if (Date.now() - shareLinksCheckedAt < 60_000) return false;
+  shareLinksCheckedAt = Date.now();
+  shareLinksReady = await shares.probe().catch(() => false);
+  if (shareLinksReady) console.log('[share] Share links enabled');
+  return shareLinksReady;
+}
+refreshShareLinksReady().then((ready) => {
+  if (!ready && supabase && MAX_SHARED_LINKS_FREE > 0) {
+    console.warn('[share] shared_designs table not found — share links are off. Run sql/shared_designs.sql in Supabase.');
+  }
+});
+
+/** The site's public origin, for links that leave the app. No trailing slash. */
+function publicBaseUrl(req) {
+  return (process.env.APP_URL || `${req.protocol}://${req.get('host')}`).replace(/\/+$/, '');
+}
+
 // ── Rate limiting (in-memory, single-instance) ─────────────────────────────
 // Fixed-window counters keyed per-IP and/or per-account; see lib/rateLimit.js.
 
@@ -549,6 +595,13 @@ const clientErrorLimiter = createRateLimiter({
   max: parseInt(process.env.RATE_LIMIT_CLIENT_ERROR_MAX) || 30,
   keyFn: ipKey,
   message: 'Too many error reports',
+});
+// Creating a share publishes an image on this domain — keep it deliberate.
+const shareCreateLimiter = createRateLimiter({
+  windowMs: 10 * ONE_MIN,
+  max: parseInt(process.env.RATE_LIMIT_SHARE_MAX) || 10,
+  keyFn: (req) => userKey(req) || ipKey(req),
+  message: 'You are creating links too quickly. Please try again in a few minutes.',
 });
 // Feedback limiter: sends real email, so keep it tight.
 const feedbackLimiter = createRateLimiter({
@@ -2003,7 +2056,12 @@ app.get('/api/config', (req, res) => {
     // One-tap sign-in providers to offer. Each must also be enabled in
     // Supabase (Authentication → Providers) with this site as a redirect URL.
     oauthProviders: AUTH_OAUTH_PROVIDERS,
+    // Offer "Create a link" for a design (needs sql/shared_designs.sql).
+    shareLinksEnabled: shareLinksReady,
   });
+  // Not awaited: this request reports the current state, and the re-check
+  // (if one is due) is ready for the next.
+  refreshShareLinksReady().catch(() => {});
 });
 
 // How many pre-signup generations this visitor has left. Issues the device
@@ -2042,6 +2100,118 @@ if (FEEDBACK_SMTP_USER && FEEDBACK_SMTP_PASS) {
 } else {
   console.warn('[feedback] Missing FEEDBACK_SMTP_USER or FEEDBACK_SMTP_PASS — /api/feedback is disabled until these are set');
 }
+
+// ── Public share links ─────────────────────────────────────────────────────
+
+// Publish the design on screen. Body: { card, og } — two JPEG data URLs built
+// by the browser (src/shareImage.js).
+app.post('/api/shares', shareCreateLimiter, async (req, res) => {
+  try {
+    const user = await getAuthUser(req, res, { requireConfirmed: true });
+    if (!user) return;
+    if (!(await refreshShareLinksReady())) {
+      return res.status(503).json({ error: 'Share links are not available right now.' });
+    }
+    const result = await shares.createShare(user.id, { card: req.body?.card, og: req.body?.og });
+    if (!result.ok) {
+      return res.status(result.status).json({ error: result.error, code: result.code });
+    }
+    res.status(201).json({ id: result.id, url: `${publicBaseUrl(req)}/s/${result.id}` });
+  } catch (err) {
+    console.error('Error in POST /api/shares:', err);
+    res.status(500).json({ error: 'Could not create the link' });
+  }
+});
+
+// The caller's own live links, newest first.
+app.get('/api/shares', async (req, res) => {
+  try {
+    const user = await getAuthUser(req, res);
+    if (!user) return;
+    const base = publicBaseUrl(req);
+    const sub = await getActiveSubscription(user.id).catch(() => null);
+    const rows = await shares.listShares(user.id);
+    res.json({
+      limit: sub ? MAX_SHARED_LINKS_SUBSCRIBER : MAX_SHARED_LINKS_FREE,
+      shares: rows.map((row) => ({
+        id: row.id,
+        url: `${base}/s/${row.id}`,
+        createdAt: row.created_at,
+        views: row.view_count || 0,
+      })),
+    });
+  } catch (err) {
+    console.error('Error in GET /api/shares:', err);
+    res.status(500).json({ error: 'Could not load your links' });
+  }
+});
+
+// Stop sharing. 404 covers both "not yours" and "not there" — a caller learns
+// nothing about other people's links.
+app.delete('/api/shares/:id', async (req, res) => {
+  try {
+    const user = await getAuthUser(req, res);
+    if (!user) return;
+    const revoked = await shares.revokeShare(user.id, req.params.id);
+    if (!revoked) return res.status(404).json({ error: 'Link not found' });
+    res.status(204).end();
+  } catch (err) {
+    console.error('Error in DELETE /api/shares/:id:', err);
+    res.status(500).json({ error: 'Could not stop sharing' });
+  }
+});
+
+// What a share page may load: its own images, the two font hosts, inline
+// style. No scripts at all — the page is a picture and a link.
+const SHARE_PAGE_CSP = [
+  "default-src 'none'",
+  "img-src 'self'",
+  "style-src 'unsafe-inline' https://fonts.googleapis.com",
+  'font-src https://fonts.gstatic.com',
+  "base-uri 'none'",
+  "form-action 'none'",
+  "frame-ancestors 'none'",
+].join('; ');
+
+function shareResponseHeaders(res, found) {
+  res.set('X-Content-Type-Options', 'nosniff');
+  res.set('Referrer-Policy', 'strict-origin-when-cross-origin');
+  // Short-lived, so "Stop sharing" takes effect within minutes everywhere. A
+  // missing share is never cached: a link created a moment ago must not be
+  // remembered as absent.
+  res.set('Cache-Control', found ? `public, max-age=${SHARE_CACHE_SECONDS}` : 'no-store');
+}
+
+// The public page for one shared design.
+app.get('/s/:id', async (req, res) => {
+  const base = publicBaseUrl(req);
+  res.set('Content-Security-Policy', SHARE_PAGE_CSP);
+  try {
+    const share = isShareId(req.params.id) ? await shares.getShare(req.params.id) : null;
+    shareResponseHeaders(res, !!share);
+    if (!share) return res.status(404).type('html').send(renderShareGonePage({ baseUrl: base }));
+    shares.recordView(share.id);
+    res.type('html').send(renderSharePage({ id: share.id, baseUrl: base }));
+  } catch (err) {
+    console.error('Error in GET /s/:id:', err);
+    shareResponseHeaders(res, false);
+    res.status(500).type('html').send(renderShareGonePage({ baseUrl: base }));
+  }
+});
+
+// Its two images: the card shown on the page, and the link-preview image.
+app.get('/s/:id/:file(card|og).jpg', async (req, res) => {
+  try {
+    const image = await shares.getShareImage(req.params.id, req.params.file);
+    shareResponseHeaders(res, !!image);
+    if (!image) return res.status(404).type('text').send('Not found');
+    res.type('image/jpeg').send(image);
+  } catch (err) {
+    console.error('Error in GET /s/:id image:', err);
+    shareResponseHeaders(res, false);
+    res.status(500).type('text').send('Error');
+  }
+});
 
 // ── Browser error reports ──────────────────────────────────────────────────
 // Uncaught errors from visitors' browsers (src/errorReporting.js). Each becomes

@@ -158,6 +158,70 @@ export async function buildShareImage({ before, after, host = '' }) {
     return { blob, width, height, layout: sideBySide ? 'side-by-side' : panels.length === 2 ? 'stacked' : 'single' };
 }
 
+// Link-preview ("Open Graph") image: the size chat apps and social sites
+// expect, so the preview isn't cropped unpredictably.
+const OG_WIDTH = 1200;
+const OG_HEIGHT = 630;
+const OG_FOOTER = 78;
+
+/**
+ * Compose the image shown when a share link is pasted into a chat or post:
+ * before and after side by side, edge to edge, over a slim wordmark strip.
+ * @returns {Promise<Blob>} 1200×630 JPEG
+ */
+export async function buildLinkPreviewImage({ before, after }) {
+    const [afterImg, beforeImg] = await Promise.all([
+        loadImage(after),
+        before ? loadImage(before).catch(() => null) : Promise.resolve(null),
+    ]);
+    try {
+        await document.fonts.load('400 40px "Instrument Serif"');
+    } catch (_) { /* system serif */ }
+
+    const canvas = document.createElement('canvas');
+    canvas.width = OG_WIDTH;
+    canvas.height = OG_HEIGHT;
+    const ctx = canvas.getContext('2d');
+    ctx.imageSmoothingQuality = 'high';
+    ctx.fillStyle = PAPER;
+    ctx.fillRect(0, 0, OG_WIDTH, OG_HEIGHT);
+
+    const top = 18;
+    const side = 18;
+    const gap = 10;
+    const panelH = OG_HEIGHT - OG_FOOTER - top;
+    if (beforeImg) {
+        const panelW = (OG_WIDTH - side * 2 - gap) / 2;
+        drawPanel(ctx, beforeImg, side, top, panelW, panelH, 'BEFORE');
+        drawPanel(ctx, afterImg, side + panelW + gap, top, panelW, panelH, 'AFTER');
+    } else {
+        drawPanel(ctx, afterImg, side, top, OG_WIDTH - side * 2, panelH, null);
+    }
+
+    const mid = OG_HEIGHT - OG_FOOTER / 2 + 2;
+    ctx.textBaseline = 'middle';
+    ctx.fillStyle = INK;
+    ctx.font = '400 40px "Instrument Serif", Georgia, "Times New Roman", serif';
+    ctx.fillText('DecorAIt', side + 6, mid);
+    const markWidth = ctx.measureText('DecorAIt').width;
+    ctx.fillStyle = MUTED;
+    ctx.font = '400 22px Inter, system-ui, -apple-system, "Segoe UI", sans-serif';
+    ctx.fillText(beforeImg ? 'One room, before and after' : 'Reimagine your space', side + 6 + markWidth + 20, mid + 3);
+
+    return new Promise((resolve, reject) => {
+        canvas.toBlob((b) => (b ? resolve(b) : reject(new Error('Could not encode the preview image'))), 'image/jpeg', 0.86);
+    });
+}
+
+export function blobToDataUrl(blob) {
+    return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(reader.result);
+        reader.onerror = () => reject(reader.error || new Error('Could not read the image'));
+        reader.readAsDataURL(blob);
+    });
+}
+
 function download(blob, filename) {
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
@@ -175,10 +239,12 @@ function download(blob, filename) {
  * Uses the device's share sheet where it can take a file (phones, mostly).
  * Elsewhere the image is downloaded instead, so the action never dead-ends.
  *
+ * Pass `card` to reuse an image already built with buildShareImage().
+ *
  * @returns {Promise<'shared'|'downloaded'|'cancelled'>}
  */
-export async function shareDesign({ before, after, host, url }) {
-    const { blob } = await buildShareImage({ before, after, host });
+export async function shareDesign({ before, after, host, url, card = null }) {
+    const blob = card || (await buildShareImage({ before, after, host })).blob;
     const filename = before ? 'decorait-before-after.jpg' : 'decorait-design.jpg';
     const file = new File([blob], filename, { type: 'image/jpeg' });
     const text = before
