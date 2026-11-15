@@ -100,6 +100,15 @@ AI floor-plan import.
 - The library (`/library/{designs,plans,builds}`, `src/library.js`) shows
   designs, floor plans and woodworking builds in one sheet, with search once a
   tab holds more than 12 items. The editors keep their own quick switchers.
+- "Shop this look" (`src/shop.js`) lists store searches for the style and
+  items behind the version on screen: the items picked, or a few pieces that
+  carry the style when nothing was picked. It doesn't read the image, so it
+  says these are searches, not the exact pieces. Retailers default to Amazon,
+  Wayfair and Target (`SHOP_RETAILERS`). Affiliate IDs are optional settings:
+  `SHOP_AMAZON_TAG`, or `SHOP_<RETAILER>_LINK_TEMPLATE` for a network deep
+  link with `{url}`; a disclosure appears once any is set. Clicks are tracked
+  as `shop_click`. On desktop it sits in the results panel; on phones and
+  tablets it opens as a sheet from the Shop button.
 - Every paywall opens one upgrade sheet (`src/upgrade.js`) that names what was
   blocked, what it costs and what happens after paying; `/upgrade` opens it as
   a pricing page. Checkout returns to the page the person was on (the server

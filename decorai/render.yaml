@@ -82,6 +82,14 @@ services:
       # equal to the STRIPE_SUBSCRIPTION_PRICE_ID price.
       - key: SUBSCRIPTION_PRICE_CENTS
         value: "1999"
+      # "Shop this look" affiliate IDs (optional; links work without them).
+      # SHOP_<RETAILER>_LINK_TEMPLATE is a network deep link with {url}.
+      - key: SHOP_AMAZON_TAG
+        sync: false
+      - key: SHOP_WAYFAIR_LINK_TEMPLATE
+        sync: false
+      - key: SHOP_TARGET_LINK_TEMPLATE
+        sync: false
 
       # ── Abuse prevention (all optional — sensible defaults live in server.js) ──
       # Comma-separated allowlist of Replicate model versions the proxy may run.

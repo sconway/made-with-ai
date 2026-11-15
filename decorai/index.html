@@ -380,6 +380,12 @@
                             <i data-feather="compass"></i>
                             <span>Feng Shui Analysis</span>
                         </button>
+                        <!-- Phones and tablets: the results view fits one screen,
+                             so Shop this look opens as a sheet from here. -->
+                        <button type="button" id="shop-look-btn" class="secondary-btn shop-look-btn" aria-label="Shop this look" aria-controls="shop-look" aria-expanded="false" hidden>
+                            <i data-feather="shopping-bag"></i>
+                            <span>Shop</span>
+                        </button>
                     </div>
                 </div>
                 <div class="results-display">
@@ -457,6 +463,23 @@
                         </button>
                     </div>
                 </div>
+                <!-- Shop this look: retailer searches for the style and items
+                     behind the selected version (src/shop.js). -->
+                <section class="shop-look" id="shop-look" aria-labelledby="shop-look-title" hidden>
+                    <div class="shop-look-header">
+                        <h3 class="shop-look-title" id="shop-look-title">
+                            <i data-feather="shopping-bag" aria-hidden="true"></i>
+                            <span>Shop this look</span>
+                        </h3>
+                        <button type="button" class="close-modal-btn shop-look-close" id="shop-look-close" aria-label="Close Shop this look">
+                            <i data-feather="x"></i>
+                        </button>
+                        <p class="shop-look-hint" id="shop-look-hint"></p>
+                    </div>
+                    <ul class="shop-look-list" id="shop-look-list"></ul>
+                    <p class="shop-look-disclosure" id="shop-look-disclosure" hidden>DecorAIt may earn a commission when you buy through these links. It doesn't change what you pay.</p>
+                </section>
+                <div class="shop-look-backdrop" id="shop-look-backdrop" hidden></div>
             </section>
         </main>
 

@@ -25,6 +25,7 @@ import { createQuota } from './lib/quota.js';
 import { createFreeDailyCap } from './lib/freeDailyCap.js';
 import { createGenerationEvents, parseModelCosts, modelLabel } from './lib/generationEvents.js';
 import { isReturnPath } from './src/upgrade.js';
+import { parseShopConfig } from './src/shop.js';
 import { planDesignRetention, designLimitFor, DEFAULT_FREE_DESIGN_LIMIT, DEFAULT_SUBSCRIBER_DESIGN_LIMIT } from './lib/designRetention.js';
 import {
   resolveCorsOrigin,
@@ -169,6 +170,8 @@ const DESIGNS_STORAGE_BUCKET = process.env.SUPABASE_DESIGNS_BUCKET?.trim() || 'g
 const MAX_SAVED_DESIGNS_SUBSCRIBER = parseInt(process.env.MAX_SAVED_DESIGNS_SUBSCRIBER) || DEFAULT_SUBSCRIBER_DESIGN_LIMIT;
 const MAX_SAVED_DESIGNS_FREE = parseInt(process.env.MAX_SAVED_DESIGNS_FREE) || DEFAULT_FREE_DESIGN_LIMIT;
 const designLimits = { free: MAX_SAVED_DESIGNS_FREE, paid: MAX_SAVED_DESIGNS_SUBSCRIBER };
+// "Shop this look": retailers and affiliate settings (src/shop.js documents them).
+const SHOP_CONFIG = parseShopConfig(process.env);
 const DESIGN_SIGNED_URL_TTL_SEC = parseInt(process.env.DESIGN_SIGNED_URL_TTL_SEC) || 3600;
 
 // ── Anonymous (pre-signup) generations ─────────────────────────────────────
@@ -2114,6 +2117,7 @@ app.get('/api/config', (req, res) => {
     tokenPacks: getConfiguredTokenPacks(),
     subscription: { amount: SUBSCRIPTION_PRICE_CENTS, monthlyLimit: SUBSCRIPTION_MONTHLY_LIMIT },
     savedDesigns: { free: MAX_SAVED_DESIGNS_FREE, subscriber: MAX_SAVED_DESIGNS_SUBSCRIBER },
+    shop: SHOP_CONFIG,
     // Public GA4 Measurement ID (e.g. G-XXXXXXXXXX). Empty disables analytics.
     gaMeasurementId: process.env.GA_MEASUREMENT_ID?.trim() || '',
     anonGenerationsEnabled: anonymousGenerationsEnabled(),

@@ -11,7 +11,7 @@ const RESULT_URL = 'https://replicate.delivery/test/result.png';
 const PREDICTION_URL = 'https://api.replicate.com/v1/predictions/pred_test_1';
 
 /** Install the fake backend. Returns what the app sent, for assertions. */
-async function mockBackend(page, { anonRemaining = 1, shareLinks = true, designs = [] } = {}) {
+async function mockBackend(page, { anonRemaining = 1, shareLinks = true, designs = [], shop = undefined } = {}) {
   const seen = { predictions: [], polls: 0, unmocked: [], clientErrors: [], shareUploads: [], shares: [], revoked: [], checkouts: [], credits: 0, designs: [...designs], designSaves: [] };
   const isApi = (url) => ['/api/', '/replicate/', '/openai/'].some((p) => url.pathname.startsWith(p)) || url.pathname === '/health';
 
@@ -35,6 +35,7 @@ async function mockBackend(page, { anonRemaining = 1, shareLinks = true, designs
           anonGenerationsEnabled: true,
           oauthProviders: ['google'],
           shareLinksEnabled: shareLinks,
+          ...(shop ? { shop } : {}),
         });
       // What a signed-in session asks for on load.
       case '/api/credits':
@@ -584,4 +585,66 @@ test('search appears past twelve designs, filters as you type, and says when not
   await expect(cards).toHaveCount(14);
   await expect(search).toBeFocused();
   expect(seen.unmocked).toEqual([]);
+});
+
+test('Shop this look searches stores for the style and items picked, and discloses affiliate links', async ({ page, context }) => {
+  // Stores open in a new tab; answer them here so nothing leaves the test.
+  await context.route(/amazon\.com|wayfair\.com|target\.com/, (route) => route.fulfill({ status: 200, contentType: 'text/html', body: '<p>store</p>' }));
+  const seen = await mockBackend(page, {
+    shop: { enabled: true, retailers: [{ id: 'amazon', amazonTag: 'decorait-20' }, { id: 'wayfair' }, { id: 'target' }] },
+  });
+  await page.goto('/');
+  await page.locator('#room-upload').setInputFiles({ name: 'room.png', mimeType: 'image/png', buffer: roomPhotoPng(2000, 1500) });
+  await expect(page.locator('#wizard-container')).toBeVisible();
+  await expect(page.locator('#style-scandinavian')).toBeAttached();
+  // The pickers sit in collapsed sections; choosing works the same either way.
+  for (const id of ['#style-scandinavian', '#item-sofa', '#item-rug']) {
+    await page.locator(id).evaluate((input) => input.click());
+  }
+  await page.locator('#generate-btn').click();
+  await expect(page.locator('#design-carousel .generated-image').first()).toHaveAttribute('src', RESULT_URL, { timeout: 30_000 });
+
+  // On a phone the results view is one screen; the list opens as a sheet.
+  const shop = page.locator('#shop-look');
+  await expect(shop).toBeHidden();
+  await page.locator('#shop-look-btn').click();
+  await expect(shop).toBeVisible();
+  await expect(page.locator('#shop-look-close')).toBeFocused();
+  await expect(page.locator('#shop-look-hint')).toContainText('The pieces you picked, in a Scandinavian style.');
+  await expect(page.locator('.shop-look-item')).toHaveText(['Sofa', 'Rug']);
+  const amazon = page.locator('.shop-look-row').first().locator('a[data-retailer="amazon"]');
+  await expect(amazon).toHaveAttribute('href', 'https://www.amazon.com/s?k=scandinavian%20sofa&tag=decorait-20');
+  await expect(amazon).toHaveAttribute('rel', 'sponsored noopener');
+  await expect(page.locator('#shop-look-disclosure')).toBeVisible();
+
+  const [store] = await Promise.all([page.waitForEvent('popup'), amazon.click()]);
+  await expect(store).toHaveURL(/amazon\.com\/s\?k=scandinavian%20sofa/);
+
+  await page.keyboard.press('Escape');
+  await expect(shop).toBeHidden();
+  await expect(page.locator('#shop-look-btn')).toBeFocused();
+
+  // The original photo has nothing to shop; the list follows the version shown.
+  await page.locator('#design-history-strip .design-history-thumb').first().click();
+  await expect(page.locator('#shop-look-btn')).toBeHidden();
+
+  // A refresh keeps the list with the design.
+  await page.reload();
+  await page.locator('#shop-look-btn').click({ timeout: 15_000 });
+  await expect(page.locator('.shop-look-item')).toHaveText(['Sofa', 'Rug']);
+  expect(seen.unmocked).toEqual([]);
+});
+
+test('with nothing picked, Shop this look offers pieces that carry the style, without a disclosure when no programme is set', async ({ page }) => {
+  await mockBackend(page);
+  await generateOnce(page); // the default style is Minimalist
+  // The sheet never takes room from the picture.
+  const box = await page.locator('#design-carousel .generated-image').first().boundingBox();
+  expect(box?.height, 'the result keeps its height').toBeGreaterThan(200);
+  await page.locator('#shop-look-btn').click();
+  await expect(page.locator('#shop-look')).toBeVisible();
+  await expect(page.locator('#shop-look-hint')).toHaveText('Pieces that carry the Minimalist look. These are store searches, not the exact pieces in the picture.');
+  await expect(page.locator('.shop-look-item')).toHaveText(['Rug', 'Wall art', 'Floor lamp', 'Throw pillows', 'Planters']);
+  await expect(page.locator('a[data-retailer="amazon"]').first()).toHaveAttribute('href', 'https://www.amazon.com/s?k=minimalist%20area%20rug');
+  await expect(page.locator('#shop-look-disclosure')).toBeHidden();
 });

@@ -10405,12 +10405,13 @@ body:has(.region-menu.is-docked:not(.hidden)) .feedback-fab { visibility: hidden
   #results-section {
     display: grid;
     grid-template-columns: minmax(0, 1fr) 380px;
-    grid-template-rows: auto auto auto auto 1fr;
+    grid-template-rows: auto auto auto auto auto 1fr;
     grid-template-areas:
       "header header"
       "image  history"
       "image  composer"
       "image  actions"
+      "image  shop"
       "image  .";
     gap: var(--space-4) var(--space-8);
     align-items: start;
@@ -10950,5 +10951,212 @@ button.library-card:active {
 
   .library-search {
     flex: 1 1 100%;
+  }
+}
+
+/* ── Shop this look ────────────────────────────────────────────────────────
+   Retailer searches for the selected version's style and items (src/shop.js).
+   Phones and tablets keep the results view to one screen, so there it is a
+   bottom sheet opened from the Shop button; on desktop it sits in the panel. */
+.shop-look {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 1900;
+  max-height: min(82dvh, 680px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  margin: 0;
+  padding: var(--space-5) var(--space-5) max(var(--space-5), var(--safe-bottom, 0px));
+  border: 1px solid var(--border-subtle);
+  border-bottom: 0;
+  border-radius: 1.25rem 1.25rem 0 0;
+  background: var(--color-bg-primary);
+  box-shadow: 0 -12px 40px rgba(32, 30, 26, 0.18);
+  transform: translateY(105%);
+  visibility: hidden;
+  transition: transform 0.28s var(--ease-out), visibility 0s linear 0.28s;
+}
+
+.shop-look.is-open {
+  transform: none;
+  visibility: visible;
+  transition: transform 0.28s var(--ease-out);
+}
+
+.shop-look[hidden],
+.shop-look-backdrop[hidden],
+.shop-look-btn[hidden] {
+  display: none !important;
+}
+
+.shop-look-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 1899;
+  background: rgba(32, 30, 26, 0.4);
+}
+
+.shop-look-header {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  column-gap: 0.5rem;
+}
+
+.shop-look-close {
+  margin: -0.5rem -0.5rem -0.5rem 0;
+}
+
+.shop-look-title {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin: 0;
+  font-size: 1rem;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.shop-look-title svg {
+  width: 18px;
+  height: 18px;
+  color: var(--brand-600, var(--color-accent-primary));
+}
+
+.shop-look-hint {
+  grid-column: 1 / -1;
+  margin: 0.375rem 0 0;
+  font-size: 0.8125rem;
+  line-height: 1.45;
+  color: var(--text-secondary);
+}
+
+.shop-look-list {
+  list-style: none;
+  margin: var(--space-3) 0 0;
+  padding: 0;
+}
+
+.shop-look-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  padding: 0.5rem 0;
+  border-top: 1px solid var(--border-subtle);
+}
+
+.shop-look-row:first-child {
+  border-top: 0;
+}
+
+.shop-look-item {
+  min-width: 0;
+  font-size: 0.875rem;
+  font-weight: 500;
+  color: var(--text-primary);
+}
+
+.shop-look-links {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 0.375rem;
+}
+
+.shop-look-link {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 36px;
+  padding: 0 0.75rem;
+  border: 1px solid var(--border-subtle);
+  border-radius: 999px;
+  font-size: 0.8125rem;
+  font-weight: 500;
+  color: var(--text-primary);
+  text-decoration: none;
+  background: var(--surface-sunken);
+  transition: border-color 0.15s var(--ease-out), background-color 0.15s var(--ease-out);
+}
+
+.shop-look-link:hover {
+  border-color: var(--brand-400);
+  background: var(--color-accent-primary-subtle);
+}
+
+.shop-look-link:focus-visible {
+  outline: 2px solid var(--brand-500, var(--color-accent-primary));
+  outline-offset: 2px;
+}
+
+.shop-look-disclosure {
+  margin: var(--space-3) 0 0;
+  font-size: 0.75rem;
+  line-height: 1.45;
+  color: var(--text-tertiary);
+}
+
+/* Phones: the item above its stores, so three buttons never squeeze the
+   name, and Shop is an icon beside Feng Shui in the tools row. */
+@media (max-width: 767px) {
+  .shop-look-row {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 0.375rem;
+  }
+  .shop-look-links {
+    justify-content: flex-start;
+  }
+  .shop-look-link {
+    min-height: 44px;
+    flex: 1;
+  }
+  #results-section .shop-look-btn { width: 40px; padding: 0; }
+  #results-section .shop-look-btn span { display: none; }
+}
+
+/* Tablets: a narrower sheet, centred. */
+@media (min-width: 768px) {
+  .shop-look {
+    left: 50%;
+    right: auto;
+    width: min(560px, 100%);
+    transform: translate(-50%, 105%);
+  }
+  .shop-look.is-open {
+    transform: translate(-50%, 0);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .shop-look,
+  .shop-look.is-open {
+    transition: none;
+  }
+}
+
+/* Desktop: part of the panel beside the image, always open. */
+@media (min-width: 1181px) and (pointer: fine), (min-width: 1377px) {
+  #results-section .shop-look {
+    grid-area: shop;
+    position: static;
+    width: auto;
+    max-height: none;
+    overflow: visible;
+    padding: var(--space-4) var(--space-5);
+    border-bottom: 1px solid var(--border-subtle);
+    border-radius: var(--radius-lg, 1rem);
+    box-shadow: none;
+    transform: none;
+    visibility: visible;
+    transition: none;
+  }
+  #results-section .shop-look-close,
+  #results-section .shop-look-btn,
+  .shop-look-backdrop {
+    display: none !important;
   }
 }

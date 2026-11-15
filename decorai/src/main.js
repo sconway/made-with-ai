@@ -22,6 +22,7 @@ import { initShareDialog, openShareDialog } from './shareDialog.js';
 import {
     describeGate, formatPrice, saveUpgradeReturn, takeUpgradeReturn, DEFAULT_SUBSCRIPTION, DEFAULT_SAVED_DESIGNS,
 } from './upgrade.js';
+import { buildShopList, hasAffiliateLinks, shopHint } from './shop.js';
 import {
     LIBRARY_TABS, TAB_LABELS, normaliseTab, shouldShowSearch, filterLibraryItems, designsStatus, emptyState,
 } from './library.js';
@@ -1135,6 +1136,8 @@ async function initializeApp() {
 
         // Populate purchase UI from config
         renderTokenPacks(appConfig.tokenPacks);
+        // A restored result may already be on screen; give it the store links.
+        renderShopLook();
 
         if (!appConfig.supabaseUrl || !appConfig.supabaseAnonKey) {
             authInitError = 'Sign-in is not configured on the server (missing Supabase keys).';
@@ -2412,6 +2415,10 @@ function formatDesignSourceLabel(sourceType) {
 }
 
 function formatDesignTitle(design) {
+    // styleName is the short name ("Scandinavian"); older designs only have
+    // the style's prompt text, which is too long for a title.
+    const styleName = design?.metadata?.styleName;
+    if (typeof styleName === 'string' && styleName.trim()) return styleName.trim();
     const style = design?.metadata?.style;
     if (typeof style === 'string' && style.trim()) return style.trim();
     return formatDesignSourceLabel(design?.sourceType);
@@ -3043,7 +3050,12 @@ async function loadSavedDesignIntoResults(design) {
     lastGeneratedImageUrl = design.imageUrl;
     resetDesignHistory();
     if (currentUploadedImage) seedDesignHistoryWithOriginal();
-    pushDesignHistory(design.imageUrl);
+    pushDesignHistory(design.imageUrl, {
+        prompt: design.prompt || '',
+        model: design.model || null,
+        sourceType: design.sourceType || 'room-design',
+        metadata: design.metadata && typeof design.metadata === 'object' ? design.metadata : {},
+    });
 
     const savedDesign = {
         id: 'design-saved',
@@ -3966,6 +3978,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         openLibrary('designs');
     });
     initLibrary();
+    initShopLook();
     if (userMenuBtn && userDropdown) {
         userMenuBtn.addEventListener('click', () => userDropdown.classList.toggle('hidden'));
     }
@@ -6126,7 +6139,7 @@ async function generateDesigns(options = {}) {
             // Premium path — counts against quota. Endpoint reserves a slot.
             const premiumResult = await callPremiumImageEdit(regionEdit?.image || modelInputImage, fullPrompt, {
                 sourceType: designSourceType,
-                metadata: { style, roomType: currentRoomType, masked: !!region },
+                metadata: { style, roomType: currentRoomType, masked: !!region, ...shopMetadata() },
                 // A masked run is composited client-side, so the server's
                 // copy would be the wrong image. Save from the client after.
                 skipSave: !!region,
@@ -6185,7 +6198,7 @@ async function generateDesigns(options = {}) {
                 prompt: fullPrompt,
                 model: modelUsed,
                 sourceType: designSourceType,
-                metadata: { style, roomType: currentRoomType },
+                metadata: { style, roomType: currentRoomType, ...shopMetadata() },
                 savedDesignId,
             });
         }
@@ -6426,7 +6439,7 @@ async function retryImageGeneration() {
                     prompt: design.prompt,
                     model: 'bria-eraser',
                     sourceType: 'quick-edit',
-                    metadata: { roomType: currentRoomType },
+                    metadata: { roomType: currentRoomType, ...shopMetadata() },
                 });
             }
             updateDesignCard(design, 0);
@@ -6543,7 +6556,7 @@ async function retryImageGeneration() {
                 prompt: retryPrompt,
                 model: modelUsed,
                 sourceType: retryIsInstructionEdit ? 'quick-edit' : 'room-design',
-                metadata: { roomType: currentRoomType },
+                metadata: { roomType: currentRoomType, ...shopMetadata() },
                 savedDesignId,
             });
         }
@@ -7308,6 +7321,129 @@ async function restoreRedesignSession() {
     }
 }
 
+// ── Shop this look (src/shop.js) ─────────────────────────────────────────────
+
+/**
+ * Saved with each design: the style's short name and what "Shop this look"
+ * needs (the style and the items picked). Keeping it on the design means the
+ * list matches the version on screen, after a refresh or from the library.
+ */
+function shopMetadata() {
+    const styleObj = selectedDesignStyle ? interiorDesignStyles.find(s => s.id === selectedDesignStyle) : null;
+    // "Keep what's there" rearranges the room; any picks left over aren't in it.
+    const items = currentRoomType === 'furnished' && furnishedOption === 'keep-existing'
+        ? []
+        : roomItems.filter(item => selectedRoomItems.has(item.id)).map(item => item.id);
+    return { styleName: styleObj?.name || null, shop: { style: styleObj?.name || null, items } };
+}
+
+/** The design whose list was last reported as shown, so it's counted once. */
+let shopShownFor = null;
+
+function renderShopLook() {
+    const section = document.getElementById('shop-look');
+    const list = document.getElementById('shop-look-list');
+    if (!section || !list) return;
+    const entry = getSelectedHistoryEntry();
+    const shop = entry && !entry.isOriginal ? entry.meta?.metadata?.shop : null;
+    const config = appConfig?.shop;
+    const shopBtn = document.getElementById('shop-look-btn');
+    const hide = () => {
+        closeShopSheet({ restoreFocus: false });
+        section.hidden = true;
+        if (shopBtn) shopBtn.hidden = true;
+    };
+    if (!shop || config?.enabled === false) return hide();
+    const built = buildShopList(shop, config);
+    if (!built.rows.length) return hide();
+    document.getElementById('shop-look-hint').textContent = shopHint(built);
+    list.innerHTML = '';
+    for (const row of built.rows) {
+        const li = document.createElement('li');
+        li.className = 'shop-look-row';
+        const label = document.createElement('span');
+        label.className = 'shop-look-item';
+        label.textContent = row.label;
+        const links = document.createElement('span');
+        links.className = 'shop-look-links';
+        for (const link of row.links) {
+            const a = document.createElement('a');
+            a.className = 'shop-look-link';
+            a.href = link.url;
+            a.target = '_blank';
+            // sponsored: these may be affiliate links. noopener: the store
+            // can't reach back into this tab.
+            a.rel = 'sponsored noopener';
+            a.textContent = link.name;
+            a.setAttribute('aria-label', `Search ${link.name} for ${row.query} (opens in a new tab)`);
+            a.dataset.retailer = link.retailer;
+            a.dataset.item = row.id;
+            links.appendChild(a);
+        }
+        li.append(label, links);
+        list.appendChild(li);
+    }
+    document.getElementById('shop-look-disclosure').hidden = !hasAffiliateLinks(config);
+    section.hidden = false;
+    if (shopBtn) shopBtn.hidden = false;
+    if (shopShownFor !== entry.id) {
+        shopShownFor = entry.id;
+        track('shop_shown', { from_picks: built.fromPicks, style: built.style || 'none', items: built.rows.length });
+    }
+}
+
+/** Phones and tablets: the list is a sheet over the one-screen results view. */
+function shopSheetIsOpen() {
+    return !!document.getElementById('shop-look')?.classList.contains('is-open');
+}
+
+function openShopSheet() {
+    const section = document.getElementById('shop-look');
+    if (!section || section.hidden) return;
+    section.classList.add('is-open');
+    section.setAttribute('role', 'dialog');
+    section.setAttribute('aria-modal', 'true');
+    document.getElementById('shop-look-backdrop').hidden = false;
+    document.getElementById('shop-look-btn')?.setAttribute('aria-expanded', 'true');
+    document.getElementById('shop-look-close')?.focus({ preventScroll: true });
+    track('shop_opened', {});
+}
+
+function closeShopSheet({ restoreFocus = true } = {}) {
+    const section = document.getElementById('shop-look');
+    if (!section?.classList.contains('is-open')) return;
+    section.classList.remove('is-open');
+    section.removeAttribute('role');
+    section.removeAttribute('aria-modal');
+    document.getElementById('shop-look-backdrop').hidden = true;
+    const btn = document.getElementById('shop-look-btn');
+    btn?.setAttribute('aria-expanded', 'false');
+    if (restoreFocus && btn && !btn.hidden) btn.focus({ preventScroll: true });
+}
+
+function initShopLook() {
+    document.getElementById('shop-look-btn')?.addEventListener('click', () => {
+        if (shopSheetIsOpen()) closeShopSheet();
+        else openShopSheet();
+    });
+    document.getElementById('shop-look-close')?.addEventListener('click', () => closeShopSheet());
+    document.getElementById('shop-look-backdrop')?.addEventListener('click', () => closeShopSheet());
+    document.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape' && shopSheetIsOpen()) closeShopSheet();
+    });
+    document.getElementById('shop-look-list')?.addEventListener('click', (e) => {
+        const a = e.target.closest?.('a.shop-look-link');
+        if (!a) return;
+        const style = getSelectedHistoryEntry()?.meta?.metadata?.shop?.style;
+        track('shop_click', {
+            retailer: a.dataset.retailer,
+            item: a.dataset.item,
+            style: style || 'none',
+            affiliate: hasAffiliateLinks(appConfig?.shop),
+        });
+    });
+}
+
 /** Returns the user-selected history entry, or the latest if none picked. */
 function getSelectedHistoryEntry() {
     if (!designHistory.length) return null;
@@ -7335,6 +7471,7 @@ function renderDesignHistory() {
         container.classList.add('hidden');
         strip.innerHTML = '';
         updateRefinementBase();
+        renderShopLook();
         return;
     }
 
@@ -7353,6 +7490,7 @@ function renderDesignHistory() {
         </button>
     `).join('');
     updateRefinementBase();
+    renderShopLook();
 
     strip.querySelectorAll('.design-history-thumb').forEach(btn => {
         btn.addEventListener('click', () => {
@@ -7367,6 +7505,7 @@ function selectHistoryEntry(id) {
     const entry = designHistory.find(h => h.id === id);
     if (!entry) return;
     selectedHistoryId = id;
+    renderShopLook();
 
     // Swap the currently displayed generated image to this entry.
     const generatedImg = document.querySelector('.design-card .design-image.generated-image');
