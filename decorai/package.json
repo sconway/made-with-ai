@@ -8,6 +8,8 @@
     "dev:server": "node server.js",
     "dev": "concurrently \"npm run dev:client\" \"npm run dev:server\"",
     "build": "vite build",
+    "test": "node --test test/unit/*.test.mjs",
+    "test:e2e": "playwright test",
     "setup:stripe-prices": "node scripts/setup-stripe-prices.mjs",
     "preview": "vite preview",
     "start": "node server.js"
@@ -27,6 +29,7 @@
     "three": "^0.184.0"
   },
   "devDependencies": {
+    "@playwright/test": "^1.65.1",
     "concurrently": "^8.0.1",
     "vite": "^5.0.0"
   },

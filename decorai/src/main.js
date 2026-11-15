@@ -16,6 +16,12 @@ import { presentToast } from './toast.js';
 import { MaskEditor, compositeMaskedResult, compositeRegionEdit, buildRegionMarkup, buildRegionLookup } from './maskEditor.js';
 import { normalizeRoomPhoto, looksLikeImageFile } from './roomPhoto.js';
 import { track, flushAnalytics } from './analytics.js';
+import { initErrorReporting, reportError } from './errorReporting.js';
+import { shareDesign } from './shareImage.js';
+
+// First thing: errors thrown while the rest of this module sets up are exactly
+// the ones that leave a visitor looking at a dead page.
+initErrorReporting();
 import {
     saveRedesignSession,
     loadRedesignSession,
@@ -1199,10 +1205,14 @@ async function initializeApp() {
                     attempts++;
                     await fetchUserSubscription();
                     if (userHasSubscription) {
+                        track('purchase', { item: 'subscription' });
                         showToastMessage('Subscription activated! You now have full layout access.', 'success');
                     } else if (attempts < 6) {
                         setTimeout(checkSub, 2000);
                     } else {
+                        // Paid, but the webhook hasn't landed yet. Still a
+                        // purchase — and worth seeing how often this happens.
+                        track('purchase', { item: 'subscription', activation: 'pending' });
                         showToastMessage('Subscription received! Access may take a moment to activate.', 'info');
                     }
                 };
@@ -1215,6 +1225,7 @@ async function initializeApp() {
         }
     } catch (err) {
         console.error('Error initializing app:', err);
+        reportError(err);
         if (!authInitError) {
             authInitError = 'Could not start sign-in. Please refresh and try again.';
         }
@@ -3131,6 +3142,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     if (backToOptionsBtn) backToOptionsBtn.addEventListener('click', goBackToPreview);
     if (regenerateBtn) regenerateBtn.addEventListener('click', regenerateDesigns);
     if (saveDesignBtn) saveDesignBtn.addEventListener('click', saveCurrentDesign);
+    document.getElementById('share-design-btn')?.addEventListener('click', shareCurrentDesign);
     if (wizardFengShuiBtn) {
         wizardFengShuiBtn.addEventListener('click', () => {
             if (!currentUploadedImage) return;
@@ -3716,7 +3728,13 @@ function configureSectionSummary(section) {
             }[furnishedOption] || 'Not set';
         case 'items': {
             const n = selectedRoomItems.size;
-            if (!n) return 'None';
+            // With nothing picked the model chooses — except "Start over",
+            // where no items really does mean an emptied room.
+            if (!n) {
+                return currentRoomType === 'furnished' && furnishedOption === 'start-fresh'
+                    ? 'None'
+                    : "Designer's choice";
+            }
             return n === 1 ? '1 item' : `${n} items`;
         }
         default:
@@ -4350,7 +4368,9 @@ function generatePromptsWithItems(basePrompt, style) {
     const result = {
         positivePrompt: '',
         negativePrompt: '',
-        shouldGenerate: true // Flag to indicate if generation should proceed
+        // Always true now that every combination has a prompt (items are
+        // optional). Kept because callers still branch on it.
+        shouldGenerate: true
     };
 
     // Simplified architectural preservation constants
@@ -4396,9 +4416,13 @@ function generatePromptsWithItems(basePrompt, style) {
     } else if (currentRoomType === 'empty' || shouldTreatAsEmpty) {
         // Empty room: add ONLY selected items, room stays identical (no other changes)
         if (selectedRoomItems.size === 0) {
-            result.shouldGenerate = false;
-            result.positivePrompt = '';
-            result.negativePrompt = '';
+            // Nothing picked: furnish it as a designer would. Items are
+            // optional (the picker says so) — refusing here left Generate
+            // doing nothing on a first visit until the visitor found the grid.
+            // NOTE: no room-kind words (bedroom, office, …) in this text;
+            // mapPromptToProplabsRoom reads the prompt for them.
+            result.positivePrompt = `Edit the image: furnish this empty room so it looks complete and lived-in. Choose a sensible set of furniture and decor for the room's size and layout, and place it naturally. Do not change anything else. Keep every wall, the floor, the ceiling, the windows, the doors, the lighting, the wall colors, the floor color, the materials, and the camera perspective exactly as they appear in the original image.${styleClause}`;
+            result.negativePrompt = `${baseNegativePrompt}, modified walls, modified floor, modified ceiling, modified windows, modified doors, changed perspective, architectural change, structural change, different room, empty room without furniture`;
         } else {
             const selectedItems = roomItems.filter(item => selectedRoomItems.has(item.id));
             // Use prompt-friendly names so the model clearly generates the object (e.g. "television" not just "tv")
@@ -4426,10 +4450,10 @@ function generatePromptsWithItems(basePrompt, style) {
             result.negativePrompt = baseNegativePrompt;
         } else if (furnishedOption === 'add-new') {
             if (selectedRoomItems.size === 0) {
-                // No items selected for "add new" - don't generate
-                result.shouldGenerate = false;
-                result.positivePrompt = '';
-                result.negativePrompt = '';
+                // Nothing picked for "add to it": let the model choose what
+                // the room is missing, rather than refusing to run.
+                result.positivePrompt = `Given this image of a furnished room, keep the existing furniture and add a few complementary pieces of furniture and decor that suit the room and fit the available space. Do not change anything about the structural parts of the room like the walls, floors, ceiling, windows, etc. ${ARCHITECTURAL_PRESERVATION_SUFFIX}${styleClause}`;
+                result.negativePrompt = baseNegativePrompt;
             } else {
                 // Get selected items to add
                 const selectedItems = roomItems.filter(item => selectedRoomItems.has(item.id));
@@ -4850,11 +4874,19 @@ function proplabsCanExpressStyle(styleObj) {
  *
  * Returns the reason to route elsewhere, or null to keep proplabs.
  */
-function freeRouteAwayFromProplabs({ styleObj, itemCount, refinementText }) {
+function freeRouteAwayFromProplabs({ styleObj, itemCount, refinementText, addToFurnished = false }) {
     if (refinementText) return 'refinement';
     if (itemCount > 0) return 'items';
+    // "Add to it" on a furnished room is an instruction (keep what's there,
+    // add a little). The staging model can't be told that — it would restage.
+    if (addToFurnished) return 'add-to-furnished';
     if (!proplabsCanExpressStyle(styleObj)) return 'style';
     return null;
+}
+
+/** Furnished photo, "Add to it" chosen: the run that keeps what is there. */
+function isAddToFurnishedRun() {
+    return currentRoomType === 'furnished' && furnishedOption === 'add-new' && !isRoomActuallyEmpty;
 }
 
 const DEFAULT_MODEL_FAILED_USER_MESSAGE =
@@ -5363,6 +5395,7 @@ async function generateDesigns(options = {}) {
                     styleObj,
                     itemCount: selectedRoomItems.size,
                     refinementText: '',
+                    addToFurnished: isAddToFurnishedRun(),
                 });
                 if (nanoRouteReason) nanoEditPrompt = fullPrompt;
             }
@@ -5379,6 +5412,7 @@ async function generateDesigns(options = {}) {
                 styleObj,
                 itemCount: selectedRoomItems.size,
                 refinementText,
+                addToFurnished: isAddToFurnishedRun(),
             });
             if (nanoRouteReason) nanoEditPrompt = fullPrompt;
             negativePrompt = prompts.negativePrompt;
@@ -5854,6 +5888,7 @@ async function retryImageGeneration() {
                 styleObj,
                 itemCount: selectedRoomItems.size,
                 refinementText: '',
+                addToFurnished: isAddToFurnishedRun(),
             });
         // Retry on the model the failed run used. A typed instruction, a
         // region edit or an earlier instruction edit is free text that only
@@ -7550,6 +7585,53 @@ async function startRoomFengShuiAnalysis(imageSource, { label = 'Room' } = {}) {
     } catch (error) {
         console.error('Feng shui analysis failed:', error);
         showRoomFengShuiError(error.message || 'Unable to analyze this room. Please try again.');
+    }
+}
+
+/**
+ * Share the design on screen as one before/after image (src/shareImage.js).
+ * Opens the device's share sheet where it accepts images; elsewhere the image
+ * is downloaded, so the button always produces something to post.
+ */
+async function shareCurrentDesign() {
+    const btn = document.getElementById('share-design-btn');
+    if (btn?.disabled) return;
+
+    // Share what the user is looking at: the version picked in the history
+    // strip, or the latest. Picking "Original" there falls back to the latest
+    // design — sharing the untouched photo is not what the button is for.
+    const picked = getSelectedHistoryEntry();
+    const after = picked && !picked.isOriginal ? picked.imageUrl : lastGeneratedImageUrl;
+    if (!after) {
+        showToastMessage('Generate a design first, then share it.', 'info');
+        return;
+    }
+    // A design opened from the library has no original photo with it.
+    const before = currentUploadedImage && currentUploadedImage !== after ? currentUploadedImage : null;
+
+    track('share_started', { has_before: !!before, signed_in: !!currentUser });
+    if (btn) { btn.disabled = true; btn.setAttribute('aria-busy', 'true'); }
+    try {
+        const outcome = await shareDesign({
+            before,
+            // Prefer the copy already fetched for the local session store: a
+            // data URL can always be drawn, a provider URL needs CORS approval.
+            after: durableImageCache.get(after) || after,
+            host: window.location.host,
+            url: window.location.origin,
+        });
+        if (outcome === 'cancelled') return;
+        // GA4's own event name and parameters for a share.
+        track('share', { method: outcome === 'shared' ? 'share_sheet' : 'download', content_type: before ? 'before_after' : 'design' });
+        if (outcome === 'downloaded') {
+            showToastMessage('Saved a before-and-after image. Post it wherever you like.', 'success');
+        }
+    } catch (err) {
+        console.error('Share failed:', err);
+        reportError(err);
+        showToastMessage("We couldn't build the share image. Try Save Design instead.", 'error');
+    } finally {
+        if (btn) { btn.disabled = false; btn.removeAttribute('aria-busy'); }
     }
 }
 

@@ -315,7 +315,7 @@
                                     <i data-feather="chevron-down" class="configure-section-chevron" aria-hidden="true"></i>
                                 </button>
                                 <div class="configure-section-body" id="configure-items-body">
-                                    <p class="selection-hint" id="items-selection-hint">Optional — pick anything you'd like included.</p>
+                                    <p class="selection-hint" id="items-selection-hint">Optional — pick anything you'd like included, or leave it to us.</p>
                                     <div class="items-grid" id="items-grid">
                                         <!-- Populated by JavaScript -->
                                     </div>
@@ -429,10 +429,17 @@
                         <i data-feather="arrow-left"></i>
                         <span>Back</span>
                     </button>
-                    <button id="save-design-btn" class="primary-btn">
-                        <i data-feather="download"></i>
-                        <span>Save Design</span>
-                    </button>
+                    <!-- Share and Save sit together: both are "take this with me". -->
+                    <div class="results-actions-end">
+                        <button id="share-design-btn" class="secondary-btn" type="button" aria-label="Share this design" title="Share a before-and-after image">
+                            <i data-feather="share-2"></i>
+                            <span>Share</span>
+                        </button>
+                        <button id="save-design-btn" class="primary-btn">
+                            <i data-feather="download"></i>
+                            <span>Save Design</span>
+                        </button>
+                    </div>
                 </div>
             </section>
         </main>

@@ -1601,6 +1601,12 @@ main:has(#wizard-container.is-quick-edit:not(.hidden)) { padding-bottom: 0; }
   flex-wrap: wrap;
 }
 
+.results-actions-end {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+
 @media (max-width: 520px) {
   .results-actions {
     width: 100%;
@@ -7084,6 +7090,12 @@ body.layout-editor-active:has(.modal.show) .layout-editor-screen .layout-sidebar
   flex-shrink: 0;
 }
 
+/* .secondary-btn sets display, which beats the browser's own [hidden] rule —
+   without this a provider that isn't configured would still show its button. */
+.oauth-btn[hidden] {
+  display: none;
+}
+
 .oauth-buttons .auth-error {
   margin: var(--space-1) 0 0;
 }
@@ -10025,4 +10037,29 @@ body:has(.region-menu.is-docked:not(.hidden)) .feedback-fab { visibility: hidden
   .rr-note { display: none; }
   .rr-actions { width: 100%; }
   .rr-actions .rr-btn { flex: 1; }
+}
+
+/* ── Results top bar: Share ─────────────────────────────────────────────────
+   The bar is Back · title · Save, and the title is laid over the gap between
+   them. Share joins Save at the right as an icon-only button — the same
+   treatment Back gets on the left — so the title keeps its room on a phone.
+   Unconditional: the bar has this shape at every width. */
+#results-section .results-actions-end {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex: none;
+}
+#results-section .results-actions-end > .secondary-btn,
+#results-section .results-actions-end > .primary-btn {
+  width: auto;
+  flex: none;
+}
+#results-section #share-design-btn {
+  width: 40px;
+  min-height: 40px;
+  padding: 0;
+}
+#results-section #share-design-btn span {
+  display: none;
 }

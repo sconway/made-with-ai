@@ -9,6 +9,11 @@ import Stripe from 'stripe';
 import nodemailer from 'nodemailer';
 import { createClient } from '@supabase/supabase-js';
 import { classifyPlan, Anthropic as PlanAnthropic } from './planClassifier.js';
+import { createRateLimiter } from './lib/rateLimit.js';
+import { sanitizeClientError } from './lib/clientErrors.js';
+import { createQuota } from './lib/quota.js';
+import { createFreeDailyCap } from './lib/freeDailyCap.js';
+import { createGenerationEvents, parseModelCosts } from './lib/generationEvents.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -415,53 +420,14 @@ async function requireActiveSubscription(req, res) {
   return user;
 }
 
-// Reserve one generation against the subscriber's monthly quota.
-// Returns { ok: true, used, limit } or { ok: false, reason, used, limit }.
-// Resets the counter when monthly_period_start has rolled over.
-async function reserveSubscriptionMonthlyGeneration(userId) {
-  const sub = await getActiveSubscription(userId);
-  if (!sub) return { ok: false, reason: 'no_subscription' };
-
-  const period = currentMonthStart();
-  // Atomic check-and-increment (see sql/atomic_credits.sql). Returns the new
-  // count, -1 if the cap is reached, or -2 if there's no subscription row.
-  const { data, error } = await supabase.rpc('reserve_subscription_generation', {
-    p_user_id: userId,
-    p_period: period,
-    p_limit: SUBSCRIPTION_MONTHLY_LIMIT,
-  });
-
-  if (error) {
-    console.error('Failed to reserve monthly quota:', error);
-    return { ok: false, reason: 'db_error' };
-  }
-  if (data === -2) return { ok: false, reason: 'no_subscription' };
-  if (data === -1) {
-    return {
-      ok: false,
-      reason: 'limit_reached',
-      used: SUBSCRIPTION_MONTHLY_LIMIT,
-      limit: SUBSCRIPTION_MONTHLY_LIMIT,
-    };
-  }
-
-  return {
-    ok: true,
-    used: data,
-    limit: SUBSCRIPTION_MONTHLY_LIMIT,
-  };
-}
-
-// Refund a previously-reserved generation when the AI call fails so the user
-// isn't charged a slot for nothing. Only decrements within the same period.
-async function refundSubscriptionMonthlyGeneration(userId) {
-  const period = currentMonthStart();
-  // Atomic decrement, only within the current period (see sql/atomic_credits.sql).
-  await supabase.rpc('refund_subscription_generation', {
-    p_user_id: userId,
-    p_period: period,
-  });
-}
+// Premium generation accounting (monthly quota + tokens) lives in lib/quota.js
+// so every branch can be unit-tested against a fake database.
+const { reserveSlotForUser } = createQuota({
+  supabase,
+  monthlyLimit: SUBSCRIPTION_MONTHLY_LIMIT,
+  getActiveSubscription,
+  currentMonthStart,
+});
 
 // Idempotently credit purchased tokens for a completed checkout session.
 // Backed by the atomic Postgres function `credit_tokens_for_session` (see
@@ -483,24 +449,6 @@ async function creditTokensForSession({ userId, sessionId, paymentIntent, tokens
   return data; // new token balance
 }
 
-// Reserve a free-tier credit. Returns { ok, credits } or { ok:false, reason }.
-// Uses an atomic decrement (see sql/atomic_credits.sql) so concurrent requests
-// can't both spend the last credit.
-async function reserveFreeCredit(userId) {
-  const { data, error } = await supabase.rpc('consume_credit', { p_user_id: userId });
-  if (error) {
-    console.error('consume_credit RPC error:', error);
-    return { ok: false, reason: 'db_error' };
-  }
-  if (data === null || data === -1) return { ok: false, reason: 'no_credits', credits: 0 };
-  return { ok: true, credits: data };
-}
-
-async function refundFreeCredit(userId) {
-  const { error } = await supabase.rpc('refund_credit', { p_user_id: userId });
-  if (error) console.error('refund_credit RPC error:', error);
-}
-
 // Bump the lifetime `total_generations` counter (analytics only).
 async function incrementLifetimeGenerations(userId) {
   const { error } = await supabase.rpc('increment_lifetime_generations', { p_user_id: userId });
@@ -513,285 +461,49 @@ async function incrementLifetimeGenerations(userId) {
 //   - kind === 'credits'      for free / paid-token users
 //   - refund() reverses the reservation if the AI call fails downstream
 // Sends an HTTP error response on failure and returns { ok: false }.
+// The decision itself is reserveSlotForUser in lib/quota.js.
 async function reserveGenerationSlot(req, res) {
   const user = await getAuthUser(req, res, { requireConfirmed: true });
   if (!user) return { ok: false };
 
-  // Subscribers first: monthly cap.
-  const sub = await getActiveSubscription(user.id);
-  if (sub) {
-    const r = await reserveSubscriptionMonthlyGeneration(user.id);
-    if (r.ok) {
-      return {
-        ok: true,
-        kind: 'subscription',
-        userId: user.id,
-        used: r.used,
-        limit: r.limit,
-        refund: () => refundSubscriptionMonthlyGeneration(user.id),
-      };
-    }
-    if (r.reason !== 'limit_reached') {
-      res.status(500).json({ error: 'Failed to reserve monthly quota' });
-      return { ok: false };
-    }
-    // Monthly cap reached — fall back to purchased token packs so subscribers
-    // can keep generating past their included quota.
-    const overflow = await reserveFreeCredit(user.id);
-    if (overflow.ok) {
-      return {
-        ok: true,
-        kind: 'credits',
-        userId: user.id,
-        credits: overflow.credits,
-        refund: () => refundFreeCredit(user.id),
-      };
-    }
-    res.status(429).json({
-      error: 'Monthly generation limit reached',
-      limit: r.limit,
-      used: r.used,
-      remaining: 0,
-      resets: 'next month',
-    });
+  const slot = await reserveSlotForUser(user.id);
+  if (!slot.ok) {
+    res.status(slot.status).json(slot.body);
     return { ok: false };
   }
-
-  // Otherwise: free / purchased tokens.
-  const r = await reserveFreeCredit(user.id);
-  if (!r.ok) {
-    if (r.reason === 'no_credits') {
-      res.status(402).json({ error: 'No tokens remaining', credits: 0 });
-    } else {
-      res.status(500).json({ error: 'Failed to reserve credit' });
-    }
-    return { ok: false };
-  }
-  return {
-    ok: true,
-    kind: 'credits',
-    userId: user.id,
-    credits: r.credits,
-    refund: () => refundFreeCredit(user.id),
-  };
+  return slot;
 }
 
 // ── Daily cap on free generations ──────────────────────────────────────────
-// The free models don't touch the token/monthly quota, but every prediction
-// costs the owner money. The rate limiters below only bound bursts (40 per 10
-// minutes is still 5,760 a day), so this is what bounds spend per account.
-//
-// Counts predictions started through /replicate/predictions by a signed-in
-// account, per UTC day. Subscribers get a higher ceiling. 0 disables the cap.
-//
-// Backed by sql/free_generation_daily_cap.sql. Until that has been run — or if
-// the database call fails — an in-process counter enforces the same limit, so
-// the cap is never silently off; it is just per-instance and resets on deploy.
+// Bounds what one account's free generations can cost per UTC day; the logic
+// and its in-memory fallback are in lib/freeDailyCap.js. 0 disables the cap.
 const FREE_DAILY_GENERATION_LIMIT = parseEnvInt('FREE_DAILY_GENERATION_LIMIT', 30);
 const FREE_DAILY_GENERATION_LIMIT_SUBSCRIBER = Math.max(
   FREE_DAILY_GENERATION_LIMIT,
   parseEnvInt('FREE_DAILY_GENERATION_LIMIT_SUBSCRIBER', 100),
 );
-const utcDay = () => new Date().toISOString().slice(0, 10);
-const freeDailyLocal = new Map(); // userId -> { day, count } (fallback store)
-let freeDailyFallbackWarned = false;
-
-function reserveFreeDailyLocal(userId, day, limit) {
-  let entry = freeDailyLocal.get(userId);
-  if (!entry || entry.day !== day) {
-    // New day: drop yesterday's entries so the map can't grow without bound.
-    if (freeDailyLocal.size > 5000) {
-      for (const [k, v] of freeDailyLocal) if (v.day !== day) freeDailyLocal.delete(k);
-    }
-    entry = { day, count: 0 };
-    freeDailyLocal.set(userId, entry);
-  }
-  if (entry.count >= limit) return -1;
-  entry.count += 1;
-  return entry.count;
-}
-
-/** Atomic check-and-increment. Returns the new count, or -1 when at the cap. */
-async function reserveFreeDailyAt(userId, day, limit) {
-  if (supabase) {
-    const { data, error } = await supabase.rpc('reserve_free_generation', {
-      p_user_id: userId,
-      p_day: day,
-      p_limit: limit,
-    });
-    if (!error && typeof data === 'number') return { count: data, store: 'db' };
-    if (!freeDailyFallbackWarned) {
-      freeDailyFallbackWarned = true;
-      console.warn(
-        '[free-cap] reserve_free_generation RPC unavailable — using the in-process counter. ' +
-          'Run sql/free_generation_daily_cap.sql in Supabase.',
-        error?.message || error,
-      );
-    }
-  }
-  return { count: reserveFreeDailyLocal(userId, day, limit), store: 'local' };
-}
-
-/**
- * Reserve one free generation for today.
- * Returns { ok: true, refund() } or { ok: false, limit }.
- */
-async function reserveFreeDailyGeneration(userId) {
-  if (FREE_DAILY_GENERATION_LIMIT <= 0) return { ok: true, refund: async () => {} };
-  const day = utcDay();
-  let limit = FREE_DAILY_GENERATION_LIMIT;
-  let r = await reserveFreeDailyAt(userId, day, limit);
-  // Only pay for the subscription lookup once the base cap is actually hit.
-  if (r.count === -1 && FREE_DAILY_GENERATION_LIMIT_SUBSCRIBER > limit && supabase) {
-    const sub = await getActiveSubscription(userId).catch(() => null);
-    if (sub) {
-      limit = FREE_DAILY_GENERATION_LIMIT_SUBSCRIBER;
-      r = await reserveFreeDailyAt(userId, day, limit);
-    }
-  }
-  if (r.count === -1) return { ok: false, limit };
-  return {
-    ok: true,
-    // Give the slot back when the provider never started the prediction.
-    refund: async () => {
-      if (r.store === 'db') {
-        const { error } = await supabase.rpc('refund_free_generation', { p_user_id: userId, p_day: day });
-        if (error) console.error('[free-cap] refund_free_generation RPC error:', error);
-      } else {
-        const entry = freeDailyLocal.get(userId);
-        if (entry && entry.day === day) entry.count = Math.max(0, entry.count - 1);
-      }
-    },
-  };
-}
+const { reserveFreeDailyGeneration } = createFreeDailyCap({
+  supabase,
+  baseLimit: FREE_DAILY_GENERATION_LIMIT,
+  subscriberLimit: FREE_DAILY_GENERATION_LIMIT_SUBSCRIBER,
+  getActiveSubscription,
+});
 
 // ── Generation events: what each model served, failed, and took ────────────
-// One row per image generation, written when it starts and completed when its
-// outcome is known, so spend and failure rates can be read per model per day
-// (see the generation_daily_stats view in sql/generation_events.sql).
-//
-// Strictly best-effort: a failed write must never fail or slow a generation,
-// so nothing here is awaited by a request and every error is swallowed. Until
-// the SQL has been run the events still go to the log as `[gen] {...}` lines.
-//
-// MODEL_COST_USD is an optional JSON map of model → estimated dollars per run,
-// e.g. {"google/nano-banana":0.04,"openai/gpt-image-2":0.17}. Prices change and
-// differ by account, so none are assumed here; without it cost columns are null.
-let MODEL_COST_USD = {};
-try {
-  MODEL_COST_USD = process.env.MODEL_COST_USD ? JSON.parse(process.env.MODEL_COST_USD) : {};
-} catch {
-  console.warn('[gen] MODEL_COST_USD is not valid JSON — cost estimates disabled');
-}
-let generationEventsTableMissingWarned = false;
-
-/** "owner/name:hash" → "owner/name": group by model, not by pinned version. */
-const modelLabel = (ref) => String(ref || 'unknown').split(':')[0].slice(0, 120);
-
-function generationEventsWriteFailed(error) {
-  if (generationEventsTableMissingWarned) return;
-  generationEventsTableMissingWarned = true;
-  console.warn(
-    '[gen] Could not write to generation_events — events are only being logged. ' +
-      'Run sql/generation_events.sql in Supabase.',
-    error?.message || error,
-  );
-}
-
-/** A generation was accepted by the provider. `predictionId` links the outcome. */
-function recordGenerationStarted({ provider, model, predictionId = null, userId = null }) {
-  const label = modelLabel(model);
-  const cost = Number.isFinite(MODEL_COST_USD[label]) ? MODEL_COST_USD[label] : null;
-  console.log('[gen]', JSON.stringify({ event: 'started', provider, model: label, predictionId, signedIn: !!userId }));
-  if (!supabase) return;
-  supabase
-    .from('generation_events')
-    .insert({
-      provider,
-      model: label,
-      prediction_id: predictionId,
-      user_id: userId,
-      outcome: 'started',
-      est_cost_usd: cost,
-    })
-    .then(({ error }) => { if (error) generationEventsWriteFailed(error); })
-    .catch(generationEventsWriteFailed);
-}
-
-/**
- * A started generation reached a terminal state. Only a row still marked
- * 'started' is updated, so the repeated polls that see the same terminal
- * status record it once.
- */
-function recordGenerationOutcome({ predictionId, outcome, durationMs = null, error = null }) {
-  if (!predictionId) return;
-  console.log('[gen]', JSON.stringify({ event: outcome, predictionId, durationMs }));
-  if (!supabase) return;
-  supabase
-    .from('generation_events')
-    .update({
-      outcome,
-      duration_ms: Number.isFinite(durationMs) ? Math.round(durationMs) : null,
-      error: error ? String(error).slice(0, 300) : null,
-      completed_at: new Date().toISOString(),
-    })
-    .eq('prediction_id', predictionId)
-    .eq('outcome', 'started')
-    .then(({ error: e }) => { if (e) generationEventsWriteFailed(e); })
-    .catch(generationEventsWriteFailed);
-}
-
-/** A generation that starts and finishes inside one request (OpenAI). */
-function recordGenerationComplete({ provider, model, userId = null, outcome, durationMs, error = null }) {
-  const label = modelLabel(model);
-  // A run the provider rejected or that timed out is not billed as an image.
-  const cost = outcome === 'succeeded' && Number.isFinite(MODEL_COST_USD[label]) ? MODEL_COST_USD[label] : null;
-  console.log('[gen]', JSON.stringify({ event: outcome, provider, model: label, durationMs }));
-  if (!supabase) return;
-  supabase
-    .from('generation_events')
-    .insert({
-      provider,
-      model: label,
-      user_id: userId,
-      outcome,
-      duration_ms: Number.isFinite(durationMs) ? Math.round(durationMs) : null,
-      error: error ? String(error).slice(0, 300) : null,
-      est_cost_usd: cost,
-      completed_at: new Date().toISOString(),
-    })
-    .then(({ error: e }) => { if (e) generationEventsWriteFailed(e); })
-    .catch(generationEventsWriteFailed);
-}
+// One row per generation in generation_events (sql/generation_events.sql),
+// best-effort; see lib/generationEvents.js. MODEL_COST_USD is an optional JSON
+// map of model → estimated dollars per run.
+const {
+  recordGenerationStarted,
+  recordGenerationOutcome,
+  recordGenerationComplete,
+} = createGenerationEvents({
+  supabase,
+  costs: parseModelCosts(process.env.MODEL_COST_USD),
+});
 
 // ── Rate limiting (in-memory, single-instance) ─────────────────────────────
-// Fixed-window counters keyed per-IP and/or per-account. Bounds how much a
-// single client can spend on the paid AI providers. NOTE: state is per-process —
-// for a horizontally-scaled deploy, swap the Map for a shared store (e.g. Redis).
-function createRateLimiter({ windowMs, max, keyFn, message }) {
-  const hits = new Map(); // key -> { count, resetAt }
-  let lastSweep = 0;
-  return function rateLimit(req, res, next) {
-    const now = Date.now();
-    if (now - lastSweep > windowMs) {
-      for (const [k, v] of hits) if (v.resetAt <= now) hits.delete(k);
-      lastSweep = now;
-    }
-    const key = keyFn(req);
-    if (!key) return next(); // unkeyable (e.g. no auth header on a user-keyed limiter) — let downstream auth handle it
-    let entry = hits.get(key);
-    if (!entry || entry.resetAt <= now) {
-      entry = { count: 0, resetAt: now + windowMs };
-      hits.set(key, entry);
-    }
-    entry.count += 1;
-    if (entry.count > max) {
-      res.set('Retry-After', String(Math.ceil((entry.resetAt - now) / 1000)));
-      return res.status(429).json({ error: message || 'Too many requests' });
-    }
-    return next();
-  };
-}
+// Fixed-window counters keyed per-IP and/or per-account; see lib/rateLimit.js.
 
 const ipKey = (req) => `ip:${req.ip}`;
 // Best-effort per-account key from the (unverified) JWT `sub` claim. Forging it
@@ -829,6 +541,14 @@ const genUserLimiter = createRateLimiter({
   max: parseInt(process.env.RATE_LIMIT_GEN_MAX_PER_USER) || 40,
   keyFn: userKey,
   message: 'Generation rate limit reached for your account. Please try again later.',
+});
+// Browser error reports: unauthenticated and written to the log, so bounded.
+// The client already caps itself at 10 per page load.
+const clientErrorLimiter = createRateLimiter({
+  windowMs: 10 * ONE_MIN,
+  max: parseInt(process.env.RATE_LIMIT_CLIENT_ERROR_MAX) || 30,
+  keyFn: ipKey,
+  message: 'Too many error reports',
 });
 // Feedback limiter: sends real email, so keep it tight.
 const feedbackLimiter = createRateLimiter({
@@ -2323,6 +2043,19 @@ if (FEEDBACK_SMTP_USER && FEEDBACK_SMTP_PASS) {
   console.warn('[feedback] Missing FEEDBACK_SMTP_USER or FEEDBACK_SMTP_PASS — /api/feedback is disabled until these are set');
 }
 
+// ── Browser error reports ──────────────────────────────────────────────────
+// Uncaught errors from visitors' browsers (src/errorReporting.js). Each becomes
+// one `[client-error] {...}` log line — search the Render logs for that tag.
+// Always answers 204: the reporter has nothing to do with the response, and a
+// dropped report should look no different from an accepted one.
+app.post('/api/client-error', clientErrorLimiter, (req, res) => {
+  const report = sanitizeClientError(req.body);
+  if (report) {
+    console.error('[client-error]', JSON.stringify({ ...report, ua: String(req.headers['user-agent'] || '').slice(0, 200) }));
+  }
+  res.status(204).end();
+});
+
 app.post('/api/feedback', feedbackLimiter, async (req, res) => {
   try {
     const { message, email, page, website } = req.body || {};
@@ -3188,6 +2921,44 @@ if (process.env.NODE_ENV === 'production') {
     res.sendFile(path.join(__dirname, 'dist', 'index.html'));
   });
 }
+
+// ── Last-resort error handling ─────────────────────────────────────────────
+// A route that throws without its own try/catch used to answer with Express's
+// HTML error page (which the client can't read) and, for a rejected promise
+// outside any request, take the whole process down. Both are now logged under
+// one tag — search the logs for `[server-error]`.
+app.use((err, req, res, next) => {
+  console.error('[server-error]', JSON.stringify({
+    kind: 'route',
+    method: req.method,
+    path: req.path,
+    message: String(err?.message || err).slice(0, 500),
+    stack: String(err?.stack || '').slice(0, 2000),
+  }));
+  if (res.headersSent) return next(err);
+  res.status(err?.status >= 400 && err?.status < 600 ? err.status : 500).json({ error: 'Server error' });
+});
+
+process.on('unhandledRejection', (reason) => {
+  // Log and keep serving: one failed background promise (a best-effort write,
+  // a refund) must not drop every in-flight generation.
+  console.error('[server-error]', JSON.stringify({
+    kind: 'unhandledRejection',
+    message: String(reason?.message || reason).slice(0, 500),
+    stack: String(reason?.stack || '').slice(0, 2000),
+  }));
+});
+
+process.on('uncaughtException', (err) => {
+  // State may be corrupt after a synchronous throw outside any handler — log
+  // it, then exit so the platform restarts a clean process.
+  console.error('[server-error]', JSON.stringify({
+    kind: 'uncaughtException',
+    message: String(err?.message || err).slice(0, 500),
+    stack: String(err?.stack || '').slice(0, 2000),
+  }));
+  process.exit(1);
+});
 
 app.listen(port, () => {
   console.log(`Server running on port ${port} in ${process.env.NODE_ENV || 'development'} mode`);
