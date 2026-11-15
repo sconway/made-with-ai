@@ -16,11 +16,21 @@ import {
   isShareId,
   renderSharePage,
   renderShareGonePage,
+  renderShareReportPage,
+  renderShareReportedPage,
+  SHARE_REPORT_REASONS,
   SHARE_CACHE_SECONDS,
 } from './lib/shares.js';
 import { createQuota } from './lib/quota.js';
 import { createFreeDailyCap } from './lib/freeDailyCap.js';
-import { createGenerationEvents, parseModelCosts } from './lib/generationEvents.js';
+import { createGenerationEvents, parseModelCosts, modelLabel } from './lib/generationEvents.js';
+import {
+  resolveCorsOrigin,
+  securityHeaders,
+  sanitizeCspReport,
+  createCspReportLog,
+  CSP_REPORT_PATH,
+} from './lib/security.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -34,6 +44,8 @@ const port = process.env.PORT || 3001;
 // Behind Render's load balancer: trust the first proxy hop so `req.ip` reflects
 // the real client address (used for rate limiting) rather than the proxy's.
 app.set('trust proxy', 1);
+// Don't advertise the framework.
+app.disable('x-powered-by');
 
 // Initialize Stripe
 const stripe = new Stripe(process.env.STRIPE_SECRET_KEY || '');
@@ -596,6 +608,19 @@ const clientErrorLimiter = createRateLimiter({
   keyFn: ipKey,
   message: 'Too many error reports',
 });
+const cspReportLimiter = createRateLimiter({
+  windowMs: 10 * ONE_MIN,
+  max: parseInt(process.env.RATE_LIMIT_CSP_REPORT_MAX) || 30,
+  keyFn: ipKey,
+  message: 'Too many reports',
+});
+// "Report this image" on public share pages. Sends email, so keep it tight.
+const shareReportLimiter = createRateLimiter({
+  windowMs: 10 * ONE_MIN,
+  max: parseInt(process.env.RATE_LIMIT_SHARE_REPORT_MAX) || 5,
+  keyFn: ipKey,
+  message: 'Too many reports at once. Please try again in a few minutes.',
+});
 // Creating a share publishes an image on this domain — keep it deliberate.
 const shareCreateLimiter = createRateLimiter({
   windowMs: 10 * ONE_MIN,
@@ -611,11 +636,25 @@ const feedbackLimiter = createRateLimiter({
   message: 'Too much feedback at once — please try again in a few minutes.',
 });
 
-// CORS configuration
+// Headers every response carries (lib/security.js). CSP_MODE: report
+// (default) | enforce | off.
+app.use(securityHeaders({
+  production: process.env.NODE_ENV === 'production',
+  cspMode: process.env.CSP_MODE?.trim().toLowerCase() || 'report',
+  supabaseUrl: process.env.SUPABASE_URL,
+}));
+
+// CORS: which other sites may call the API from a visitor's browser. The app
+// itself is same-origin and doesn't need it. Never `*` in production.
+const corsResolution = resolveCorsOrigin({
+  production: process.env.NODE_ENV === 'production',
+  allowedOrigin: process.env.ALLOWED_ORIGIN,
+  appUrl: process.env.APP_URL,
+  devOrigins: ['http://localhost:5173', 'http://localhost:4173', 'http://localhost:4174'],
+});
+if (corsResolution.warning) console.warn(corsResolution.warning);
 const corsOptions = {
-  origin: process.env.NODE_ENV === 'production' 
-    ? process.env.ALLOWED_ORIGIN || '*'
-    : ['http://localhost:5173', 'http://localhost:4173', 'http://localhost:4174'],
+  origin: corsResolution.origin,
   methods: ['GET', 'POST', 'PUT', 'DELETE'],
   allowedHeaders: ['Content-Type', 'Authorization', 'X-Fallback'],
   credentials: true
@@ -1100,7 +1139,9 @@ app.post('/replicate/predictions', genIpLimiter, genUserLimiter, async (req, res
       outboundBody = { input: forwardBody.input };
     }
 
-    console.log(`Making request to Replicate API (free) [${targetUrl}] with body:`, JSON.stringify(outboundBody, (k, v) => k === 'replicate_api_key' ? '***' : (k === 'image' || k === 'image_input' ? '<image>' : v), 2));
+    // Model and input field names only: prompts are user content and images
+    // are megabytes of base64.
+    console.log(`[replicate] start ${modelLabel(requestedVersion)} inputs=${Object.keys(outboundBody?.input || {}).join(',')}`);
 
     const response = await fetch(targetUrl, {
       method: 'POST',
@@ -1133,7 +1174,7 @@ app.post('/replicate/predictions', genIpLimiter, genUserLimiter, async (req, res
       predictionId: data?.id || null,
       userId: user?.id || null,
     });
-    console.log('Replicate API response:', data);
+    console.log(`[replicate] accepted ${data?.id || '?'} status=${data?.status || '?'}`);
     // Bind the prediction to the anonymous device so /replicate/poll will
     // serve it back to this visitor and nobody else.
     if (anonDeviceId && data?.id) {
@@ -1197,7 +1238,7 @@ app.post('/openai/image-edit', genIpLimiter, genUserLimiter, async (req, res) =>
     if (quality) form.append('quality', quality);
     form.append('image', new Blob([buf], { type: mime }), `input.${ext}`);
 
-    console.log(`OpenAI image-edit: prompt="${prompt.slice(0, 80)}..." size=${size || '1024x1024'}`);
+    console.log(`[openai] image-edit size=${size || '1024x1024'}`);
 
     sentAt = Date.now();
     const response = await fetch('https://api.openai.com/v1/images/edits', {
@@ -1295,7 +1336,6 @@ app.post('/replicate/poll', async (req, res) => {
       }
     }
 
-    console.log('Polling Replicate API:', predictionUrl);
 
     const response = await fetch(predictionUrl, {
       headers: {
@@ -1317,7 +1357,13 @@ app.post('/replicate/poll', async (req, res) => {
     }
 
     const data = await response.json();
-    console.log('Replicate API polling response:', data);
+    // One line per finished run; in-progress polls (every second or two)
+    // aren't logged at all.
+    if (data.status === 'failed' || data.status === 'canceled') {
+      console.warn(`[replicate] ${data.id} ${data.status}: ${String(data.error || '').slice(0, 200)}`);
+    } else if (data.status === 'succeeded') {
+      console.log(`[replicate] ${data.id} succeeded`);
+    }
 
     if (data.status === 'succeeded' || data.status === 'failed' || data.status === 'canceled') {
       // Replicate reports model run time in seconds; fall back to wall time.
@@ -1379,7 +1425,6 @@ app.post('/api/image-to-svg', genIpLimiter, genUserLimiter, async (req, res) => 
       return res.status(400).json({ error: 'Image data is required' });
     }
 
-    console.log('Starting image to SVG conversion for:', filename);
 
     // Use merahburam/vectorizer-v2 model - a high-quality PNG to SVG converter
     const predictionResponse = await fetch('https://api.replicate.com/v1/predictions', {
@@ -1411,7 +1456,7 @@ app.post('/api/image-to-svg', genIpLimiter, genUserLimiter, async (req, res) => 
     }
 
     const predictionData = await predictionResponse.json();
-    console.log('Prediction started:', predictionData.id);
+    console.log(`[svg] conversion started ${predictionData.id}`);
 
     // Poll for completion
     return await pollAndReturnSVG(predictionData, apiKey, res);
@@ -1444,11 +1489,9 @@ async function pollAndReturnSVG(predictionData, apiKey, res) {
     }
 
     const pollData = await pollResponse.json();
-    console.log(`Poll attempt ${attempts + 1}:`, pollData.status);
 
     if (pollData.status === 'succeeded') {
       const output = pollData.output;
-      console.log('Conversion output:', typeof output, output);
       
       // Handle different output formats
       if (typeof output === 'string') {
@@ -1457,7 +1500,6 @@ async function pollAndReturnSVG(predictionData, apiKey, res) {
           return res.json({ svg: cleanedSvg });
         } else if (output.startsWith('http')) {
           // Output is a URL, fetch the content
-          console.log('Fetching SVG from URL:', output);
           const svgResponse = await fetch(output);
           if (svgResponse.ok) {
             const contentType = svgResponse.headers.get('content-type') || '';
@@ -1587,8 +1629,6 @@ function isWhiteColor(color) {
 function removeWhiteBackground(svgString) {
   let processed = svgString;
   
-  console.log('Processing SVG to remove white background...');
-  console.log('Original SVG length:', svgString.length);
   
   // Replace ALL white fills with transparent/none
   // This is aggressive but works well for floor plans where we want outlines
@@ -1623,7 +1663,6 @@ function removeWhiteBackground(svgString) {
     );
   }
   
-  console.log('Processed SVG length:', processed.length);
   
   return processed;
 }
@@ -2174,8 +2213,9 @@ const SHARE_PAGE_CSP = [
 ].join('; ');
 
 function shareResponseHeaders(res, found) {
-  res.set('X-Content-Type-Options', 'nosniff');
-  res.set('Referrer-Policy', 'strict-origin-when-cross-origin');
+  // The share page carries its own, stricter policy; the app's report-only
+  // one would only add noise for a page with no scripts.
+  res.removeHeader('Content-Security-Policy-Report-Only');
   // Short-lived, so "Stop sharing" takes effect within minutes everywhere. A
   // missing share is never cached: a link created a moment ago must not be
   // remembered as absent.
@@ -2213,6 +2253,79 @@ app.get('/s/:id/:file(card|og).jpg', async (req, res) => {
   }
 });
 
+// "Report this image": a form page, and where it posts. Plain HTML with no
+// script, like the share page; the only difference in policy is that this
+// page may submit a form to this site.
+const SHARE_REPORT_CSP = SHARE_PAGE_CSP.replace("form-action 'none'", "form-action 'self'");
+// One report per visitor per share per day: a second click is thanked, not
+// counted or emailed again.
+const shareReportsSeen = new Map();
+const SHARE_REPORT_DEDUPE_MS = 24 * 60 * ONE_MIN;
+
+app.get('/s/:id/report', async (req, res) => {
+  const base = publicBaseUrl(req);
+  res.set('Content-Security-Policy', SHARE_REPORT_CSP);
+  res.set('Cache-Control', 'no-store');
+  res.removeHeader('Content-Security-Policy-Report-Only');
+  try {
+    const share = isShareId(req.params.id) ? await shares.getShare(req.params.id) : null;
+    if (!share) return res.status(404).type('html').send(renderShareGonePage({ baseUrl: base }));
+    res.type('html').send(renderShareReportPage({ id: share.id }));
+  } catch (err) {
+    console.error('Error in GET /s/:id/report:', err);
+    res.status(500).type('html').send(renderShareGonePage({ baseUrl: base }));
+  }
+});
+
+app.post(
+  '/s/:id/report',
+  shareReportLimiter,
+  express.urlencoded({ extended: false, limit: '2kb' }),
+  async (req, res) => {
+    const base = publicBaseUrl(req);
+    res.set('Content-Security-Policy', SHARE_REPORT_CSP);
+    res.set('Cache-Control', 'no-store');
+    res.removeHeader('Content-Security-Policy-Report-Only');
+    try {
+      const share = isShareId(req.params.id) ? await shares.getShare(req.params.id) : null;
+      if (!share) return res.status(404).type('html').send(renderShareGonePage({ baseUrl: base }));
+      const reason = Object.hasOwn(SHARE_REPORT_REASONS, req.body?.reason) ? req.body.reason : 'other';
+
+      const now = Date.now();
+      const key = `${ipKey(req)}|${share.id}`;
+      const seenAt = shareReportsSeen.get(key);
+      if (!seenAt || now - seenAt > SHARE_REPORT_DEDUPE_MS) {
+        if (shareReportsSeen.size > 5000) shareReportsSeen.clear();
+        shareReportsSeen.set(key, now);
+        await shares.recordReport(share.id);
+        console.warn(`[share-report] ${share.id} reason=${reason} owner=${share.user_id}`);
+        if (feedbackTransporter) {
+          feedbackTransporter.sendMail({
+            from: `"DecorAIt Reports" <${FEEDBACK_SMTP_USER}>`,
+            to: FEEDBACK_TO_EMAIL,
+            subject: `[DecorAIt] Shared image reported: ${SHARE_REPORT_REASONS[reason]}`,
+            text: [
+              `A visitor reported a shared design.`,
+              ``,
+              `Reason: ${SHARE_REPORT_REASONS[reason]}`,
+              `Page: ${base}/s/${share.id}`,
+              `Owner (user id): ${share.user_id}`,
+              `Shared: ${share.created_at}`,
+              ``,
+              `To take it down, run in the Supabase SQL editor:`,
+              `  delete from shared_designs where id = '${share.id}';`,
+            ].join('\n'),
+          }).catch((err) => console.error('[share-report] email failed:', err.message));
+        }
+      }
+      res.type('html').send(renderShareReportedPage({ baseUrl: base }));
+    } catch (err) {
+      console.error('Error in POST /s/:id/report:', err);
+      res.status(500).type('html').send(renderShareGonePage({ baseUrl: base }));
+    }
+  },
+);
+
 // ── Browser error reports ──────────────────────────────────────────────────
 // Uncaught errors from visitors' browsers (src/errorReporting.js). Each becomes
 // one `[client-error] {...}` log line — search the Render logs for that tag.
@@ -2225,6 +2338,22 @@ app.post('/api/client-error', clientErrorLimiter, (req, res) => {
   }
   res.status(204).end();
 });
+
+// ── Content security policy reports ────────────────────────────────────────
+// Browsers post here when the app does something the policy doesn't allow
+// (lib/security.js). In the default 'report' mode nothing is blocked; each
+// distinct violation is logged once an hour as `[csp-report] {...}`. A quiet
+// log after a week of real traffic means CSP_MODE=enforce is safe.
+const recordCspReport = createCspReportLog();
+app.post(
+  CSP_REPORT_PATH,
+  cspReportLimiter,
+  express.json({ type: ['application/csp-report', 'application/reports+json'], limit: '16kb' }),
+  (req, res) => {
+    recordCspReport(sanitizeCspReport(req.body));
+    res.status(204).end();
+  },
+);
 
 app.post('/api/feedback', feedbackLimiter, async (req, res) => {
   try {

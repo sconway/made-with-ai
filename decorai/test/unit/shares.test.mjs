@@ -4,7 +4,8 @@ import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   createShares, newShareId, isShareId, parseJpegDataUrl, escapeHtml,
-  renderSharePage, renderShareGonePage, SHARE_CARD_MAX_BYTES, SHARE_OG_MAX_BYTES,
+  renderSharePage, renderShareGonePage, renderShareReportPage, renderShareReportedPage,
+  SHARE_REPORT_REASONS, SHARE_CARD_MAX_BYTES, SHARE_OG_MAX_BYTES,
 } from '../../lib/shares.js';
 import { captureConsole, tick } from './helpers.mjs';
 
@@ -71,6 +72,11 @@ function fakeBackend({ bucketExists = true, failInsert = false, failUploadOf = n
       if (name === 'record_share_view') {
         const row = rows.find((r) => r.id === args.p_id);
         if (row) row.view_count += 1;
+        return { data: null, error: null };
+      }
+      if (name === 'record_share_report') {
+        const row = rows.find((r) => r.id === args.p_id);
+        if (row) row.report_count = (row.report_count || 0) + 1;
         return { data: null, error: null };
       }
       return { data: null, error: { message: 'no such function' } };
@@ -244,6 +250,14 @@ describe('viewing a share', () => {
     await tick();
     assert.equal(rows[0].view_count, 2);
   });
+
+  test('reports are counted', async () => {
+    const { shares, rows } = make();
+    const { id } = await shares.createShare(ALICE, good());
+    await shares.recordReport(id);
+    await shares.recordReport('not-an-id');
+    assert.equal(rows[0].report_count, 1);
+  });
 });
 
 describe('taking a share down', () => {
@@ -351,6 +365,21 @@ describe('the public page', () => {
     assert.ok(!hostile.includes('<script>x</script>'));
     assert.ok(!hostile.includes('<img src=x'));
     assert.equal(escapeHtml(`<a href="x" onclick='y'>&`), '&lt;a href=&quot;x&quot; onclick=&#39;y&#39;&gt;&amp;');
+  });
+
+  test('links to the report form', () => {
+    assert.match(html, /<a href="\/s\/AbCdEfGhJkLm\/report" rel="nofollow">Report this image<\/a>/);
+  });
+
+  test('the report form posts every reason back to the same share, with no script', () => {
+    const form = renderShareReportPage({ id });
+    assert.match(form, /<form method="post" action="\/s\/AbCdEfGhJkLm\/report">/);
+    for (const key of Object.keys(SHARE_REPORT_REASONS)) {
+      assert.match(form, new RegExp(`name="reason" value="${key}"`));
+    }
+    assert.ok(!/<script/i.test(form));
+    assert.ok(!renderShareReportPage({ id: '"><script>x</script>' }).includes('<script>x'));
+    assert.match(renderShareReportedPage({ baseUrl: 'https://decorait.example' }), /Thanks for telling us/);
   });
 
   test('a link that is gone says so, and still offers the app', () => {

@@ -56,8 +56,14 @@ services:
       # App configuration
       - key: APP_URL
         sync: false
+      # Other sites allowed to call the API (comma-separated). Unset = APP_URL's
+      # origin only; never "*".
       - key: ALLOWED_ORIGIN
         sync: false
+      # Content security policy: report (logs [csp-report], blocks only a small
+      # baseline) | enforce | off. Move to enforce once the logs are quiet.
+      - key: CSP_MODE
+        value: report
       # Google Analytics 4 Measurement ID (e.g. G-XXXXXXXXXX). Leave unset to disable.
       - key: GA_MEASUREMENT_ID
         sync: false

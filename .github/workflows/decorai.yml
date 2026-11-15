@@ -1,0 +1,59 @@
+# DecorAIt: unit tests, a production build, and the browser smoke test on
+# every push or pull request that touches decorai/. Nothing here talks to a
+# real API: the smoke test mocks every call, so a run costs nothing.
+name: DecorAIt
+
+on:
+  push:
+    paths:
+      - 'decorai/**'
+      - '.github/workflows/decorai.yml'
+  pull_request:
+    paths:
+      - 'decorai/**'
+      - '.github/workflows/decorai.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: decorai-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: decorai
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: decorai/package-lock.json
+
+      - run: npm ci
+
+      - name: Unit tests
+        run: npm test
+
+      - name: Production build
+        run: npm run build
+
+      - name: Install the smoke test's browser
+        run: npx playwright install --with-deps chromium
+
+      - name: Smoke test
+        run: npm run test:e2e
+
+      - name: Keep the trace of a failed smoke test
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-traces
+          path: decorai/test-results/
+          retention-days: 7

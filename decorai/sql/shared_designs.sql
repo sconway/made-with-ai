@@ -20,8 +20,16 @@ create table if not exists shared_designs (
     -- the app on "Stop sharing"; see the housekeeping note below.)
     user_id     uuid not null references auth.users(id) on delete cascade,
     created_at  timestamptz not null default now(),
-    view_count  integer not null default 0
+    view_count  integer not null default 0,
+    -- "Report this image" on the public page. Reports are emailed to
+    -- FEEDBACK_TO_EMAIL; these columns are the record.
+    report_count     integer not null default 0,
+    last_reported_at timestamptz
 );
+
+-- For a table created by an earlier version of this file.
+alter table shared_designs add column if not exists report_count integer not null default 0;
+alter table shared_designs add column if not exists last_reported_at timestamptz;
 
 -- The per-account cap and "your shared links" both look up by owner.
 create index if not exists shared_designs_user_idx
@@ -49,6 +57,29 @@ $$;
 revoke execute on function public.record_share_view(text) from public, anon, authenticated;
 grant  execute on function public.record_share_view(text) to service_role;
 
+-- Count a report from the public page (atomic; called best-effort by the server).
+create or replace function public.record_share_report(p_id text)
+returns void
+language sql
+security definer
+set search_path = public
+as $$
+  update shared_designs
+     set report_count = report_count + 1, last_reported_at = now()
+   where id = p_id;
+$$;
+
+revoke execute on function public.record_share_report(text) from public, anon, authenticated;
+grant  execute on function public.record_share_report(text) to service_role;
+
+-- Reported shares, most recent first:
+--   select id, user_id, report_count, last_reported_at from shared_designs
+--    where report_count > 0 order by last_reported_at desc;
+--
+-- Take one down (the page and images answer 404 at once; the files are left
+-- as described under Housekeeping):
+--   delete from shared_designs where id = '<id>';
+--
 -- Which shares bring visitors:
 --   select id, created_at, view_count from shared_designs order by view_count desc limit 20;
 --

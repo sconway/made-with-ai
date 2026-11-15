@@ -179,16 +179,26 @@ image" is offered. `APP_URL` must be the public site address, because links and
 preview images are built from it. Each account can have `MAX_SHARED_LINKS_FREE`
 (default 10) live links, or `MAX_SHARED_LINKS_SUBSCRIBER` (default 50).
 
+Every share page has a **Report this image** link. A report is counted on the
+share's row (`report_count`, `last_reported_at`), logged as `[share-report]`,
+and emailed to `FEEDBACK_TO_EMAIL` when the feedback mail settings are
+configured, with the SQL to take the image down. Nothing is hidden
+automatically, so a handful of reports can't remove someone's design.
+
 ## Tests
 
 ```bash
-npm test                              # unit tests (Node 18+), no network
+npm test                              # unit tests (Node 20+), no network
 PW_CHANNEL=chrome npm run test:e2e    # browser smoke test, in installed Chrome
 ```
 
 The smoke test mocks every API and provider call, so it costs nothing to run.
 Without `PW_CHANNEL` it uses Playwright's own Chromium
 (`npx playwright install chromium` once).
+
+The same three steps (unit tests, production build, smoke test) run on GitHub
+Actions for every push that touches `decorai/` (`.github/workflows/decorai.yml`
+at the repository root). `dist/` is not committed: Render builds it on deploy.
 
 ## Seeing what generations cost
 
@@ -217,13 +227,25 @@ Before opening the app to the public, complete this checklist:
 2. **Enable "Confirm email"** in Supabase (Authentication → Providers → Email). The
    server also enforces this on every paid endpoint (`requireConfirmed`), so disposable
    accounts can't farm the AI providers — but the dashboard toggle should be on too.
-3. **Set `ALLOWED_ORIGIN`** to your real domain in production (CORS otherwise falls
-   back to `*`).
-4. **Keep the Replicate model allowlist current.** The proxy only runs the models in
+3. **Set `ALLOWED_ORIGIN`** to your real domain(s) in production, comma-separated.
+   It is only needed for other sites calling the API, since the app is same-origin;
+   unset, the server allows `APP_URL`'s origin, or no cross-origin callers at all.
+   It never falls back to `*`.
+4. **Security headers** are set on every response (`lib/security.js`): nosniff,
+   no framing, a strict referrer policy, HSTS, and a permissions policy that
+   allows only the camera. The content security policy starts in
+   `CSP_MODE=report`: a small baseline is enforced and the full policy is
+   report-only, with each distinct violation logged once an hour as
+   `[csp-report]`. Once the logs are quiet under real traffic, set
+   `CSP_MODE=enforce`. If something breaks, `CSP_MODE=off` removes it.
+   One report is expected and harmless: `{"directive":"script-src","blocked":"eval"}`
+   comes from feather-icons probing for the global object; it catches the
+   refusal and falls back, and the app works the same with the policy enforced.
+5. **Keep the Replicate model allowlist current.** The proxy only runs the models in
    `REPLICATE_ALLOWED_MODELS` (default list in `server.js`). If you add a model, add its
    version string there or via the env var — otherwise a user could otherwise invoke
    arbitrary, expensive Replicate models on your account.
-5. **Tune the rate limits** (`RATE_LIMIT_*` in `render.yaml`) to your expected traffic.
+6. **Tune the rate limits** (`RATE_LIMIT_*` in `render.yaml`) to your expected traffic.
    They are in-memory per-instance — if you scale to multiple instances, move the
    counters to a shared store (e.g. Redis).
 

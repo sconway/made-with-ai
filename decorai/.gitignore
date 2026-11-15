@@ -9,3 +9,6 @@ node_modules/
 # Test output
 test-results/
 playwright-report/
+
+# Build output: Render builds it on deploy (render.yaml buildCommand)
+dist/

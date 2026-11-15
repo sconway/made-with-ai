@@ -93,6 +93,15 @@ const PAGE_STYLE = `
   .cta:focus-visible { outline: 3px solid #a5b4fc; outline-offset: 2px; }
   .small { font-size: 13px; color: #6b6355; text-align: center; margin: 0; }
   .gone { text-align: center; padding-top: 12vh; }
+  .report { margin-top: 36px; text-align: center; font-size: 13px; }
+  .report a { color: #6b6355; }
+  form { margin: 0; }
+  fieldset { border: 0; padding: 0; margin: 0 0 8px; }
+  legend { font-weight: 600; margin-bottom: 10px; }
+  label.reason { display: flex; align-items: center; gap: 10px; padding: 12px 14px; margin-bottom: 8px; border: 1px solid #e8e3da; border-radius: 10px; background: #fff; font-size: 16px; cursor: pointer; }
+  label.reason input { flex: none; width: 18px; height: 18px; margin: 0; accent-color: #4f46e5; }
+  button.cta { width: 100%; border: 0; cursor: pointer; font-family: inherit; }
+  .back { display: block; text-align: center; color: #6b6355; font-size: 15px; }
 `;
 
 function pageShell({ title, head = '', body }) {
@@ -151,8 +160,47 @@ export function renderSharePage({ id, baseUrl }) {
 <p>Someone redesigned this room from a single photo. You can do the same with yours.</p>
 <img class="card" src="/s/${escapeHtml(id)}/card.jpg" alt="The room before and after its redesign">
 <a class="cta" href="${escapeHtml(tryUrl)}">Redesign your own room</a>
-<p class="small">Upload a photo and see it restyled in about a minute.</p>`;
+<p class="small">Upload a photo and see it restyled in about a minute.</p>
+<p class="report"><a href="/s/${escapeHtml(id)}/report" rel="nofollow">Report this image</a></p>`;
   return pageShell({ title, head, body });
+}
+
+/** Why someone can report a share. Keys are what the form posts. */
+export const SHARE_REPORT_REASONS = {
+  not_room: 'It isn\'t a room design',
+  offensive: 'It\'s offensive or explicit',
+  my_photo: 'It\'s my photo, shared without my permission',
+  other: 'Something else',
+};
+
+/** The form behind "Report this image". Posts back to the same address. */
+export function renderShareReportPage({ id }) {
+  const options = Object.entries(SHARE_REPORT_REASONS)
+    .map(([value, label], i) => `<label class="reason"><input type="radio" name="reason" value="${value}"${i === 0 ? ' required' : ''}> ${escapeHtml(label)}</label>`)
+    .join('\n');
+  const body = `<header><a class="brand" href="/s/${escapeHtml(id)}">DecorAIt</a></header>
+<h1>Report this image</h1>
+<p>Tell us what's wrong and we'll review it. Images that break the rules are taken down.</p>
+<form method="post" action="/s/${escapeHtml(id)}/report">
+<fieldset>
+<legend>What's the problem?</legend>
+${options}
+</fieldset>
+<button class="cta" type="submit">Send report</button>
+</form>
+<a class="back" href="/s/${escapeHtml(id)}">Cancel</a>`;
+  return pageShell({ title: 'Report an image — DecorAIt', body });
+}
+
+/** Shown after a report is sent (or politely ignored as a repeat). */
+export function renderShareReportedPage({ baseUrl }) {
+  const tryUrl = `${baseUrl}/?utm_source=share&utm_medium=link&utm_campaign=report`;
+  const body = `<div class="gone">
+<header style="justify-content:center"><a class="brand" href="${escapeHtml(tryUrl)}">DecorAIt</a></header>
+<h1>Thanks for telling us</h1>
+<p>We'll review this image and take it down if it breaks the rules.</p>
+</div>`;
+  return pageShell({ title: 'Report sent — DecorAIt', body });
 }
 
 /** Shown for a link that was revoked or never existed (the two look the same). */
@@ -326,5 +374,12 @@ export function createShares({ supabase, bucket, limits, getActiveSubscription }
       .catch(() => {});
   }
 
-  return { probe, createShare, getShare, getShareImage, listShares, revokeShare, recordView };
+  /** Count a report against a share. Best-effort, like recordView. */
+  async function recordReport(id) {
+    if (!supabase || !isShareId(id)) return;
+    const { error } = await supabase.rpc('record_share_report', { p_id: id }).catch((e) => ({ error: e }));
+    if (error) console.warn('[share] report not counted:', error.message || error);
+  }
+
+  return { probe, createShare, getShare, getShareImage, listShares, revokeShare, recordView, recordReport };
 }
