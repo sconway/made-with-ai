@@ -10472,3 +10472,483 @@ body:has(.region-menu.is-docked:not(.hidden)) .feedback-fab { visibility: hidden
   }  /* As on iPad: the floating Feedback button would sit on Save. */
   body:has(#results-section:not(.hidden)) .feedback-fab { display: none; }
 }
+
+/* ── Library (/library/{designs,plans,builds}) ──────────────────────────────
+   One sheet for everything an account keeps. Sits one step under the other
+   sheets so sign-in, upgrade and confirm dialogs open over it. */
+.library-modal {
+  z-index: 1999;
+}
+
+.library-modal .library-sheet {
+  width: 100%;
+  max-width: 860px;
+  display: flex;
+  flex-direction: column;
+}
+
+.library-header {
+  padding-bottom: 0.5rem;
+}
+
+.library-sheet:focus {
+  outline: none;
+}
+
+.library-tabs {
+  display: flex;
+  gap: 0.25rem;
+  padding: 0 1.5rem;
+  border-bottom: 1px solid var(--border-subtle);
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.library-tabs::-webkit-scrollbar {
+  display: none;
+}
+
+.library-tab {
+  position: relative;
+  flex: none;
+  padding: 0.75rem 0.875rem;
+  min-height: 44px;
+  border: 0;
+  background: none;
+  font: inherit;
+  font-size: 0.9375rem;
+  font-weight: 500;
+  color: var(--text-secondary);
+  cursor: pointer;
+  border-radius: var(--radius-md) var(--radius-md) 0 0;
+  transition: color 0.15s var(--ease-out);
+}
+
+.library-tab:hover {
+  color: var(--text-primary);
+}
+
+.library-tab[aria-selected="true"] {
+  color: var(--text-primary);
+}
+
+.library-tab[aria-selected="true"]::after {
+  content: '';
+  position: absolute;
+  left: 0.875rem;
+  right: 0.875rem;
+  bottom: -1px;
+  height: 2px;
+  border-radius: 2px;
+  background: var(--brand-500, var(--color-accent-primary));
+}
+
+.library-tab:focus-visible {
+  outline: 2px solid var(--brand-500, var(--color-accent-primary));
+  outline-offset: -2px;
+}
+
+.library-tab-count {
+  margin-left: 0.25rem;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-tertiary);
+  font-weight: 400;
+}
+
+.library-body {
+  min-height: 320px;
+}
+
+.library-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+
+.library-toolbar:has(> :not(.hidden)) {
+  margin-bottom: 1rem;
+}
+
+.library-status {
+  flex: 1 1 18rem;
+  margin: 0;
+  font-size: 0.875rem;
+  line-height: 1.45;
+  color: var(--text-secondary);
+}
+
+.library-status.is-full {
+  color: var(--text-primary);
+}
+
+.library-status-upsell {
+  margin-left: 0.25rem;
+  padding: 0;
+  border: 0;
+  background: none;
+  font: inherit;
+  font-weight: 600;
+  color: var(--brand-600, var(--color-accent-primary));
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  cursor: pointer;
+}
+
+.library-search {
+  flex: 0 1 16rem;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0 0.75rem;
+  min-height: 40px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 999px;
+  background: var(--color-bg-primary);
+  color: var(--text-tertiary);
+}
+
+.library-search:focus-within {
+  border-color: var(--brand-400);
+  box-shadow: 0 0 0 3px var(--color-accent-primary-subtle);
+}
+
+.library-search svg {
+  width: 16px;
+  height: 16px;
+  flex: none;
+}
+
+.library-search input {
+  flex: 1;
+  min-width: 0;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  font: inherit;
+  font-size: 0.9375rem;
+  color: var(--text-primary);
+}
+
+.library-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(170px, 1fr));
+  gap: 0.875rem;
+}
+
+.library-grid--list {
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+}
+
+.library-card {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  padding: 0 0 0.625rem;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  background: var(--color-bg-primary);
+  overflow: hidden;
+  text-align: left;
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+  transition: border-color 0.15s var(--ease-out), box-shadow 0.15s var(--ease-out), transform 0.15s var(--ease-out);
+}
+
+button.library-card:hover,
+.library-card--row:hover {
+  border-color: var(--brand-400);
+  box-shadow: var(--shadow-sm);
+}
+
+button.library-card:active {
+  transform: scale(0.985);
+}
+
+.library-card:focus-visible,
+.library-card-main:focus-visible,
+.library-card-delete:focus-visible {
+  outline: 2px solid var(--brand-500, var(--color-accent-primary));
+  outline-offset: 2px;
+}
+
+.library-card-thumb {
+  display: grid;
+  place-items: center;
+  aspect-ratio: 4 / 3;
+  background: var(--surface-sunken);
+  color: var(--text-tertiary);
+  overflow: hidden;
+}
+
+.library-card-thumb img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.library-card-thumb svg {
+  width: 26px;
+  height: 26px;
+}
+
+.library-card-title,
+.library-card-meta {
+  padding: 0 0.75rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.library-card-title {
+  margin-top: 0.375rem;
+  font-size: 0.875rem;
+  font-weight: 500;
+  color: var(--text-primary);
+}
+
+.library-card-meta {
+  font-size: 0.75rem;
+  color: var(--text-tertiary);
+}
+
+/* Floor plans and builds: a row with a thumbnail, and delete on the side. */
+.library-card--row {
+  flex-direction: row;
+  align-items: stretch;
+  padding: 0;
+  cursor: default;
+}
+
+.library-card-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.5rem;
+  border: 0;
+  background: none;
+  font: inherit;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+  border-radius: var(--radius-md);
+}
+
+.library-card--row .library-card-thumb {
+  flex: none;
+  width: 84px;
+  border-radius: calc(var(--radius-md) - 2px);
+}
+
+.library-card-text {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.library-card--row .library-card-title,
+.library-card--row .library-card-meta {
+  padding: 0;
+}
+
+.library-card--row .library-card-title {
+  margin: 0;
+}
+
+.library-card-delete {
+  flex: none;
+  width: 44px;
+  display: grid;
+  place-items: center;
+  border: 0;
+  border-left: 1px solid var(--border-subtle);
+  background: none;
+  color: var(--text-tertiary);
+  cursor: pointer;
+  transition: color 0.15s var(--ease-out), background-color 0.15s var(--ease-out);
+}
+
+.library-card-delete:hover {
+  color: var(--error-500);
+  background: var(--surface-sunken);
+}
+
+.library-card-delete svg {
+  width: 16px;
+  height: 16px;
+}
+
+/* Loading: placeholders the size of the cards they stand in for. */
+.library-card--skeleton {
+  cursor: default;
+  pointer-events: none;
+}
+
+.library-card--skeleton .library-card-thumb,
+.library-skeleton-line {
+  background: linear-gradient(90deg, var(--surface-sunken) 0%, var(--gray-200) 50%, var(--surface-sunken) 100%);
+  background-size: 200% 100%;
+  animation: library-shimmer 1.4s ease-in-out infinite;
+}
+
+.library-skeleton-line {
+  display: block;
+  height: 0.625rem;
+  margin: 0.5rem 0.75rem 0;
+  border-radius: 999px;
+  width: 70%;
+}
+
+.library-skeleton-line--short {
+  width: 40%;
+  margin-top: 0.25rem;
+}
+
+.library-card--skeleton.library-card--row {
+  padding: 0.5rem;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.library-card--skeleton.library-card--row .library-skeleton-line {
+  margin: 0;
+  flex: 1;
+}
+
+.library-card--skeleton.library-card--row .library-skeleton-line--short {
+  display: none;
+}
+
+@keyframes library-shimmer {
+  from { background-position: 100% 0; }
+  to { background-position: -100% 0; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .library-card--skeleton .library-card-thumb,
+  .library-skeleton-line {
+    animation: none;
+  }
+}
+
+/* Empty, no-results, signed-out and failed tabs. */
+.library-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  gap: 0.5rem;
+  padding: 2.5rem 1rem 2rem;
+}
+
+.library-empty-art {
+  display: grid;
+  place-items: center;
+  width: 72px;
+  height: 72px;
+  margin-bottom: 0.5rem;
+  border-radius: 50%;
+  background: var(--color-accent-primary-subtle);
+  color: var(--brand-600, var(--color-accent-primary));
+}
+
+.library-empty-art svg {
+  width: 30px;
+  height: 30px;
+}
+
+.library-empty-title {
+  margin: 0;
+  font-size: 1.0625rem;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.library-empty-text {
+  margin: 0;
+  max-width: 26rem;
+  font-size: 0.9375rem;
+  line-height: 1.5;
+  color: var(--text-secondary);
+}
+
+.library-empty-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 0.625rem;
+  margin-top: 0.75rem;
+}
+
+/* A design's details replace the grid; Back returns to it. */
+.library-preview {
+  margin-top: 0;
+  padding-top: 0;
+  border-top: 0;
+}
+
+.library-back-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.375rem;
+  min-height: 40px;
+  padding: 0 0.75rem 0 0.5rem;
+  border: 0;
+  border-radius: 999px;
+  background: none;
+  font: inherit;
+  font-size: 0.875rem;
+  font-weight: 500;
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+
+.library-back-btn:hover {
+  background: var(--surface-sunken);
+  color: var(--text-primary);
+}
+
+.library-back-btn svg {
+  width: 16px;
+  height: 16px;
+}
+
+.library-preview .my-designs-preview-actions {
+  margin-top: 1rem;
+}
+
+/* Phones: a full-height sheet, two designs per row. */
+@media (max-width: 640px) {
+  .library-modal {
+    padding: 0;
+  }
+
+  .library-modal .library-sheet {
+    min-height: 100dvh;
+    max-width: none;
+    border-radius: 0;
+  }
+
+  .library-tabs {
+    padding: 0 0.75rem;
+  }
+
+  .library-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 0.625rem;
+  }
+
+  .library-grid--list {
+    grid-template-columns: 1fr;
+  }
+
+  .library-search {
+    flex: 1 1 100%;
+  }
+}

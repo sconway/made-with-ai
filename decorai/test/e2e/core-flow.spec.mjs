@@ -11,8 +11,8 @@ const RESULT_URL = 'https://replicate.delivery/test/result.png';
 const PREDICTION_URL = 'https://api.replicate.com/v1/predictions/pred_test_1';
 
 /** Install the fake backend. Returns what the app sent, for assertions. */
-async function mockBackend(page, { anonRemaining = 1, shareLinks = true } = {}) {
-  const seen = { predictions: [], polls: 0, unmocked: [], clientErrors: [], shareUploads: [], shares: [], revoked: [], checkouts: [], credits: 0 };
+async function mockBackend(page, { anonRemaining = 1, shareLinks = true, designs = [] } = {}) {
+  const seen = { predictions: [], polls: 0, unmocked: [], clientErrors: [], shareUploads: [], shares: [], revoked: [], checkouts: [], credits: 0, designs: [...designs], designSaves: [] };
   const isApi = (url) => ['/api/', '/replicate/', '/openai/'].some((p) => url.pathname.startsWith(p)) || url.pathname === '/health';
 
   await page.route(isApi, async (route) => {
@@ -54,6 +54,30 @@ async function mockBackend(page, { anonRemaining = 1, shareLinks = true } = {}) 
         return json({ active: false });
       case '/api/layout':
         return json({ state: null });
+      // The library: a free account keeps 10 designs.
+      case '/api/designs': {
+        if (!route.request().headers().authorization) return json({ error: 'Unauthorized' }, 401);
+        if (route.request().method() === 'POST') {
+          const body = route.request().postDataJSON();
+          seen.designSaves.push(body);
+          const design = {
+            id: `d${seen.designs.length + 1}`,
+            imageUrl: RESULT_URL,
+            prompt: body.prompt,
+            model: body.model,
+            sourceType: body.sourceType,
+            metadata: body.metadata || {},
+            createdAt: new Date().toISOString(),
+          };
+          seen.designs.unshift(design);
+          return json(design, 201);
+        }
+        return json({ designs: seen.designs, total: seen.designs.length, limit: 10, subscriber: false });
+      }
+      case '/api/layouts':
+        return json({ layouts: [] });
+      case '/api/woodworking-projects':
+        return json({ projects: [] });
       case '/api/shares': {
         if (!route.request().headers().authorization) return json({ error: 'Unauthorized' }, 401);
         if (route.request().method() === 'POST') {
@@ -453,4 +477,111 @@ test('/upgrade shows the prices to a signed-out visitor, and buying asks for an 
   await page.locator('#tokens-modal-subscribe-btn').click();
   await expect(page.locator('#signup-form')).toBeVisible();
   expect(seen.checkouts).toEqual([]);
+});
+
+/** A saved design as /api/designs returns it. */
+function savedDesign(i, style) {
+  return {
+    id: `seed${i}`,
+    imageUrl: RESULT_URL,
+    prompt: `Redesign this room in a ${style} style`,
+    model: 'flux',
+    sourceType: 'room-design',
+    metadata: { style },
+    createdAt: new Date(Date.UTC(2026, 9, 1 + i)).toISOString(),
+  };
+}
+
+test('the library asks a signed-out visitor to sign in, on every tab, and Escape closes it', async ({ page }) => {
+  const seen = await mockBackend(page);
+  await page.goto('/library/designs');
+  const library = page.locator('#library-panel');
+  await expect(library).toHaveClass(/show/);
+  await expect(page.locator('#library-empty-title')).toHaveText('Sign in to see your library');
+  await expect(page.locator('#library-tab-designs')).toHaveAttribute('aria-selected', 'true');
+
+  await page.locator('#library-tab-plans').click();
+  await expect(page).toHaveURL(/\/library\/plans$/);
+  await expect(page.locator('#library-tab-plans')).toHaveAttribute('aria-selected', 'true');
+  await expect(page.locator('#library-empty-title')).toHaveText('Sign in to see your library');
+  // Arrow keys move between tabs.
+  await page.keyboard.press('ArrowRight');
+  await expect(page.locator('#library-tab-builds')).toBeFocused();
+  await expect(page).toHaveURL(/\/library\/builds$/);
+
+  await page.keyboard.press('Escape');
+  await expect(library).not.toHaveClass(/show/);
+  await expect(page).toHaveURL(/\/$/);
+
+  await page.goto('/library/designs');
+  await page.locator('#library-empty [data-library-action="signin"]').click();
+  await expect(page.locator('#auth-modal')).toHaveClass(/show/);
+  expect(seen.unmocked).toEqual([]);
+});
+
+test("a free account's designs are kept in the library, with the limit and a way to keep more", async ({ page }) => {
+  await signIn(page);
+  const seen = await mockBackend(page);
+  await generateOnce(page);
+  await expect.poll(() => seen.designSaves.length, { message: 'the result is saved for a free account' }).toBe(1);
+
+  await page.locator('#user-menu-btn').click();
+  await page.locator('#my-designs-btn').click();
+  await expect(page).toHaveURL(/\/library\/designs$/);
+  const cards = page.locator('#library-grid .library-card:not(.library-card--skeleton)');
+  await expect(cards).toHaveCount(1);
+  await expect(page.locator('#library-status-text')).toHaveText('1 of 10 kept. Free accounts keep the latest 10 designs.');
+  await expect(page.locator('#library-tab-designs .library-tab-count')).toHaveText(' 1');
+
+  // A design opens its details in place; Back returns to the grid.
+  await cards.first().click();
+  await expect(page.locator('#my-designs-preview')).toBeVisible();
+  await expect(page.locator('#library-grid')).toBeHidden();
+  await page.locator('#my-designs-preview-close').click();
+  await expect(cards.first()).toBeFocused();
+
+  // Other tabs say what fills them.
+  await page.locator('#library-tab-plans').click();
+  await expect(page.locator('#library-empty-title')).toHaveText('No floor plans yet');
+  await page.locator('#library-tab-designs').click();
+
+  await page.locator('#library-status-upsell').click();
+  await expect(page.locator('#buy-tokens-modal')).toBeVisible();
+  await expect(page.locator('#upgrade-title')).toHaveText('Keep more of your designs');
+  await expect(page.locator('#upgrade-blocked')).toContainText('Free accounts keep their latest 10 designs');
+  await page.keyboard.press('Escape');
+  await expect(page.locator('#buy-tokens-modal')).toBeHidden();
+  await expect(page.locator('#library-panel'), 'Escape closed only the sheet on top').toHaveClass(/show/);
+
+  // Opening a design takes them to it, and the library steps aside.
+  await cards.first().click();
+  await page.locator('#my-designs-open-btn').click();
+  await expect(page.locator('#library-panel')).not.toHaveClass(/show/);
+  await expect(page).toHaveURL(/\/result\/d1$/);
+  await expect(page.locator('#design-carousel .generated-image').first()).toBeVisible();
+  expect(seen.unmocked).toEqual([]);
+});
+
+test('search appears past twelve designs, filters as you type, and says when nothing matches', async ({ page }) => {
+  await signIn(page);
+  const styles = ['Japandi', 'Scandinavian', 'Industrial', 'Coastal', 'Bohemian', 'Mid-century', 'Minimal'];
+  const designs = Array.from({ length: 14 }, (_, i) => savedDesign(i, styles[i % styles.length]));
+  const seen = await mockBackend(page, { designs });
+  await page.goto('/library/designs');
+  const cards = page.locator('#library-grid .library-card:not(.library-card--skeleton)');
+  await expect(cards).toHaveCount(14);
+  await expect(page.locator('#library-status-text')).toContainText('14 saved from your plan');
+  await expect(page.locator('#library-status-text')).toContainText('Nothing here is deleted');
+
+  const search = page.locator('#library-search');
+  await expect(search).toBeVisible();
+  await search.fill('japandi');
+  await expect(cards).toHaveCount(2);
+  await search.fill('velvet');
+  await expect(cards).toHaveCount(0);
+  await expect(page.locator('#library-empty-title')).toHaveText('Nothing matches \u201cvelvet\u201d');
+  await page.locator('#library-empty [data-library-action="clear-search"]').click();
+  await expect(cards).toHaveCount(14);
+  await expect(search).toBeFocused();
+  expect(seen.unmocked).toEqual([]);
 });

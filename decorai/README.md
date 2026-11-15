@@ -79,8 +79,8 @@ AI floor-plan import.
    `sql/free_generation_daily_cap.sql`), but don't touch the quota. `freeRouteAwayFromProplabs()` in `src/main.js` decides the route —
    proplabs takes only a `room` and `furniture_style` enum, so anything it
    would silently drop goes to the prompt-capable model instead.
-4. Compare, refine, regenerate. Subscribers' results are saved to Supabase
-   Storage and appear in My Designs.
+4. Compare, refine, regenerate. Every signed-in account's results are saved to
+   Supabase Storage and appear in the library (`/library/designs`).
 
 ## Accounts, credits and limits
 
@@ -91,6 +91,15 @@ AI floor-plan import.
 - One-time token packs ($4.99/10, $9.99/20, $19.99/50) via Stripe, plus a
   subscription capped at `SUBSCRIPTION_MONTHLY_LIMIT` (default 50) generations
   per calendar month. Token packs act as overflow once the cap is spent.
+- Every signed-in account keeps its designs in the library: free accounts the
+  latest `MAX_SAVED_DESIGNS_FREE` (default 10), subscribers up to
+  `MAX_SAVED_DESIGNS_SUBSCRIBER` (default 200). When the library is full the
+  oldest design makes way for the new one. An account holding more than its
+  limit (a subscriber whose plan ended) loses nothing: new designs just aren't
+  saved until it is back under the limit (`lib/designRetention.js`).
+- The library (`/library/{designs,plans,builds}`, `src/library.js`) shows
+  designs, floor plans and woodworking builds in one sheet, with search once a
+  tab holds more than 12 items. The editors keep their own quick switchers.
 - Every paywall opens one upgrade sheet (`src/upgrade.js`) that names what was
   blocked, what it costs and what happens after paying; `/upgrade` opens it as
   a pricing page. Checkout returns to the page the person was on (the server

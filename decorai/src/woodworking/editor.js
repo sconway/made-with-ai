@@ -1786,7 +1786,15 @@ const WoodworkingEditor = (() => {
         if (e.key === 'Escape')                            { e.preventDefault(); clearSelection(); return; }
     }
 
-    return { init, show, hide, getState, loadState };
+    // The library (main.js) opens and deletes builds from outside the editor.
+    function projectDeleted(id) {
+        if (id !== currentProjectId) return;
+        currentProjectId = null;
+        updateProjectTitleUI();
+        markDirty();
+    }
+
+    return { init, show, hide, getState, loadState, openProject: loadProject, projectDeleted };
 })();
 
 // Self-initialize on DOM ready (mirrors floorPlanEditor.js pattern). Safe no-op if markup is missing.

@@ -8,6 +8,7 @@ import {
     authParam,
     setAuthParam,
     current as currentRoute,
+    isApplying as routeIsApplying,
 } from './router.js';
 import { initSheets } from './sheets.js';
 import { initWaitState, waitStateMarkup } from './waitState.js';
@@ -19,8 +20,11 @@ import { track, flushAnalytics } from './analytics.js';
 import { initErrorReporting, reportError } from './errorReporting.js';
 import { initShareDialog, openShareDialog } from './shareDialog.js';
 import {
-    describeGate, formatPrice, saveUpgradeReturn, takeUpgradeReturn, DEFAULT_SUBSCRIPTION,
+    describeGate, formatPrice, saveUpgradeReturn, takeUpgradeReturn, DEFAULT_SUBSCRIPTION, DEFAULT_SAVED_DESIGNS,
 } from './upgrade.js';
+import {
+    LIBRARY_TABS, TAB_LABELS, normaliseTab, shouldShowSearch, filterLibraryItems, designsStatus, emptyState,
+} from './library.js';
 
 // First thing: errors thrown while the rest of this module sets up are exactly
 // the ones that leave a visitor looking at a dead page.
@@ -1564,7 +1568,8 @@ function openUpgrade(gate = 'plans') {
     if (typeof gate !== 'string') gate = 'plans'; // when bound straight to a click
     const packs = (appConfig?.tokenPacks && appConfig.tokenPacks.length) ? appConfig.tokenPacks : DEFAULT_TOKEN_PACKS;
     const subscription = appConfig?.subscription || DEFAULT_SUBSCRIPTION;
-    const copy = describeGate(gate, { packs, subscription, isSubscriber: userHasSubscription });
+    const savedDesigns = appConfig?.savedDesigns || DEFAULT_SAVED_DESIGNS;
+    const copy = describeGate(gate, { packs, subscription, savedDesigns, isSubscriber: userHasSubscription });
     activeUpgradeGate = copy.gate;
     track('upgrade_shown', { gate: copy.gate, signed_in: !!currentUser });
 
@@ -1817,9 +1822,9 @@ async function resumeAfterUpgrade(confirmation) {
             return;
         }
         case 'library':
-            showToastMessage(`${confirmation} Designs you make are now saved to your library.`, 'success', {
+            showToastMessage(`${confirmation} Your library now keeps up to ${(appConfig?.savedDesigns || DEFAULT_SAVED_DESIGNS).subscriber} designs.`, 'success', {
                 actionLabel: 'Open library',
-                onAction: openDesignsModal,
+                onAction: () => openLibrary('designs'),
                 duration: 12000,
             });
             return;
@@ -2279,12 +2284,14 @@ async function deleteLayoutById(id) {
         if (typeof window.__decoraitCurrentLayoutId !== 'undefined' && window.__decoraitCurrentLayoutId === id) window.__decoraitCurrentLayoutId = null;
         refreshLayoutsList();
         showLayoutSaveToast('Layout deleted.');
+        return true;
     } catch (e) {
         showLayoutSaveToast(e?.message || 'Failed to delete layout', true);
+        return false;
     }
 }
 
-// ===== SAVED GENERATED DESIGNS (subscription-only) =====
+// ===== SAVED GENERATED DESIGNS (every signed-in account; the server caps how many) =====
 
 const DESIGN_SOURCE_LABELS = {
     'room-design': 'Room design',
@@ -2320,7 +2327,8 @@ async function autoSaveGeneratedDesign(imageUrl, {
     metadata = {},
     savedDesignId = null,
 } = {}) {
-    if (!userHasSubscription || !currentSession?.access_token || !imageUrl) return savedDesignId || null;
+    // Every signed-in account keeps its designs; the server applies the limit.
+    if (!currentUser || !currentSession?.access_token || !imageUrl) return savedDesignId || null;
     if (savedDesignId) return savedDesignId;
     try {
         const res = await fetch(`${PROXY_SERVER_URL}/api/designs`, {
@@ -2331,8 +2339,9 @@ async function autoSaveGeneratedDesign(imageUrl, {
             },
             body: JSON.stringify({ imageUrl, prompt, model, sourceType, metadata }),
         });
+        // 409: not kept (an account over its limit). The library explains it.
         if (!res.ok) {
-            console.warn('autoSaveGeneratedDesign failed:', res.status);
+            if (res.status !== 409) console.warn('autoSaveGeneratedDesign failed:', res.status);
             return null;
         }
         const data = await res.json();
@@ -2359,14 +2368,31 @@ async function onGenerationSuccess(imageUrl, saveMeta = {}) {
         metadata: saveMeta.metadata && typeof saveMeta.metadata === 'object' ? saveMeta.metadata : {},
     });
     await autoSaveGeneratedDesign(imageUrl, saveMeta);
+    libraryState.items.designs = null; // the library re-reads it next time
     // A new saved design may be the user's first — re-check so the
     // "use a saved design" option appears without needing a reload.
     invalidateUseSavedAvailability();
     refreshUseSavedAvailability();
 }
 
+/** The library's first page: designs plus how many the account keeps. */
+async function fetchSavedDesignsPage(bustCache = false) {
+    if (!currentSession?.access_token) return { designs: [], total: 0, limit: 0, subscriber: false };
+    const url = `${PROXY_SERVER_URL}/api/designs?limit=100` + (bustCache ? `&_=${Date.now()}` : '');
+    const res = await fetch(url, { headers: { Authorization: `Bearer ${currentSession.access_token}` } });
+    if (!res.ok) throw new Error(`designs ${res.status}`);
+    const data = await res.json();
+    const designs = Array.isArray(data.designs) ? data.designs : [];
+    return {
+        designs,
+        total: Number.isFinite(data.total) ? data.total : designs.length,
+        limit: data.limit || (appConfig?.savedDesigns || DEFAULT_SAVED_DESIGNS)[data.subscriber ? 'subscriber' : 'free'],
+        subscriber: !!data.subscriber,
+    };
+}
+
 async function fetchSavedDesigns(bustCache = false) {
-    if (!currentSession?.access_token || !userHasSubscription) return [];
+    if (!currentSession?.access_token) return [];
     try {
         const url = `${PROXY_SERVER_URL}/api/designs` + (bustCache ? `?_=${Date.now()}` : '');
         const res = await fetch(url, {
@@ -2476,46 +2502,493 @@ function renderDesignPreviewDetails(design) {
     }
 }
 
-function refreshDesignsGallery(bustCache = false) {
-    const gridEl = document.getElementById('my-designs-grid');
-    if (!gridEl) return;
-    gridEl.innerHTML = '<p class="my-designs-loading" role="status" aria-live="polite"><span class="my-layouts-spinner" aria-hidden="true"></span>Loading your designs…</p>';
-    fetchSavedDesigns(bustCache).then(designs => {
-        gridEl.innerHTML = '';
-        if (designs.length === 0) {
-            gridEl.innerHTML = '<p class="my-designs-empty">No saved designs yet. Generate a room design and it will appear here automatically.</p>';
-            return;
+// ===== LIBRARY (/library/{designs,plans,builds}) =====
+// One place for everything an account keeps. The words and rules live in
+// src/library.js; this draws them. The floor plan and woodworking editors keep
+// their own quick switchers ("My layouts", "Projects") for use mid-edit.
+
+const libraryState = {
+    tab: 'designs',
+    // null = not loaded yet, 'error' = failed, otherwise an array
+    items: { designs: null, plans: null, builds: null },
+    designsMeta: null,
+    query: '',
+    // true when opening the library added a history entry, so closing can go back
+    pushedUrl: false,
+    previewFrom: null,
+    openedFrom: null,
+};
+
+const LIBRARY_SKELETON_COUNT = 6;
+
+function libraryPanel() {
+    return document.getElementById('library-panel');
+}
+
+function isLibraryOpen() {
+    return !!libraryPanel()?.classList.contains('show');
+}
+
+function libraryItemText(tab, item) {
+    if (tab === 'designs') {
+        return [
+            formatDesignTitle(item),
+            item.prompt,
+            formatDesignSourceLabel(item.sourceType),
+            item.metadata?.roomType && DESIGN_ROOM_TYPE_LABELS[item.metadata.roomType],
+        ].filter(Boolean).join(' ');
+    }
+    return item.name || '';
+}
+
+function openLibrary(tab = 'designs', { focus = true } = {}) {
+    const panel = libraryPanel();
+    if (!panel) return;
+    const wasOpen = isLibraryOpen();
+    const nextTab = normaliseTab(tab);
+    if (!wasOpen) {
+        libraryState.openedFrom = document.activeElement;
+        panel.classList.remove('hidden');
+        panel.classList.add('show');
+        // A route being applied already owns the URL; anything else pushes one,
+        // so Back closes the library.
+        libraryState.pushedUrl = !routeIsApplying() && currentRoute().name !== 'library';
+        if (libraryState.pushedUrl) syncUrl('library', { tab: nextTab });
+        track('library_opened', { tab: nextTab, signed_in: !!currentUser });
+    }
+    selectLibraryTab(nextTab);
+    // Focus moves into the sheet (not onto a tab, which would draw a focus
+    // ring for a mouse click); Tab then reaches the tabs.
+    if (focus && !wasOpen) panel.querySelector('.library-sheet')?.focus({ preventScroll: true });
+    if (typeof feather !== 'undefined') feather.replace();
+}
+
+/**
+ * @param {object} [opts]
+ * @param {boolean} [opts.leaveUrl] another navigation follows (opening a
+ *   design or an editor), so don't touch history here
+ */
+function closeLibrary({ leaveUrl = false } = {}) {
+    const panel = libraryPanel();
+    if (!panel || !isLibraryOpen()) return;
+    closeSavedDesignPreview();
+    panel.classList.remove('show');
+    panel.classList.add('hidden');
+    if (!leaveUrl && currentRoute().name === 'library') {
+        if (libraryState.pushedUrl) window.history.back();
+        else navigate('home', {}, { replace: true });
+    }
+    libraryState.pushedUrl = false;
+    const back = libraryState.openedFrom;
+    libraryState.openedFrom = null;
+    if (!leaveUrl && back && document.contains(back) && back.offsetParent !== null) back.focus();
+}
+
+function selectLibraryTab(tab, { focusTab = false } = {}) {
+    const t = normaliseTab(tab);
+    const changed = t !== libraryState.tab;
+    libraryState.tab = t;
+    if (changed) {
+        libraryState.query = '';
+        const search = document.getElementById('library-search');
+        if (search) search.value = '';
+    }
+    closeSavedDesignPreview();
+    document.querySelectorAll('#library-panel .library-tab').forEach((btn) => {
+        const on = btn.dataset.tab === t;
+        btn.setAttribute('aria-selected', on ? 'true' : 'false');
+        btn.tabIndex = on ? 0 : -1;
+        if (on && focusTab) btn.focus();
+    });
+    document.getElementById('library-tabpanel')?.setAttribute('aria-labelledby', `library-tab-${t}`);
+    const search = document.getElementById('library-search');
+    if (search) search.placeholder = `Search ${TAB_LABELS[t].toLowerCase()}`;
+    // Keep the address on the tab being shown, without adding history per tab.
+    if (currentRoute().name === 'library' && currentRoute().params?.tab !== t && !routeIsApplying()) {
+        navigate('library', { tab: t }, { replace: true, silent: true });
+    }
+    renderLibrary();
+    if (currentUser && libraryState.items[t] === null) loadLibraryTab(t);
+}
+
+async function fetchBuilds() {
+    if (!currentSession?.access_token) return [];
+    const res = await fetch(`${PROXY_SERVER_URL}/api/woodworking-projects`, {
+        headers: { Authorization: `Bearer ${currentSession.access_token}` },
+    });
+    if (!res.ok) throw new Error(`builds ${res.status}`);
+    const data = await res.json();
+    return Array.isArray(data.projects) ? data.projects : [];
+}
+
+async function fetchPlansStrict(bustCache) {
+    if (!currentSession?.access_token) return [];
+    const url = `${PROXY_SERVER_URL}/api/layouts` + (bustCache ? `?_=${Date.now()}` : '');
+    const res = await fetch(url, {
+        headers: { Authorization: `Bearer ${currentSession.access_token}` },
+        ...(bustCache && { cache: 'no-store' }),
+    });
+    if (!res.ok) throw new Error(`layouts ${res.status}`);
+    const data = await res.json();
+    const layouts = data.layouts;
+    return Array.isArray(layouts) ? layouts : (layouts ? [layouts] : []);
+}
+
+let libraryLoadSeq = 0;
+
+async function loadLibraryTab(tab, bustCache = false) {
+    const t = normaliseTab(tab);
+    if (!currentUser) { renderLibrary(); return; }
+    const seq = ++libraryLoadSeq;
+    libraryState.items[t] = null;
+    if (t === libraryState.tab) renderLibrary();
+    try {
+        if (t === 'designs') {
+            const page = await fetchSavedDesignsPage(bustCache);
+            libraryState.items.designs = page.designs;
+            libraryState.designsMeta = page;
+        } else if (t === 'plans') {
+            libraryState.items.plans = await fetchPlansStrict(bustCache);
+        } else {
+            libraryState.items.builds = await fetchBuilds();
         }
-        designs.forEach(design => {
-            const card = document.createElement('button');
-            card.type = 'button';
-            card.className = 'my-designs-card';
-            card.dataset.designId = design.id;
-            card.setAttribute('aria-label', `View ${formatDesignTitle(design)} from ${formatLayoutDate(design.createdAt)}`);
+    } catch (err) {
+        console.warn(`Library: ${t} failed to load`, err);
+        libraryState.items[t] = 'error';
+    }
+    if (seq === libraryLoadSeq || t === libraryState.tab) renderLibrary();
+}
 
-            const img = document.createElement('img');
-            img.className = 'my-designs-card-img';
-            img.alt = '';
-            img.loading = 'lazy';
-            img.src = design.imageUrl || '';
-            img.onerror = function () {
-                this.style.visibility = 'hidden';
-            };
+function libraryCountLabel(tab) {
+    const items = libraryState.items[tab];
+    if (!Array.isArray(items)) return '';
+    if (tab === 'designs' && libraryState.designsMeta) return String(libraryState.designsMeta.total);
+    return String(items.length);
+}
 
-            const meta = document.createElement('span');
-            meta.className = 'my-designs-card-meta';
-            meta.textContent = formatLayoutDate(design.createdAt);
+function renderLibrary() {
+    const tab = libraryState.tab;
+    const grid = document.getElementById('library-grid');
+    const empty = document.getElementById('library-empty');
+    const status = document.getElementById('library-status');
+    const statusText = document.getElementById('library-status-text');
+    const upsell = document.getElementById('library-status-upsell');
+    const searchWrap = document.getElementById('library-search-wrap');
+    if (!grid || !empty) return;
 
-            const label = document.createElement('span');
-            label.className = 'my-designs-card-label';
-            label.textContent = formatDesignTitle(design);
+    document.querySelectorAll('#library-panel .library-tab').forEach((btn) => {
+        const count = btn.querySelector('.library-tab-count');
+        const label = currentUser ? libraryCountLabel(btn.dataset.tab) : '';
+        if (count) count.textContent = label ? ` ${label}` : '';
+    });
 
-            card.append(img, label, meta);
-            card.addEventListener('click', () => openSavedDesignPreview(design));
-            gridEl.appendChild(card);
+    grid.innerHTML = '';
+    grid.classList.toggle('library-grid--list', tab !== 'designs');
+    status?.classList.add('hidden');
+    searchWrap?.classList.add('hidden');
+    empty.classList.add('hidden');
+    grid.setAttribute('aria-busy', 'false');
+
+    if (!currentUser) {
+        showLibraryEmpty(emptyState(tab, { signedIn: false }));
+        return;
+    }
+
+    const items = libraryState.items[tab];
+    if (items === null) {
+        grid.setAttribute('aria-busy', 'true');
+        for (let i = 0; i < LIBRARY_SKELETON_COUNT; i++) {
+            const sk = document.createElement('div');
+            sk.className = `library-card library-card--skeleton${tab !== 'designs' ? ' library-card--row' : ''}`;
+            sk.setAttribute('aria-hidden', 'true');
+            sk.innerHTML = '<span class="library-card-thumb"></span><span class="library-skeleton-line"></span><span class="library-skeleton-line library-skeleton-line--short"></span>';
+            grid.appendChild(sk);
+        }
+        return;
+    }
+    if (items === 'error') {
+        showLibraryEmpty(emptyState(tab, { signedIn: true, failed: true }));
+        return;
+    }
+
+    if (tab === 'designs' && libraryState.designsMeta && status && statusText) {
+        const line = designsStatus(libraryState.designsMeta);
+        if (line) {
+            statusText.textContent = line.text;
+            status.classList.remove('hidden');
+            status.classList.toggle('is-full', line.full);
+            upsell?.classList.toggle('hidden', !line.upsell);
+        }
+    }
+    if (shouldShowSearch(items.length)) searchWrap?.classList.remove('hidden');
+
+    const shown = filterLibraryItems(items, libraryState.query, (item) => libraryItemText(tab, item));
+    if (!shown.length) {
+        showLibraryEmpty(emptyState(tab, { signedIn: true, query: items.length ? libraryState.query : '' }));
+        return;
+    }
+    for (const item of shown) {
+        grid.appendChild(tab === 'designs' ? designCard(item) : tab === 'plans' ? planCard(item) : buildCard(item));
+    }
+    if (typeof feather !== 'undefined') feather.replace();
+}
+
+function showLibraryEmpty(state) {
+    const empty = document.getElementById('library-empty');
+    const icon = document.getElementById('library-empty-icon');
+    const title = document.getElementById('library-empty-title');
+    const text = document.getElementById('library-empty-text');
+    const actions = document.getElementById('library-empty-actions');
+    if (!empty) return;
+    if (icon) {
+        // feather.replace() swaps the <i> for an <svg>; put a fresh <i> back.
+        const fresh = document.createElement('i');
+        fresh.id = 'library-empty-icon';
+        fresh.setAttribute('data-feather', state.icon);
+        icon.replaceWith(fresh);
+    }
+    if (title) title.textContent = state.title;
+    if (text) text.textContent = state.text;
+    if (actions) {
+        actions.innerHTML = '';
+        for (const a of state.actions) {
+            const b = document.createElement('button');
+            b.type = 'button';
+            b.className = a.primary ? 'primary-btn' : 'secondary-btn';
+            b.textContent = a.label;
+            b.dataset.libraryAction = a.id;
+            actions.appendChild(b);
+        }
+    }
+    empty.classList.remove('hidden');
+    if (typeof feather !== 'undefined') feather.replace();
+}
+
+function onLibraryEmptyAction(id) {
+    switch (id) {
+        case 'signin':
+            showAuthModal('login');
+            break;
+        case 'signup':
+            showAuthModal('signup');
+            break;
+        case 'retry':
+            loadLibraryTab(libraryState.tab, true);
+            break;
+        case 'clear-search': {
+            libraryState.query = '';
+            const search = document.getElementById('library-search');
+            if (search) { search.value = ''; search.focus(); }
+            renderLibrary();
+            break;
+        }
+        case 'new-design':
+            closeLibrary({ leaveUrl: true });
+            navigate('home');
+            break;
+        case 'open-plan':
+            closeLibrary({ leaveUrl: true });
+            openEditor('plan');
+            break;
+        case 'open-build':
+            closeLibrary({ leaveUrl: true });
+            openEditor('build');
+            break;
+        default:
+            break;
+    }
+}
+
+function designCard(design) {
+    const card = document.createElement('button');
+    card.type = 'button';
+    card.className = 'library-card';
+    card.dataset.designId = design.id;
+    card.setAttribute('aria-label', `${formatDesignTitle(design)}, ${formatLayoutDate(design.createdAt)}. View details`);
+    const thumb = document.createElement('span');
+    thumb.className = 'library-card-thumb';
+    const img = document.createElement('img');
+    img.alt = '';
+    img.loading = 'lazy';
+    img.decoding = 'async';
+    img.src = design.imageUrl || '';
+    img.onerror = function () { this.remove(); };
+    thumb.appendChild(img);
+    const title = document.createElement('span');
+    title.className = 'library-card-title';
+    title.textContent = formatDesignTitle(design);
+    const meta = document.createElement('span');
+    meta.className = 'library-card-meta';
+    meta.textContent = formatLayoutDate(design.createdAt);
+    card.append(thumb, title, meta);
+    card.addEventListener('click', () => openSavedDesignPreview(design));
+    return card;
+}
+
+/** A floor plan or build: open on the main part, delete on the side. */
+function itemCard({ name, updatedAt, thumbSrc, icon, openLabel, onOpen, onDelete }) {
+    const card = document.createElement('div');
+    card.className = 'library-card library-card--row';
+    const main = document.createElement('button');
+    main.type = 'button';
+    main.className = 'library-card-main';
+    main.setAttribute('aria-label', `${openLabel} ${name}`);
+    const thumb = document.createElement('span');
+    thumb.className = 'library-card-thumb';
+    if (thumbSrc) {
+        const img = document.createElement('img');
+        img.alt = '';
+        img.loading = 'lazy';
+        img.src = thumbSrc;
+        img.onerror = function () { this.remove(); };
+        thumb.appendChild(img);
+    } else {
+        const i = document.createElement('i');
+        i.setAttribute('data-feather', icon);
+        i.setAttribute('aria-hidden', 'true');
+        thumb.appendChild(i);
+    }
+    const text = document.createElement('span');
+    text.className = 'library-card-text';
+    const title = document.createElement('span');
+    title.className = 'library-card-title';
+    title.textContent = name;
+    const meta = document.createElement('span');
+    meta.className = 'library-card-meta';
+    meta.textContent = updatedAt ? `Updated ${formatLayoutDate(updatedAt)}` : '';
+    text.append(title, meta);
+    main.append(thumb, text);
+    main.addEventListener('click', onOpen);
+    const del = document.createElement('button');
+    del.type = 'button';
+    del.className = 'library-card-delete';
+    del.setAttribute('aria-label', `Delete ${name}`);
+    del.innerHTML = '<i data-feather="trash-2" aria-hidden="true"></i>';
+    del.addEventListener('click', onDelete);
+    card.append(main, del);
+    return card;
+}
+
+function planCard(layout) {
+    const name = layout.name || 'Unnamed floor plan';
+    const preview = typeof layout.preview_data_url === 'string' && layout.preview_data_url.startsWith('data:image/')
+        ? layout.preview_data_url
+        : null;
+    return itemCard({
+        name,
+        updatedAt: layout.updated_at,
+        thumbSrc: preview,
+        icon: 'grid',
+        openLabel: 'Open floor plan',
+        onOpen: () => openPlanFromLibrary(layout.id),
+        onDelete: async () => {
+            if (await deleteLayoutById(layout.id)) {
+                showToastMessage('Floor plan deleted.', 'success');
+                loadLibraryTab('plans', true);
+            }
+        },
+    });
+}
+
+function buildCard(project) {
+    const name = project.name || 'Untitled project';
+    return itemCard({
+        name,
+        updatedAt: project.updated_at,
+        thumbSrc: null,
+        icon: 'box',
+        openLabel: 'Open build',
+        onOpen: () => openBuildFromLibrary(project.id),
+        onDelete: () => deleteBuildFromLibrary(project.id, name),
+    });
+}
+
+async function openPlanFromLibrary(id) {
+    closeLibrary({ leaveUrl: true });
+    await openEditor('plan');
+    const screen = document.getElementById('layout-editor-screen');
+    if (screen && !screen.classList.contains('hidden')) await loadLayoutById(id);
+}
+
+async function openBuildFromLibrary(id) {
+    closeLibrary({ leaveUrl: true });
+    await openEditor('build');
+    const screen = document.getElementById('woodworking-editor-screen');
+    if (screen && !screen.classList.contains('hidden')) await WoodworkingEditor?.openProject?.(id);
+}
+
+async function deleteBuildFromLibrary(id, name) {
+    if (!currentSession?.access_token) return;
+    const ok = await showConfirmDialog(`Delete “${name}”? This can’t be undone.`, 'Delete build', 'Delete', 'Cancel');
+    if (!ok) return;
+    try {
+        const res = await fetch(`${PROXY_SERVER_URL}/api/woodworking-projects/${id}`, {
+            method: 'DELETE',
+            headers: { Authorization: `Bearer ${currentSession.access_token}` },
         });
-    }).catch(() => {
-        gridEl.innerHTML = '<p class="my-designs-empty">Couldn\u2019t load your designs. Try again in a moment.</p>';
+        if (!res.ok && res.status !== 204) throw new Error(`HTTP ${res.status}`);
+        WoodworkingEditor?.projectDeleted?.(id);
+        showToastMessage('Build deleted.', 'success');
+        loadLibraryTab('builds', true);
+    } catch (err) {
+        console.warn('Library: delete build failed', err);
+        showToastMessage('That build wasn’t deleted. Try again in a moment.', 'error');
+    }
+}
+
+/** Sign-in, sign-out or a new plan: what the library shows has changed. */
+let libraryAuthKey = null;
+function onLibraryAuthChange() {
+    const key = `${currentUser?.id || 'anon'}:${userHasSubscription ? 'sub' : 'free'}`;
+    if (key === libraryAuthKey) return;
+    libraryAuthKey = key;
+    libraryState.items = { designs: null, plans: null, builds: null };
+    libraryState.designsMeta = null;
+    if (isLibraryOpen()) selectLibraryTab(libraryState.tab);
+}
+
+function initLibrary() {
+    const panel = libraryPanel();
+    if (!panel) return;
+    document.getElementById('library-close')?.addEventListener('click', () => closeLibrary());
+    document.getElementById('my-designs-preview-close')?.addEventListener('click', closeSavedDesignPreview);
+    panel.addEventListener('click', (e) => {
+        if (e.target === panel) closeLibrary();
+        const action = e.target.closest?.('[data-library-action]');
+        if (action) onLibraryEmptyAction(action.dataset.libraryAction);
+    });
+    document.getElementById('library-status-upsell')?.addEventListener('click', () => {
+        track('library_upsell_clicked', { full: !!document.getElementById('library-status')?.classList.contains('is-full') });
+        openUpgrade('library');
+    });
+    const tabs = Array.from(panel.querySelectorAll('.library-tab'));
+    tabs.forEach((btn, i) => {
+        btn.addEventListener('click', () => selectLibraryTab(btn.dataset.tab));
+        // Arrow keys move along the tabs (WAI-ARIA tabs pattern).
+        btn.addEventListener('keydown', (e) => {
+            let next = null;
+            if (e.key === 'ArrowRight') next = tabs[(i + 1) % tabs.length];
+            else if (e.key === 'ArrowLeft') next = tabs[(i - 1 + tabs.length) % tabs.length];
+            else if (e.key === 'Home') next = tabs[0];
+            else if (e.key === 'End') next = tabs[tabs.length - 1];
+            if (!next) return;
+            e.preventDefault();
+            selectLibraryTab(next.dataset.tab, { focusTab: true });
+        });
+    });
+    const search = document.getElementById('library-search');
+    search?.addEventListener('input', () => {
+        libraryState.query = search.value;
+        renderLibrary();
+    });
+    document.addEventListener('keydown', (e) => {
+        if (e.key !== 'Escape' || !isLibraryOpen()) return;
+        // A sheet opened over the library (sign-in, upgrade, a confirm) closes first.
+        const above = document.querySelector('.modal.show:not(#library-panel), .confirm-dialog.show, .custom-dialog.show');
+        if (above) return;
+        const preview = document.getElementById('my-designs-preview');
+        if (preview && !preview.classList.contains('hidden')) closeSavedDesignPreview();
+        else closeLibrary();
     });
 }
 
@@ -2531,6 +3004,9 @@ function openSavedDesignPreview(design) {
     renderDesignPreviewDetails(design);
     panel.dataset.designId = design.id;
     panel.classList.remove('hidden');
+    document.getElementById('library-browse')?.classList.add('hidden');
+    libraryState.previewFrom = document.activeElement;
+    document.getElementById('my-designs-preview-close')?.focus();
 
     if (openBtn) {
         openBtn.onclick = () => loadSavedDesignIntoResults(design);
@@ -2543,13 +3019,18 @@ function openSavedDesignPreview(design) {
 
 function closeSavedDesignPreview() {
     const panel = document.getElementById('my-designs-preview');
-    if (panel) panel.classList.add('hidden');
+    if (!panel || panel.classList.contains('hidden')) return;
+    panel.classList.add('hidden');
+    document.getElementById('library-browse')?.classList.remove('hidden');
+    const back = libraryState.previewFrom;
+    libraryState.previewFrom = null;
+    if (back && document.contains(back)) back.focus();
 }
 
 async function loadSavedDesignIntoResults(design) {
     if (!design?.imageUrl) return;
     closeSavedDesignPreview();
-    closeDesignsModal();
+    closeLibrary({ leaveUrl: true });
 
     if (wizardContainer) wizardContainer.classList.add('hidden');
     if (wizardProgress) wizardProgress.classList.add('hidden');
@@ -2597,32 +3078,12 @@ async function deleteSavedDesignById(id) {
         });
         if (!res.ok) throw new Error('Failed to delete');
         closeSavedDesignPreview();
-        refreshDesignsGallery(true);
+        loadLibraryTab('designs', true);
+        invalidateUseSavedAvailability();
+        refreshUseSavedAvailability();
     } catch (e) {
         showAlertDialog(e?.message || 'Failed to delete design');
     }
-}
-
-function openDesignsModal() {
-    if (!userHasSubscription) {
-        openUpgrade('library');
-        return;
-    }
-    const panel = document.getElementById('my-designs-panel');
-    if (!panel) return;
-    panel.classList.remove('hidden');
-    panel.classList.add('show');
-    refreshDesignsGallery();
-    if (typeof feather !== 'undefined') feather.replace();
-}
-
-function closeDesignsModal() {
-    const panel = document.getElementById('my-designs-panel');
-    if (panel) {
-        panel.classList.remove('show');
-        panel.classList.add('hidden');
-    }
-    closeSavedDesignPreview();
 }
 
 window.__decoraitSaveGeneratedDesign = autoSaveGeneratedDesign;
@@ -2639,8 +3100,6 @@ function updateAuthUI() {
         if (userEmailDisplay) userEmailDisplay.textContent = currentUser.email?.split('@')[0] || 'Account';
         updateTokensDisplay();
         updateSubscriptionUsageDisplay();
-        const myDesignsBtn = document.getElementById('my-designs-btn');
-        if (myDesignsBtn) myDesignsBtn.classList.toggle('hidden', !userHasSubscription);
         const subscribeDropdownBtn = document.getElementById('subscribe-dropdown-btn');
         if (subscribeDropdownBtn) subscribeDropdownBtn.classList.toggle('hidden', userHasSubscription);
     } else {
@@ -2652,6 +3111,7 @@ function updateAuthUI() {
     }
     // Reveal/hide the "use a saved design" entry points as auth state changes.
     refreshUseSavedAvailability();
+    onLibraryAuthChange();
     if (typeof feather !== 'undefined') feather.replace();
 }
 
@@ -3501,23 +3961,11 @@ document.addEventListener('DOMContentLoaded', async () => {
         });
     }
     const myDesignsBtn = document.getElementById('my-designs-btn');
-    const myDesignsPanel = document.getElementById('my-designs-panel');
-    const myDesignsClose = document.getElementById('my-designs-close');
-    const myDesignsPreviewClose = document.getElementById('my-designs-preview-close');
     if (myDesignsBtn) myDesignsBtn.addEventListener('click', () => {
         if (userDropdown) userDropdown.classList.add('hidden');
-        openDesignsModal();
+        openLibrary('designs');
     });
-    if (myDesignsClose) myDesignsClose.addEventListener('click', closeDesignsModal);
-    if (myDesignsPreviewClose) myDesignsPreviewClose.addEventListener('click', closeSavedDesignPreview);
-    if (myDesignsPanel) {
-        myDesignsPanel.addEventListener('click', (e) => {
-            if (e.target === myDesignsPanel) closeDesignsModal();
-        });
-        document.addEventListener('keydown', (e) => {
-            if (e.key === 'Escape' && myDesignsPanel.classList.contains('show')) closeDesignsModal();
-        });
-    }
+    initLibrary();
     if (userMenuBtn && userDropdown) {
         userMenuBtn.addEventListener('click', () => userDropdown.classList.toggle('hidden'));
     }
@@ -3743,7 +4191,7 @@ function applyRoute(route) {
 
         case 'library':
             goToRedesign();
-            openDesignsModal();
+            openLibrary(route.params?.tab);
             break;
 
         case 'result':
@@ -4171,8 +4619,8 @@ function renderUseSavedGrid() {
 
 /**
  * Show the "use a saved design" entry points only when the user actually has
- * saved designs. Saved designs are a subscriber feature, so for everyone else
- * the option would be an empty promise — better absent than teasing.
+ * saved designs. A new account has none, and offering an empty list is a
+ * promise the app can't keep — better absent than teasing.
  */
 let useSavedAvailabilityKey = null;
 
@@ -4181,12 +4629,12 @@ async function refreshUseSavedAvailability() {
 
     // updateAuthUI() runs on every auth change; without this guard each one
     // would fire a fresh /api/designs request just to decide button visibility.
-    const key = `${currentUser?.id || 'anon'}:${userHasSubscription ? 'sub' : 'free'}`;
+    const key = `${currentUser?.id || 'anon'}`;
     if (key === useSavedAvailabilityKey) return;
     useSavedAvailabilityKey = key;
 
     let available = false;
-    if (currentUser && currentSession && userHasSubscription) {
+    if (currentUser && currentSession) {
         try {
             const designs = await fetchSavedDesigns();
             available = designs.length > 0;

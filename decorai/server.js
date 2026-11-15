@@ -25,6 +25,7 @@ import { createQuota } from './lib/quota.js';
 import { createFreeDailyCap } from './lib/freeDailyCap.js';
 import { createGenerationEvents, parseModelCosts, modelLabel } from './lib/generationEvents.js';
 import { isReturnPath } from './src/upgrade.js';
+import { planDesignRetention, designLimitFor, DEFAULT_FREE_DESIGN_LIMIT, DEFAULT_SUBSCRIBER_DESIGN_LIMIT } from './lib/designRetention.js';
 import {
   resolveCorsOrigin,
   securityHeaders,
@@ -162,7 +163,12 @@ function checkoutReturnUrl(returnTo, query) {
   return `${appUrl}${path}?${query}`;
 }
 const DESIGNS_STORAGE_BUCKET = process.env.SUPABASE_DESIGNS_BUCKET?.trim() || 'generated-designs';
-const MAX_SAVED_DESIGNS_SUBSCRIBER = parseInt(process.env.MAX_SAVED_DESIGNS_SUBSCRIBER) || 200;
+// Every signed-in account keeps its designs: free accounts their latest
+// MAX_SAVED_DESIGNS_FREE, subscribers up to MAX_SAVED_DESIGNS_SUBSCRIBER
+// (lib/designRetention.js has the rules for a full library).
+const MAX_SAVED_DESIGNS_SUBSCRIBER = parseInt(process.env.MAX_SAVED_DESIGNS_SUBSCRIBER) || DEFAULT_SUBSCRIBER_DESIGN_LIMIT;
+const MAX_SAVED_DESIGNS_FREE = parseInt(process.env.MAX_SAVED_DESIGNS_FREE) || DEFAULT_FREE_DESIGN_LIMIT;
+const designLimits = { free: MAX_SAVED_DESIGNS_FREE, paid: MAX_SAVED_DESIGNS_SUBSCRIBER };
 const DESIGN_SIGNED_URL_TTL_SEC = parseInt(process.env.DESIGN_SIGNED_URL_TTL_SEC) || 3600;
 
 // ── Anonymous (pre-signup) generations ─────────────────────────────────────
@@ -364,17 +370,27 @@ async function deleteDesignRecord(userId, row) {
     .eq('user_id', userId);
 }
 
-async function enforceDesignRetentionLimit(userId) {
+/**
+ * Make room for one more design, or say there is none. Returns false when the
+ * new design should not be saved (an account over its limit; see
+ * lib/designRetention.js).
+ */
+async function makeRoomForDesign(userId, subscriber) {
   const { data: rows, error } = await supabase
     .from('user_generated_designs')
     .select('id, storage_path, created_at')
     .eq('user_id', userId)
     .order('created_at', { ascending: true });
-  if (error || !rows || rows.length < MAX_SAVED_DESIGNS_SUBSCRIBER) return;
-  const excess = rows.length - MAX_SAVED_DESIGNS_SUBSCRIBER + 1;
-  for (const row of rows.slice(0, excess)) {
+  if (error || !rows) return true;
+  const plan = planDesignRetention({
+    count: rows.length,
+    limit: designLimitFor(subscriber, designLimits),
+    subscriber,
+  });
+  for (const row of rows.slice(0, plan.deleteOldest)) {
     await deleteDesignRecord(userId, row);
   }
+  return plan.save;
 }
 
 async function createSignedDesignUrl(storagePath) {
@@ -388,12 +404,11 @@ async function createSignedDesignUrl(storagePath) {
   return data?.signedUrl || null;
 }
 
-/** Persist a generated image for a subscriber. Returns the DB row or null. */
+/** Persist a generated image to the account's library. Returns the DB row or null. */
 async function persistGeneratedDesign(userId, { imageSource, prompt, model, sourceType, metadata }) {
-  if (!supabase) return null;
+  if (!supabase || !userId) return null;
 
-  const sub = await getActiveSubscription(userId);
-  if (!sub) return null;
+  const subscriber = !!(await getActiveSubscription(userId));
 
   try {
     const resolved = await resolveImageBuffer(imageSource);
@@ -402,7 +417,7 @@ async function persistGeneratedDesign(userId, { imageSource, prompt, model, sour
       return null;
     }
 
-    await enforceDesignRetentionLimit(userId);
+    if (!(await makeRoomForDesign(userId, subscriber))) return null;
 
     const designId = randomUUID();
     const storagePath = `${userId}/${designId}.${resolved.ext}`;
@@ -441,17 +456,6 @@ async function persistGeneratedDesign(userId, { imageSource, prompt, model, sour
     console.error('persistGeneratedDesign error:', err);
     return null;
   }
-}
-
-async function requireActiveSubscription(req, res) {
-  const user = await getAuthUser(req, res);
-  if (!user) return null;
-  const sub = await getActiveSubscription(user.id);
-  if (!sub) {
-    res.status(403).json({ error: 'Active subscription required' });
-    return null;
-  }
-  return user;
 }
 
 // Premium generation accounting (monthly quota + tokens) lives in lib/quota.js
@@ -642,6 +646,14 @@ const shareCreateLimiter = createRateLimiter({
   max: parseInt(process.env.RATE_LIMIT_SHARE_MAX) || 10,
   keyFn: (req) => userKey(req) || ipKey(req),
   message: 'You are creating links too quickly. Please try again in a few minutes.',
+});
+// Saving a design stores an image, so bound it per account even though the
+// library itself is capped.
+const designSaveLimiter = createRateLimiter({
+  windowMs: 10 * ONE_MIN,
+  max: parseInt(process.env.RATE_LIMIT_DESIGN_SAVE_MAX) || 60,
+  keyFn: (req) => userKey(req) || ipKey(req),
+  message: 'Too many designs saved at once. Please try again in a few minutes.',
 });
 // Feedback limiter: sends real email, so keep it tight.
 const feedbackLimiter = createRateLimiter({
@@ -2101,6 +2113,7 @@ app.get('/api/config', (req, res) => {
     priceAmount: parseInt(process.env.PRICE_AMOUNT) || 199,
     tokenPacks: getConfiguredTokenPacks(),
     subscription: { amount: SUBSCRIPTION_PRICE_CENTS, monthlyLimit: SUBSCRIPTION_MONTHLY_LIMIT },
+    savedDesigns: { free: MAX_SAVED_DESIGNS_FREE, subscriber: MAX_SAVED_DESIGNS_SUBSCRIBER },
     // Public GA4 Measurement ID (e.g. G-XXXXXXXXXX). Empty disables analytics.
     gaMeasurementId: process.env.GA_MEASUREMENT_ID?.trim() || '',
     anonGenerationsEnabled: anonymousGenerationsEnabled(),
@@ -2955,21 +2968,24 @@ async function attachSignedUrls(designs) {
   return results;
 }
 
-// List saved generated designs for the current subscriber
+// List the account's saved designs, newest first, with how many it may keep.
 app.get('/api/designs', async (req, res) => {
   try {
-    const user = await requireActiveSubscription(req, res);
+    const user = await getAuthUser(req, res);
     if (!user) return;
 
     const limit = Math.min(parseInt(req.query.limit) || 50, 100);
     const offset = Math.max(parseInt(req.query.offset) || 0, 0);
 
-    const { data, error } = await supabase
-      .from('user_generated_designs')
-      .select('id, storage_path, prompt, model, source_type, metadata, created_at')
-      .eq('user_id', user.id)
-      .order('created_at', { ascending: false })
-      .range(offset, offset + limit - 1);
+    const [{ data, error, count }, sub] = await Promise.all([
+      supabase
+        .from('user_generated_designs')
+        .select('id, storage_path, prompt, model, source_type, metadata, created_at', { count: 'exact' })
+        .eq('user_id', user.id)
+        .order('created_at', { ascending: false })
+        .range(offset, offset + limit - 1),
+      getActiveSubscription(user.id),
+    ]);
 
     if (error) {
       console.error('Error fetching designs:', error);
@@ -2977,7 +2993,13 @@ app.get('/api/designs', async (req, res) => {
     }
 
     const list = await attachSignedUrls(data || []);
-    res.json({ designs: list });
+    const subscriber = !!sub;
+    res.json({
+      designs: list,
+      total: Number.isFinite(count) ? count : list.length,
+      limit: designLimitFor(subscriber, designLimits),
+      subscriber,
+    });
   } catch (err) {
     console.error('Error in GET /api/designs:', err);
     res.status(500).json({ error: 'Server error' });
@@ -2987,7 +3009,7 @@ app.get('/api/designs', async (req, res) => {
 // Get one saved design with a signed image URL
 app.get('/api/designs/:id', async (req, res) => {
   try {
-    const user = await requireActiveSubscription(req, res);
+    const user = await getAuthUser(req, res);
     if (!user) return;
 
     const { id } = req.params;
@@ -3013,9 +3035,9 @@ app.get('/api/designs/:id', async (req, res) => {
 });
 
 // Save a generated design (used for Replicate / client-side generation paths)
-app.post('/api/designs', async (req, res) => {
+app.post('/api/designs', designSaveLimiter, async (req, res) => {
   try {
-    const user = await requireActiveSubscription(req, res);
+    const user = await getAuthUser(req, res);
     if (!user) return;
 
     const { imageUrl, prompt, model, sourceType, metadata } = req.body || {};
@@ -3032,7 +3054,9 @@ app.post('/api/designs', async (req, res) => {
     });
 
     if (!saved) {
-      return res.status(500).json({ error: 'Failed to save design' });
+      // Usually an account over its limit (lib/designRetention.js); the
+      // library explains that, so this is not shown as an error.
+      return res.status(409).json({ error: 'Design not saved', code: 'not_saved' });
     }
 
     const signedUrl = await createSignedDesignUrl(saved.storage_path);
@@ -3046,7 +3070,7 @@ app.post('/api/designs', async (req, res) => {
 // Delete a saved design
 app.delete('/api/designs/:id', async (req, res) => {
   try {
-    const user = await requireActiveSubscription(req, res);
+    const user = await getAuthUser(req, res);
     if (!user) return;
 
     const { id } = req.params;

@@ -92,9 +92,9 @@
                         <i data-feather="chevron-down"></i>
                     </button>
                     <div id="user-dropdown" class="user-dropdown hidden">
-                        <button id="my-designs-btn" class="dropdown-item hidden" type="button">
-                            <i data-feather="image"></i>
-                            <span>My Designs</span>
+                        <button id="my-designs-btn" class="dropdown-item" type="button">
+                            <i data-feather="bookmark"></i>
+                            <span>Library</span>
                         </button>
                         <button id="subscribe-dropdown-btn" class="dropdown-item dropdown-item--subscribe hidden" type="button">
                             <i data-feather="star"></i>
@@ -1234,33 +1234,58 @@
         </div>
     </div>
 
-    <div class="modal hidden" id="my-designs-panel" role="dialog" aria-modal="true" aria-labelledby="my-designs-modal-title">
-        <div class="modal-content my-designs-modal">
-            <div class="modal-header">
-                <h2 id="my-designs-modal-title">My Designs</h2>
-                <button type="button" id="my-designs-close" class="close-modal-btn" aria-label="Close">
+    <!-- The library: designs, floor plans and builds in one place, at
+         /library/{designs,plans,builds}. Drawn by main.js from src/library.js.
+         Sits just under the other sheets, so sign-in and upgrade open over it. -->
+    <div class="modal hidden library-modal" id="library-panel" role="dialog" aria-modal="true" aria-labelledby="library-title">
+        <div class="modal-content library-sheet" tabindex="-1">
+            <div class="modal-header library-header">
+                <h2 id="library-title">Library</h2>
+                <button type="button" id="library-close" class="close-modal-btn" aria-label="Close library">
                     <i data-feather="x"></i>
                 </button>
             </div>
-            <div class="modal-body">
-                <p class="my-designs-intro">Your generated room designs are saved automatically while you have an active subscription.</p>
-                <div id="my-designs-grid" class="my-designs-grid"></div>
-                <div id="my-designs-preview" class="my-designs-preview hidden">
+            <div class="library-tabs" role="tablist" aria-label="Library sections">
+                <button type="button" role="tab" class="library-tab" id="library-tab-designs" data-tab="designs" aria-controls="library-tabpanel" aria-selected="true">Designs<span class="library-tab-count" aria-hidden="true"></span></button>
+                <button type="button" role="tab" class="library-tab" id="library-tab-plans" data-tab="plans" aria-controls="library-tabpanel" aria-selected="false" tabindex="-1">Floor plans<span class="library-tab-count" aria-hidden="true"></span></button>
+                <button type="button" role="tab" class="library-tab" id="library-tab-builds" data-tab="builds" aria-controls="library-tabpanel" aria-selected="false" tabindex="-1">Builds<span class="library-tab-count" aria-hidden="true"></span></button>
+            </div>
+            <div class="modal-body library-body" id="library-tabpanel" role="tabpanel" aria-labelledby="library-tab-designs">
+                <div class="library-browse" id="library-browse">
+                    <div class="library-toolbar">
+                        <p class="library-status hidden" id="library-status">
+                            <span id="library-status-text"></span>
+                            <button type="button" class="library-status-upsell hidden" id="library-status-upsell">Keep more</button>
+                        </p>
+                        <label class="library-search hidden" id="library-search-wrap">
+                            <i data-feather="search" aria-hidden="true"></i>
+                            <input type="search" id="library-search" autocomplete="off" spellcheck="false" placeholder="Search" aria-label="Search this tab">
+                        </label>
+                    </div>
+                    <div id="library-grid" class="library-grid" aria-busy="false"></div>
+                    <div id="library-empty" class="library-empty hidden" aria-live="polite">
+                        <div class="library-empty-art" aria-hidden="true"><i id="library-empty-icon"></i></div>
+                        <h3 class="library-empty-title" id="library-empty-title"></h3>
+                        <p class="library-empty-text" id="library-empty-text"></p>
+                        <div class="library-empty-actions" id="library-empty-actions"></div>
+                    </div>
+                </div>
+                <div id="my-designs-preview" class="my-designs-preview library-preview hidden">
                     <div class="my-designs-preview-header">
-                        <h3 class="my-designs-preview-heading">Design details</h3>
-                        <button type="button" id="my-designs-preview-close" class="close-modal-btn" aria-label="Close preview">
-                            <i data-feather="x"></i>
+                        <button type="button" id="my-designs-preview-close" class="library-back-btn">
+                            <i data-feather="arrow-left" aria-hidden="true"></i>
+                            <span>All designs</span>
                         </button>
                     </div>
                     <img id="my-designs-preview-img" class="my-designs-preview-img" alt="Saved generated design">
+                    <div class="my-designs-preview-actions">
+                        <button type="button" id="my-designs-open-btn" class="primary-btn">Open in results</button>
+                        <button type="button" id="my-designs-delete-btn" class="secondary-btn my-designs-delete-btn">Delete</button>
+                    </div>
                     <div id="my-designs-preview-details" class="my-designs-preview-details" role="list"></div>
                     <div id="my-designs-preview-prompt-wrap" class="my-designs-preview-prompt-wrap hidden">
                         <h4 class="my-designs-preview-prompt-label">Prompt</h4>
                         <p id="my-designs-preview-prompt" class="my-designs-preview-prompt"></p>
-                    </div>
-                    <div class="my-designs-preview-actions">
-                        <button type="button" id="my-designs-open-btn" class="primary-btn">Open in results</button>
-                        <button type="button" id="my-designs-delete-btn" class="secondary-btn my-designs-delete-btn">Delete</button>
                     </div>
                 </div>
             </div>

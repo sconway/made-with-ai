@@ -14,7 +14,7 @@
  * Why the sheet opened.
  *   premium        a premium design or edit, with no tokens left
  *   monthly-limit  a subscriber has used this month's premium designs
- *   library        saved designs (subscription)
+ *   library        keeping more designs than a free account does
  *   floor-plan     a floor plan editor feature (subscription)
  *   tokens         the token balance in the header: no block, just buying
  *   plans          /upgrade or the account menu: no block, just the options
@@ -22,6 +22,9 @@
 export const UPGRADE_GATES = ['premium', 'monthly-limit', 'library', 'floor-plan', 'tokens', 'plans'];
 
 export const DEFAULT_SUBSCRIPTION = { amount: 1999, monthlyLimit: 50 };
+
+/** How many designs each kind of account keeps (server: MAX_SAVED_DESIGNS_*). */
+export const DEFAULT_SAVED_DESIGNS = { free: 10, subscriber: 200 };
 
 /** 499 → "$4.99"; 50 → "50¢". */
 export function formatPrice(cents) {
@@ -50,19 +53,21 @@ export function nextMonthStart(now = new Date()) {
  * @param {object} ctx
  * @param {Array<{tokens:number, amount:number}>} ctx.packs
  * @param {{amount:number, monthlyLimit:number}} [ctx.subscription]
+ * @param {{free:number, subscriber:number}} [ctx.savedDesigns]
  * @param {boolean} [ctx.isSubscriber]
  * @param {Date} [ctx.now]
  * @returns {{ gate, title, blocked, cost, next, recommend, showTokens, showSubscription, subscriptionPoints }}
  */
-export function describeGate(gate, { packs = [], subscription = DEFAULT_SUBSCRIPTION, isSubscriber = false, now = new Date() } = {}) {
+export function describeGate(gate, { packs = [], subscription = DEFAULT_SUBSCRIPTION, savedDesigns = DEFAULT_SAVED_DESIGNS, isSubscriber = false, now = new Date() } = {}) {
     const g = UPGRADE_GATES.includes(gate) ? gate : 'plans';
     const sub = { ...DEFAULT_SUBSCRIPTION, ...(subscription || {}) };
+    const keep = { ...DEFAULT_SAVED_DESIGNS, ...(savedDesigns || {}) };
     const per = cheapestPerDesign(packs);
     const tokensFrom = per != null ? ` Tokens start at ${formatPrice(per)} each.` : '';
     const planPrice = `${formatPrice(sub.amount)} a month`;
     const subscriptionPoints = [
         `${sub.monthlyLimit} premium designs every month`,
-        'Every design saved to your library',
+        `Up to ${keep.subscriber} designs kept in your library`,
         'The full floor plan editor: saved layouts, every furniture category, and exports',
     ];
     const back = "After checkout you'll come straight back to this design, with premium switched on and your change ready to run.";
@@ -91,10 +96,10 @@ export function describeGate(gate, { packs = [], subscription = DEFAULT_SUBSCRIP
         case 'library':
             return {
                 ...base,
-                title: 'Keep every design you make',
-                blocked: 'Saved designs come with the monthly plan. Each design is kept in your library, ready to pick up again on any device.',
+                title: 'Keep more of your designs',
+                blocked: `Free accounts keep their latest ${keep.free} designs, and the oldest makes way for each new one. The monthly plan keeps up to ${keep.subscriber}.`,
                 cost: `The plan is ${planPrice} and includes ${sub.monthlyLimit} premium designs.`,
-                next: "After checkout you'll come straight back here, and the designs you make from then on are saved for you.",
+                next: `After checkout you'll come straight back to your library, and it will keep up to ${keep.subscriber} designs.`,
                 recommend: 'subscription',
                 showTokens: false,
                 showSubscription: true,
@@ -125,7 +130,7 @@ export function describeGate(gate, { packs = [], subscription = DEFAULT_SUBSCRIP
                 ...base,
                 title: 'Plans and pricing',
                 blocked: null,
-                cost: 'Standard designs are free. Premium designs, a saved library and the full floor plan editor are paid.',
+                cost: `Standard designs are free, and a free account keeps its latest ${keep.free}. Premium designs, a bigger library and the full floor plan editor are paid.`,
                 next: null,
                 recommend: isSubscriber ? 'tokens' : 'subscription',
             };

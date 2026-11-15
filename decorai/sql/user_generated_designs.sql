@@ -1,4 +1,4 @@
--- Generated design history (subscription feature)
+-- Generated design history: every signed-in account (lib/designRetention.js sets how many each keeps)
 -- Run in Supabase SQL Editor after creating the Storage bucket (see below).
 
 -- ============================================================

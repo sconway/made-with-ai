@@ -112,15 +112,15 @@ Three forces, resolved in this order:
   keyboard — matching the divider metaphor users just saw on the marketing site.
   Replaces the current checkbox reveal. _Modifies design card / reveal._
 
-- [ ] **C5 · Refinement** _(M)_ — Elevate from footer block to the primary next
+- [x] **C5 · Refinement** _(M)_ — Elevate from footer block to the primary next
   action. Chips populate the textarea rather than firing immediately. History strip
   gets real visual weight; previous results stay reachable. _Modifies._
 
-- [ ] **C6 · Library** _(M)_ — `/library/{designs,plans,builds}`. Replaces three
+- [x] **C6 · Library** _(M)_ — `/library/{designs,plans,builds}`. Replaces three
   separate modals with one view: shared grid, shared empty state, search past 12
   items. _Depends on: F6, F7. Consolidates 3 existing modals._
 
-- [ ] **C7 · Upgrade + paywall moments** _(M)_ — `/upgrade` as a real URL so the
+- [x] **C7 · Upgrade + paywall moments** _(M)_ — `/upgrade` as a real URL so the
   marketing site can link to pricing. Every gate names the blocked action, its
   cost, and what happens next; on success the user returns to the exact action they
   attempted. Covers token, subscribe, and quota-exceeded paths. _Modifies 2 modals._
