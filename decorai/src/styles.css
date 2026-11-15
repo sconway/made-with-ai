@@ -1592,6 +1592,65 @@ main:has(#wizard-container.is-quick-edit:not(.hidden)) { padding-bottom: 0; }
   padding: var(--space-4);
 }
 
+/* Ideas: tap to add a sentence to the box (tap again to take it out). */
+.refine-ideas {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  padding: 0 var(--space-4) var(--space-3);
+}
+.refine-idea {
+  flex: none;
+  min-height: 32px;
+  padding: 0 var(--space-3);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-pill);
+  background: var(--surface);
+  color: var(--text-secondary);
+  font-family: var(--font-sans);
+  font-size: var(--text-sm);
+  line-height: 1;
+  cursor: pointer;
+  transition: border-color var(--duration-fast) var(--ease-out),
+              background-color var(--duration-fast) var(--ease-out),
+              color var(--duration-fast) var(--ease-out);
+}
+.refine-idea:hover { border-color: var(--border-strong); color: var(--text-primary); }
+.refine-idea[aria-pressed="true"] {
+  border-color: var(--color-accent-primary);
+  background: var(--color-accent-primary-subtle);
+  color: var(--color-accent-primary);
+}
+.refine-idea:focus-visible { outline: none; box-shadow: var(--shadow-focus); }
+
+/* Shown only while an earlier version is picked. */
+.refinement-base {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-1) var(--space-2);
+  margin: 0 var(--space-4) var(--space-3);
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-md);
+  background: var(--color-bg-tertiary);
+  font-size: var(--text-sm);
+  line-height: var(--leading-normal);
+  color: var(--text-primary);
+}
+.refinement-base[hidden] { display: none; }
+.refinement-base-latest {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--color-accent-primary);
+  font-family: inherit;
+  font-size: inherit;
+  font-weight: var(--weight-semibold);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  cursor: pointer;
+}
+
 .results-actions {
   display: flex;
   align-items: center;
@@ -7571,6 +7630,135 @@ body.layout-editor-active:has(.modal.show) .layout-editor-screen .layout-sidebar
   color: var(--indigo-500);
 }
 
+/* ── Upgrade sheet ──────────────────────────────────────────────────────────
+   One sheet for every paywall (openUpgrade in main.js): what was blocked,
+   what it costs, what happens after checkout, then only the options that
+   unblock it — the recommended one first. */
+.upgrade-sheet { min-height: 0; }
+.upgrade-sheet [hidden] { display: none !important; }
+.upgrade-sheet .modal-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+.upgrade-gate {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+.upgrade-blocked {
+  margin: 0;
+  font-size: var(--text-base);
+  line-height: var(--leading-normal);
+  color: var(--text-primary);
+}
+.upgrade-cost {
+  margin: 0;
+  font-size: var(--text-sm);
+  line-height: var(--leading-relaxed);
+  color: var(--text-secondary);
+}
+.upgrade-next {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-2);
+  margin: var(--space-1) 0 0;
+  padding: var(--space-3);
+  border-radius: var(--radius-md);
+  background: var(--color-accent-primary-subtle);
+  font-size: var(--text-sm);
+  line-height: var(--leading-normal);
+  color: var(--text-primary);
+}
+.upgrade-next svg {
+  flex: none;
+  width: 16px;
+  height: 16px;
+  margin-top: 2px;
+  color: var(--color-accent-primary);
+}
+.upgrade-sheet .tokens-current {
+  margin: 0;
+  font-size: var(--text-sm);
+  color: var(--text-secondary);
+}
+.upgrade-options {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+.upgrade-option {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  padding: var(--space-4);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+}
+.upgrade-option.is-recommended {
+  border-color: var(--color-accent-primary);
+  box-shadow: 0 0 0 1px var(--color-accent-primary);
+}
+.upgrade-option-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+}
+.upgrade-option h3 {
+  margin: 0;
+  font-size: var(--text-base);
+  font-weight: var(--weight-semibold);
+  color: var(--text-primary);
+}
+.upgrade-recommended {
+  padding: 2px var(--space-2);
+  border-radius: var(--radius-pill);
+  background: var(--color-accent-primary-subtle);
+  color: var(--color-accent-primary);
+  font-size: var(--text-xs);
+  font-weight: var(--weight-semibold);
+}
+.upgrade-option-text {
+  margin: 0;
+  font-size: var(--text-sm);
+  color: var(--text-secondary);
+}
+.upgrade-sheet .subscribe-price { margin-top: calc(-1 * var(--space-1)); }
+.upgrade-sheet .subscribe-price-amount {
+  font-family: var(--font-sans);
+  font-size: 1.5rem;
+  letter-spacing: -0.01em;
+}
+.upgrade-plan-points {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  font-size: var(--text-sm);
+  color: var(--text-primary);
+}
+.upgrade-plan-points li {
+  position: relative;
+  padding-left: 1.5rem;
+  line-height: var(--leading-normal);
+}
+.upgrade-plan-points li::before {
+  content: '';
+  position: absolute;
+  left: 0.2rem;
+  top: 0.4em;
+  width: 0.55rem;
+  height: 0.3rem;
+  border-left: 2px solid var(--color-accent-primary);
+  border-bottom: 2px solid var(--color-accent-primary);
+  transform: rotate(-45deg);
+}
+.upgrade-sheet .tokens-footer { font-size: var(--text-xs); }
+
 /* ── Subscribe modal ──────────────────────────────────────────────────────────── */
 
 .subscribe-hero {
@@ -9204,6 +9392,21 @@ body:has(.region-menu.is-docked:not(.hidden)) .feedback-fab { visibility: hidden
     box-shadow: var(--shadow-sm);
   }
   #results-section .refinement-header { display: none; }
+  #results-section .refine-ideas {
+    flex: 1 1 100%;
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    margin: 0 calc(-1 * var(--space-3));
+    padding: 0 var(--space-3);
+    scrollbar-width: none;
+  }
+  #results-section .refine-ideas::-webkit-scrollbar { display: none; }
+  #results-section .refinement-base {
+    flex: 1 1 100%;
+    margin: 0;
+    padding: var(--space-1) var(--space-2);
+    font-size: var(--text-xs);
+  }
   #results-section .refinement-textarea {
     flex: 1 1 100%;
     width: 100%;
@@ -9437,13 +9640,15 @@ body:has(.region-menu.is-docked:not(.hidden)) .feedback-fab { visibility: hidden
     #results-section .refinement-area {
       display: grid;
       grid-template-columns: minmax(0, 1fr) auto;
-      grid-template-rows: minmax(0, 1fr) auto;
-      grid-template-areas: "text premium" "text button";
+      grid-template-rows: auto auto minmax(0, 1fr) auto;
+      grid-template-areas: "base base" "ideas ideas" "text premium" "text button";
       align-items: center;
       gap: var(--space-2) var(--space-3);
       padding: var(--space-3);
     }
     #results-section .refinement-header { display: none; }
+    #results-section .refinement-base { grid-area: base; margin: 0; }
+    #results-section .refine-ideas { grid-area: ideas; padding: 0; }
     #results-section .refinement-textarea { grid-area: text; width: 100%; height: 5.5rem; min-height: 0; margin: 0; }
     /* With spare room, the text box fills the taller refine box. */
     #results-section.re-roomy .refinement-textarea { height: 100%; min-height: 5.5rem; }
@@ -10189,4 +10394,81 @@ body:has(.region-menu.is-docked:not(.hidden)) .feedback-fab { visibility: hidden
   grid-column: 2;
   grid-row: 1 / span 2;
   align-self: center;
+}
+
+/* ── Desktop: the result beside its next step ───────────────────────────────
+   Below this the phone and iPad layouts apply. On a desktop the result used
+   to be a 400px card with the refine box below the fold. Now the image takes
+   the main column and stays in view, and the panel beside it holds the
+   versions, the refine box, then Back / Share / Save. */
+@media (min-width: 1181px) and (pointer: fine), (min-width: 1377px) {
+  #results-section {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 380px;
+    grid-template-rows: auto auto auto auto 1fr;
+    grid-template-areas:
+      "header header"
+      "image  history"
+      "image  composer"
+      "image  actions"
+      "image  .";
+    gap: var(--space-4) var(--space-8);
+    align-items: start;
+  }
+  #results-section .results-header {
+    grid-area: header;
+    align-items: center;
+    margin: 0;
+    padding: 0;
+  }
+  #results-section .results-display {
+    grid-area: image;
+    position: sticky;
+    top: var(--space-6);
+    min-width: 0;
+    height: min(calc(100dvh - 15rem), 780px);
+    min-height: 360px;
+  }
+  #results-section .design-carousel { display: block; height: 100%; padding: 0; overflow: hidden; }
+  #results-section .design-card { width: 100%; height: 100%; min-height: 0; margin: 0; flex: none; }
+  #results-section .design-image-container { flex: 1 1 0; min-height: 0; }
+  #results-section .image-reveal-container { height: 100%; }
+  #results-section .image-reveal-container .design-image { object-fit: contain; }
+  #results-section .image-reveal-container .original-image {
+    position: absolute;
+    inset: 0;
+    height: 100%;
+    max-height: none;
+  }
+  #results-section .design-info { display: none; }
+  #results-section .image-loader { inset: 0; height: auto; min-height: 0; }
+
+  #results-section .design-history { grid-area: history; min-width: 0; margin: 0; }
+  #results-section .design-history-strip {
+    flex-wrap: wrap;
+    max-height: 15rem;
+    overflow-x: hidden;
+    overflow-y: auto;
+  }
+  #results-section .design-history-thumb { width: calc((100% - 2 * var(--space-2)) / 3); }
+  #results-section .design-history-thumb img { height: auto; aspect-ratio: 4 / 3; }
+
+  #results-section .refinement-area { grid-area: composer; margin: 0; box-shadow: var(--shadow-sm); }
+  #results-section .refinement-header { padding: var(--space-4) var(--space-4) var(--space-3); }
+  #results-section .refinement-hint { display: none; }
+  #results-section .refinement-textarea { min-height: 4.5rem; height: 4.5rem; resize: vertical; }
+  /* As on iPad, a locked premium switch opens the options when tapped, so
+     its explanation and sign-in note don't need the room. */
+  #results-section .refinement-area .model-pref-row { margin-bottom: var(--space-2); }
+  #results-section .refinement-area .model-pref-hint,
+  #results-section .refinement-area .model-pref-upsell { display: none; }
+  #results-section .refinement-footer { padding-top: 0; }
+  #results-section #regenerate-btn { flex: 1; justify-content: center; }
+
+  #results-section .results-actions {
+    grid-area: actions;
+    margin: 0;
+    justify-content: space-between;
+  }  /* As on iPad: the floating Feedback button would sit on Save. */
+  body:has(#results-section:not(.hidden)) .feedback-fab { display: none; }
 }

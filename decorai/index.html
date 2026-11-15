@@ -358,7 +358,7 @@
 
             <section class="results-section hidden" id="results-section">
                 <div class="design-history hidden" id="design-history" aria-label="Design history">
-                    <div class="design-history-label">History</div>
+                    <div class="design-history-label">Versions</div>
                     <div class="design-history-strip" id="design-history-strip" role="list">
                         <!-- Thumbnails inserted by JavaScript -->
                     </div>
@@ -366,7 +366,7 @@
                 <div class="results-header">
                     <div class="results-header-text">
                         <h2>Your <em>design</em></h2>
-                        <p class="results-header-hint" data-region-hint="Brush over anything to remove or change it.">Drag the divider to compare with your original, or refine the result below.</p>
+                        <p class="results-header-hint" data-region-hint="Brush over anything to remove or change it.">Drag the divider to compare with your original.</p>
                     </div>
                     <div class="results-header-actions">
                         <!-- Region editing on the result. Off by default: dragging on
@@ -391,13 +391,30 @@
                         <!-- Design variants will be inserted here by JavaScript -->
                     </div>
                 </div>
+                <!-- The next step after a result: say what to change. Ideas fill
+                     the box rather than running, so they can be combined and
+                     edited first. Each run adds a version; none are lost. -->
                 <div class="refinement-area">
                     <div class="refinement-header">
                         <label class="refinement-label" for="refinement-input">
                             <i data-feather="edit-2"></i>
-                            <span>Refine this design</span>
+                            <span>What would you change?</span>
                         </label>
-                        <p class="refinement-hint">Describe what you'd like to change.</p>
+                        <p class="refinement-hint">Describe it, or start from an idea. Each change makes a new version, and earlier ones stay above.</p>
+                    </div>
+                    <p class="refinement-base" id="refinement-base" hidden>
+                        <span></span>
+                        <button type="button" class="refinement-base-latest" id="refinement-base-latest">Use the latest</button>
+                    </p>
+                    <div class="refine-ideas" role="group" aria-label="Ideas to start from">
+                        <button type="button" class="refine-idea" data-key="warmer" data-idea="Use warmer, cosier colours." aria-pressed="false">Warmer</button>
+                        <button type="button" class="refine-idea" data-key="brighter" data-idea="Make it lighter and brighter." aria-pressed="false">Brighter</button>
+                        <button type="button" class="refine-idea" data-key="plants" data-idea="Add a few more plants." aria-pressed="false">More plants</button>
+                        <button type="button" class="refine-idea" data-key="art" data-idea="Add art to the walls." aria-pressed="false">Wall art</button>
+                        <button type="button" class="refine-idea" data-key="rug" data-idea="Swap the rug for a different one." aria-pressed="false">New rug</button>
+                        <button type="button" class="refine-idea" data-key="minimal" data-idea="Pare it back to fewer, simpler pieces." aria-pressed="false">Simpler</button>
+                        <button type="button" class="refine-idea" data-key="accent" data-idea="Add one bold accent colour." aria-pressed="false">Bold accent</button>
+                        <button type="button" class="refine-idea" data-key="lighting" data-idea="Change the light fixtures." aria-pressed="false">New lighting</button>
                     </div>
 
                     <textarea
@@ -419,7 +436,7 @@
                     <div class="refinement-footer">
                         <button type="button" id="regenerate-btn" class="primary-btn">
                             <i data-feather="refresh-cw"></i>
-                            <span>Regenerate</span>
+                            <span>New version</span>
                         </button>
                     </div>
                 </div>
@@ -1165,95 +1182,52 @@
         </div>
     </div>
 
-    <div class="modal hidden" id="buy-tokens-modal">
-        <div class="modal-content buy-tokens-modal-content">
+    <!-- The upgrade sheet: every paywall opens this. It names what was
+         blocked, what it costs and what happens after checkout (src/upgrade.js
+         holds the words). The id predates the merge with the subscribe modal. -->
+    <div class="modal hidden" id="buy-tokens-modal" role="dialog" aria-modal="true" aria-labelledby="upgrade-title">
+        <div class="modal-content buy-tokens-modal-content upgrade-sheet">
             <div class="modal-header">
-                <h2>Get More Tokens</h2>
-                <button id="close-buy-tokens-modal-btn" class="close-modal-btn" type="button">
+                <h2 id="upgrade-title">Plans and pricing</h2>
+                <button id="close-buy-tokens-modal-btn" class="close-modal-btn" type="button" aria-label="Close">
                     <i data-feather="x"></i>
                 </button>
             </div>
             <div class="modal-body">
-                <div class="tokens-info">
-                    <div class="tokens-icon-large">
-                        <i data-feather="zap"></i>
-                    </div>
-                    <p class="tokens-current">You have <strong id="modal-tokens-count">0</strong> token(s) remaining.</p>
-                    <p class="tokens-description">Each premium AI-generated layout design uses 1 token. Lower quality models will be used when users are out of tokens or premium models are unavailable. Tokens are only used when a design is successfully generated.</p>
+                <div class="upgrade-gate">
+                    <p class="upgrade-blocked" id="upgrade-blocked" hidden></p>
+                    <p class="upgrade-cost" id="upgrade-cost"></p>
+                    <p class="upgrade-next" id="upgrade-next" hidden>
+                        <i data-feather="corner-down-left" aria-hidden="true"></i>
+                        <span></span>
+                    </p>
                 </div>
-                <div class="token-packs" id="token-packs">
-                    <!-- Pack options injected from /api/config -->
-                </div>
-                <div class="tokens-modal-divider">
-                    <span>or</span>
-                </div>
-                <div class="tokens-modal-subscribe">
-                    <div class="tokens-modal-subscribe-text">
-                        <strong>Monthly subscription</strong>
-                        <span>50 premium generations/month + floor plan editor, saved layouts &amp; designs</span>
-                    </div>
-                    <button id="tokens-modal-subscribe-btn" class="primary-btn tokens-modal-subscribe-btn" type="button">
-                        <i data-feather="star"></i>
-                        <span>Subscribe — $19.99/mo</span>
-                    </button>
-                </div>
-                <p class="tokens-footer">Payments are processed securely by Stripe.</p>
-            </div>
-        </div>
-    </div>
-
-    <!-- Subscription modal -->
-    <div class="modal hidden" id="subscribe-modal">
-        <div class="modal-content subscribe-modal-content">
-            <div class="modal-header">
-                <h2>Unlock Full Layout Access</h2>
-                <button id="close-subscribe-modal-btn" class="close-modal-btn" type="button">
-                    <i data-feather="x"></i>
-                </button>
-            </div>
-            <div class="modal-body">
-                <div class="subscribe-hero">
-                    <div class="subscribe-icon-large">
-                        <i data-feather="layout"></i>
-                    </div>
-                    <p class="subscribe-tagline">Get unlimited access to the full floor plan editor with a monthly subscription.</p>
-                </div>
-                <div class="subscribe-features">
-                    <div class="subscribe-feature">
-                        <i data-feather="check-circle"></i>
-                        <span>All drawing tools — rooms, doors, windows, labels</span>
-                    </div>
-                    <div class="subscribe-feature">
-                        <i data-feather="check-circle"></i>
-                        <span>Full furniture library across all categories</span>
-                    </div>
-                    <div class="subscribe-feature">
-                        <i data-feather="check-circle"></i>
-                        <span>Auto-save all your generated room designs</span>
-                    </div>
-                    <div class="subscribe-feature">
-                        <i data-feather="check-circle"></i>
-                        <span>Save unlimited layouts to your account</span>
-                    </div>
-                    <div class="subscribe-feature">
-                        <i data-feather="check-circle"></i>
-                        <span>Export as PNG, SVG, or layout file</span>
-                    </div>
-                    <div class="subscribe-feature">
-                        <i data-feather="check-circle"></i>
-                        <span>Unlimited layout generations</span>
-                    </div>
-                </div>
-                <div class="subscribe-cta-card">
-                    <div class="subscribe-price">
-                        <span class="subscribe-price-amount">$19.99</span>
-                        <span class="subscribe-price-period">/ month</span>
-                    </div>
-                    <button id="subscribe-checkout-btn" class="primary-btn subscribe-btn" type="button">
-                        <i data-feather="zap"></i>
-                        <span>Subscribe</span>
-                    </button>
-                    <p class="subscribe-note">Free wall tool always available. Cancel anytime.</p>
+                <p class="tokens-current" hidden>You have <strong id="modal-tokens-count">0</strong> token(s) remaining.</p>
+                <div class="upgrade-options">
+                    <section class="upgrade-option" data-option="tokens" aria-labelledby="upgrade-tokens-heading">
+                        <div class="upgrade-option-head">
+                            <h3 id="upgrade-tokens-heading">Token packs</h3>
+                            <span class="upgrade-recommended" hidden>Best for this</span>
+                        </div>
+                        <p class="upgrade-option-text">One token is one premium design. Pay once; there's no subscription.</p>
+                        <div class="token-packs" id="token-packs">
+                            <!-- Pack options injected from /api/config -->
+                        </div>
+                    </section>
+                    <section class="upgrade-option" data-option="subscription" aria-labelledby="upgrade-plan-heading">
+                        <div class="upgrade-option-head">
+                            <h3 id="upgrade-plan-heading">Monthly plan</h3>
+                            <span class="upgrade-recommended" hidden>Best for this</span>
+                        </div>
+                        <div class="subscribe-price">
+                            <span class="subscribe-price-amount" id="upgrade-plan-price">$19.99</span>
+                            <span class="subscribe-price-period">/ month</span>
+                        </div>
+                        <ul class="upgrade-plan-points" id="upgrade-plan-points"></ul>
+                        <button id="tokens-modal-subscribe-btn" class="primary-btn subscribe-btn" type="button">
+                            <span>Subscribe</span>
+                        </button>
+                    </section>
                 </div>
                 <p class="tokens-footer">Payments are processed securely by Stripe.</p>
             </div>

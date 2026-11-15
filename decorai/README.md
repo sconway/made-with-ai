@@ -91,6 +91,13 @@ AI floor-plan import.
 - One-time token packs ($4.99/10, $9.99/20, $19.99/50) via Stripe, plus a
   subscription capped at `SUBSCRIPTION_MONTHLY_LIMIT` (default 50) generations
   per calendar month. Token packs act as overflow once the cap is spent.
+- Every paywall opens one upgrade sheet (`src/upgrade.js`) that names what was
+  blocked, what it costs and what happens after paying; `/upgrade` opens it as
+  a pricing page. Checkout returns to the page the person was on (the server
+  only accepts known app paths as `return_to`), and after payment their
+  half-typed change is put back with one tap to run it. Nothing runs on its own.
+  The plan price on the sheet comes from `SUBSCRIPTION_PRICE_CENTS` (default
+  1999), which is display only and must match the Stripe price.
 - Credit and quota spending is atomic — see `sql/atomic_credits.sql`.
 
 ## Running it locally

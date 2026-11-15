@@ -18,6 +18,9 @@ import { normalizeRoomPhoto, looksLikeImageFile } from './roomPhoto.js';
 import { track, flushAnalytics } from './analytics.js';
 import { initErrorReporting, reportError } from './errorReporting.js';
 import { initShareDialog, openShareDialog } from './shareDialog.js';
+import {
+    describeGate, formatPrice, saveUpgradeReturn, takeUpgradeReturn, DEFAULT_SUBSCRIPTION,
+} from './upgrade.js';
 
 // First thing: errors thrown while the rest of this module sets up are exactly
 // the ones that leave a visitor looking at a dead page.
@@ -1192,7 +1195,8 @@ async function initializeApp() {
                 window.history.replaceState({}, document.title, window.location.pathname);
                 verifyCheckoutAndCredit(sessionId);
             } else if (paymentStatus === 'cancelled') {
-                showToastMessage('Payment cancelled.', 'error');
+                takeUpgradeReturn(); // nothing to resume
+                showToastMessage('Payment cancelled. Nothing was charged.', 'info');
                 window.history.replaceState({}, document.title, window.location.pathname);
             }
 
@@ -1206,7 +1210,9 @@ async function initializeApp() {
                     await fetchUserSubscription();
                     if (userHasSubscription) {
                         track('purchase', { item: 'subscription' });
-                        showToastMessage('Subscription activated! You now have full layout access.', 'success');
+                        await fetchSubscriptionUsage();
+                        syncDefaultModelToggles();
+                        resumeAfterUpgrade('Your plan is active.');
                     } else if (attempts < 6) {
                         setTimeout(checkSub, 2000);
                     } else {
@@ -1219,7 +1225,8 @@ async function initializeApp() {
                 setTimeout(checkSub, 1000);
                 window.history.replaceState({}, document.title, window.location.pathname);
             } else if (subscriptionStatus === 'cancelled') {
-                showToastMessage('Subscription cancelled.', 'error');
+                takeUpgradeReturn(); // nothing to resume
+                showToastMessage('Checkout cancelled. Nothing was charged.', 'info');
                 window.history.replaceState({}, document.title, window.location.pathname);
             }
         }
@@ -1414,14 +1421,19 @@ function hasTokensAvailable() {
         // make the user wait for a server 429.
         if (subscriptionUsage.remaining > 0) return true;
         if (userTokens > 0) return true;
-        showBuyTokensModal();
+        openUpgrade('monthly-limit');
         return false;
     }
     if (userTokens <= 0) {
-        showBuyTokensModal();
+        openUpgrade('premium');
         return false;
     }
     return true;
+}
+
+/** Which gate a blocked premium action hits: out of tokens, or out of this month's plan. */
+function premiumGate() {
+    return userHasSubscription ? 'monthly-limit' : 'premium';
 }
 
 /** Whether the user can still run a premium (OpenAI) image generation. */
@@ -1432,11 +1444,7 @@ function hasPremiumGenerationsAvailable() {
 }
 
 function showSubscriptionLimitMessage() {
-    const limit = subscriptionUsage.limit || 50;
-    alert(
-        `You've reached your monthly limit of ${limit} image generations.\n\n` +
-        `Your quota will reset at the start of next month.`
-    );
+    openUpgrade('monthly-limit');
 }
 
 /**
@@ -1530,6 +1538,7 @@ function renderBuyTokensModalCounts() {
     if (countEl) countEl.textContent = totalRemaining;
     const tokensCurrentEl = buyTokensModal?.querySelector('.tokens-current');
     if (!tokensCurrentEl) return;
+    tokensCurrentEl.hidden = !currentUser;
     if (userHasSubscription) {
         tokensCurrentEl.innerHTML =
             `You have <strong id="modal-tokens-count">${totalRemaining}</strong> generation${totalRemaining === 1 ? '' : 's'} remaining ` +
@@ -1542,29 +1551,81 @@ function renderBuyTokensModalCounts() {
     }
 }
 
-function showBuyTokensModal() {
-    if (!currentUser) { showAuthModal('login'); return; }
+/** The gate the upgrade sheet is showing, while it's open. */
+let activeUpgradeGate = null;
+
+/**
+ * Open the upgrade sheet for a gate (src/upgrade.js lists them). It says what
+ * was blocked, what it costs and what happens after checkout, and shows only
+ * the options that unblock it. Signed-out visitors see prices too; buying
+ * asks them to make an account first.
+ */
+function openUpgrade(gate = 'plans') {
+    if (typeof gate !== 'string') gate = 'plans'; // when bound straight to a click
+    const packs = (appConfig?.tokenPacks && appConfig.tokenPacks.length) ? appConfig.tokenPacks : DEFAULT_TOKEN_PACKS;
+    const subscription = appConfig?.subscription || DEFAULT_SUBSCRIPTION;
+    const copy = describeGate(gate, { packs, subscription, isSubscriber: userHasSubscription });
+    activeUpgradeGate = copy.gate;
+    track('upgrade_shown', { gate: copy.gate, signed_in: !!currentUser });
+
+    if (!buyTokensModal) return;
+    const setText = (id, text) => {
+        const el = document.getElementById(id);
+        if (!el) return;
+        const target = el.querySelector('span') || el;
+        target.textContent = text || '';
+        el.hidden = !text;
+    };
+    setText('upgrade-title', copy.title);
+    setText('upgrade-blocked', copy.blocked);
+    setText('upgrade-cost', copy.cost);
+    setText('upgrade-next', copy.next);
+
+    const tokensOption = buyTokensModal.querySelector('[data-option="tokens"]');
+    const planOption = buyTokensModal.querySelector('[data-option="subscription"]');
+    if (tokensOption) tokensOption.hidden = !copy.showTokens;
+    if (planOption) planOption.hidden = !copy.showSubscription;
+    // The option that unblocks this action comes first, and says so when
+    // there is a choice. With nothing blocked (the pricing page) there's no
+    // "this" to be best for, so no badge.
+    const both = copy.showTokens && copy.showSubscription && !!copy.blocked;
+    for (const option of [tokensOption, planOption]) {
+        if (!option) continue;
+        const recommended = option.dataset.option === copy.recommend;
+        option.classList.toggle('is-recommended', recommended && both);
+        option.style.order = recommended ? '0' : '1';
+        const badge = option.querySelector('.upgrade-recommended');
+        if (badge) badge.hidden = !(recommended && both);
+    }
+
+    const price = document.getElementById('upgrade-plan-price');
+    if (price) price.textContent = formatPrice(subscription.amount);
+    const points = document.getElementById('upgrade-plan-points');
+    if (points) {
+        points.innerHTML = '';
+        for (const text of copy.subscriptionPoints) {
+            const li = document.createElement('li');
+            li.textContent = text;
+            points.appendChild(li);
+        }
+    }
+    resetSubscribeButton();
+
     updateTokensDisplay();
-    // Subscribers have two pools that both count toward generation: the
-    // monthly subscription allowance and any purchased token packs on top of
-    // it. The modal should show the COMBINED remaining count plus a
-    // breakdown — showing only purchased tokens (userTokens) misled
-    // subscribers into thinking they had fewer generations available than
-    // they actually did.
     renderBuyTokensModalCounts();
-    // Kick off a background refresh so the numbers reflect post-generation
-    // server state. The modal stays interactive while it's in flight.
-    refreshBuyTokensModalCounts();
-    if (!tokenPacksContainer || !tokenPacksContainer.children.length) {
-        renderTokenPacks(appConfig?.tokenPacks);
-    }
-    if (buyTokensModal) {
-        buyTokensModal.classList.remove('hidden');
-        buyTokensModal.classList.add('show');
-        buyTokensModal.style.opacity = '1';
-        buyTokensModal.style.visibility = 'visible';
-    }
+    if (currentUser) refreshBuyTokensModalCounts();
+    renderTokenPacks(appConfig?.tokenPacks);
+
+    buyTokensModal.classList.remove('hidden');
+    buyTokensModal.classList.add('show');
+    buyTokensModal.style.opacity = '1';
+    buyTokensModal.style.visibility = 'visible';
     if (typeof feather !== 'undefined') feather.replace();
+}
+
+/** The token balance in the header, and other "buy more" entry points. */
+function showBuyTokensModal() {
+    openUpgrade('tokens');
 }
 
 function hideBuyTokensModal() {
@@ -1574,23 +1635,56 @@ function hideBuyTokensModal() {
         buyTokensModal.style.visibility = '';
         buyTokensModal.classList.add('hidden');
     }
+    activeUpgradeGate = null;
+    // /upgrade is the sheet; closing it there leaves for the home page
+    // rather than an empty page with a pricing URL.
+    if (currentRoute().name === 'upgrade') {
+        navigate('home', {}, { replace: true });
+    }
+}
+
+/**
+ * Note where checkout should bring them back to, and what to pick up there.
+ * Returns the path for the server's return address.
+ */
+function rememberUpgradeReturn() {
+    // Paying from /upgrade itself lands on the home page, not the sheet again.
+    const path = window.location.pathname === '/upgrade' ? '/' : window.location.pathname;
+    saveUpgradeReturn({
+        gate: activeUpgradeGate || 'plans',
+        path,
+        refinement: refinementInput?.value || '',
+    });
+    return path;
+}
+
+/** Signed out at checkout: make the account, then carry on to checkout. */
+function requireAccountForCheckout(resume) {
+    hideBuyTokensModal();
+    setPendingGatedAction(resume);
+    showAuthModal('signup');
 }
 
 async function handleCheckout(pack, cardEl) {
-    if (!currentUser || !currentSession) { showAuthModal('login'); return; }
     if (!pack) return;
+    if (!currentUser || !currentSession) {
+        const gate = activeUpgradeGate;
+        requireAccountForCheckout(() => { openUpgrade(gate || 'tokens'); });
+        return;
+    }
     const cards = tokenPacksContainer ? Array.from(tokenPacksContainer.children) : [];
     try {
         cards.forEach((c) => { c.disabled = true; });
         if (cardEl) cardEl.classList.add('token-pack--loading');
-        track('begin_checkout', { item: `token-pack-${pack}` });
+        track('begin_checkout', { item: `token-pack-${pack}`, gate: activeUpgradeGate || 'plans' });
+        const returnTo = rememberUpgradeReturn();
         const res = await fetch(`${PROXY_SERVER_URL}/api/checkout`, {
             method: 'POST',
             headers: {
                 Authorization: `Bearer ${currentSession.access_token}`,
                 'Content-Type': 'application/json'
             },
-            body: JSON.stringify({ pack })
+            body: JSON.stringify({ pack, return_to: returnTo })
         });
         if (res.ok) {
             const { url } = await res.json();
@@ -1645,7 +1739,8 @@ async function verifyCheckoutAndCredit(sessionId) {
                 updateTokensDisplay();
                 if (userHasSubscription) updateSubscriptionUsageDisplay();
                 if (data.tokensAdded) track('purchase', { item: 'token-pack', tokens: data.tokensAdded });
-                showToastMessage(`Payment successful! ${data.tokensAdded} token(s) added.`, 'success');
+                syncDefaultModelToggles();
+                resumeAfterUpgrade(`${data.tokensAdded} premium design${data.tokensAdded === 1 ? '' : 's'} added.`);
                 return;
             }
 
@@ -1673,50 +1768,105 @@ async function verifyCheckoutAndCredit(sessionId) {
     attemptVerify();
 }
 
-// ── Subscription modal helpers ─────────────────────────────────────────────────
+/**
+ * Resolves once the photo and versions from the last visit are back on screen
+ * (or there were none). Checkout returns with a page load, so anything that
+ * resumes work after paying waits for this first.
+ */
+let markSessionRestored = () => {};
+const sessionRestored = new Promise((resolve) => { markSessionRestored = resolve; });
 
-function showSubscribeModal() {
-    if (!currentUser) { showAuthModal('login'); return; }
-    const modal = document.getElementById('subscribe-modal');
-    const subscribeBtn = document.getElementById('subscribe-checkout-btn');
-    if (subscribeBtn) {
-        subscribeBtn.disabled = false;
-        subscribeBtn.innerHTML = '<i data-feather="zap"></i><span>Subscribe — $19.99/mo</span>';
+/**
+ * Back from a successful checkout: pick up what the gate interrupted. The
+ * page they paid from has been reloaded with their design restored; this
+ * puts the rest back (premium on, the change they'd typed) and offers to run
+ * it with one tap. It doesn't start a paid run on its own: they should see
+ * the design come back before spending what they just bought.
+ * @param {string} confirmation  what the purchase added, e.g. "10 premium designs added."
+ */
+async function resumeAfterUpgrade(confirmation) {
+    const pending = takeUpgradeReturn();
+    if (!pending) {
+        showToastMessage(`Payment successful. ${confirmation}`, 'success');
+        return;
     }
-    if (modal) {
-        modal.classList.remove('hidden');
-        modal.classList.add('show');
-        modal.style.opacity = '1';
-        modal.style.visibility = 'visible';
+    track('upgrade_resumed', { gate: pending.gate });
+    await sessionRestored;
+
+    switch (pending.gate) {
+        case 'premium':
+        case 'monthly-limit': {
+            if (hasPremiumGenerationsAvailable()) setDefaultModelPref('premium');
+            syncDefaultModelToggles();
+            if (pending.refinement && refinementInput && !refinementInput.value.trim()) {
+                refinementInput.value = pending.refinement;
+                refinementInput.dispatchEvent(new Event('input'));
+            }
+            const onResults = resultsSection && !resultsSection.classList.contains('hidden');
+            const onDesign = wizardContainer && !wizardContainer.classList.contains('hidden');
+            if (!onResults && !onDesign) {
+                showToastMessage(`${confirmation} Premium is on.`, 'success');
+                return;
+            }
+            const hasChange = !!refinementInput?.value.trim();
+            showToastMessage(`${confirmation} Premium is on.`, 'success', {
+                actionLabel: onResults ? (hasChange ? 'Apply change' : 'New version') : 'Generate',
+                onAction: () => (onResults ? regenerateDesigns() : generateDesigns()),
+                duration: 15000,
+            });
+            return;
+        }
+        case 'library':
+            showToastMessage(`${confirmation} Designs you make are now saved to your library.`, 'success', {
+                actionLabel: 'Open library',
+                onAction: openDesignsModal,
+                duration: 12000,
+            });
+            return;
+        case 'floor-plan':
+            showToastMessage(`${confirmation} The full floor plan editor is unlocked.`, 'success');
+            return;
+        default:
+            showToastMessage(`Payment successful. ${confirmation}`, 'success');
     }
-    if (typeof feather !== 'undefined') feather.replace();
 }
 
-function hideSubscribeModal() {
-    const modal = document.getElementById('subscribe-modal');
-    if (modal) {
-        modal.classList.remove('show');
-        modal.style.opacity = '';
-        modal.style.visibility = '';
-        modal.classList.add('hidden');
-    }
+// ── Subscription ───────────────────────────────────────────────────────────
+
+/** Anything that just shows the options, gate unnamed. */
+function showSubscribeModal(gate = 'plans') {
+    openUpgrade(typeof gate === 'string' ? gate : 'plans');
+}
+
+function resetSubscribeButton() {
+    const btn = document.getElementById('tokens-modal-subscribe-btn');
+    if (!btn) return;
+    const amount = (appConfig?.subscription || DEFAULT_SUBSCRIPTION).amount;
+    btn.disabled = false;
+    btn.innerHTML = `<span>Subscribe for ${formatPrice(amount)} a month</span>`;
 }
 
 async function handleSubscribeCheckout() {
-    if (!currentUser || !currentSession) { showAuthModal('login'); return; }
-    const subscribeBtn = document.getElementById('subscribe-checkout-btn');
+    if (!currentUser || !currentSession) {
+        const gate = activeUpgradeGate;
+        requireAccountForCheckout(() => { openUpgrade(gate || 'plans'); });
+        return;
+    }
+    const subscribeBtn = document.getElementById('tokens-modal-subscribe-btn');
     try {
         if (subscribeBtn) {
             subscribeBtn.disabled = true;
             subscribeBtn.innerHTML = '<span>Processing...</span>';
         }
-        track('begin_checkout', { item: 'subscription' });
+        track('begin_checkout', { item: 'subscription', gate: activeUpgradeGate || 'plans' });
+        const returnTo = rememberUpgradeReturn();
         const res = await fetch(`${PROXY_SERVER_URL}/api/subscribe`, {
             method: 'POST',
             headers: {
                 Authorization: `Bearer ${currentSession.access_token}`,
                 'Content-Type': 'application/json'
-            }
+            },
+            body: JSON.stringify({ return_to: returnTo })
         });
         if (res.ok) {
             const { url } = await res.json();
@@ -1728,16 +1878,12 @@ async function handleSubscribeCheckout() {
     } catch (err) {
         console.error('handleSubscribeCheckout error:', err);
         showToastMessage(err.message || 'Error starting subscription. Please try again.', 'error');
-        if (subscribeBtn) {
-            subscribeBtn.disabled = false;
-            subscribeBtn.innerHTML = '<i data-feather="zap"></i><span>Subscribe — $19.99/mo</span>';
-            if (typeof feather !== 'undefined') feather.replace();
-        }
+        resetSubscribeButton();
     }
 }
 
 // Exposed so floorPlanEditor can open the modal
-window.__decoraitShowSubscribeModal = showSubscribeModal;
+window.__decoraitShowSubscribeModal = () => openUpgrade('floor-plan');
 window.__decoraitGetAccessToken = () => currentSession?.access_token || null;
 
 /** Lightweight toast notification (no external dependency) */
@@ -1746,7 +1892,7 @@ let _activeToast = null;
  * @param {{ actionLabel?: string, onAction?: () => void }} [action]
  *   An optional button ("Try Premium") that dismisses the toast and runs onAction.
  */
-function showToastMessage(message, type = 'info', { actionLabel, onAction } = {}) {
+function showToastMessage(message, type = 'info', { actionLabel, onAction, duration } = {}) {
     if (_activeToast) _activeToast.remove();
     const toast = document.createElement('div');
     toast.className = `toast toast-${type}`;
@@ -1768,6 +1914,7 @@ function showToastMessage(message, type = 'info', { actionLabel, onAction } = {}
         text: message,
         // A loading toast stays until it's replaced or dismissed.
         ...(type === 'loading' ? { duration: null } : {}),
+        ...(duration !== undefined ? { duration } : {}),
         onRemove: () => { if (_activeToast === toast) _activeToast = null; },
     });
     actionBtn?.addEventListener('click', () => { dismiss(); onAction(); });
@@ -2458,7 +2605,7 @@ async function deleteSavedDesignById(id) {
 
 function openDesignsModal() {
     if (!userHasSubscription) {
-        showSubscribeModal();
+        openUpgrade('library');
         return;
     }
     const panel = document.getElementById('my-designs-panel');
@@ -3185,15 +3332,13 @@ document.addEventListener('DOMContentLoaded', async () => {
         if (!defaultModelToggleResults.disabled) return;
         e.preventDefault();
         if (!currentUser) showAuthModal('login');
-        else if (userHasSubscription) showSubscriptionLimitMessage();
-        else showBuyTokensModal();
+        else openUpgrade(premiumGate());
     });
     quickEditPremiumToggle?.closest('label')?.addEventListener('click', (e) => {
         if (!quickEditPremiumToggle.disabled) return;
         e.preventDefault();
         if (!currentUser) showAuthModal('login');
-        else if (userHasSubscription) showSubscriptionLimitMessage();
-        else showBuyTokensModal();
+        else openUpgrade(premiumGate());
     });
     const shortcutHint = document.querySelector('.quick-edit-shortcut');
     if (shortcutHint && !/Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent)) {
@@ -3204,8 +3349,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         quickEditPremiumToggle.addEventListener('change', () => {
             if (quickEditPremiumToggle.checked && !hasPremiumGenerationsAvailable()) {
                 quickEditPremiumToggle.checked = false;
-                if (userHasSubscription) showSubscriptionLimitMessage();
-                else showBuyTokensModal();
+                openUpgrade(premiumGate());
             }
         });
     }
@@ -3228,8 +3372,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         fengShuiApplyPremiumToggle.addEventListener('change', () => {
             if (fengShuiApplyPremiumToggle.checked && !hasPremiumGenerationsAvailable()) {
                 fengShuiApplyPremiumToggle.checked = false;
-                if (userHasSubscription) showSubscriptionLimitMessage();
-                else showBuyTokensModal();
+                openUpgrade(premiumGate());
                 syncDefaultModelToggles();
             }
         });
@@ -3244,27 +3387,15 @@ document.addEventListener('DOMContentLoaded', async () => {
     if (buyTokensBtn) buyTokensBtn.addEventListener('click', showBuyTokensModal);
     if (closeBuyTokensModalBtn) closeBuyTokensModalBtn.addEventListener('click', hideBuyTokensModal);
     const tokensModalSubscribeBtn = document.getElementById('tokens-modal-subscribe-btn');
-    if (tokensModalSubscribeBtn) tokensModalSubscribeBtn.addEventListener('click', () => { hideBuyTokensModal(); showSubscribeModal(); });
+    if (tokensModalSubscribeBtn) tokensModalSubscribeBtn.addEventListener('click', handleSubscribeCheckout);
     const subscribeDropdownBtn = document.getElementById('subscribe-dropdown-btn');
-    if (subscribeDropdownBtn) subscribeDropdownBtn.addEventListener('click', () => { userDropdown?.classList.add('hidden'); showSubscribeModal(); });
+    if (subscribeDropdownBtn) subscribeDropdownBtn.addEventListener('click', () => { userDropdown?.classList.add('hidden'); openUpgrade('plans'); });
     // Subscribers can click their monthly-usage badge to buy overflow token packs.
     if (subscriptionUsageDisplay) subscriptionUsageDisplay.addEventListener('click', showBuyTokensModal);
     // Close modal when clicking outside
     if (buyTokensModal) {
         buyTokensModal.addEventListener('click', (e) => {
             if (e.target === buyTokensModal) hideBuyTokensModal();
-        });
-    }
-
-    // Subscription modal listeners
-    const subscribeCheckoutBtn = document.getElementById('subscribe-checkout-btn');
-    const closeSubscribeModalBtn = document.getElementById('close-subscribe-modal-btn');
-    const subscribeModal = document.getElementById('subscribe-modal');
-    if (subscribeCheckoutBtn) subscribeCheckoutBtn.addEventListener('click', handleSubscribeCheckout);
-    if (closeSubscribeModalBtn) closeSubscribeModalBtn.addEventListener('click', hideSubscribeModal);
-    if (subscribeModal) {
-        subscribeModal.addEventListener('click', (e) => {
-            if (e.target === subscribeModal) hideSubscribeModal();
         });
     }
 
@@ -3341,7 +3472,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     const layoutSaveBtn = document.getElementById('layout-save-btn');
     if (layoutSaveBtn) layoutSaveBtn.addEventListener('click', () => {
         if (layoutSaveBtn.getAttribute('data-subscription-locked') === '1') {
-            showSubscribeModal();
+            openUpgrade('floor-plan');
             return;
         }
         handleSaveLayout();
@@ -3456,7 +3587,8 @@ function initializeAppUI() {
     initShell();
     startRouter(applyRoute);
     openAuthFromUrl();
-    restoreRedesignSession();
+    initRefinement();
+    restoreRedesignSession().finally(markSessionRestored);
 }
 
 // ── App shell: workspace switcher + mobile tab bar ───────────────────────────
@@ -3606,7 +3738,7 @@ function applyRoute(route) {
 
         case 'upgrade':
             goToRedesign();
-            showSubscribeModal();
+            openUpgrade('plans');
             break;
 
         case 'library':
@@ -5620,6 +5752,7 @@ async function generateDesigns(options = {}) {
         // means the next Regenerate applies it a second time on top of itself.
         if (nanoRouteReason === 'refinement' && imageUrl && refinementInput) {
             refinementInput.value = '';
+            updateRefinementState();
         }
 
         if (imageUrl) suggestPremiumForEmptyRoom(initialDesign);
@@ -6149,13 +6282,10 @@ function syncDefaultModelToggles() {
                     ' and purchase tokens or a monthly subscription to use the premium model.';
                 upsell.querySelector('.model-pref-upsell-btn').addEventListener('click', () => showAuthModal('login'));
             } else {
-                upsell.innerHTML =
-                    'No tokens remaining — ' +
-                    '<button type="button" class="model-pref-upsell-btn" data-upsell="buy">buy tokens</button>' +
-                    ' or <button type="button" class="model-pref-upsell-btn" data-upsell="subscribe">get a subscription</button>' +
-                    ' to unlock the premium model.';
-                upsell.querySelector('[data-upsell="buy"]').addEventListener('click', () => showBuyTokensModal());
-                upsell.querySelector('[data-upsell="subscribe"]').addEventListener('click', () => showSubscribeModal());
+                upsell.innerHTML = userHasSubscription
+                    ? 'This month\'s premium designs are used up. <button type="button" class="model-pref-upsell-btn">Keep going with tokens</button>'
+                    : 'No premium designs left. <button type="button" class="model-pref-upsell-btn">See prices</button>';
+                upsell.querySelector('.model-pref-upsell-btn').addEventListener('click', () => openUpgrade(premiumGate()));
             }
             row.appendChild(upsell);
         }
@@ -6166,8 +6296,7 @@ defaultModelToggles.forEach((el) => {
     el.addEventListener('change', () => {
         if (el.checked && !hasPremiumGenerationsAvailable()) {
             el.checked = false;
-            if (userHasSubscription) showSubscriptionLimitMessage();
-            else showBuyTokensModal();
+            openUpgrade(premiumGate());
             syncDefaultModelToggles();
             return;
         }
@@ -6757,6 +6886,7 @@ function renderDesignHistory() {
     if (designHistory.length < 2) {
         container.classList.add('hidden');
         strip.innerHTML = '';
+        updateRefinementBase();
         return;
     }
 
@@ -6774,6 +6904,7 @@ function renderDesignHistory() {
             <span class="design-history-thumb-label">${entry.label}</span>
         </button>
     `).join('');
+    updateRefinementBase();
 
     strip.querySelectorAll('.design-history-thumb').forEach(btn => {
         btn.addEventListener('click', () => {
@@ -6858,11 +6989,80 @@ function goBackToPreview() {
 
     // Clear refinement text so it doesn't bleed into the next generation
     if (refinementInput) refinementInput.value = '';
+    updateRefinementState();
 }
 
 function regenerateDesigns() {
     // Simply call the generate designs function again
     generateDesigns();
+}
+
+// ── Refinement: the next step after a result ─────────────────────────────────
+
+const refineIdeaButtons = Array.from(document.querySelectorAll('.refine-idea'));
+
+/**
+ * An idea adds its sentence to the box, or takes it back out. It never runs
+ * anything: ideas are meant to be combined and reworded before applying.
+ */
+function toggleRefineIdea(button) {
+    if (!refinementInput) return;
+    const idea = button.dataset.idea || '';
+    const text = refinementInput.value;
+    if (text.includes(idea)) {
+        refinementInput.value = text.replace(idea, '').replace(/\s{2,}/g, ' ').trim();
+    } else {
+        refinementInput.value = (text.trim() ? `${text.trim()} ` : '') + idea;
+        track('refine_idea', { idea: button.dataset.key || 'unknown' });
+    }
+    // On a phone, focusing would raise the keyboard over the design they're
+    // looking at; there the tap only fills the box.
+    if (window.matchMedia?.('(pointer: fine)').matches) {
+        refinementInput.focus();
+        const end = refinementInput.value.length;
+        refinementInput.setSelectionRange(end, end);
+    }
+    updateRefinementState();
+}
+
+/** Keep the ideas' pressed state and the button's wording in step with the box. */
+function updateRefinementState() {
+    const text = refinementInput?.value || '';
+    for (const button of refineIdeaButtons) {
+        button.setAttribute('aria-pressed', String(text.includes(button.dataset.idea || '\u0000')));
+    }
+    const label = regenerateBtn?.querySelector('span');
+    if (label) label.textContent = text.trim() ? 'Apply change' : 'New version';
+}
+
+/**
+ * When an earlier version is picked, say that the next change starts from it,
+ * with a way back to the latest. Hidden while the latest is shown.
+ */
+function updateRefinementBase() {
+    const note = document.getElementById('refinement-base');
+    if (!note) return;
+    const selected = getSelectedHistoryEntry();
+    const latest = designHistory[designHistory.length - 1];
+    const show = !!(selected && latest && selected.id !== latest.id);
+    note.hidden = !show;
+    if (!show) return;
+    const text = note.querySelector('span');
+    if (text) {
+        text.textContent = selected.isOriginal
+            ? 'Your next change starts again from your original photo.'
+            : `Your next change builds on ${selected.label}, not the latest.`;
+    }
+}
+
+function initRefinement() {
+    refineIdeaButtons.forEach((button) => button.addEventListener('click', () => toggleRefineIdea(button)));
+    refinementInput?.addEventListener('input', updateRefinementState);
+    document.getElementById('refinement-base-latest')?.addEventListener('click', () => {
+        const latest = designHistory[designHistory.length - 1];
+        if (latest) selectHistoryEntry(latest.id);
+    });
+    updateRefinementState();
 }
 
 // ── Room photo Feng Shui analysis ───────────────────────────────────────────

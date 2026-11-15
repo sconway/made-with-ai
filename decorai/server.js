@@ -24,6 +24,7 @@ import {
 import { createQuota } from './lib/quota.js';
 import { createFreeDailyCap } from './lib/freeDailyCap.js';
 import { createGenerationEvents, parseModelCosts, modelLabel } from './lib/generationEvents.js';
+import { isReturnPath } from './src/upgrade.js';
 import {
   resolveCorsOrigin,
   securityHeaders,
@@ -146,6 +147,20 @@ if (!SUPABASE_URL || !SUPABASE_ANON_KEY) {
 
 // Subscription configuration
 const SUBSCRIPTION_PRICE_ID = process.env.STRIPE_SUBSCRIPTION_PRICE_ID || '';
+// What the upgrade sheet shows for the plan. Display only: Stripe charges
+// whatever STRIPE_SUBSCRIPTION_PRICE_ID says, so keep the two in step.
+const SUBSCRIPTION_PRICE_CENTS = parseInt(process.env.SUBSCRIPTION_PRICE_CENTS, 10) || 1999;
+
+/**
+ * Where Stripe sends someone after checkout: the page they paid from, so the
+ * app can pick up what they were doing. Only known app paths are accepted
+ * (src/upgrade.js isReturnPath); anything else returns to the home page.
+ */
+function checkoutReturnUrl(returnTo, query) {
+  const appUrl = (process.env.APP_URL || 'http://localhost:5173').replace(/\/+$/, '');
+  const path = isReturnPath(returnTo) ? returnTo : '/';
+  return `${appUrl}${path}?${query}`;
+}
 const DESIGNS_STORAGE_BUCKET = process.env.SUPABASE_DESIGNS_BUCKET?.trim() || 'generated-designs';
 const MAX_SAVED_DESIGNS_SUBSCRIBER = parseInt(process.env.MAX_SAVED_DESIGNS_SUBSCRIBER) || 200;
 const DESIGN_SIGNED_URL_TTL_SEC = parseInt(process.env.DESIGN_SIGNED_URL_TTL_SEC) || 3600;
@@ -908,16 +923,14 @@ app.post('/api/checkout', async (req, res) => {
       });
     }
 
-    const appUrl = process.env.APP_URL || 'http://localhost:5173';
-
     const session = await stripe.checkout.sessions.create({
       payment_method_types: ['card'],
       line_items: [{ price: pack.priceId, quantity: 1 }],
       mode: 'payment',
       // session_id lets the success page verify + credit immediately, without
       // depending on webhook delivery timing.
-      success_url: `${appUrl}?payment=success&session_id={CHECKOUT_SESSION_ID}`,
-      cancel_url: `${appUrl}?payment=cancelled`,
+      success_url: checkoutReturnUrl(req.body?.return_to, 'payment=success&session_id={CHECKOUT_SESSION_ID}'),
+      cancel_url: checkoutReturnUrl(req.body?.return_to, 'payment=cancelled'),
       customer_email: user.email,
       metadata: { user_id: user.id, tokens: String(pack.tokens) }
     });
@@ -1022,14 +1035,12 @@ app.post('/api/subscribe', async (req, res) => {
       return res.status(500).json({ error: 'Subscription not configured', detail: 'STRIPE_SUBSCRIPTION_PRICE_ID is not set' });
     }
 
-    const appUrl = process.env.APP_URL || 'http://localhost:5173';
-
     const session = await stripe.checkout.sessions.create({
       payment_method_types: ['card'],
       line_items: [{ price: SUBSCRIPTION_PRICE_ID, quantity: 1 }],
       mode: 'subscription',
-      success_url: `${appUrl}?subscription=success`,
-      cancel_url: `${appUrl}?subscription=cancelled`,
+      success_url: checkoutReturnUrl(req.body?.return_to, 'subscription=success'),
+      cancel_url: checkoutReturnUrl(req.body?.return_to, 'subscription=cancelled'),
       customer_email: user.email,
       subscription_data: { metadata: { user_id: user.id } },
       metadata: { user_id: user.id }
@@ -2089,6 +2100,7 @@ app.get('/api/config', (req, res) => {
     tokensPerPurchase: TOKENS_PER_PURCHASE,
     priceAmount: parseInt(process.env.PRICE_AMOUNT) || 199,
     tokenPacks: getConfiguredTokenPacks(),
+    subscription: { amount: SUBSCRIPTION_PRICE_CENTS, monthlyLimit: SUBSCRIPTION_MONTHLY_LIMIT },
     // Public GA4 Measurement ID (e.g. G-XXXXXXXXXX). Empty disables analytics.
     gaMeasurementId: process.env.GA_MEASUREMENT_ID?.trim() || '',
     anonGenerationsEnabled: anonymousGenerationsEnabled(),

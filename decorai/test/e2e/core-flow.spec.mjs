@@ -12,7 +12,7 @@ const PREDICTION_URL = 'https://api.replicate.com/v1/predictions/pred_test_1';
 
 /** Install the fake backend. Returns what the app sent, for assertions. */
 async function mockBackend(page, { anonRemaining = 1, shareLinks = true } = {}) {
-  const seen = { predictions: [], polls: 0, unmocked: [], clientErrors: [], shareUploads: [], shares: [], revoked: [] };
+  const seen = { predictions: [], polls: 0, unmocked: [], clientErrors: [], shareUploads: [], shares: [], revoked: [], checkouts: [], credits: 0 };
   const isApi = (url) => ['/api/', '/replicate/', '/openai/'].some((p) => url.pathname.startsWith(p)) || url.pathname === '/health';
 
   await page.route(isApi, async (route) => {
@@ -29,7 +29,8 @@ async function mockBackend(page, { anonRemaining = 1, shareLinks = true } = {}) 
           supabaseUrl: 'https://smoke-test.supabase.invalid',
           supabaseAnonKey: 'smoke-test-anon-key',
           stripePublishableKey: '',
-          tokenPacks: [],
+          tokenPacks: [{ id: '10', tokens: 10, amount: 499 }, { id: '50', tokens: 50, amount: 1999 }],
+          subscription: { amount: 1999, monthlyLimit: 50 },
           gaMeasurementId: '',
           anonGenerationsEnabled: true,
           oauthProviders: ['google'],
@@ -37,7 +38,18 @@ async function mockBackend(page, { anonRemaining = 1, shareLinks = true } = {}) 
         });
       // What a signed-in session asks for on load.
       case '/api/credits':
-        return json({ credits: 0 });
+        return json({ credits: seen.credits });
+      // Checkout: instead of Stripe's page, go straight to where Stripe's
+      // success redirect would land, built from the return path sent.
+      case '/api/checkout': {
+        const body = route.request().postDataJSON();
+        seen.checkouts.push(body);
+        const back = body.return_to || '/';
+        return json({ url: `${url.origin}${back}?payment=success&session_id=cs_test_1` });
+      }
+      case '/api/verify-checkout':
+        seen.credits = 10;
+        return json({ credits: 10, tokensAdded: 10 });
       case '/api/subscription':
         return json({ active: false });
       case '/api/layout':
@@ -367,4 +379,78 @@ test('an uncaught browser error is reported to the server', async ({ page }) => 
   expect(report.path).toBe('/');
   expect(report.message).toContain('smoke-test failure');
   expect(report.message, 'personal details are stripped before sending').not.toContain('jane@example.com');
+});
+
+test('ideas fill the refine box without running anything, and the button says what it will do', async ({ page }) => {
+  const seen = await mockBackend(page);
+  await generateOnce(page);
+  const box = page.locator('#refinement-input');
+  const button = page.locator('#regenerate-btn');
+  await expect(button).toHaveText(/New version/);
+
+  await page.locator('.refine-idea[data-key="warmer"]').click();
+  await page.locator('.refine-idea[data-key="plants"]').click();
+  await expect(box).toHaveValue('Use warmer, cosier colours. Add a few more plants.');
+  await expect(page.locator('.refine-idea[data-key="warmer"]')).toHaveAttribute('aria-pressed', 'true');
+  await expect(button).toHaveText(/Apply change/);
+
+  // A second tap takes the idea back out.
+  await page.locator('.refine-idea[data-key="warmer"]').click();
+  await expect(box).toHaveValue('Add a few more plants.');
+  await expect(page.locator('.refine-idea[data-key="warmer"]')).toHaveAttribute('aria-pressed', 'false');
+
+  expect(seen.predictions.length, 'ideas never start a generation').toBe(1);
+
+  // Picking an earlier version says the next change starts from it.
+  await expect(page.locator('#refinement-base')).toBeHidden();
+  await page.locator('#design-history-strip .design-history-thumb').first().click();
+  await expect(page.locator('#refinement-base')).toBeVisible();
+  await expect(page.locator('#refinement-base')).toContainText('original photo');
+  await page.locator('#refinement-base-latest').click();
+  await expect(page.locator('#refinement-base')).toBeHidden();
+});
+
+test('a premium gate names the blocked action, and checkout brings them back to it', async ({ page }) => {
+  await signIn(page);
+  const seen = await mockBackend(page);
+  await generateOnce(page);
+  await expect(page).toHaveURL(/\/result/);
+
+  // They type a change, then try to switch on premium with no tokens.
+  await page.locator('.refine-idea[data-key="art"]').click();
+  await page.locator('#default-model-toggle-results').locator('xpath=..').click({ force: true });
+  const sheet = page.locator('#buy-tokens-modal');
+  await expect(sheet).toBeVisible();
+  await expect(page.locator('#upgrade-title')).toHaveText('Generate with the premium model');
+  await expect(page.locator('#upgrade-blocked')).toContainText("You don't have any premium designs left");
+  await expect(page.locator('#upgrade-cost')).toContainText('Tokens start at 39¢ each');
+  await expect(page.locator('#upgrade-next')).toContainText('come straight back to this design');
+  await expect(sheet.locator('[data-option="tokens"]')).toHaveClass(/is-recommended/);
+
+  // Buy a pack. The fake checkout returns at once, as Stripe's success page would.
+  await page.locator('.token-pack[data-pack="10"]').click();
+  await expect(page).toHaveURL(/\/result$/, { timeout: 15_000 }); // query stripped after handling
+  expect(seen.checkouts).toEqual([{ pack: '10', return_to: '/result' }]);
+
+  // Back on the same design, premium on, their change put back, one tap to run.
+  await expect(page.locator('#design-carousel .generated-image').first()).toHaveAttribute('src', /^data:image\//, { timeout: 15_000 });
+  await expect(page.locator('#refinement-input')).toHaveValue('Add art to the walls.');
+  await expect(page.locator('#default-model-toggle-results')).toBeChecked();
+  const toast = page.locator('.toast').filter({ hasText: '10 premium designs added. Premium is on.' });
+  await expect(toast).toBeVisible({ timeout: 15_000 });
+  await expect(toast.locator('.toast-action')).toHaveText('Apply change');
+  expect(seen.predictions.length, 'nothing paid runs until they tap').toBe(1);
+});
+
+test('/upgrade shows the prices to a signed-out visitor, and buying asks for an account first', async ({ page }) => {
+  const seen = await mockBackend(page);
+  await page.goto('/upgrade');
+  await expect(page.locator('#buy-tokens-modal')).toBeVisible();
+  await expect(page.locator('#upgrade-title')).toHaveText('Plans and pricing');
+  await expect(page.locator('#upgrade-plan-price')).toHaveText('$19.99');
+  await expect(page.locator('.upgrade-recommended:visible')).toHaveCount(0);
+
+  await page.locator('#tokens-modal-subscribe-btn').click();
+  await expect(page.locator('#signup-form')).toBeVisible();
+  expect(seen.checkouts).toEqual([]);
 });

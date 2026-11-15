@@ -76,6 +76,10 @@ services:
       # Subscriber monthly image-generation cap (matches SUBSCRIPTION_MONTHLY_LIMIT in server.js)
       - key: SUBSCRIPTION_MONTHLY_LIMIT
         value: "50"
+      # Plan price shown on the upgrade sheet, in cents. Display only: keep it
+      # equal to the STRIPE_SUBSCRIPTION_PRICE_ID price.
+      - key: SUBSCRIPTION_PRICE_CENTS
+        value: "1999"
 
       # ── Abuse prevention (all optional — sensible defaults live in server.js) ──
       # Comma-separated allowlist of Replicate model versions the proxy may run.
