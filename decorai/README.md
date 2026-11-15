@@ -203,9 +203,11 @@ The smoke test mocks every API and provider call, so it costs nothing to run.
 Without `PW_CHANNEL` it uses Playwright's own Chromium
 (`npx playwright install chromium` once).
 
-The same three steps (unit tests, production build, smoke test) run on GitHub
-Actions for every push that touches `decorai/` (`.github/workflows/decorai.yml`
-at the repository root). `dist/` is not committed: Render builds it on deploy.
+Render runs the unit tests as part of every deploy
+(`npm install && npm test && npm run build`), so a failing test stops the
+deploy and the previous version keeps serving. The smoke test needs a browser
+and is not part of the deploy: run it locally before pushing. `dist/` is not
+committed: Render builds it on deploy.
 
 ## Seeing what generations cost
 

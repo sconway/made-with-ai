@@ -8,7 +8,9 @@ services:
   - type: web
     name: decorait
     env: node
-    buildCommand: npm install && npm run build
+    # The unit tests run before the build: if one fails, the deploy stops and
+    # the previous version keeps serving. They need no network or secrets.
+    buildCommand: npm install && npm test && npm run build
     startCommand: npm start
     envVars:
       - key: NODE_ENV
