@@ -58,7 +58,8 @@ function requestClose(modal) {
 
 // ── Focus management ───────────────────────────────────────────────────────
 
-function trapFocus(e, modal) {
+/** Keep Tab inside `modal`. Exported for overlays that aren't `.modal`s. */
+export function trapFocus(e, modal) {
   if (e.key !== 'Tab') return;
   const items = [...modal.querySelectorAll(FOCUSABLE)].filter(el => el.offsetParent !== null);
   if (!items.length) return;

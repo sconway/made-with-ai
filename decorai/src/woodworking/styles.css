@@ -603,6 +603,7 @@ body.woodworking-active .modal { z-index: 10000; }
 #woodworking-editor-screen .ww-project-name:hover { border-color: var(--color-border-subtle); }
 #woodworking-editor-screen .ww-project-name:focus {
     border-color: var(--color-accent-primary);
+    box-shadow: 0 0 0 1px var(--color-accent-primary);
     background: var(--color-bg-canvas);
     overflow: visible;
     text-overflow: clip;
@@ -713,4 +714,57 @@ body.woodworking-active .modal { z-index: 10000; }
   font-family: var(--font-family-body);
   font-style: normal;
   font-feature-settings: normal;
+}
+
+/* Phones and narrow tablets (R1, R2). The desktop layout put six buttons in
+   one row and the panels beside the 3D view, so on a phone Save was off the
+   screen and the view was a 70px strip. Here: Back, the name and Save on the
+   first row, the other actions wrapping below; the view on top, the panels
+   under it. */
+@media (max-width: 767px) {
+    #woodworking-editor-screen .ww-toolbar {
+        flex-wrap: wrap;
+        gap: 8px;
+        padding: 8px 12px;
+        padding-top: max(8px, env(safe-area-inset-top));
+    }
+    #woodworking-editor-screen .ww-toolbar h2,
+    #woodworking-editor-screen .ww-toolbar .ww-spacer,
+    #woodworking-editor-screen .ww-save-status:empty {
+        display: none;
+    }
+    /* The name takes the rest of the first row, which pushes the other
+       actions onto the second. */
+    #woodworking-editor-screen .ww-project-name {
+        flex: 1 1 45%;
+        min-width: 0;
+    }
+    #woodworking-editor-screen .ww-toolbar [data-action="back"] { order: -2; }
+    #woodworking-editor-screen .ww-toolbar .ww-project-name { order: -1; }
+    #woodworking-editor-screen .ww-toolbar [data-action="save"] { order: 0; }
+    #woodworking-editor-screen .ww-save-status { order: 1; flex-basis: 100%; }
+    #woodworking-editor-screen .ww-toolbar .ww-btn:not([data-action="back"]):not([data-action="save"]) {
+        order: 2;
+        flex: 1 1 30%;   /* five actions: three, then two, evenly */
+        justify-content: center;
+    }
+    #woodworking-editor-screen .ww-btn {
+        min-height: 44px;   /* a finger, not a cursor */
+        font-size: 14px;
+        padding: 6px 10px;
+    }
+    #woodworking-editor-screen .ww-body {
+        grid-template-columns: 1fr;
+        grid-template-rows: minmax(240px, 50%) 1fr;
+    }
+    #woodworking-editor-screen .ww-side {
+        border-left: 0;
+        border-top: 1px solid var(--color-border-subtle);
+        padding-bottom: max(16px, env(safe-area-inset-bottom));
+    }
+    #woodworking-editor-screen .ww-hint {
+        right: 12px;
+        font-size: 12px;
+        line-height: 1.4;
+    }
 }

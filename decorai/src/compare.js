@@ -110,8 +110,13 @@ export function enhanceCompare(container) {
     const step = e.shiftKey ? 10 : 2;
     const current = getPosition(container);
     switch (e.key) {
-      case 'ArrowLeft':  setPosition(container, current - step); break;
-      case 'ArrowRight': setPosition(container, current + step); break;
+      // The ARIA slider pattern: Up and Right both increase, Page keys jump.
+      case 'ArrowLeft':
+      case 'ArrowDown':  setPosition(container, current - step); break;
+      case 'ArrowRight':
+      case 'ArrowUp':    setPosition(container, current + step); break;
+      case 'PageDown':   setPosition(container, current - 10); break;
+      case 'PageUp':     setPosition(container, current + 10); break;
       case 'Home':       setPosition(container, 0); break;
       case 'End':        setPosition(container, 100); break;
       default: return;

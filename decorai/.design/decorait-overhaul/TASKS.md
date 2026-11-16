@@ -155,10 +155,15 @@ Three forces, resolved in this order:
   woodworking editors use it, with "Try again" on failed saves and opens and
   "Undo" after clearing all boards.
 
-- [ ] **I4 · Focus & keyboard pass** _(M)_ — Visible focus indicators at 3:1 on
+- [x] **I4 · Focus & keyboard pass** _(M)_ — Visible focus indicators at 3:1 on
   every interactive element (no bare `outline: none`), logical tab order, focus
   trap and restore in sheets, Escape to close, arrow-key support on the compare
   divider and editor numeric fields. _Cross-cutting._
+  Done: `--shadow-focus` is a solid ring with a gap (was a 28% wash, ~1.5:1);
+  the last controls without a ring fixed; the global ring no longer squares
+  pill buttons; the Shop this look sheet traps Tab; the compare divider takes
+  Up/Down/PageUp/PageDown too. A smoke test tabs through configure, results and
+  both editors and fails on any control without a ring.
 
 - [ ] **I5 · Motion pass** _(M)_ — Apply the existing easings consistently: spring
   pane transitions, `--easing-sheet` for sheets, hover/press feedback on every
@@ -188,14 +193,22 @@ Three forces, resolved in this order:
   scroll. **The primary success criterion for the redesign flow.** _Depends on:
   F7, F8, C1–C5._
 
-- [ ] **R2 · Editor responsive honesty** _(S)_ — Editors get a designed "best on a
+- [ ] **R2 · Editor responsive honesty** _(S)_ — _Started: the woodworking
+  editor has a phone layout (Save on screen, view above panels, touch hint).
+  The floor plan editor is still broken below 768px._ — Editors get a designed "best on a
   larger screen" state below 640px instead of a broken CAD interface. Verify
   `pointer: coarse` restores 44px targets in tool density. _Depends on: E1, E2._
 
-- [ ] **R3 · Accessibility pass** _(M)_ — Verify AA across every surface: contrast
+- [x] **R3 · Accessibility pass** _(M)_ — Verify AA across every surface: contrast
   (tokens are pre-verified, but check composed backgrounds), touch targets, keyboard
   paths, `aria-live` on generation progress and quota changes, form errors tied via
   `aria-describedby`, no color-only meaning. _Cross-cutting._
+  Done: test/e2e/a11yAudit.mjs checks contrast on the composed background and
+  control names; the main screens pass on a phone and a desktop (four contrast
+  fixes, three unnamed close buttons). Form errors are role="alert" and tied to
+  their fields; the usage counter is a live region; a blanket reduced-motion
+  rule; pinch-zoom allowed (4.5). Not covered: text over photos, dark mode
+  (not switched on yet).
 
 - [x] **R4 · Wide-screen restraint** _(S)_ — Apply `--max-width-page`; the app
   currently stretches edge-to-edge. An 1800px row of style options is a failure of

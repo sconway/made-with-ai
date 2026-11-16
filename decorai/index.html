@@ -3,7 +3,7 @@
 
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
     <title>DecorAIt - AI-Powered Interior Design</title>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -75,7 +75,7 @@
                     </button>
                 </div>
                 <!-- Subscription monthly-usage display (subscribers only) -->
-                <div id="subscription-usage-display" class="subscription-usage-display hidden" title="Image generations remaining this month">
+                <div id="subscription-usage-display" class="subscription-usage-display hidden" title="Image generations remaining this month" aria-live="polite" aria-atomic="true">
                     <i data-feather="image"></i>
                     <span class="subscription-usage-text">
                         <span id="subscription-usage-remaining">50</span>
@@ -318,7 +318,7 @@
                                     <div class="items-grid" id="items-grid">
                                         <!-- Populated by JavaScript -->
                                     </div>
-                                    <div class="error-message hidden" id="items-selection-error">
+                                    <div class="error-message hidden" id="items-selection-error" role="alert">
                                         <i data-feather="alert-circle"></i>
                                         <span>Please select at least one item before continuing.</span>
                                     </div>
@@ -967,7 +967,7 @@
         <div class="modal-content auth-modal">
             <div class="modal-header">
                 <h2 id="auth-modal-title">Sign In</h2>
-                <button id="close-modal-btn" class="close-modal-btn" type="button">
+                <button id="close-modal-btn" class="close-modal-btn" type="button" aria-label="Close">
                     <i data-feather="x"></i>
                 </button>
             </div>
@@ -975,13 +975,13 @@
                 <form id="login-form" class="auth-form">
                     <div class="form-group">
                         <label for="login-email">Email</label>
-                        <input type="email" id="login-email" name="email" autocomplete="username" placeholder="you@example.com" required>
+                        <input type="email" id="login-email" name="email" autocomplete="username" placeholder="you@example.com" required aria-describedby="login-error">
                     </div>
                     <div class="form-group">
                         <label for="login-password">Password</label>
-                        <input type="password" id="login-password" name="password" autocomplete="current-password" placeholder="••••••••" required minlength="6">
+                        <input type="password" id="login-password" name="password" autocomplete="current-password" placeholder="••••••••" required minlength="6" aria-describedby="login-error">
                     </div>
-                    <div id="login-error" class="auth-error hidden"></div>
+                    <div id="login-error" class="auth-error hidden" role="alert"></div>
                     <div id="login-resend-block" class="login-resend-block hidden">
                         <button type="button" id="login-resend-btn" class="secondary-btn">Resend verification email</button>
                         <div id="login-resend-message" class="auth-email-exists-message hidden"></div>
@@ -991,17 +991,17 @@
                 <form id="signup-form" class="auth-form hidden">
                     <div class="form-group">
                         <label for="signup-email">Email</label>
-                        <input type="email" id="signup-email" placeholder="you@example.com" required>
+                        <input type="email" id="signup-email" autocomplete="email" placeholder="you@example.com" required aria-describedby="signup-error">
                     </div>
                     <div class="form-group">
                         <label for="signup-password">Password</label>
-                        <input type="password" id="signup-password" placeholder="••••••••" required minlength="6">
+                        <input type="password" id="signup-password" autocomplete="new-password" placeholder="••••••••" required minlength="6" aria-describedby="signup-error">
                     </div>
                     <div class="form-group">
                         <label for="signup-confirm-password">Confirm Password</label>
-                        <input type="password" id="signup-confirm-password" placeholder="••••••••" required minlength="6">
+                        <input type="password" id="signup-confirm-password" autocomplete="new-password" placeholder="••••••••" required minlength="6" aria-describedby="signup-error">
                     </div>
-                    <div id="signup-error" class="auth-error hidden"></div>
+                    <div id="signup-error" class="auth-error hidden" role="alert"></div>
                     <button type="submit" class="primary-btn auth-submit-btn">Create Account</button>
                 </form>
                 <div id="signup-success" class="auth-success hidden">
@@ -1061,7 +1061,7 @@
                             </svg>
                             <span>Continue with Apple</span>
                         </button>
-                        <div id="oauth-error" class="auth-error hidden"></div>
+                        <div id="oauth-error" class="auth-error hidden" role="alert"></div>
                     </div>
                     <div class="auth-switch">
                         <p id="auth-switch-text">Don't have an account?</p>
@@ -1114,7 +1114,7 @@
         <div class="modal-content alert-modal">
             <div class="modal-header">
                 <h2 id="alert-modal-title">Notice</h2>
-                <button id="alert-modal-close" class="close-modal-btn" type="button">
+                <button id="alert-modal-close" class="close-modal-btn" type="button" aria-label="Close">
                     <i data-feather="x"></i>
                 </button>
             </div>
@@ -1132,7 +1132,7 @@
         <div class="modal-content alert-modal">
             <div class="modal-header">
                 <h2 id="confirm-modal-title">Confirm</h2>
-                <button id="confirm-modal-close" class="close-modal-btn" type="button">
+                <button id="confirm-modal-close" class="close-modal-btn" type="button" aria-label="Close">
                     <i data-feather="x"></i>
                 </button>
             </div>
@@ -1365,7 +1365,7 @@
                     </div>
                     <!-- Honeypot: hidden from real users, catches bots -->
                     <input type="text" id="feedback-website" name="website" class="feedback-honeypot" tabindex="-1" autocomplete="off" aria-hidden="true">
-                    <div id="feedback-error" class="auth-error hidden"></div>
+                    <div id="feedback-error" class="auth-error hidden" role="alert"></div>
                     <button type="submit" id="feedback-submit-btn" class="primary-btn feedback-submit-btn">Send Feedback</button>
                 </form>
                 <div id="feedback-success" class="auth-success hidden">

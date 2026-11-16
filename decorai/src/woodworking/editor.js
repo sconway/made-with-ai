@@ -168,6 +168,12 @@ const WoodworkingEditor = (() => {
         screenEl.querySelector('[data-action="back"]')?.addEventListener('click', hide);
         renderLibrary();
         renderCutList(); // the empty state, before any board exists
+        // The hint names mouse buttons; a touch screen gets its own gestures
+        // (OrbitControls: one finger orbits, two pinch to zoom and pan).
+        if (window.matchMedia?.('(pointer: coarse)').matches) {
+            const hint = screenEl.querySelector('.ww-hint');
+            if (hint) hint.textContent = 'Drag a board to move it · Drag empty space to orbit · Pinch to zoom · Two fingers to pan';
+        }
         screenEl.querySelector('[data-action="delete-board"]')?.addEventListener('click', deleteSelected);
         screenEl.querySelector('[data-action="array"]')?.addEventListener('click', createLinearArray);
         screenEl.querySelector('[data-action="cutopt-open"]')?.addEventListener('click', openCutOpt);

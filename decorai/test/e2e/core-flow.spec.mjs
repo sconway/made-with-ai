@@ -6,6 +6,7 @@
 // file forgot to mock fails instead of reaching a real server.
 import { test, expect } from '@playwright/test';
 import { makePng, roomPhotoPng, resultPng } from './png.mjs';
+import { auditPage } from './a11yAudit.mjs';
 
 const RESULT_URL = 'https://replicate.delivery/test/result.png';
 const PREDICTION_URL = 'https://api.replicate.com/v1/predictions/pred_test_1';
@@ -736,4 +737,144 @@ test('use a saved design shows placeholders while it loads, and a failed load ca
   await page.unroute(/\/api\/designs\?limit=100/, fail);
   await grid.getByRole('button', { name: 'Try again' }).click();
   await expect(grid.locator('.use-saved-card:not(.ph-card)')).toHaveCount(1);
+});
+
+// ── Accessibility (4.5: I4, R3) ─────────────────────────────────────────────
+
+test('the accessibility check itself catches faint text, unnamed controls and images without alt', async ({ page }) => {
+  await page.setContent('<body style="background:#fff"><p style="color:#bbb">pale</p><p style="color:#222">fine</p><button></button><img src="data:image/gif;base64,R0lGODlhAQABAAAAACw=" width="10" height="10"></body>');
+  const problems = await auditPage(page);
+  expect(problems).toHaveLength(3);
+  expect(problems[0]).toMatch(/^contrast 1\.\d+:1 \(needs 4\.5\) p "pale"/);
+});
+
+test('the main screens pass the contrast and name checks, on a phone and a desktop', async ({ browser }) => {
+  test.setTimeout(120_000);
+  const problems = [];
+  for (const viewport of [{ width: 390, height: 844 }, { width: 1280, height: 800 }]) {
+    const context = await browser.newContext({ viewport, reducedMotion: 'reduce' });
+    const page = await context.newPage();
+    await signIn(page);
+    await mockBackend(page, { designs: [savedDesign(1, 'Japandi')] });
+    const check = async (name, scope) => {
+      for (const p of await auditPage(page, scope ? { scope } : {})) problems.push(`${viewport.width} ${name}: ${p}`);
+    };
+    await page.goto('/');
+    await expect(page.locator('#use-saved-btn')).toBeVisible();
+    await check('home');
+    await page.locator('#room-upload').setInputFiles({ name: 'room.png', mimeType: 'image/png', buffer: roomPhotoPng(2000, 1500) });
+    await expect(page.locator('#wizard-container')).toBeVisible();
+    await check('configure');
+    await page.locator('#generate-btn').click();
+    await expect(page.locator('#design-carousel .generated-image').first()).toHaveAttribute('src', RESULT_URL, { timeout: 30_000 });
+    await check('results');
+    await page.goto('/library/designs');
+    await expect(page.locator('.library-card').first()).toBeVisible();
+    await check('library', '#library-panel');
+    await page.goto('/upgrade');
+    await check('upgrade');
+    await page.goto('/build');
+    await expect(page.locator('#woodworking-editor-screen')).toBeVisible();
+    await check('woodworking', '#woodworking-editor-screen');
+    await context.close();
+  }
+  const context = await browser.newContext({ reducedMotion: 'reduce' });
+  const page = await context.newPage();
+  await mockBackend(page);
+  await page.goto('/?auth=signin');
+  await expect(page.locator('#auth-modal')).toBeVisible();
+  for (const p of await auditPage(page, { scope: '#auth-modal' })) problems.push(`signed out, sign-in: ${p}`);
+  await context.close();
+  expect(problems).toEqual([]);
+});
+
+/** Tab `presses` times; return the controls that took focus without a visible ring. */
+async function controlsWithoutFocusRing(page, presses) {
+  const missing = new Set();
+  for (let i = 0; i < presses; i++) {
+    await page.keyboard.press('Tab');
+    const miss = await page.evaluate(async () => {
+      // Reduced motion shortens every transition to a hair, but a ring still
+      // starts from nothing; give it a moment before reading it.
+      await new Promise((r) => setTimeout(r, 50));
+      const el = document.activeElement;
+      if (!el || el === document.body) return null;
+      const ring = (node) => {
+        if (!node) return false;
+        const cs = getComputedStyle(node);
+        return (cs.outlineStyle !== 'none' && parseFloat(cs.outlineWidth) >= 1)
+          || (cs.boxShadow !== 'none' && !/^rgba\(0, 0, 0, 0\)/.test(cs.boxShadow));
+      };
+      // A visually hidden radio or checkbox shows its focus on its label.
+      if (ring(el) || ring(el.labels?.[0]) || ring(el.nextElementSibling)) return null;
+      const cls = typeof el.className === 'string' && el.className ? `.${el.className.trim().split(/\s+/)[0]}` : '';
+      const cs = getComputedStyle(el);
+      return `${el.tagName.toLowerCase()}${el.id ? `#${el.id}` : ''}${cls} "${(el.getAttribute('aria-label') || el.textContent || '').trim().slice(0, 30)}" ${cs.outlineStyle}/${cs.boxShadow}`;
+    });
+    if (miss) missing.add(miss);
+  }
+  return [...missing];
+}
+
+test('every control reached with Tab shows where focus is', async ({ browser }) => {
+  test.setTimeout(120_000);
+  // Reduced motion: rings appear at once, not part-way through a transition.
+  const context = await browser.newContext({ viewport: { width: 1280, height: 800 }, reducedMotion: 'reduce' });
+  const page = await context.newPage();
+  await signIn(page);
+  await mockBackend(page, { subscribed: true });
+  await page.goto('/');
+  await page.locator('#room-upload').setInputFiles({ name: 'room.png', mimeType: 'image/png', buffer: roomPhotoPng(2000, 1500) });
+  await expect(page.locator('#wizard-container')).toBeVisible();
+  expect(await controlsWithoutFocusRing(page, 60), 'configure').toEqual([]);
+  await page.locator('#generate-btn').click();
+  await expect(page.locator('#design-carousel .generated-image').first()).toHaveAttribute('src', RESULT_URL, { timeout: 30_000 });
+  expect(await controlsWithoutFocusRing(page, 50), 'results').toEqual([]);
+  await page.goto('/plan');
+  await expect(page.locator('#furniture-search')).toBeVisible();
+  expect(await controlsWithoutFocusRing(page, 70), 'floor plan editor').toEqual([]);
+  await page.goto('/build');
+  await expect(page.locator('#woodworking-editor-screen')).toBeVisible();
+  expect(await controlsWithoutFocusRing(page, 50), 'woodworking editor').toEqual([]);
+  await context.close();
+});
+
+test('pinch-zoom is allowed, and the editors keep pinch for their own canvas', async ({ page }) => {
+  await mockBackend(page);
+  await page.goto('/');
+  const viewport = await page.locator('meta[name="viewport"]').getAttribute('content');
+  expect(viewport).not.toMatch(/user-scalable\s*=\s*no|maximum-scale/);
+  expect(await page.evaluate(() => getComputedStyle(document.documentElement).touchAction)).toBe('manipulation');
+  expect(await page.evaluate(() => getComputedStyle(document.querySelector('#layout-svg')).touchAction)).toBe('none');
+});
+
+test('on a phone, Tab stays inside the Shop this look sheet until it closes', async ({ page }) => {
+  await mockBackend(page, { shop: { enabled: true, retailers: [{ id: 'amazon' }] } });
+  await page.goto('/');
+  await page.locator('#room-upload').setInputFiles({ name: 'room.png', mimeType: 'image/png', buffer: roomPhotoPng(2000, 1500) });
+  await page.locator('#generate-btn').click();
+  await expect(page.locator('#design-carousel .generated-image').first()).toHaveAttribute('src', RESULT_URL, { timeout: 30_000 });
+  await page.locator('#shop-look-btn').click();
+  await expect(page.locator('#shop-look-close')).toBeFocused();
+  for (let i = 0; i < 12; i++) {
+    await page.keyboard.press(i % 4 === 3 ? 'Shift+Tab' : 'Tab');
+    expect(await page.evaluate(() => document.getElementById('shop-look').contains(document.activeElement))).toBe(true);
+  }
+  await page.keyboard.press('Escape');
+  await expect(page.locator('#shop-look-btn')).toBeFocused();
+});
+
+test('the woodworking editor fits a phone: Save is on screen and the 3D view keeps half of it', async ({ page }) => {
+  await signIn(page);
+  const seen = await mockBackend(page);
+  await page.goto('/build');
+  const save = page.locator('#woodworking-editor-screen [data-action="save"]');
+  await expect(save).toBeInViewport({ ratio: 1 });
+  const canvas = await page.locator('#woodworking-editor-screen .ww-canvas').boundingBox();
+  expect(canvas.width).toBeGreaterThan(350);
+  expect(canvas.height).toBeGreaterThan(240);
+  await page.locator('#woodworking-editor-screen .ww-cutlist-body').getByRole('button', { name: 'Add a board' }).click();
+  await save.click();
+  await expect(page.locator('.toast.toast-success')).toContainText('Project saved.');
+  expect(seen.projectSaves).toHaveLength(1);
 });

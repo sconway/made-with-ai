@@ -351,7 +351,9 @@
 
   /* Focus ring: 3:1 against adjacent surfaces, offset so it never
      collides with the control's own border. */
-  --shadow-focus: 0 0 0 3px rgba(79, 70, 229, 0.28);
+  /* A solid ring with a gap, 3:1 or better against the page (WCAG 1.4.11).
+     The old 28% wash measured about 1.5:1 and was easy to miss. */
+  --shadow-focus: 0 0 0 2px var(--color-bg-primary), 0 0 0 4px var(--color-border-focus);
   --focus-ring-width:  2px;
   --focus-ring-offset: 2px;
   --focus-ring-color:  var(--color-border-focus);
@@ -619,7 +621,7 @@
   --shadow-lg: 0 12px 28px -8px rgba(0, 0, 0, 0.6), 0 4px 8px -2px rgba(0, 0, 0, 0.4);
   --shadow-xl: 0 24px 48px -12px rgba(0, 0, 0, 0.7);
   --shadow-sheet: 0 -8px 32px -8px rgba(0, 0, 0, 0.6);
-  --shadow-focus: 0 0 0 3px rgba(128, 121, 232, 0.4);
+  --shadow-focus: 0 0 0 2px var(--color-bg-primary), 0 0 0 4px var(--color-border-focus);
 
   /* Compat layer follows the semantics above */
   --surface:         var(--color-bg-primary);

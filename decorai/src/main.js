@@ -10,7 +10,7 @@ import {
     current as currentRoute,
     isApplying as routeIsApplying,
 } from './router.js';
-import { initSheets } from './sheets.js';
+import { initSheets, trapFocus } from './sheets.js';
 import { initWaitState, waitStateMarkup } from './waitState.js';
 import { initCompare, enhanceCompare } from './compare.js';
 import { showToast } from './toast.js';
@@ -4000,20 +4000,8 @@ document.addEventListener('DOMContentLoaded', async () => {
 });
 
 // Functions
-/**
- * iPhone Safari ignores user-scalable=no in the viewport tag (Apple's
- * accessibility choice), so its pinch gesture is cancelled here. Only Safari
- * fires gesture* events, so this does nothing anywhere else.
- */
-function blockPageZoom() {
-    for (const type of ['gesturestart', 'gesturechange', 'gestureend']) {
-        document.addEventListener(type, (e) => e.preventDefault(), { passive: false });
-    }
-}
-
 function initializeAppUI() {
     feather.replace();
-    blockPageZoom();
     initSheets();
     initWaitState();
     initCompare();
@@ -7458,7 +7446,10 @@ function initShopLook() {
     document.getElementById('shop-look-close')?.addEventListener('click', () => closeShopSheet());
     document.getElementById('shop-look-backdrop')?.addEventListener('click', () => closeShopSheet());
     document.addEventListener('keydown', (e) => {
-        if (e.key === 'Escape' && shopSheetIsOpen()) closeShopSheet();
+        if (!shopSheetIsOpen()) return;
+        if (e.key === 'Escape') closeShopSheet();
+        // A sheet on phones and tablets: Tab stays in it until it's closed.
+        else trapFocus(e, document.getElementById('shop-look'));
     });
     document.getElementById('shop-look-list')?.addEventListener('click', (e) => {
         const a = e.target.closest?.('a.shop-look-link');
