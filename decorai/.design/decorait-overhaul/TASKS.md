@@ -90,10 +90,20 @@ Three forces, resolved in this order:
 
 ## Core UI
 
-- [ ] **C1 · Home / upload** _(M)_ — `/`. Currently a bare dashed box with no proof
+- [x] **C1 · Home / upload** _(M)_ — `/`. Currently a bare dashed box with no proof
   of value for traffic arriving cold from the marketing site. Add a one-line
   promise and a sample transformation alongside the upload affordance. Drag-over,
   invalid-file, and camera-unavailable states. _Modifies `.upload-container`._
+  Done: a heading and one-line promise over the upload buttons; a before/after
+  from the marketing site (two tiles, not a slider: the generator reframes the
+  room); three sample rooms that start the flow without a photo
+  (`public/samples/`). A photo dropped anywhere on the page is used, the card
+  says "That isn't a photo" mid-drag, and a dropped non-photo is explained under
+  the buttons rather than in a dialog. The camera says why it didn't open
+  (blocked, none, busy) and offers the phone's camera app or Upload instead;
+  "Take a photo" is hidden on a computer with no camera. Words and rules in
+  `src/uploadStates.js`. The phone landing no longer locks to one screen
+  height (it still fits on a 390×844 phone).
 
 - [x] **C2 · Configure view** _(L)_ — `/design`. Collapse room type + approach +
   items + style into one scrollable view with defaults pre-selected so Generate is

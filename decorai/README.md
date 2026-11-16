@@ -10,7 +10,8 @@ not a mood board of somebody else's.
 Three workspaces share one shell, plus a set of AI tools that cut across them.
 
 **Redesign** (`/`, `/design`, `/result`) — the core flow.
-Upload or photograph a room. Room type is **detected, not asked**. Pick one of
+Upload or photograph a room (or drop one anywhere on the home page), or start
+from one of three sample rooms (`public/samples/`, from the marketing site). Room type is **detected, not asked**. Pick one of
 ten styles (Minimalist, Scandinavian, Industrial, Bohemian, Mid-Century,
 Traditional, Coastal, Farmhouse, Art Deco, Japandi), optionally choose which
 items to include, and for a furnished room say whether to rearrange, add to, or

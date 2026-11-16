@@ -18,6 +18,10 @@ import { placeholderMarkup, watchImage } from './placeholders.js';
 import { useSavedEmpty, emptyStateElement } from './emptyStates.js';
 import { MaskEditor, compositeMaskedResult, compositeRegionEdit, buildRegionMarkup, buildRegionLookup } from './maskEditor.js';
 import { normalizeRoomPhoto, looksLikeImageFile } from './roomPhoto.js';
+import {
+    SAMPLE_ROOMS, pickDroppedFile, dragLooksWrong, notAPhoto, couldNotOpen, sampleFailed,
+    cameraProblem, PROBLEM_ACTION_LABELS,
+} from './uploadStates.js';
 import { track, flushAnalytics } from './analytics.js';
 import { initErrorReporting, reportError } from './errorReporting.js';
 import { initShareDialog, openShareDialog } from './shareDialog.js';
@@ -72,6 +76,7 @@ const wizardContainer = document.getElementById('wizard-container');
 const roomPreview = document.getElementById('room-preview');
 const roomUpload = document.getElementById('room-upload');
 const cameraBtn = document.getElementById('camera-btn');
+const roomCapture = document.getElementById('room-capture');
 const changeImageBtn = document.getElementById('change-image-btn');
 const generateBtn = document.getElementById('generate-btn');
 const defaultModelToggle = document.getElementById('default-model-toggle');
@@ -3721,7 +3726,11 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     // Event Listeners (Add null checks for safety)
     if (roomUpload) roomUpload.addEventListener('change', handleImageUpload);
+    if (roomCapture) roomCapture.addEventListener('change', handleImageUpload);
     if (cameraBtn) cameraBtn.addEventListener('click', openCamera);
+    initUploadProblem();
+    initSampleRooms();
+    hideCameraWithoutOne();
 
     // "Use a saved design" — offered wherever an image can be chosen: the
     // upload drop zone and the change-image overlay in the configure view.
@@ -3977,23 +3986,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         else goBackToUpload();
     });
 
-    // Drag-and-drop file upload
-    if (uploadContainer) {
-        uploadContainer.addEventListener('dragover', (e) => {
-            e.preventDefault();
-            uploadContainer.classList.add('drag-over');
-        });
-        uploadContainer.addEventListener('dragleave', () => {
-            uploadContainer.classList.remove('drag-over');
-        });
-        uploadContainer.addEventListener('drop', (e) => {
-            e.preventDefault();
-            uploadContainer.classList.remove('drag-over');
-            if (e.dataTransfer.files.length) {
-                loadRoomPhotoFile(e.dataTransfer.files[0], 'drop');
-            }
-        });
-    }
+    initPhotoDrop();
 
     // Initialize the app UI (feather icons)
     initializeAppUI();
@@ -4697,7 +4690,7 @@ async function handleImageUpload(e) {
  */
 async function loadRoomPhotoFile(file, source) {
     if (!looksLikeImageFile(file)) {
-        showAlertDialog('Please upload a photo (JPEG, PNG, WebP or HEIC).');
+        showUploadProblem(notAPhoto(file));
         return;
     }
     let photo;
@@ -4705,10 +4698,7 @@ async function loadRoomPhotoFile(file, source) {
         photo = await normalizeRoomPhoto(file);
     } catch (err) {
         console.warn('Could not open the selected photo:', err);
-        showAlertDialog(
-            "We couldn't open that photo in this browser. Try a JPEG or PNG — if it came from an iPhone, sharing it as \"Most Compatible\" converts it.",
-            'Photo not supported'
-        );
+        showUploadProblem(couldNotOpen());
         return;
     }
     await acceptRoomPhoto(photo, source);
@@ -4716,6 +4706,7 @@ async function loadRoomPhotoFile(file, source) {
 
 /** Make an already-normalised photo the current room and open the configure view. */
 async function acceptRoomPhoto(photo, source) {
+    hideUploadProblem();
     clearFengShuiCache();
     currentUploadedImage = photo;
     if (roomPreview) roomPreview.src = currentUploadedImage;
@@ -4726,66 +4717,247 @@ async function acceptRoomPhoto(photo, source) {
     persistRedesignSession();
 }
 
-function openCamera() {
-    // Check if the device has a camera
-    if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
-        // Create a new element for the camera view
-        const cameraView = document.createElement('div');
-        cameraView.classList.add('camera-view');
+// ── Home screen states (TASKS.md C1) ──────────────────────────────────────
+// Words and rules live in src/uploadStates.js; this draws them.
 
-        const video = document.createElement('video');
-        video.setAttribute('autoplay', '');
-        video.setAttribute('playsinline', '');
+/** The home screen (not the configure view, results, or another route). */
+function isHomeVisible() {
+    return !!uploadContainer
+        && !uploadContainer.classList.contains('hidden')
+        && uploadContainer.offsetParent !== null;
+}
 
-        const captureBtn = document.createElement('button');
-        captureBtn.classList.add('capture-btn');
-        captureBtn.innerHTML = '<i data-feather="camera"></i>';
+/** A phone or tablet: no drag and drop, and a camera app to fall back on. */
+function isTouchDevice() {
+    return window.matchMedia?.('(pointer: coarse)').matches ?? false;
+}
 
-        const cancelBtn = document.createElement('button');
-        cancelBtn.classList.add('cancel-btn');
-        cancelBtn.innerHTML = '<i data-feather="x"></i>';
+let uploadProblemAction = null;
 
-        cameraView.appendChild(video);
-        cameraView.appendChild(captureBtn);
-        cameraView.appendChild(cancelBtn);
-
-        document.body.appendChild(cameraView);
-        feather.replace();
-
-        // Get camera access
-        navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } })
-            .then(stream => {
-                video.srcObject = stream;
-                video.play();
-
-                captureBtn.addEventListener('click', async () => {
-                    const canvas = document.createElement('canvas');
-                    canvas.width = video.videoWidth;
-                    canvas.height = video.videoHeight;
-                    const ctx = canvas.getContext('2d');
-                    ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-
-                    await acceptRoomPhoto(await normalizeRoomPhoto(canvas), 'camera');
-
-                    // Stop the camera stream
-                    stream.getTracks().forEach(track => track.stop());
-                    cameraView.remove();
-                });
-
-                cancelBtn.addEventListener('click', () => {
-                    // Stop the camera stream
-                    stream.getTracks().forEach(track => track.stop());
-                    cameraView.remove();
-                });
-            })
-            .catch(error => {
-                console.error('Error accessing camera:', error);
-                showAlertDialog('Unable to access camera. Please check your device permissions.');
-                cameraView.remove();
-            });
-    } else {
-        showAlertDialog('Your device does not support camera access');
+/**
+ * Say what went wrong with a photo or the camera. On the home screen it sits
+ * under the buttons, so the way round it is right there; anywhere else (the
+ * configure view's "Change image") it's the alert dialog.
+ * @param {{ title: string, text: string, action?: 'upload'|'camera-app'|'retry' }} problem
+ */
+function showUploadProblem(problem) {
+    const box = document.getElementById('upload-problem');
+    if (!box || !isHomeVisible()) {
+        showAlertDialog(problem.text, problem.title);
+        return;
     }
+    document.getElementById('upload-problem-title').textContent = problem.title;
+    document.getElementById('upload-problem-text').textContent = problem.text;
+    const action = document.getElementById('upload-problem-action');
+    uploadProblemAction = problem.action || null;
+    action.textContent = PROBLEM_ACTION_LABELS[problem.action] || '';
+    action.hidden = !problem.action;
+    // Re-announce even when the same problem happens twice in a row.
+    box.hidden = true;
+    requestAnimationFrame(() => { box.hidden = false; });
+}
+
+function hideUploadProblem() {
+    const box = document.getElementById('upload-problem');
+    if (box) box.hidden = true;
+    uploadProblemAction = null;
+}
+
+function initUploadProblem() {
+    document.getElementById('upload-problem-close')?.addEventListener('click', hideUploadProblem);
+    document.getElementById('upload-problem-action')?.addEventListener('click', () => {
+        const action = uploadProblemAction;
+        hideUploadProblem();
+        if (action === 'upload') roomUpload?.click();
+        else if (action === 'camera-app') roomCapture?.click();
+        else if (action === 'retry') openCamera();
+    });
+}
+
+/**
+ * Dropping a photo anywhere on the page while the home screen shows. Counting
+ * enters and leaves keeps the highlight steady as the pointer crosses child
+ * elements, which each fire their own dragleave.
+ */
+function initPhotoDrop() {
+    if (!uploadContainer) return;
+    let depth = 0;
+    const carriesFiles = (e) => Array.from(e.dataTransfer?.types || []).includes('Files');
+    const clear = () => {
+        depth = 0;
+        uploadContainer.classList.remove('is-drag-over', 'is-drag-invalid');
+    };
+    document.addEventListener('dragenter', (e) => {
+        if (!carriesFiles(e) || !isHomeVisible()) return;
+        e.preventDefault();
+        depth += 1;
+        hideUploadProblem();
+        uploadContainer.classList.add('is-drag-over');
+        uploadContainer.classList.toggle('is-drag-invalid', dragLooksWrong(e.dataTransfer.items));
+    });
+    document.addEventListener('dragover', (e) => {
+        if (!carriesFiles(e) || !isHomeVisible()) return;
+        e.preventDefault(); // without this the browser opens the file instead
+        e.dataTransfer.dropEffect = dragLooksWrong(e.dataTransfer.items) ? 'none' : 'copy';
+    });
+    document.addEventListener('dragleave', (e) => {
+        if (!carriesFiles(e) || !isHomeVisible()) return;
+        depth = Math.max(0, depth - 1);
+        if (depth === 0) clear();
+    });
+    document.addEventListener('drop', (e) => {
+        if (!carriesFiles(e) || !isHomeVisible()) return;
+        e.preventDefault();
+        clear();
+        const { file, rejected } = pickDroppedFile(e.dataTransfer.files);
+        if (file) loadRoomPhotoFile(file, 'drop');
+        else if (rejected) showUploadProblem(notAPhoto(rejected));
+    });
+    window.addEventListener('dragend', clear);
+    window.addEventListener('blur', clear);
+}
+
+/** The sample rooms under the before/after: tap one to start with it. */
+function initSampleRooms() {
+    const list = document.getElementById('upload-samples-list');
+    if (!list) return;
+    list.replaceChildren(...SAMPLE_ROOMS.map((room) => {
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className = 'upload-sample';
+        btn.dataset.sample = room.id;
+        const img = document.createElement('img');
+        img.src = room.src;
+        img.alt = '';
+        img.loading = 'lazy';
+        img.decoding = 'async';
+        const label = document.createElement('span');
+        label.className = 'upload-sample-label';
+        label.textContent = room.label;
+        btn.setAttribute('aria-label', `Try the sample ${room.label.toLowerCase()}: ${room.alt}`);
+        btn.append(img, label);
+        btn.addEventListener('click', () => useSampleRoom(room, btn));
+        return btn;
+    }));
+}
+
+async function useSampleRoom(room, btn) {
+    if (btn.getAttribute('aria-busy') === 'true') return;
+    btn.setAttribute('aria-busy', 'true');
+    hideUploadProblem();
+    try {
+        const res = await fetch(room.src);
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const photo = await normalizeRoomPhoto(await res.blob());
+        track('sample_room_used', { sample: room.id });
+        await acceptRoomPhoto(photo, 'sample');
+    } catch (err) {
+        console.warn('Sample room failed to load:', err);
+        showUploadProblem(sampleFailed());
+    } finally {
+        btn.removeAttribute('aria-busy');
+    }
+}
+
+/**
+ * A laptop or desktop with no camera at all: "Take a photo" would only ever
+ * fail, so it goes. Phones keep it — before permission some list no devices,
+ * and the camera app is there regardless.
+ */
+async function hideCameraWithoutOne() {
+    if (!cameraBtn || isTouchDevice() || !navigator.mediaDevices?.enumerateDevices) return;
+    try {
+        const devices = await navigator.mediaDevices.enumerateDevices();
+        if (!devices.some((d) => d.kind === 'videoinput')) cameraBtn.hidden = true;
+    } catch (_) { /* leave it: the click explains any problem */ }
+}
+
+function openCamera() {
+    hideUploadProblem();
+    const phone = isTouchDevice();
+    if (!navigator.mediaDevices?.getUserMedia) {
+        // An older browser, or a page not served over HTTPS. The camera app
+        // (or, on a computer, the file picker) still works.
+        roomCapture?.click();
+        return;
+    }
+
+    const cameraView = document.createElement('div');
+    cameraView.classList.add('camera-view');
+    cameraView.setAttribute('role', 'dialog');
+    cameraView.setAttribute('aria-modal', 'true');
+    cameraView.setAttribute('aria-label', 'Camera');
+
+    const video = document.createElement('video');
+    video.setAttribute('autoplay', '');
+    video.setAttribute('playsinline', '');
+    video.muted = true;
+
+    const status = document.createElement('p');
+    status.className = 'camera-status';
+    status.setAttribute('role', 'status');
+    status.textContent = 'Opening the camera…';
+
+    const captureBtn = document.createElement('button');
+    captureBtn.type = 'button';
+    captureBtn.classList.add('capture-btn');
+    captureBtn.setAttribute('aria-label', 'Take the photo');
+    captureBtn.disabled = true;
+    captureBtn.innerHTML = '<i data-feather="camera" aria-hidden="true"></i>';
+
+    const cancelBtn = document.createElement('button');
+    cancelBtn.type = 'button';
+    cancelBtn.classList.add('cancel-btn');
+    cancelBtn.setAttribute('aria-label', 'Close the camera');
+    cancelBtn.innerHTML = '<i data-feather="x" aria-hidden="true"></i>';
+
+    cameraView.append(video, status, captureBtn, cancelBtn);
+    document.body.appendChild(cameraView);
+    feather.replace();
+    const returnFocus = document.activeElement;
+    cancelBtn.focus();
+
+    let stream = null;
+    const close = () => {
+        stream?.getTracks().forEach((t) => t.stop());
+        document.removeEventListener('keydown', onKey);
+        cameraView.remove();
+        if (returnFocus instanceof HTMLElement && returnFocus.isConnected) returnFocus.focus();
+    };
+    const onKey = (e) => {
+        if (e.key === 'Escape') close();
+        else if (e.key === 'Tab') trapFocus(e, cameraView);
+    };
+    document.addEventListener('keydown', onKey);
+    cancelBtn.addEventListener('click', close);
+
+    captureBtn.addEventListener('click', async () => {
+        if (!video.videoWidth || !video.videoHeight) return; // not streaming yet
+        const canvas = document.createElement('canvas');
+        canvas.width = video.videoWidth;
+        canvas.height = video.videoHeight;
+        canvas.getContext('2d').drawImage(video, 0, 0, canvas.width, canvas.height);
+        close();
+        await acceptRoomPhoto(await normalizeRoomPhoto(canvas), 'camera');
+    });
+
+    navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } })
+        .then((s) => {
+            stream = s;
+            if (!cameraView.isConnected) { s.getTracks().forEach((t) => t.stop()); return; } // closed while asking
+            video.srcObject = s;
+            video.addEventListener('loadedmetadata', () => {
+                status.textContent = '';
+                captureBtn.disabled = false;
+                captureBtn.focus();
+            }, { once: true });
+            video.play().catch(() => {});
+        })
+        .catch((error) => {
+            console.warn('Camera unavailable:', error?.name || error);
+            close();
+            showUploadProblem(cameraProblem(error, { phone }));
+        });
 }
 
 function openFileSelector() {

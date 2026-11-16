@@ -762,6 +762,13 @@ test('the main screens pass the contrast and name checks, on a phone and a deskt
     await page.goto('/');
     await expect(page.locator('#use-saved-btn')).toBeVisible();
     await check('home');
+    // The "not a photo" note, on its tinted background.
+    await page.evaluate(() => {
+      const d = new DataTransfer(); d.items.add(new File(['x'], 'notes.txt', { type: 'text/plain' }));
+      document.getElementById('upload-container').dispatchEvent(new DragEvent('drop', { dataTransfer: d, bubbles: true, cancelable: true }));
+    });
+    await expect(page.locator('#upload-problem')).toBeVisible();
+    await check('home, not a photo', '#upload-problem');
     await page.locator('#room-upload').setInputFiles({ name: 'room.png', mimeType: 'image/png', buffer: roomPhotoPng(2000, 1500) });
     await expect(page.locator('#wizard-container')).toBeVisible();
     await check('configure');
@@ -824,6 +831,8 @@ test('every control reached with Tab shows where focus is', async ({ browser }) 
   await signIn(page);
   await mockBackend(page, { subscribed: true });
   await page.goto('/');
+  await expect(page.locator('.upload-sample')).toHaveCount(3);
+  expect(await controlsWithoutFocusRing(page, 14), 'home').toEqual([]);
   await page.locator('#room-upload').setInputFiles({ name: 'room.png', mimeType: 'image/png', buffer: roomPhotoPng(2000, 1500) });
   await expect(page.locator('#wizard-container')).toBeVisible();
   expect(await controlsWithoutFocusRing(page, 60), 'configure').toEqual([]);
@@ -934,5 +943,120 @@ test('the floor plan editor works by touch on a phone: draw, pinch, place furnit
   await page.locator('#layout-save-btn').tap();
   await expect(page.locator('.toast.toast-success')).toContainText('Layout saved.');
   expect(seen.clientErrors).toEqual([]);
+  await context.close();
+});
+
+// ── Home and upload (TASKS.md C1) ──────────────────────────────────────────
+
+/** Drag (and maybe drop) files onto the page the way a browser would. */
+async function dragFiles(page, files, { drop = true } = {}) {
+  const dt = await page.evaluateHandle((list) => {
+    const d = new DataTransfer();
+    for (const f of list) d.items.add(new File([new Uint8Array(f.bytes)], f.name, { type: f.type }));
+    return d;
+  }, files.map((f) => ({ name: f.name, type: f.type, bytes: [...(f.buffer || Buffer.from('hello'))] })));
+  await page.dispatchEvent('#upload-container', 'dragenter', { dataTransfer: dt });
+  await page.dispatchEvent('#upload-container', 'dragover', { dataTransfer: dt });
+  if (drop) await page.dispatchEvent('#upload-container', 'drop', { dataTransfer: dt });
+}
+
+test('home shows what you get before asking for anything, and a sample room starts without a photo', async ({ page }) => {
+  const seen = await mockBackend(page);
+  await page.goto('/');
+  await expect(page.locator('.upload-promise')).toBeVisible();
+  // The before/after is real images, loaded, with alt text that says which is which.
+  for (const id of ['#upload-proof-before', '#upload-proof-after']) {
+    await expect(page.locator(id)).toHaveJSProperty('complete', true);
+    expect(await page.locator(id).evaluate((img) => img.naturalWidth)).toBeGreaterThan(0);
+  }
+  await expect(page.locator('#upload-proof-after')).toHaveAttribute('alt', /after.*Japandi/i);
+  // Everything that matters fits a phone screen without scrolling.
+  const actionsBox = await page.locator('.upload-actions').boundingBox();
+  expect(actionsBox.y + actionsBox.height).toBeLessThan(844);
+
+  const samples = page.locator('.upload-sample');
+  await expect(samples).toHaveCount(3);
+  await page.getByRole('button', { name: /Try the sample living room/ }).click();
+  await expect(page.locator('#wizard-container')).toBeVisible();
+  await expect(page.locator('#room-preview')).toHaveAttribute('src', /^data:image\/jpeg/);
+  expect(seen.predictions, 'picking a sample generates nothing').toEqual([]);
+});
+
+test('dropping a photo uses it; dragging something else says so, and dropping it explains why not', async ({ page }) => {
+  await mockBackend(page);
+  await page.goto('/');
+  const zone = page.locator('#upload-container');
+
+  // A PDF on its way in: the card says it won't take it, before the drop.
+  await dragFiles(page, [{ name: 'floorplan.pdf', type: 'application/pdf' }], { drop: false });
+  await expect(zone).toHaveClass(/is-drag-over/);
+  await expect(zone).toHaveClass(/is-drag-invalid/);
+  await expect(page.locator('.upload-drop-text--bad')).toBeVisible();
+  await page.dispatchEvent('#upload-container', 'drop', { dataTransfer: await page.evaluateHandle(() => {
+    const d = new DataTransfer(); d.items.add(new File(['x'], 'floorplan.pdf', { type: 'application/pdf' })); return d;
+  }) });
+  await expect(zone).not.toHaveClass(/is-drag-over/);
+
+  // Said under the buttons, not in a dialog, with the way round it.
+  const problem = page.locator('#upload-problem');
+  await expect(problem).toBeVisible();
+  await expect(problem).toHaveAttribute('role', 'alert');
+  await expect(page.locator('#upload-problem-title')).toHaveText('“floorplan.pdf” isn’t a photo');
+  await expect(page.locator('#upload-problem-action')).toHaveText('Upload a photo');
+  await expect(page.locator('#alert-modal')).not.toHaveClass(/show/);
+  await page.locator('#upload-problem-close').click();
+  await expect(problem).toBeHidden();
+
+  // A photo among other files: the photo is the one used.
+  await dragFiles(page, [
+    { name: 'notes.txt', type: 'text/plain' },
+    { name: 'room.png', type: 'image/png', buffer: roomPhotoPng(1200, 900) },
+  ]);
+  await expect(page.locator('#wizard-container')).toBeVisible();
+  await expect(problem).toBeHidden();
+});
+
+test('when the camera cannot open, home says why and offers the way round it', async ({ browser }) => {
+  const stubCamera = ([errName, kinds]) => {
+    navigator.mediaDevices.getUserMedia = () => Promise.reject(new DOMException('no', errName));
+    navigator.mediaDevices.enumerateDevices = () => Promise.resolve(kinds.map((kind) => ({ kind })));
+  };
+
+  // A laptop that refused permission: allow it, or upload instead.
+  let context = await browser.newContext({ viewport: { width: 1280, height: 800 } });
+  let page = await context.newPage();
+  await page.addInitScript(stubCamera, ['NotAllowedError', ['videoinput']]);
+  await mockBackend(page);
+  await page.goto('/');
+  await page.locator('#camera-btn').click();
+  await expect(page.locator('#upload-problem-title')).toHaveText('Camera access is off');
+  await expect(page.locator('#upload-problem-action')).toHaveText('Upload a photo');
+  await expect(page.locator('.camera-view')).toHaveCount(0);
+  await expect(page.locator('#camera-btn')).toBeFocused();
+  await context.close();
+
+  // A laptop with no camera at all: "Take a photo" isn't offered.
+  context = await browser.newContext({ viewport: { width: 1280, height: 800 } });
+  page = await context.newPage();
+  await page.addInitScript(stubCamera, ['NotFoundError', ['audioinput']]);
+  await mockBackend(page);
+  await page.goto('/');
+  await expect(page.locator('.upload-promise')).toBeVisible();
+  await expect(page.locator('#camera-btn')).toBeHidden();
+  await context.close();
+
+  // A phone: the camera app needs no permission from the site, so offer that.
+  context = await browser.newContext({ viewport: { width: 390, height: 844 }, hasTouch: true, isMobile: true });
+  page = await context.newPage();
+  await page.addInitScript(stubCamera, ['NotAllowedError', []]);
+  await mockBackend(page);
+  await page.goto('/');
+  await expect(page.locator('#camera-btn')).toBeVisible();
+  await page.locator('#camera-btn').tap();
+  await expect(page.locator('#upload-problem-action')).toHaveText('Open camera app');
+  const chooser = page.waitForEvent('filechooser');
+  await page.locator('#upload-problem-action').tap();
+  const picked = await chooser;
+  expect(await picked.element().getAttribute('capture')).toBe('environment');
   await context.close();
 });

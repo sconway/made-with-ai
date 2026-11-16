@@ -114,31 +114,83 @@
         <main>
             <section class="upload-section" id="upload-section">
                 <!-- Upload drop zone (shown before an image is selected) -->
+                <!-- Home (TASKS.md C1): the upload buttons first, then proof of
+                     what they lead to — a real before/after — and sample rooms
+                     for anyone without a photo to hand. The whole page takes a
+                     dropped photo while this is showing (main.js, initPhotoDrop). -->
                 <div class="upload-container" id="upload-container">
                     <div class="upload-content">
-                        <i data-feather="image" class="upload-icon"></i>
-                        <h2>Upload a <em>room photo</em></h2>
-                        <p>Take a photo of your room or upload an existing one</p>
-                        <!-- The container owns the spacing (gap), so the stack
-                             stays evenly spaced no matter how many actions are
-                             present. Per-button margins only worked for exactly
-                             two. -->
-                        <div class="upload-actions">
-                            <label for="room-upload" class="upload-btn">
-                                <span>Upload Image</span>
-                            </label>
-                            <input type="file" id="room-upload" accept="image/*" hidden>
-                            <button id="camera-btn" class="camera-btn">
-                                <i data-feather="camera"></i>
-                                <span>Take Photo</span>
-                            </button>
-                            <!-- Shown only when the user actually has saved designs;
-                                 revealed by refreshUseSavedAvailability(). -->
-                            <button type="button" id="use-saved-btn" class="camera-btn use-saved-btn hidden">
-                                <i data-feather="image"></i>
-                                <span>Saved Design</span>
-                            </button>
+                        <div class="upload-intro">
+                            <h2>Redesign your room <em>from one photo</em></h2>
+                            <p class="upload-promise">Pick a style and see your own room in it, furnished and finished, before you buy a thing.</p>
+
+                            <!-- The container owns the spacing (gap), so the stack
+                                 stays evenly spaced no matter how many actions are
+                                 present. -->
+                            <div class="upload-actions">
+                                <label for="room-upload" class="upload-btn">
+                                    <i data-feather="upload" aria-hidden="true"></i>
+                                    <span>Upload a photo</span>
+                                </label>
+                                <input type="file" id="room-upload" accept="image/*" hidden>
+                                <!-- The phone's own camera app: no permission needed
+                                     from this site. Used when the in-page camera can't open. -->
+                                <input type="file" id="room-capture" accept="image/*" capture="environment" hidden>
+                                <button type="button" id="camera-btn" class="camera-btn">
+                                    <i data-feather="camera" aria-hidden="true"></i>
+                                    <span>Take a photo</span>
+                                </button>
+                                <!-- Shown only when the user actually has saved designs;
+                                     revealed by refreshUseSavedAvailability(). -->
+                                <button type="button" id="use-saved-btn" class="camera-btn use-saved-btn hidden">
+                                    <i data-feather="image" aria-hidden="true"></i>
+                                    <span>Saved design</span>
+                                </button>
+                            </div>
+                            <p class="upload-drop-hint">or drop a photo anywhere on this page</p>
+
+                            <!-- A file that isn't a photo, or a camera that won't open. -->
+                            <div id="upload-problem" class="upload-problem" role="alert" hidden>
+                                <i data-feather="alert-circle" aria-hidden="true"></i>
+                                <div class="upload-problem-body">
+                                    <p class="upload-problem-title" id="upload-problem-title"></p>
+                                    <p class="upload-problem-text" id="upload-problem-text"></p>
+                                    <button type="button" class="upload-problem-action" id="upload-problem-action"></button>
+                                </div>
+                                <button type="button" class="upload-problem-close" id="upload-problem-close" aria-label="Dismiss">
+                                    <i data-feather="x" aria-hidden="true"></i>
+                                </button>
+                            </div>
                         </div>
+
+                        <figure class="upload-proof" aria-labelledby="upload-proof-caption">
+                            <div class="upload-proof-pair">
+                                <div class="upload-proof-frame">
+                                    <img id="upload-proof-before" src="/samples/apartment-before.jpg" alt="Example before: an empty apartment with a grey accent wall and floor-to-ceiling windows" width="640" height="360" decoding="async">
+                                    <span class="upload-proof-tag">Before</span>
+                                </div>
+                                <div class="upload-proof-frame">
+                                    <img id="upload-proof-after" src="/samples/apartment-japandi-after.jpg" alt="Example after: the same apartment furnished in Japandi style, with a linen sofa, oak shelves and plants" width="960" height="640" decoding="async">
+                                    <span class="upload-proof-tag upload-proof-tag--after">After · Japandi</span>
+                                </div>
+                            </div>
+                            <figcaption id="upload-proof-caption" class="upload-proof-caption">An empty apartment, one style picked.</figcaption>
+                        </figure>
+
+                        <div class="upload-samples">
+                            <p class="upload-samples-label" id="upload-samples-label">No photo handy? Try a sample room</p>
+                            <div class="upload-samples-list" id="upload-samples-list" role="group" aria-labelledby="upload-samples-label">
+                                <!-- Filled from SAMPLE_ROOMS (src/uploadStates.js). -->
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Drag-over: says where the photo will go, or that it won't. -->
+                    <div class="upload-drop-overlay" aria-hidden="true">
+                        <i data-feather="download" class="upload-drop-icon upload-drop-icon--ok"></i>
+                        <i data-feather="slash" class="upload-drop-icon upload-drop-icon--bad"></i>
+                        <span class="upload-drop-text upload-drop-text--ok">Drop to use this photo</span>
+                        <span class="upload-drop-text upload-drop-text--bad">That isn’t a photo</span>
                     </div>
                 </div>
 
