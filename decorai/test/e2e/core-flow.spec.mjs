@@ -878,3 +878,61 @@ test('the woodworking editor fits a phone: Save is on screen and the 3D view kee
   await expect(page.locator('.toast.toast-success')).toContainText('Project saved.');
   expect(seen.projectSaves).toHaveLength(1);
 });
+
+test('the floor plan editor works by touch on a phone: draw, pinch, place furniture, save', async ({ browser }) => {
+  const context = await browser.newContext({ viewport: { width: 390, height: 844 }, hasTouch: true, isMobile: true });
+  const page = await context.newPage();
+  await signIn(page);
+  const seen = await mockBackend(page, { subscribed: true });
+  await page.goto('/plan');
+  await page.waitForFunction(() => window.__decoraitHasSubscription === true);
+
+  // Save is on screen, and the plan gets most of it.
+  await expect(page.locator('#layout-save-btn')).toBeInViewport({ ratio: 1 });
+  const plan = await page.locator('#layout-canvas-wrapper').boundingBox();
+  expect(plan.height).toBeGreaterThan(400);
+  expect(plan.width).toBeGreaterThan(320);
+
+  // Draw a wall: tap the wall tool, then tap two points.
+  await page.locator('.floor-tool[data-tool="wall"]').tap();
+  await page.touchscreen.tap(plan.x + 60, plan.y + 120);
+  await page.touchscreen.tap(plan.x + 260, plan.y + 120);
+  await expect(page.locator('#walls-layer > *').first()).toBeAttached();
+
+  // Two fingers pinch outward: the plan zooms in.
+  const wallsBeforePinch = await page.locator('#walls-layer > *').count();
+  const zoomBefore = await page.locator('#zoom-level').textContent();
+  await page.evaluate(({ x, y }) => {
+    const svg = document.getElementById('layout-svg');
+    const fire = (type, pts) => {
+      const touches = pts.map(([px, py], i) => new Touch({ identifier: i, target: svg, clientX: px, clientY: py }));
+      svg.dispatchEvent(new TouchEvent(type, { touches, targetTouches: touches, changedTouches: touches, bubbles: true, cancelable: true }));
+    };
+    // Fingers land a moment apart, as real ones do, with the wall tool still
+    // chaining from the last corner: the first finger must not add a wall.
+    fire('touchstart', [[x - 30, y]]);
+    fire('touchstart', [[x - 30, y], [x + 30, y]]);
+    fire('touchmove', [[x - 90, y], [x + 90, y]]);
+    fire('touchend', []);
+  }, { x: plan.x + plan.width / 2, y: plan.y + plan.height / 2 });
+  const zoomAfter = await page.locator('#zoom-level').textContent();
+  expect(parseInt(zoomAfter, 10)).toBeGreaterThan(parseInt(zoomBefore, 10) * 2);
+  // A pinch draws nothing.
+  const walls = await page.locator('#walls-layer > *').count();
+  expect(walls).toBe(wallsBeforePinch);
+
+  // Furniture opens as a sheet; picking a piece closes it so the piece is in view.
+  const toggle = page.locator('#furniture-sheet-toggle');
+  await expect(toggle).toBeVisible();
+  await toggle.tap();
+  await expect(toggle).toHaveAttribute('aria-expanded', 'true');
+  await page.locator('.furniture-item').first().tap();
+  await expect(toggle).toHaveAttribute('aria-expanded', 'false');
+  await expect(page.locator('#furniture-layer > *').first()).toBeAttached();
+  expect(await page.locator('#walls-layer > *').count()).toBe(walls);
+
+  await page.locator('#layout-save-btn').tap();
+  await expect(page.locator('.toast.toast-success')).toContainText('Layout saved.');
+  expect(seen.clientErrors).toEqual([]);
+  await context.close();
+});

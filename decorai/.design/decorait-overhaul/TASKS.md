@@ -193,11 +193,17 @@ Three forces, resolved in this order:
   scroll. **The primary success criterion for the redesign flow.** _Depends on:
   F7, F8, C1–C5._
 
-- [ ] **R2 · Editor responsive honesty** _(S)_ — _Started: the woodworking
-  editor has a phone layout (Save on screen, view above panels, touch hint).
-  The floor plan editor is still broken below 768px._ — Editors get a designed "best on a
+- [x] **R2 · Editor responsive honesty** _(S)_ — Editors get a designed "best on a
   larger screen" state below 640px instead of a broken CAD interface. Verify
   `pointer: coarse` restores 44px targets in tool density. _Depends on: E1, E2._
+  Done, past the brief: both editors work on a phone rather than apologising.
+  Woodworking: Save on screen, the view above the panels, a touch hint.
+  Floor plan (≤768px): a two-row header with Save first, a strip of tools,
+  the plan filling the rest, furniture and properties in a bottom sheet, 44px
+  targets, two-finger pinch and pan (a single finger waits 120ms so a pinch
+  can't draw a wall), touch wording in the hints. Left on larger screens: the
+  floor plan's Options (grid, snap, wall thickness). A landscape phone still
+  gets the desktop layout, cramped but usable.
 
 - [x] **R3 · Accessibility pass** _(M)_ — Verify AA across every surface: contrast
   (tokens are pre-verified, but check composed backgrounds), touch targets, keyboard

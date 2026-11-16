@@ -11272,3 +11272,183 @@ img.img-pending {
     animation-iteration-count: infinite !important;
   }
 }
+
+/* ============================================================
+   Floor plan editor on phones (R2, 4.5)
+   The 768px rules above stacked the tools on top but let them take the
+   whole height, so the plan got none, and hid the furniture outright.
+   Here: a two-row header (name and Save first), a strip of tools, the
+   plan filling the rest, and furniture with the selected item's
+   properties in a sheet along the bottom. Two fingers pinch and pan
+   (floorPlanEditor.js).
+   ============================================================ */
+.furniture-sheet-toggle {
+  display: none;
+}
+
+@media (max-width: 768px) {
+  /* Header: back, name, Save, Export; then undo … feng shui and units. */
+  .layout-editor-header {
+    gap: 6px;
+    padding: 8px 12px;
+    padding-top: max(8px, env(safe-area-inset-top));
+  }
+  .layout-editor-actions { display: contents; }
+  .layout-editor-title { order: 1; flex: 1 1 62%; min-width: 0; gap: 8px; }
+  .layout-editor-title-text { min-width: 0; }
+  .layout-editor-title h2 { display: none; }
+  .layout-name-display {
+    display: block;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  #layout-save-btn { order: 2; }
+  .export-dropdown { order: 3; }
+  #layout-undo-btn { order: 4; }
+  #layout-redo-btn { order: 5; }
+  #layout-select-all-btn { order: 6; }
+  #layout-clear-btn { order: 7; }
+  #feng-shui-btn { order: 8; }
+  .layout-editor-controls {
+    order: 9;
+    width: auto;
+    margin-left: auto;
+  }
+  .unit-control label { display: none; }
+  .layout-editor-title .back-btn,
+  .layout-editor-header .tool-btn,
+  .layout-save-primary-btn,
+  .export-dropdown .primary-btn {
+    width: 44px;
+    min-width: 44px;
+    height: 44px;
+  }
+  .export-dropdown .primary-btn { width: auto; padding: 0 10px; }
+  .unit-control select { min-height: 44px; }
+
+  /* The plan area: the content box holds the sheet, so it's the anchor. */
+  .layout-editor-content {
+    position: relative;
+    overflow: hidden;
+  }
+
+  /* Tools: one scrolling strip, icons only, 44px targets. Options (grid,
+     snap, wall thickness) stay on larger screens. */
+  .layout-toolbar,
+  .layout-toolbar.is-collapsed {
+    flex: none;
+    height: auto;
+    width: 100%;
+  }
+  .layout-toolbar .tool-section h4,
+  .layout-toolbar .tool-section--options,
+  .layout-toolbar .ref-image-controls {
+    display: none;
+  }
+  .layout-toolbar .tool-section {
+    padding: 4px 8px;
+    border-right: 0;
+  }
+  .layout-toolbar .tool-list { gap: 2px; }
+  .layout-toolbar .floor-tool {
+    min-width: 44px;
+    min-height: 44px;
+    justify-content: center;
+    padding: 0;
+  }
+
+  /* The plan takes what's left, above the closed sheet's bar. */
+  .layout-canvas-container {
+    flex: 1 1 auto;
+    min-height: 0;
+    margin-bottom: 56px;
+  }
+  .layout-canvas-wrapper {
+    margin: 8px;
+    margin-left: 33px;
+    margin-top: 33px;
+  }
+  .canvas-status {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: space-between;
+    gap: 6px 12px;
+    min-width: 0;
+    padding: 6px 8px;
+  }
+  .canvas-status-start,
+  .canvas-status-end { gap: 12px; }
+  #mouse-coords { display: none; }          /* no pointer to follow */
+  .canvas-status .my-layouts-toggle span { display: none; }
+  .canvas-status .my-layouts-toggle,
+  .canvas-zoom-btn {
+    min-width: 44px;
+    min-height: 44px;
+    justify-content: center;
+  }
+  .layout-empty-hint-body { display: none; }  /* drag-and-drop is a desktop thing */
+
+  /* Furniture: a sheet, closed to a bar, opened to most of the plan. */
+  .furniture-panel,
+  .furniture-panel.is-collapsed {
+    display: flex;
+    position: absolute;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    width: auto;
+    height: auto;
+    max-height: 56px;
+    z-index: 20;
+    border-left: 0;
+    border-top: 1px solid var(--color-border-subtle);
+    border-radius: 16px 16px 0 0;
+    box-shadow: 0 -6px 24px rgba(32, 30, 26, 0.12);
+    padding-bottom: env(safe-area-inset-bottom);
+    transition: max-height 0.25s var(--ease-out);
+  }
+  .furniture-panel.is-sheet-open { max-height: 65%; }
+  .furniture-panel:not(.is-sheet-open) .layout-sidebar-body { display: none; }
+  .furniture-panel .layout-sidebar-toggle { display: none; }
+  .furniture-sheet-toggle {
+    position: relative;
+    flex: none;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    width: 100%;
+    min-height: 56px;
+    padding: 12px 16px 8px;
+    border: 0;
+    background: none;
+    color: var(--color-text-primary);
+    font: inherit;
+    font-weight: 600;
+    cursor: pointer;
+  }
+  .furniture-sheet-grabber {
+    position: absolute;
+    top: 6px;
+    left: 50%;
+    width: 36px;
+    height: 4px;
+    margin-left: -18px;
+    border-radius: 999px;
+    background: var(--color-border-primary, var(--color-border-subtle));
+  }
+  .furniture-sheet-toggle svg { transition: transform 0.2s var(--ease-out); }
+  .furniture-panel.is-sheet-open .furniture-sheet-toggle svg { transform: rotate(180deg); }
+  .furniture-panel .layout-sidebar-body {
+    overflow-y: auto;
+    padding-bottom: 12px;
+  }
+  .furniture-panel .furniture-grid {
+    grid-template-columns: repeat(auto-fill, minmax(96px, 1fr));
+  }
+  .furniture-panel .category-btn { min-height: 40px; }
+
+  /* Hover tooltips stick after a tap on touch screens; the buttons have labels. */
+  .layout-editor-screen [data-tooltip]::after { display: none; }
+}

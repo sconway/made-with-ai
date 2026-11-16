@@ -400,6 +400,7 @@ const FloorPlanEditor = (() => {
         svg.addEventListener('touchstart', handleTouchStart, { passive: false });
         svg.addEventListener('touchmove', handleTouchMove, { passive: false });
         svg.addEventListener('touchend', handleTouchEnd);
+        svg.addEventListener('touchcancel', handleTouchEnd);
         
         // Keyboard shortcuts
         document.addEventListener('keydown', handleKeyDown);
@@ -431,6 +432,8 @@ const FloorPlanEditor = (() => {
                 updateFurnitureGrid();
             });
         });
+
+        initFurnitureSheet();
 
         // Search furniture
         document.getElementById('furniture-search')?.addEventListener('input', () => {
@@ -481,8 +484,12 @@ const FloorPlanEditor = (() => {
             saved = {};
         }
 
-        if (saved.leftCollapsed) leftBar.classList.add('is-collapsed');
-        if (saved.rightCollapsed) rightBar.classList.add('is-collapsed');
+        // On a phone the panels are a strip and a sheet; a desktop "collapsed"
+        // choice would leave them empty.
+        if (!isPhoneLayout()) {
+            if (saved.leftCollapsed) leftBar.classList.add('is-collapsed');
+            if (saved.rightCollapsed) rightBar.classList.add('is-collapsed');
+        }
         syncSidebarToggleState();
         if (typeof feather !== 'undefined') feather.replace();
 
@@ -677,6 +684,23 @@ const FloorPlanEditor = (() => {
         label: 'Click anywhere to add a text label',
     };
 
+    /** Touch screens: the plan moves with two fingers, and there is no keyboard. */
+    const TOUCH_NAV_HINTS = [
+        { keys: 'Two fingers, pinch', desc: 'Zoom' },
+        { keys: 'Two fingers, drag', desc: 'Pan' },
+        { keys: '− + Fit', desc: 'Zoom buttons under the plan' },
+    ];
+
+    /** A tool hint in touch words: tap, not click; no Shift. */
+    function touchHint(text) {
+        return text
+            .replace(/ · Shift\+click to multi-select/, '')
+            .replace(/double-click/g, 'double-tap')
+            .replace(/Click and drag/g, 'Drag')
+            .replace(/Click/g, 'Tap')
+            .replace(/click/g, 'tap');
+    }
+
     let toolHintMenuOpen = false;
 
     function renderToolHintMenu() {
@@ -689,7 +713,8 @@ const FloorPlanEditor = (() => {
                 <ul class="tool-hint-list">${itemsHtml}</ul>
             </section>`;
 
-        const canvasItems = CANVAS_NAV_HINTS.map(({ keys, desc }) => `
+        const touch = window.matchMedia?.('(pointer: coarse)').matches === true;
+        const canvasItems = (touch ? TOUCH_NAV_HINTS : CANVAS_NAV_HINTS).map(({ keys, desc }) => `
             <li class="tool-hint-item">
                 <span class="tool-hint-keys">${keys}</span>
                 <span class="tool-hint-desc">${desc}</span>
@@ -697,13 +722,13 @@ const FloorPlanEditor = (() => {
 
         const toolItems = Object.entries(TOOL_HINTS).map(([tool, hint]) => {
             const shortcut = TOOL_SHORTCUT_HINTS.find((entry) => entry.tool === tool);
-            const keys = shortcut
+            const keys = shortcut && !touch
                 ? `${shortcut.keys} · ${TOOL_LABELS[tool] || tool}`
                 : (TOOL_LABELS[tool] || tool);
             return `
             <li class="tool-hint-item" data-tool="${tool}">
                 <span class="tool-hint-keys">${keys}</span>
-                <span class="tool-hint-desc">${hint}</span>
+                <span class="tool-hint-desc">${touch ? touchHint(hint) : hint}</span>
             </li>`;
         }).join('');
 
@@ -713,10 +738,11 @@ const FloorPlanEditor = (() => {
                 <span class="tool-hint-desc">${desc}</span>
             </li>`).join('');
 
+        // Keyboard shortcuts mean nothing without a keyboard.
         panel.innerHTML =
             renderSection('Canvas navigation', canvasItems) +
             renderSection('Tools', toolItems) +
-            renderSection('Editing', editItems);
+            (touch ? '' : renderSection('Editing', editItems));
     }
 
     function setToolHintMenuOpen(open) {
@@ -1760,19 +1786,96 @@ const FloorPlanEditor = (() => {
         }
     }
     
+    // ── Touch ──
+    // One finger draws, places and drags, as the mouse does. Two fingers
+    // pinch to zoom and drag to pan, which is how every map and drawing app
+    // works on a phone. Without this the plan couldn't be zoomed or moved
+    // by touch at all (the page can't zoom here: touch-action is none).
+
+    /** The pinch in progress: where it started, and the zoom and pan then. */
+    let pinch = null;
+
+    function touchPair(touches) {
+        const [a, b] = [touches[0], touches[1]];
+        return {
+            x: (a.clientX + b.clientX) / 2,
+            y: (a.clientY + b.clientY) / 2,
+            dist: Math.max(1, Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY)),
+        };
+    }
+
+    /**
+     * A single finger waits this long before it counts as a press, so a pinch
+     * whose fingers land a moment apart doesn't first draw a wall (the wall
+     * tool chains from the last corner, so one stray press adds a segment).
+     * Moving or lifting the finger starts it at once.
+     */
+    const TOUCH_PRESS_DELAY_MS = 120;
+    let pendingPress = null;
+
+    function startPendingPress() {
+        if (!pendingPress) return;
+        const press = pendingPress;
+        pendingPress = null;
+        clearTimeout(press.timer);
+        handleMouseDown(press.event);
+    }
+
     function handleTouchStart(e) {
         e.preventDefault();
+        if (e.touches.length >= 2) {
+            if (pendingPress) {
+                // The first finger hadn't done anything yet: nothing to undo.
+                clearTimeout(pendingPress.timer);
+                pendingPress = null;
+            } else if (!pinch) {
+                // It had: finish it where it is, and drop any half-drawn wall.
+                const first = e.touches[0];
+                handleMouseUp({ clientX: first.clientX, clientY: first.clientY });
+                cancelDrawing();
+            }
+            const m = touchPair(e.touches);
+            pinch = { ...m, zoom, pan: { ...panOffset } };
+            return;
+        }
+        if (pinch) return;
         const touch = e.touches[0];
-        handleMouseDown({ clientX: touch.clientX, clientY: touch.clientY, target: document.elementFromPoint(touch.clientX, touch.clientY) });
+        const event = { clientX: touch.clientX, clientY: touch.clientY, target: document.elementFromPoint(touch.clientX, touch.clientY) };
+        pendingPress = { event, timer: setTimeout(startPendingPress, TOUCH_PRESS_DELAY_MS) };
     }
     
     function handleTouchMove(e) {
         e.preventDefault();
+        if (pinch) {
+            if (e.touches.length < 2) return;
+            const m = touchPair(e.touches);
+            const rect = svg.getBoundingClientRect();
+            const limits = getZoomLimits();
+            // The plan point under the fingers when the pinch began stays under them.
+            const startX = pinch.x - rect.left;
+            const startY = pinch.y - rect.top;
+            const planX = (startX - pinch.pan.x) / pinch.zoom;
+            const planY = (startY - pinch.pan.y) / pinch.zoom;
+            zoom = Math.max(limits.min, Math.min(limits.max, pinch.zoom * (m.dist / pinch.dist)));
+            panOffset.x = (m.x - rect.left) - planX * zoom;
+            panOffset.y = (m.y - rect.top) - planY * zoom;
+            updateZoomLevelDisplay();
+            applyTransform();
+            return;
+        }
+        startPendingPress();
         const touch = e.touches[0];
         handleMouseMove({ clientX: touch.clientX, clientY: touch.clientY });
     }
     
     function handleTouchEnd(e) {
+        if (pinch) {
+            // Wait for every finger to lift, so the last one doesn't draw.
+            if (e.touches.length === 0) pinch = null;
+            return;
+        }
+        // A quick tap: press and release together.
+        startPendingPress();
         handleMouseUp(e);
     }
     
@@ -4951,12 +5054,39 @@ const FloorPlanEditor = (() => {
 
                 // Switch to select tool so user can move/adjust the furniture
                 selectTool('select');
+                // On a phone the sheet covers the middle of the plan: close it
+                // so the new piece is in view.
+                if (isPhoneLayout()) setFurnitureSheetOpen(false);
             });
             
             grid.appendChild(div);
         }
     }
     
+    /** Matches the phone layout in styles.css (max-width: 768px). */
+    function isPhoneLayout() {
+        return window.matchMedia?.('(max-width: 768px)').matches === true;
+    }
+
+    /**
+     * Phones: the furniture panel (with the selected item's properties) is a
+     * sheet along the bottom of the plan, closed to a bar until tapped.
+     */
+    function initFurnitureSheet() {
+        const panel = document.getElementById('furniture-panel');
+        const toggle = document.getElementById('furniture-sheet-toggle');
+        if (!panel || !toggle) return;
+        toggle.addEventListener('click', () => setFurnitureSheetOpen(!panel.classList.contains('is-sheet-open')));
+    }
+
+    function setFurnitureSheetOpen(open) {
+        const panel = document.getElementById('furniture-panel');
+        const toggle = document.getElementById('furniture-sheet-toggle');
+        if (!panel || !toggle) return;
+        panel.classList.toggle('is-sheet-open', open);
+        toggle.setAttribute('aria-expanded', String(open));
+    }
+
     function onFurnitureEmptyAction(id) {
         const search = document.getElementById('furniture-search');
         if (id === 'all-categories') {
