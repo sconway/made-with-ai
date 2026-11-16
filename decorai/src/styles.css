@@ -4815,6 +4815,8 @@ body.layout-editor-active:has(.modal.show) .layout-editor-screen .layout-sidebar
 }
 
 /* Tool Options */
+.layout-options-toggle { display: none; }
+
 .option-group {
   margin-bottom: 12px;
 }
@@ -9182,7 +9184,8 @@ body.woodworking-active .feedback-fab {
   .upload-actions > .camera-btn { width: auto; min-width: 11rem; }
 }
 
-@media (min-width: 900px) {
+/* Two columns from 900px, and on a phone on its side (wide but short). */
+@media (min-width: 900px), (min-width: 640px) and (max-height: 500px) {
   .upload-container { padding: var(--space-10); }
   .upload-content {
     grid-template-columns: minmax(0, 1fr) minmax(0, 1.15fr);
@@ -9203,6 +9206,12 @@ body.woodworking-active .feedback-fab {
   .upload-proof { align-self: center; }
   /* The after takes most of the width: it's the point. */
   .upload-proof-pair { grid-template-columns: 1fr 2fr; align-items: end; }
+}
+
+@media (min-width: 640px) and (max-height: 500px) {
+  .upload-container { padding: var(--space-6); }
+  .upload-content { column-gap: var(--space-6); row-gap: var(--space-5); }
+  .upload-content h2 { font-size: var(--font-size-2xl); }
 }
 
 /* ── Region mask ───────────────────────────────────────────────────────────
@@ -11589,6 +11598,66 @@ img.img-pending {
   .layout-toolbar .ref-image-controls {
     display: none;
   }
+
+  /* Options: a button at the end of the strip opens them as a panel over
+     the top of the plan. */
+  .layout-toolbar { position: relative; z-index: 30; overflow: visible; }
+  .layout-options-toggle {
+    display: inline-flex;
+    flex: none;
+    align-items: center;
+    justify-content: center;
+    align-self: center;
+    width: 44px;
+    height: 44px;
+    margin: 0 8px 0 auto;
+    border: 1px solid var(--color-border-subtle);
+    border-radius: var(--radius-sm);
+    background: var(--color-bg-primary);
+    color: var(--color-text-secondary);
+    cursor: pointer;
+  }
+  .layout-options-toggle svg { width: 18px; height: 18px; }
+  .layout-options-toggle[aria-expanded="true"] {
+    background: var(--color-accent-primary-subtle);
+    border-color: var(--indigo-200);
+    color: var(--color-accent-primary-hover);
+  }
+  .layout-toolbar.is-options-open .tool-section--options {
+    display: block;
+    position: absolute;
+    top: calc(100% + 4px);
+    right: 8px;
+    width: min(20rem, calc(100vw - 16px));
+    padding: var(--space-3) var(--space-4);
+    background: var(--color-bg-primary);
+    border: 1px solid var(--color-border-subtle);
+    border-radius: var(--radius-lg);
+    box-shadow: var(--shadow-md);
+  }
+  .layout-toolbar.is-options-open .tool-section--options h4 {
+    display: block;
+    margin-bottom: var(--space-2);
+  }
+  .tool-section--options .checkbox-label {
+    min-height: 44px;
+    display: flex;
+    align-items: center;
+    gap: var(--space-3);
+  }
+  .tool-section--options .checkbox-label input { width: 20px; height: 20px; margin: 0; }
+  .tool-section--options .option-group { margin-bottom: var(--space-2); }
+  .tool-section--options input[type="range"] { width: 100%; min-height: 44px; margin: 0; }
+  /* A slider row: its label and value on one line, the slider under them. */
+  .tool-section--options .option-group:has(input[type="range"]) {
+    display: grid;
+    grid-template-columns: 1fr auto;
+    align-items: center;
+    column-gap: var(--space-2);
+  }
+  .tool-section--options .option-group:has(input[type="range"]) > label { margin: 0; }
+  .tool-section--options .option-group:has(input[type="range"]) > input { grid-column: 1 / -1; grid-row: 2; }
+  .tool-section--options .option-group:has(input[type="range"]) > span { grid-column: 2; grid-row: 1; }
   .layout-toolbar .tool-section {
     padding: 4px 8px;
     border-right: 0;
@@ -11694,4 +11763,206 @@ img.img-pending {
 
   /* Hover tooltips stick after a tap on touch screens; the buttons have labels. */
   .layout-editor-screen [data-tooltip]::after { display: none; }
+}
+
+/* ────────────────────────────────────────────────────────────────
+   TOUCH TARGETS (TASKS.md R1)
+   On a touch screen nothing you tap is under 44px (--tap-target-min) in
+   either direction. min-height/min-width rather than height, so a control
+   that's already bigger is left alone; the smoke test "on a touch screen,
+   every control is at least 44px" measures every main screen.
+   ──────────────────────────────────────────────────────────────── */
+@media (pointer: coarse) {
+  .tokens-btn,
+  .user-menu-btn,
+  .dropdown-item,
+  .feedback-fab,
+  .primary-btn,
+  .secondary-btn,
+  .refine-idea,
+  .library-status-upsell,
+  .model-pref-upsell-btn,
+  .text-btn,
+  .ww-library-cat {
+    min-height: var(--tap-target-min);
+  }
+
+  /* Text that acts as a button: centre it in its taller box. */
+  .library-status-upsell,
+  .model-pref-upsell-btn,
+  .text-btn {
+    display: inline-flex;
+    align-items: center;
+  }
+
+  /* The logo link: taller by padding, so its text stays centred and on its baseline. */
+  .logo { padding-block: 10px; }
+
+  .feedback-fab,
+  .close-modal-btn,
+  .tool-hint-btn,
+  .layout-save-primary-btn,
+  #results-section .design-history-thumb {
+    min-width: var(--tap-target-min);
+    min-height: var(--tap-target-min);
+  }
+
+  .close-modal-btn,
+  .tool-hint-btn {
+    align-items: center;
+    justify-content: center;
+  }
+
+  /* Screens that size their own buttons more specifically. */
+  .layout-editor-actions > .tool-btn,
+  .layout-editor-actions > .layout-save-primary-btn,
+  .layout-editor-actions > .export-dropdown .primary-btn,
+  #results-section .primary-btn,
+  #results-section .secondary-btn,
+  #results-section .results-header-actions > .secondary-btn,
+  #results-section #regenerate-btn,
+  #results-section #save-design-btn,
+  #results-section #share-design-btn {
+    min-height: var(--tap-target-min);
+  }
+  #results-section #back-to-options-btn,
+  #results-section .feng-shui-action-btn,
+  #results-section .shop-look-btn,
+  #results-section #share-design-btn {
+    min-width: var(--tap-target-min);
+  }
+  #results-section .model-pref-toggle { min-height: var(--tap-target-min); }
+}
+
+/* No hover on a touch screen, so "Change image" (and "Use a saved design")
+   can't wait for one: they sit in the photo's corner as pills, always there. */
+@media (hover: none) {
+  .image-overlay {
+    opacity: 1;
+    background: none;
+    backdrop-filter: none;
+    align-items: flex-end;
+    justify-content: flex-end;
+    align-content: flex-end;
+    padding: var(--space-2);
+    pointer-events: none;
+  }
+  .image-overlay > * { pointer-events: auto; }
+  .change-image-overlay-btn {
+    min-height: var(--tap-target-min);
+    padding: 0 var(--space-3);
+    font-size: var(--text-sm);
+    box-shadow: var(--shadow-md);
+  }
+  .change-image-overlay-btn svg { width: 16px; height: 16px; }
+}
+
+/* Safe areas. viewport-fit=cover lets the page run under a notch or the
+   rounded corners of a landscape phone; these keep content out from under
+   them (each is 0 everywhere else). */
+header,
+.app-container,
+#layout-editor-screen,
+#woodworking-editor-screen {
+  padding-left: env(safe-area-inset-left, 0px);
+  padding-right: env(safe-area-inset-right, 0px);
+}
+
+/* A landscape phone: little height, so the header gives some back. */
+@media (max-height: 500px) and (orientation: landscape) {
+  .header-inner {
+    padding-top: var(--space-2);
+    padding-bottom: var(--space-2);
+  }
+  main { padding-top: var(--space-3); }
+}
+
+/* A landscape phone in the floor plan: the desktop layout, with a slimmer
+   header so the plan keeps most of the little height there is. */
+@media (min-width: 769px) and (max-height: 500px) and (pointer: coarse) {
+  .layout-editor-header {
+    padding: 6px 16px;
+    padding-left: max(16px, env(safe-area-inset-left, 0px));
+  }
+  .layout-editor-title h2 { display: none; }
+  .layout-editor-header { gap: 8px; }
+  .layout-editor-actions { gap: 4px; }
+  .unit-control label { display: none; }
+}
+
+/* The floor plan's panel edge buttons show on hover. A touch screen has no
+   hover, so there they're always shown, and big enough for a finger. */
+@media (hover: none) and (min-width: 769px) {
+  .layout-sidebar-toggle {
+    opacity: 1;
+    visibility: visible;
+    pointer-events: auto;
+    width: var(--tap-target-min);
+    height: var(--tap-target-min);
+  }
+  /* Just outside the panel, so they don't cover its tools. */
+  .layout-sidebar-toggle--left { transform: translateX(100%); }
+  .layout-sidebar-toggle--right { transform: translateX(-100%); }
+}
+
+/* The floor plan's desktop layout on a touch screen (a tablet, or a phone on
+   its side): the same 44px minimum as everywhere else. */
+@media (pointer: coarse) {
+  .layout-editor-title .back-btn,
+  .layout-editor-header .tool-btn,
+  .canvas-zoom-btn,
+  .category-btn {
+    min-width: var(--tap-target-min);
+    min-height: var(--tap-target-min);
+  }
+  .unit-control select,
+  .floor-tool,
+  .my-layouts-toggle,
+  .tool-section--options .checkbox-label,
+  .tool-section--options input[type="range"] {
+    min-height: var(--tap-target-min);
+  }
+  .layout-editor-title .back-btn,
+  .canvas-zoom-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+  }
+}
+
+/* Woodworking's desktop layout on a touch screen. */
+@media (pointer: coarse) {
+  #woodworking-editor-screen .ww-btn { min-height: var(--tap-target-min); }
+}
+
+/* The last few that set their own size. */
+@media (pointer: coarse) {
+  .auth-buttons .secondary-btn,
+  .auth-buttons .primary-btn,
+  .toast-close {
+    min-height: var(--tap-target-min);
+  }
+  .toast-close,
+  .model-pref-upsell-btn {
+    min-width: var(--tap-target-min);
+    justify-content: center;
+  }
+}
+
+/* Configure on a phone on its side: the photo beside the options, not a
+   30vh strip above them. */
+@media (min-width: 640px) and (max-height: 500px) {
+  .configure-layout {
+    grid-template-columns: minmax(0, 5fr) minmax(0, 6fr);
+    gap: var(--space-5);
+  }
+  .configure-photo {
+    position: sticky;
+    top: var(--space-3);
+  }
+  .configure-photo .image-preview-wrapper,
+  .configure-photo .image-preview-wrapper #room-preview {
+    max-height: 55vh;
+  }
+  .wizard-upload-actions { grid-template-columns: 1fr; }
 }

@@ -785,7 +785,12 @@
                     </div>
                 </div>
                 
-                <div class="tool-section tool-section--options">
+                <!-- Phones only: the strip has no room for Options, so this opens
+                     them as a panel over the plan (floorPlanEditor.js, initOptionsPanel). -->
+                <button type="button" id="layout-options-toggle" class="layout-options-toggle" aria-expanded="false" aria-controls="layout-options-panel" aria-label="Options: grid, snapping, dimensions and wall thickness">
+                    <i data-feather="sliders" aria-hidden="true"></i>
+                </button>
+                <div class="tool-section tool-section--options" id="layout-options-panel">
                     <h4>Options</h4>
                     <div class="option-group">
                         <label class="checkbox-label">

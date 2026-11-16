@@ -197,11 +197,21 @@ Three forces, resolved in this order:
 
 ## Responsive & Polish
 
-- [ ] **R1 · Mobile native-feel pass** _(L)_ — Below 640px: sheets not modals,
+- [x] **R1 · Mobile native-feel pass** _(L)_ — Below 640px: sheets not modals,
   sticky action bars, 44px minimum targets, tap equivalents for every hover
   affordance, safe-area insets top and bottom, spring pane transitions, momentum
   scroll. **The primary success criterion for the redesign flow.** _Depends on:
   F7, F8, C1–C5._
+  Done: on any touch screen (`pointer: coarse`) every control is at least 44px,
+  checked by a smoke test on every main screen in portrait and landscape
+  (`test/e2e/targets.mjs`). Hover-only controls have tap equivalents: "Change
+  image" sits on the photo, and the floor plan's panel edge buttons are always
+  shown. The floor plan's Options open from a button in the phone tool strip.
+  Landscape phones: a shorter header, home and configure in two columns, and
+  the floor plan starts with its side panels collapsed. Safe areas left and
+  right too (the page runs under a notch on its side). Sheets, the sticky
+  configure bar and the one-screen results view were already in place. Spring
+  pane transitions are left to I5.
 
 - [x] **R2 · Editor responsive honesty** _(S)_ — Editors get a designed "best on a
   larger screen" state below 640px instead of a broken CAD interface. Verify

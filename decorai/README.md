@@ -221,7 +221,8 @@ PW_CHANNEL=chrome npm run test:e2e    # browser smoke test, in installed Chrome
 The smoke test mocks every API and provider call, so it costs nothing to run.
 It also checks accessibility: contrast and control names on the main
 screens (`test/e2e/a11yAudit.mjs`), a visible focus ring on every control
-reached with Tab, and that pinch-zoom is allowed.
+reached with Tab, that pinch-zoom is allowed, and that on a touch screen every
+control is at least 44px, in portrait and landscape (`test/e2e/targets.mjs`).
 Without `PW_CHANNEL` it uses Playwright's own Chromium
 (`npx playwright install chromium` once).
 

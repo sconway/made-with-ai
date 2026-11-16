@@ -434,6 +434,7 @@ const FloorPlanEditor = (() => {
         });
 
         initFurnitureSheet();
+        initOptionsPanel();
 
         // Search furniture
         document.getElementById('furniture-search')?.addEventListener('input', () => {
@@ -485,8 +486,13 @@ const FloorPlanEditor = (() => {
         }
 
         // On a phone the panels are a strip and a sheet; a desktop "collapsed"
-        // choice would leave them empty.
-        if (!isPhoneLayout()) {
+        // choice would leave them empty. A landscape phone gets the desktop
+        // layout with little height, so both panels start collapsed to give
+        // the plan the room (either opens with its edge button).
+        if (isShortTouchScreen()) {
+            leftBar.classList.add('is-collapsed');
+            rightBar.classList.add('is-collapsed');
+        } else if (!isPhoneLayout()) {
             if (saved.leftCollapsed) leftBar.classList.add('is-collapsed');
             if (saved.rightCollapsed) rightBar.classList.add('is-collapsed');
         }
@@ -5063,6 +5069,12 @@ const FloorPlanEditor = (() => {
         }
     }
     
+    /** A phone on its side: wide enough for the desktop layout, but short. */
+    function isShortTouchScreen() {
+        return !isPhoneLayout()
+            && window.matchMedia?.('(max-height: 500px) and (pointer: coarse)').matches === true;
+    }
+
     /** Matches the phone layout in styles.css (max-width: 768px). */
     function isPhoneLayout() {
         return window.matchMedia?.('(max-width: 768px)').matches === true;
@@ -5077,6 +5089,43 @@ const FloorPlanEditor = (() => {
         const toggle = document.getElementById('furniture-sheet-toggle');
         if (!panel || !toggle) return;
         toggle.addEventListener('click', () => setFurnitureSheetOpen(!panel.classList.contains('is-sheet-open')));
+    }
+
+    /**
+     * Phones: Options (grid, snap, dimensions, wall thickness) open as a panel
+     * under the tool strip. A tap anywhere else, Escape, or picking a tool
+     * closes it.
+     */
+    function initOptionsPanel() {
+        const bar = document.getElementById('layout-toolbar');
+        const toggle = document.getElementById('layout-options-toggle');
+        const panel = document.getElementById('layout-options-panel');
+        if (!bar || !toggle || !panel) return;
+        const setOpen = (open) => {
+            bar.classList.toggle('is-options-open', open);
+            toggle.setAttribute('aria-expanded', String(open));
+            if (open) setFurnitureSheetOpen(false);
+        };
+        toggle.addEventListener('click', () => setOpen(!bar.classList.contains('is-options-open')));
+        // A tap outside closes it. On the plan that tap only closes: it mustn't
+        // also start a wall. Captured at the document, before the plan sees it.
+        const closeFromOutside = (e) => {
+            if (!bar.classList.contains('is-options-open')) return;
+            if (panel.contains(e.target) || toggle.contains(e.target)) return;
+            setOpen(false);
+            if (e.target instanceof Element && e.target.closest('#layout-canvas-wrapper')) {
+                e.stopPropagation();
+                if (e.cancelable) e.preventDefault(); // and no mouse events after the touch
+            }
+        };
+        document.addEventListener('touchstart', closeFromOutside, { capture: true, passive: false });
+        document.addEventListener('mousedown', closeFromOutside, true);
+        document.addEventListener('keydown', (e) => {
+            if (e.key !== 'Escape' || !bar.classList.contains('is-options-open')) return;
+            setOpen(false);
+            toggle.focus();
+        });
+        bar.querySelectorAll('.floor-tool').forEach((btn) => btn.addEventListener('click', () => setOpen(false)));
     }
 
     function setFurnitureSheetOpen(open) {

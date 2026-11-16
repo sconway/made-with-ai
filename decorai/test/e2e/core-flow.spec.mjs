@@ -7,6 +7,7 @@
 import { test, expect } from '@playwright/test';
 import { makePng, roomPhotoPng, resultPng } from './png.mjs';
 import { auditPage } from './a11yAudit.mjs';
+import { smallTargets } from './targets.mjs';
 
 const RESULT_URL = 'https://replicate.delivery/test/result.png';
 const PREDICTION_URL = 'https://api.replicate.com/v1/predictions/pred_test_1';
@@ -1059,4 +1060,166 @@ test('when the camera cannot open, home says why and offers the way round it', a
   const picked = await chooser;
   expect(await picked.element().getAttribute('capture')).toBe('environment');
   await context.close();
+});
+
+// ── Phones (TASKS.md R1) ───────────────────────────────────────────────────
+
+const phone = { viewport: { width: 390, height: 844 }, hasTouch: true, isMobile: true, reducedMotion: 'reduce' };
+
+test('on a touch screen, every control on the main screens is at least 44px', async ({ browser }) => {
+  test.setTimeout(120_000);
+  const problems = [];
+  const check = async (page, name, scope) => {
+    for (const p of await smallTargets(page, scope ? { scope } : {})) problems.push(`${name}: ${p}`);
+  };
+  const context = await browser.newContext(phone);
+  const page = await context.newPage();
+  await signIn(page);
+  await mockBackend(page, { designs: [savedDesign(1, 'Japandi')] });
+  await page.goto('/');
+  await expect(page.locator('#use-saved-btn')).toBeVisible();
+  await check(page, 'home');
+  await page.locator('#room-upload').setInputFiles({ name: 'room.png', mimeType: 'image/png', buffer: roomPhotoPng(2000, 1500) });
+  await expect(page.locator('#wizard-container')).toBeVisible();
+  await check(page, 'configure');
+  await page.locator('#generate-btn').tap();
+  await expect(page.locator('#design-carousel .generated-image').first()).toHaveAttribute('src', RESULT_URL, { timeout: 30_000 });
+  await check(page, 'results');
+  await page.locator('#user-menu-btn').tap();
+  await check(page, 'account menu', 'header');
+  await page.goto('/library/designs');
+  await expect(page.locator('.library-card').first()).toBeVisible();
+  await check(page, 'library');
+  await page.goto('/upgrade');
+  await check(page, 'upgrade');
+  await page.goto('/build');
+  await expect(page.locator('#woodworking-editor-screen')).toBeVisible();
+  await check(page, 'woodworking', '#woodworking-editor-screen');
+  await page.goto('/plan');
+  await expect(page.locator('#layout-options-toggle')).toBeVisible();
+  await check(page, 'floor plan', '#layout-editor-screen');
+  await context.close();
+
+  const signedOut = await browser.newContext(phone);
+  const p2 = await signedOut.newPage();
+  await mockBackend(p2);
+  await p2.goto('/?auth=signin');
+  await expect(p2.locator('#auth-modal')).toBeVisible();
+  await check(p2, 'sign in', '#auth-modal');
+  await signedOut.close();
+  expect(problems).toEqual([]);
+});
+
+test('on a touch screen, Change image is on the photo without hovering', async ({ browser }) => {
+  const context = await browser.newContext(phone);
+  const page = await context.newPage();
+  await mockBackend(page);
+  await page.goto('/');
+  await page.locator('#room-upload').setInputFiles({ name: 'room.png', mimeType: 'image/png', buffer: roomPhotoPng(1600, 1200) });
+  await expect(page.locator('#wizard-container')).toBeVisible();
+  const change = page.locator('#change-image-btn');
+  await expect(change).toBeVisible();
+  expect(await change.evaluate((el) => Number(getComputedStyle(el.closest('.image-overlay')).opacity))).toBe(1);
+  // It does what it says: the file picker opens.
+  const chooser = page.waitForEvent('filechooser');
+  await change.tap();
+  await chooser;
+  await context.close();
+});
+
+test('the floor plan Options open on a phone, and tapping the plan closes them without drawing', async ({ browser }) => {
+  const context = await browser.newContext(phone);
+  const page = await context.newPage();
+  await signIn(page);
+  const seen = await mockBackend(page, { subscribed: true });
+  await page.goto('/plan');
+  const toggle = page.locator('#layout-options-toggle');
+  const panel = page.locator('#layout-options-panel');
+  await expect(toggle).toBeVisible();
+  await expect(panel).toBeHidden();
+
+  await page.locator('.floor-tool[data-tool="wall"]').tap();
+  await toggle.tap();
+  await expect(panel).toBeVisible();
+  await expect(toggle).toHaveAttribute('aria-expanded', 'true');
+  // Not clipped by the tool strip: the whole panel is on screen.
+  const box = await panel.boundingBox();
+  expect(box.height).toBeGreaterThan(200);
+  await page.locator('#snap-to-grid').tap();
+  await expect(page.locator('#snap-to-grid')).not.toBeChecked();
+
+  // A tap on the plan, with the wall tool on: the panel closes, no wall starts.
+  // (If it had, the next tap would finish a wall.)
+  const svg = await page.locator('#layout-svg').boundingBox();
+  const at = (fx, fy) => page.touchscreen.tap(svg.x + svg.width * fx, svg.y + svg.height * fy);
+  await at(0.5, 0.85);
+  await expect(panel).toBeHidden();
+  await expect(toggle).toHaveAttribute('aria-expanded', 'false');
+  await page.waitForTimeout(250);
+  await at(0.3, 0.5);
+  await page.waitForTimeout(250);
+  expect(await page.locator('#walls-layer > *').count(), 'the closing tap started nothing').toBe(0);
+  await at(0.7, 0.5);
+  await expect(page.locator('#walls-layer > *').first()).toBeAttached();
+
+  // Escape closes it too, back to the button.
+  await toggle.tap();
+  await expect(panel).toBeVisible();
+  await page.keyboard.press('Escape');
+  await expect(panel).toBeHidden();
+  await expect(toggle).toBeFocused();
+  expect(seen.clientErrors).toEqual([]);
+  await context.close();
+});
+
+test('a landscape phone gets the plan most of the screen, and a shorter header', async ({ browser }) => {
+  const context = await browser.newContext({ ...phone, viewport: { width: 844, height: 390 } });
+  const page = await context.newPage();
+  await signIn(page);
+  await mockBackend(page, { subscribed: true });
+  // A desktop visit left both panels open: a phone on its side ignores that.
+  await page.addInitScript(() => localStorage.setItem('decorait-layout-sidebar-state', JSON.stringify({ leftCollapsed: false, rightCollapsed: false })));
+  await page.goto('/plan');
+  await expect(page.locator('#layout-toolbar')).toHaveClass(/is-collapsed/);
+  await expect(page.locator('#furniture-panel')).toHaveClass(/is-collapsed/);
+  const plan = await page.locator('.layout-canvas-container').boundingBox();
+  expect(plan.width, 'the plan takes most of the width').toBeGreaterThan(844 * 0.75);
+  expect(plan.height).toBeGreaterThan(390 * 0.6);
+  // Either panel still opens from its edge: the edge button is there without
+  // hovering, and finger-sized.
+  const edge = page.locator('#layout-toolbar-toggle');
+  await expect(edge).toBeVisible();
+  expect((await edge.boundingBox()).width).toBeGreaterThanOrEqual(44);
+  await edge.tap();
+  await expect(page.locator('#layout-toolbar')).not.toHaveClass(/is-collapsed/);
+  expect(await smallTargets(page, { scope: '#layout-editor-screen' }), 'every control finger-sized here too').toEqual([]);
+  await page.goto('/build');
+  await expect(page.locator('#woodworking-editor-screen')).toBeVisible();
+  expect(await smallTargets(page, { scope: '#woodworking-editor-screen' }), 'and in woodworking').toEqual([]);
+
+  await context.close();
+
+  // The app header gives back some of the little height there is.
+  const home = await browser.newContext({ ...phone, viewport: { width: 844, height: 390 } });
+  const p2 = await home.newPage();
+  await mockBackend(p2);
+  await p2.goto('/');
+  await expect(p2.locator('.upload-promise')).toBeVisible();
+  const header = await p2.locator('header').first().boundingBox();
+  expect(header.height).toBeLessThan(70);
+  const small = [];
+  for (const p of await smallTargets(p2)) small.push(`home: ${p}`);
+  await p2.locator('#room-upload').setInputFiles({ name: 'room.png', mimeType: 'image/png', buffer: roomPhotoPng(1600, 1200) });
+  await expect(p2.locator('#wizard-container')).toBeVisible();
+  // The photo sits beside the options, not as a strip above them.
+  const photo = await p2.locator('.configure-photo').boundingBox();
+  const options = await p2.locator('.configure-options').boundingBox();
+  expect(options.x).toBeGreaterThan(photo.x + photo.width - 1);
+  expect(photo.height).toBeGreaterThan(150);
+  for (const p of await smallTargets(p2)) small.push(`configure: ${p}`);
+  await p2.locator('#generate-btn').tap();
+  await expect(p2.locator('#design-carousel .generated-image').first()).toHaveAttribute('src', RESULT_URL, { timeout: 30_000 });
+  for (const p of await smallTargets(p2)) small.push(`results: ${p}`);
+  expect(small).toEqual([]);
+  await home.close();
 });
